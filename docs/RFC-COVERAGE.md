@@ -14,18 +14,18 @@ least two independent servers in the interop matrix).
 
 | Capability | RFC | Task | Status |
 |---|---|---|---|
-| IMAP4REV1 | 3501 | T01,T02,T05,T06 | done |
+| IMAP4REV1 | 3501 | T01,T02,T05,T06 | verified |
 | IMAP4REV2 | 9051 | T07 | planned |
 | STARTTLS | 3501, 9051 | T03 | done |
 | LOGINDISABLED | 3501, 9051 | T04 | done |
-| AUTH= | 3501, 9051 | T04 | done |
-| SASL-IR | 4959 | T04 | done |
+| AUTH= | 3501, 9051 | T04 | verified |
+| SASL-IR | 4959 | T04 | verified |
 | ENABLE | 5161 | T07 | planned |
 | IDLE | 2177 | T07 | planned |
 | ID | 2971 | T08 | planned |
-| NAMESPACE | 2342 | T05 | done |
-| UNSELECT | 3691 | T05 | done |
-| LITERAL+ | 7888 | T01 | done |
+| NAMESPACE | 2342 | T05 | verified |
+| UNSELECT | 3691 | T05 | verified |
+| LITERAL+ | 7888 | T01 | verified |
 | LITERAL- | 7888 | T01 | done |
 
 ## Group A — core modern (task T08)
@@ -129,7 +129,7 @@ break the client; full command support is best-effort.
 | SCRAM-SHA-*-PLUS | 5802, 7677 | T04 | done | channel binding to TLS exporter |
 | OAUTHBEARER | 7628 | T04 | done | |
 | XOAUTH2 | — | T04 | done | de-facto, Gmail/Outlook |
-| PLAIN | 4616 | T04 | done | |
+| PLAIN | 4616 | T04 | verified | |
 | CRAM-MD5 | 2195 | T04 | done | legacy, still common |
 | MIME header encoding | 2047, 2231 | T02 | done | envelope decoding |
 

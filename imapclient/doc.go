@@ -24,6 +24,6 @@
 // # Status
 //
 // The connection/session layer, authentication, and base mailbox and message
-// commands are implemented. Extension support and multi-server verification
-// are still under active development; see docs/ROADMAP.md.
+// commands are implemented and verified across the native server matrix.
+// Extension support is still under active development; see docs/ROADMAP.md.
 package imapclient

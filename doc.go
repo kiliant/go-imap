@@ -30,7 +30,7 @@
 // # Status
 //
 // The core vocabulary, wire codec, connection/session layer, authentication,
-// and base mailbox and message commands are implemented. Extensions and
-// multi-server verification are still under active development; see
-// docs/ROADMAP.md.
+// and base mailbox and message commands are implemented and verified across
+// the native server matrix. Extensions are still under active development;
+// see docs/ROADMAP.md.
 package imap

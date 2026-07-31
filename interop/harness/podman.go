@@ -64,6 +64,8 @@ type Server struct {
 	ID      string
 	Address string
 
+	additionalAddresses map[int]string
+
 	manager *Manager
 	closed  atomic.Bool
 }
@@ -92,6 +94,9 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 
 	name := fmt.Sprintf("go-imap-%s-%d-%d", profile.Name, time.Now().Unix(), containerSequence.Add(1))
 	args := []string{"run", "--detach", "--name", name, "--publish", fmt.Sprintf("127.0.0.1::%d", profile.ContainerPort)}
+	for _, port := range profile.AdditionalPorts {
+		args = append(args, "--publish", fmt.Sprintf("127.0.0.1::%d", port))
+	}
 	if profile.Tier == definition.TierEmulated {
 		args = append(args, "--arch", "amd64")
 	}
@@ -114,7 +119,7 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 	if err != nil {
 		return nil, err
 	}
-	server := &Server{Profile: profile, ID: id, manager: m}
+	server := &Server{Profile: profile, ID: id, manager: m, additionalAddresses: make(map[int]string)}
 	defer func() {
 		if err != nil {
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), defaultStopTimeout)
@@ -134,6 +139,13 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 		return nil, fmt.Errorf("interop: %s did not become ready: %w\nserver log:\n%s", profile.Name, err, logs)
 	}
 	server.Address = address
+	for _, port := range profile.AdditionalPorts {
+		address, err := m.publishedAddress(ctx, server, port)
+		if err != nil {
+			return nil, err
+		}
+		server.additionalAddresses[port] = address
+	}
 	for _, command := range profile.ProvisionCommands {
 		if len(command) == 0 {
 			return nil, fmt.Errorf("interop: %s has an empty provision command", profile.Name)
@@ -176,7 +188,7 @@ func (m *Manager) waitReady(ctx context.Context, server *Server) (string, error)
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		address, err := m.publishedAddress(ctx, server)
+		address, err := m.publishedAddress(ctx, server, server.Profile.ContainerPort)
 		if err == nil {
 			probeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			err = probeGreeting(probeCtx, address)
@@ -198,8 +210,8 @@ func (m *Manager) waitReady(ctx context.Context, server *Server) (string, error)
 	}
 }
 
-func (m *Manager) publishedAddress(ctx context.Context, server *Server) (string, error) {
-	out, err := m.runner.Run(ctx, "port", server.ID, strconv.Itoa(server.Profile.ContainerPort)+"/tcp")
+func (m *Manager) publishedAddress(ctx context.Context, server *Server, port int) (string, error) {
+	out, err := m.runner.Run(ctx, "port", server.ID, strconv.Itoa(port)+"/tcp")
 	if err != nil {
 		return "", err
 	}
@@ -207,14 +219,24 @@ func (m *Manager) publishedAddress(ctx context.Context, server *Server) (string,
 	if line == "" {
 		return "", fmt.Errorf("interop: podman returned no published port")
 	}
-	host, port, err := net.SplitHostPort(line)
+	host, publishedPort, err := net.SplitHostPort(line)
 	if err != nil {
 		return "", fmt.Errorf("interop: parse published port %q: %w", line, err)
 	}
 	if host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	return net.JoinHostPort(host, port), nil
+	return net.JoinHostPort(host, publishedPort), nil
+}
+
+// AddressForPort returns the host address for a port published by this
+// profile. The primary IMAP port is also available as Address.
+func (s *Server) AddressForPort(port int) (string, bool) {
+	if port == s.Profile.ContainerPort {
+		return s.Address, s.Address != ""
+	}
+	address, ok := s.additionalAddresses[port]
+	return address, ok
 }
 
 // Logs returns the server's complete container log.

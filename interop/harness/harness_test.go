@@ -32,6 +32,50 @@ func TestValidateProfileRejectsLatest(t *testing.T) {
 	}
 }
 
+func TestValidateProfileAdditionalPorts(t *testing.T) {
+	profile := definition.Profile{
+		Name:            "multiple-listeners",
+		Image:           "example.test/imap:v1",
+		ContainerPort:   143,
+		AdditionalPorts: []int{8080},
+		Tier:            definition.TierNativeImage,
+	}
+	if err := validateProfile(profile); err != nil {
+		t.Fatalf("valid additional port rejected: %v", err)
+	}
+	profile.AdditionalPorts = []int{143}
+	if err := validateProfile(profile); err == nil {
+		t.Fatal("primary port accepted as an additional port")
+	}
+	profile.AdditionalPorts = []int{8080, 8080}
+	if err := validateProfile(profile); err == nil {
+		t.Fatal("duplicate additional port accepted")
+	}
+	profile.AdditionalPorts = []int{70000}
+	if err := validateProfile(profile); err == nil {
+		t.Fatal("out-of-range additional port accepted")
+	}
+}
+
+func TestServerAddressForPort(t *testing.T) {
+	server := &Server{
+		Profile: definition.Profile{ContainerPort: 143},
+		Address: "127.0.0.1:1143",
+		additionalAddresses: map[int]string{
+			8080: "127.0.0.1:18080",
+		},
+	}
+	if got, ok := server.AddressForPort(143); !ok || got != "127.0.0.1:1143" {
+		t.Fatalf("primary address = %q, %t", got, ok)
+	}
+	if got, ok := server.AddressForPort(8080); !ok || got != "127.0.0.1:18080" {
+		t.Fatalf("additional address = %q, %t", got, ok)
+	}
+	if got, ok := server.AddressForPort(993); ok || got != "" {
+		t.Fatalf("unpublished address = %q, %t", got, ok)
+	}
+}
+
 func TestFixturesAreRepeatableAndComplete(t *testing.T) {
 	fixtures := Fixtures()
 	if len(fixtures) != 10 {

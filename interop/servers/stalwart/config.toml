@@ -1,6 +1,13 @@
+[server]
+hostname = "stalwart.example.test"
+
 [server.listener.imap]
 bind = ["[::]:143"]
 protocol = "imap"
+
+[server.listener.http]
+bind = ["[::]:8080"]
+protocol = "http"
 
 [storage]
 data = "rocksdb"
@@ -22,6 +29,13 @@ principals = [
 [imap.auth]
 allow-plain-text = true
 directory = "in-memory"
+
+[oauth]
+key = "go-imap-interop-oauth-key"
+
+[oauth.client-registration]
+anonymous = true
+require = true
 
 [authentication.fallback-admin]
 user = "admin"

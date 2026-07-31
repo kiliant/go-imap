@@ -15,13 +15,19 @@ const (
 
 // Profile describes one server in the interoperability matrix.
 // Exactly one of Image and BuildContext must be set.
+//
+// Construct with keyed fields only; fields may be added as the harness gains
+// support for additional server features.
 type Profile struct {
 	Name          string
 	Image         string
 	BuildContext  string
 	ContainerPort int
-	Environment   map[string]string
-	Arguments     []string
+	// AdditionalPorts are extra TCP listener ports the harness publishes on
+	// loopback. They are available from Server.AddressForPort.
+	AdditionalPorts []int
+	Environment     map[string]string
+	Arguments       []string
 	// ProvisionCommands are argv vectors run with podman exec after the IMAP
 	// greeting is live and before the server is returned to the suite.
 	ProvisionCommands    [][]string
@@ -30,4 +36,5 @@ type Profile struct {
 	// use the empty string; Courier exposes personal folders under INBOX.
 	MailboxPrefix string
 	Tier          Tier
+	_             struct{}
 }

@@ -9,8 +9,8 @@ import "github.com/kiliant/go-imap/imapclient"
 
 > **Status: early development.** The wire codec, core protocol vocabulary,
 > connection/session layer, authentication, base mailbox and message commands,
-> and interoperability harness are implemented. Extension support and
-> multi-server verification remain in progress. See `docs/ROADMAP.md`.
+> and interoperability harness are implemented and verified across the native
+> server matrix. Extension support remains in progress. See `docs/ROADMAP.md`.
 
 ## Why another one
 

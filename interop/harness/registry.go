@@ -42,6 +42,16 @@ func validateProfile(profile definition.Profile) error {
 	if profile.ContainerPort < 1 || profile.ContainerPort > 65535 {
 		return fmt.Errorf("interop: profile %s has invalid container port %d", profile.Name, profile.ContainerPort)
 	}
+	ports := map[int]bool{profile.ContainerPort: true}
+	for _, port := range profile.AdditionalPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("interop: profile %s has invalid additional port %d", profile.Name, port)
+		}
+		if ports[port] {
+			return fmt.Errorf("interop: profile %s repeats published port %d", profile.Name, port)
+		}
+		ports[port] = true
+	}
 	if profile.Tier < definition.TierNativeImage || profile.Tier > definition.TierEmulated {
 		return fmt.Errorf("interop: profile %s has invalid tier %d", profile.Name, profile.Tier)
 	}
