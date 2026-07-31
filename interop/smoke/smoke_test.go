@@ -30,7 +30,7 @@ func TestAuthenticatedSmoke(t *testing.T) {
 				err = session.Select(ctx, "INBOX")
 			}
 			if err != nil {
-				server.DumpDiagnostics(context.Background(), t.Output(), trace)
+				server.LogDiagnostics(context.Background(), t, trace)
 				t.Fatal(err)
 			}
 		})

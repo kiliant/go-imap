@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/kiliant/go-imap/interop/definition"
@@ -264,6 +266,23 @@ func (s *Server) DumpDiagnostics(ctx context.Context, dst io.Writer, trace fmt.S
 	if trace != nil {
 		fmt.Fprintf(dst, "=== %s client wire trace ===\n%s", s.Profile.Name, trace.String())
 	}
+}
+
+// LogDiagnostics writes DumpDiagnostics' output to the test log.
+//
+// It buffers and emits one t.Log rather than taking a writer from the testing
+// package, because testing.T.Output — the obvious destination for an io.Writer —
+// requires go1.25, and go.mod deliberately keeps the floor a major lower so
+// consumers on the previous release build without a toolchain download. A single
+// Log call is also better output than a streaming writer would give: t.Log
+// indents a multi-line block uniformly, so the aligned tables in a diagnostic
+// dump survive, where a line-by-line writer prefixes every line with its own
+// file:line and destroys the columns.
+func (s *Server) LogDiagnostics(ctx context.Context, t testing.TB, trace fmt.Stringer) {
+	t.Helper()
+	var buf bytes.Buffer
+	s.DumpDiagnostics(ctx, &buf, trace)
+	t.Log(buf.String())
 }
 
 // Stop removes a running container. It is idempotent.

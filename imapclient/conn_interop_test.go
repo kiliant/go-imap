@@ -35,7 +35,7 @@ func TestConnectionLifecycle(t *testing.T) {
 				if client != nil {
 					_ = client.Close()
 				}
-				server.DumpDiagnostics(context.Background(), t.Output(), nil)
+				server.LogDiagnostics(context.Background(), t, nil)
 				t.Fatal(err)
 			}
 		})

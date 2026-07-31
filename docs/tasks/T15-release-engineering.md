@@ -13,16 +13,26 @@ only T15 may change.
 | Job | Runs |
 |---|---|
 | `test` | `go test -race ./...` on the two most recent Go majors, linux + macOS |
-| `vet` | `go vet`, `staticcheck`, `gofmt -l` |
+| `vet` | `go vet`, `staticcheck`, `gofmt -l` — **and `go vet -tags=interop`**, plus `-tags='interop interop_emulated'` |
 | `interop` | Run `go test -count=1 -race -tags=interop ./imapclient`, then separately `go test -count=1 -race -tags=interop ./interop/...` — native profiles, on push to main and nightly; separate lifecycles prevent container-name collisions |
 | `interop-emulated` | Run `go test -count=1 -race -tags='interop interop_emulated' ./imapclient`, then separately `go test -count=1 -race -tags='interop interop_emulated' ./interop/...` — Apache James (amd64), nightly only |
 | `fuzz-smoke` | 60 s per fuzz target on every PR |
 | `fuzz-long` | 30 min per target, nightly |
 | `apidiff` | Compare exported API against the previous tag |
 
+The `vet` job must run the tagged variants, not just the default build. Interop
+test files are excluded from an untagged `go vet ./...`, so a vet job that omits
+the tags reports clean while the tagged build has findings — which is exactly how
+a `testing.Output requires go1.25` violation survived unnoticed. The tagged vet
+needs no container runtime; it only type-checks.
+
 Note the interop job needs a container runtime; GitHub runners have Docker, the
 dev host has podman. The harness must work with either — abstract the binary name
 rather than hardcoding `podman`, and record which was used in the test output.
+
+The `test` job's "two most recent Go majors" must stay consistent with the `go`
+directive in `go.mod`: the older of the two is the floor, so testing a release
+below it is meaningless and testing only above it leaves the floor unverified.
 
 ## The apidiff gate
 

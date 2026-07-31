@@ -122,7 +122,7 @@ func dialIdleInteropClient(t *testing.T, ctx context.Context, server *harness.Se
 		if client != nil {
 			_ = client.Close()
 		}
-		server.DumpDiagnostics(context.Background(), t.Output(), &trace)
+		server.LogDiagnostics(context.Background(), t, &trace)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })

@@ -224,7 +224,7 @@ func authenticateProbe(t *testing.T, server *harness.Server, mechanism, username
 	}
 	client, err := imapclient.Dial(ctx, server.Address, options)
 	if err != nil {
-		server.DumpDiagnostics(context.Background(), t.Output(), trace)
+		server.LogDiagnostics(context.Background(), t, trace)
 		t.Fatalf("dial %s: %v", server.Profile.Name, err)
 	}
 	defer client.Close()
@@ -252,7 +252,7 @@ func authenticateProbe(t *testing.T, server *harness.Server, mechanism, username
 		// is not a clean credential rejection. Surface it plainly, but do
 		// not let it participate in the "neither form worked" check: it is
 		// not evidence about normalization one way or the other.
-		server.DumpDiagnostics(context.Background(), t.Output(), trace)
+		server.LogDiagnostics(context.Background(), t, trace)
 		t.Logf("%s %s authentication (user=%s, PrepareCredentials=%t) returned an unexpected error (not a clean rejection): %v", server.Profile.Name, mechanism, username, prepareCredentials, err)
 		return outcomeClientRefused
 	}

@@ -45,7 +45,7 @@ func TestAuthenticationCapabilityProfiles(t *testing.T) {
 			defer cancel()
 			client, err := imapclient.Dial(ctx, server.Address, nil)
 			if err != nil {
-				server.DumpDiagnostics(context.Background(), t.Output(), nil)
+				server.LogDiagnostics(context.Background(), t, nil)
 				t.Fatal(err)
 			}
 			defer client.Close()
@@ -107,7 +107,7 @@ func testAuthenticationInterop(t *testing.T, server *harness.Server, test authIn
 	}
 	client, err := imapclient.Dial(ctx, server.Address, options)
 	if err != nil {
-		server.DumpDiagnostics(context.Background(), t.Output(), trace)
+		server.LogDiagnostics(context.Background(), t, trace)
 		t.Fatal(err)
 	}
 	defer client.Close()
@@ -121,7 +121,7 @@ func testAuthenticationInterop(t *testing.T, server *harness.Server, test authIn
 	if server.Profile.Name == "stalwart" && test.mechanism == "OAUTHBEARER" {
 		token, err = stalwartOAuthToken(ctx, server)
 		if err != nil {
-			server.DumpDiagnostics(context.Background(), t.Output(), trace)
+			server.LogDiagnostics(context.Background(), t, trace)
 			t.Fatal(err)
 		}
 	}
@@ -140,7 +140,7 @@ func testAuthenticationInterop(t *testing.T, server *harness.Server, test authIn
 		err = client.Logout(ctx)
 	}
 	if err != nil {
-		server.DumpDiagnostics(context.Background(), t.Output(), trace)
+		server.LogDiagnostics(context.Background(), t, trace)
 		t.Fatal(err)
 	}
 }

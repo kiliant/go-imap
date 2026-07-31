@@ -228,7 +228,7 @@ func dialMailboxInteropClient(t *testing.T, ctx context.Context, server *harness
 		if client != nil {
 			_ = client.Close()
 		}
-		server.DumpDiagnostics(context.Background(), t.Output(), &trace)
+		server.LogDiagnostics(context.Background(), t, &trace)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
@@ -265,7 +265,7 @@ func failMailboxInterop(t *testing.T, server *harness.Server, client *imapclient
 	if client != nil {
 		_ = client.Close()
 	}
-	server.DumpDiagnostics(context.Background(), t.Output(), nil)
+	server.LogDiagnostics(context.Background(), t, nil)
 	if err != nil {
 		t.Fatalf("%s: %v", operation, err)
 	}
