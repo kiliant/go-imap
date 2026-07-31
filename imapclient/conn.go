@@ -128,8 +128,9 @@ func (c *Client) startTLS(ctx context.Context, address string) error {
 	c.mu.Lock()
 	c.conn = tlsConn
 	wopts := c.opts.wireOptions()
+	eopts := c.opts.encoderOptions()
 	c.dec = imapwire.NewDecoder(tlsConn, &wopts)
-	c.enc = imapwire.NewEncoder(tlsConn, nil)
+	c.enc = imapwire.NewEncoder(tlsConn, &eopts)
 	c.caps = make(map[string]struct{}) // Cleartext capabilities are untrusted.
 	c.enabled = make(map[string]struct{})
 	c.mu.Unlock()

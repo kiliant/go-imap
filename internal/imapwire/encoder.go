@@ -38,6 +38,53 @@ type EncoderOptions struct {
 	// "the server refused" means — a rejected APPEND and a dead connection need
 	// different handling upstream.
 	WaitContinuation func() error
+
+	// WriteTimeout, if positive, keeps an active write deadline on every
+	// underlying write, provided the writer implements
+	//
+	//	interface{ SetWriteDeadline(time.Time) error }
+	//
+	// as *net.Conn does. It bounds a server that stops reading, which would
+	// otherwise block a command in the kernel send buffer indefinitely.
+	//
+	// It is a no-progress bound, not a bound on the whole command: the deadline
+	// is refreshed as each write completes, so a multi-megabyte APPEND literal
+	// streams for as long as the server keeps consuming it. A caller that hands
+	// the whole payload to a single Write does get one deadline for the whole
+	// of it, since bufio passes a large buffer straight through; the read side
+	// has the same property. A zero or negative value disables the deadline.
+	WriteTimeout time.Duration
+}
+
+// writeDeadlineSetter is implemented by *net.Conn and by *tls.Conn.
+type writeDeadlineSetter interface {
+	SetWriteDeadline(t time.Time) error
+}
+
+// timeoutWriter keeps an active write deadline on every underlying write, so
+// that a server which stops reading cannot block a command forever. Like
+// timeoutReader it refreshes the deadline once half the timeout has elapsed
+// rather than on every buffer flush, which would otherwise allocate a network
+// timer per chunk while a large literal streams.
+//
+// A deadline left armed in the past is harmless: it only takes effect during an
+// operation, and the refresh below recomputes it before the next write.
+type timeoutWriter struct {
+	w        io.Writer
+	setter   writeDeadlineSetter
+	timeout  time.Duration
+	deadline time.Time
+}
+
+func (t *timeoutWriter) Write(p []byte) (int, error) {
+	now := time.Now()
+	if t.deadline.IsZero() || !now.Add(t.timeout/2).Before(t.deadline) {
+		t.deadline = now.Add(t.timeout)
+		if err := t.setter.SetWriteDeadline(t.deadline); err != nil {
+			return 0, err
+		}
+	}
+	return t.w.Write(p)
 }
 
 // Encoder serialises IMAP commands.
@@ -62,11 +109,22 @@ type Encoder struct {
 }
 
 // NewEncoder returns an Encoder writing to w. A nil opts selects the defaults.
+//
+// If w implements SetWriteDeadline and opts.WriteTimeout is positive, every
+// write is bounded by that timeout. The wrapper sits beneath the buffer, so a
+// streaming literal refreshes the deadline as it drains rather than having to
+// complete within a single one.
 func NewEncoder(w io.Writer, opts *EncoderOptions) *Encoder {
-	e := &Encoder{w: bufio.NewWriter(w)}
+	e := &Encoder{}
 	if opts != nil {
 		e.opts = *opts
 	}
+	if e.opts.WriteTimeout > 0 {
+		if ws, ok := w.(writeDeadlineSetter); ok {
+			w = &timeoutWriter{w: w, setter: ws, timeout: e.opts.WriteTimeout}
+		}
+	}
+	e.w = bufio.NewWriter(w)
 	return e
 }
 

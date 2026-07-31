@@ -66,6 +66,17 @@ type Options struct {
 	// longer as long as the server continues sending data.
 	ReadTimeout time.Duration
 
+	// WriteTimeout is the maximum time an underlying network write may make no
+	// progress. Zero or a negative value uses the 5 minute default. The deadline
+	// is refreshed as each write completes, so a large streaming APPEND may take
+	// longer as long as the server keeps consuming it.
+	//
+	// It bounds a server that stops reading, which would otherwise block a
+	// command in the kernel send buffer for as long as the connection stayed
+	// open. A write that does time out desynchronises the stream and therefore
+	// poisons the session; it is not recoverable.
+	WriteTimeout time.Duration
+
 	// MaxUntaggedResponses is the largest number of command-scoped untagged
 	// responses retained for one command. Zero or a negative value uses the
 	// default of 4096. Streaming FETCH responses are delivered directly and are
@@ -74,6 +85,13 @@ type Options struct {
 }
 
 const defaultReadTimeout = 30 * time.Minute
+
+// defaultWriteTimeout is shorter than defaultReadTimeout because the two bound
+// different things. A read may legitimately make no progress for a long time —
+// that is what an idle session looks like. A write making no progress means the
+// server has stopped draining its receive window, which no healthy server does
+// for minutes at a time.
+const defaultWriteTimeout = 5 * time.Minute
 
 // TraceDirection identifies whether a trace event came from the client or the
 // server.
@@ -299,11 +317,12 @@ func NewClient(conn net.Conn, opts *Options) *Client {
 		o = *opts
 	}
 	wopts := o.wireOptions()
+	eopts := o.encoderOptions()
 	c := &Client{
 		conn:               conn,
 		opts:               o,
 		dec:                imapwire.NewDecoder(conn, &wopts),
-		enc:                imapwire.NewEncoder(conn, nil),
+		enc:                imapwire.NewEncoder(conn, &eopts),
 		state:              StateNotAuthenticated,
 		caps:               make(map[string]struct{}),
 		enabled:            make(map[string]struct{}),
@@ -329,6 +348,18 @@ func (o Options) wireOptions() imapwire.Options {
 		ReadTimeout:           readTimeout,
 		MaxUntaggedPerCommand: maxUntagged,
 	}
+}
+
+// encoderOptions carries the settings that survive an encoder being rebuilt.
+// LiteralPlus, LiteralMinus and WaitContinuation are deliberately absent: they
+// are re-applied per command from the current capabilities. WriteTimeout is
+// not, so it has to be established at construction wherever an encoder is made.
+func (o Options) encoderOptions() imapwire.EncoderOptions {
+	writeTimeout := o.WriteTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = defaultWriteTimeout
+	}
+	return imapwire.EncoderOptions{WriteTimeout: writeTimeout}
 }
 
 func (c *Client) maxUntaggedResponses() int {
@@ -650,7 +681,8 @@ func (c *Client) replaceEncoder(stale *imapwire.Encoder) {
 		return
 	}
 	utf8Accept := c.enc.UTF8Accept()
-	c.enc = imapwire.NewEncoder(c.conn, nil)
+	eopts := c.opts.encoderOptions()
+	c.enc = imapwire.NewEncoder(c.conn, &eopts)
 	c.enc.SetUTF8Accept(utf8Accept)
 }
 
