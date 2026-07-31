@@ -22,8 +22,20 @@ path = "/opt/stalwart-mail/data"
 
 [directory.in-memory]
 type = "memory"
+# The second and third principals are T12's SASLprep diagnostic accounts
+# (interop/saslprep). "interop-prep" stores the byte-exact micro sign
+# (U+00B5), never NFKC-normalized to Greek mu (U+03BC); "interop-prep-nfkc"
+# stores the opposite: the byte-exact NFKC form (U+03BC) as if Stalwart's
+# directory had already normalized the password at enrollment. Together they
+# let imapclient.AuthenticateOptions.PrepareCredentials be asserted end to
+# end: each account only authenticates with the password form it was
+# actually given, so the client-side normalization the option performs is
+# what decides which form matches which account, not any belief about
+# Stalwart's own normalization behavior.
 principals = [
-  { name = "interop@example.test", class = "individual", secret = "interop-pw", email = ["interop@example.test"] }
+  { name = "interop@example.test", class = "individual", secret = "interop-pw", email = ["interop@example.test"] },
+  { name = "interop-prep@example.test", class = "individual", secret = "interop-pw-µ", email = ["interop-prep@example.test"] },
+  { name = "interop-prep-nfkc@example.test", class = "individual", secret = "interop-pw-μ", email = ["interop-prep-nfkc@example.test"] }
 ]
 
 [imap.auth]
