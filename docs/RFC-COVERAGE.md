@@ -14,7 +14,7 @@ least two independent servers in the interop matrix).
 
 | Capability | RFC | Task | Status |
 |---|---|---|---|
-| IMAP4REV1 | 3501 | T01,T02,T05,T06 | verified |
+| IMAP4REV1 | 3501 | T01,T02,T05,T06 | done [^rev1] |
 | IMAP4REV2 | 9051 | T07 | done |
 | STARTTLS | 3501, 9051 | T03 | done |
 | LOGINDISABLED | 3501, 9051 | T04 | done |
@@ -27,6 +27,11 @@ least two independent servers in the interop matrix).
 | UNSELECT | 3691 | T05 | verified |
 | LITERAL+ | 7888 | T01 | verified |
 | LITERAL- | 7888 | T01 | done |
+
+[^rev1]: Most of rev1 is exercised across the interop matrix, but the ENVELOPE
+    and BODYSTRUCTURE fetch items are covered only by unit and fuzz tests so
+    far. Real servers disagree about them more than about anything else in the
+    grammar, so the row stays at `done` until the matrix exercises both.
 
 ## Group A — core modern (task T08)
 

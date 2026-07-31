@@ -66,9 +66,14 @@ func (c *Client) EnabledCapabilities() map[string]bool {
 // Capabilities returns only the server's advertised wire tokens; use Supports
 // for feature gates.
 func (c *Client) Supports(name string) bool {
-	name = strings.ToUpper(name)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.supportsLocked(name)
+}
+
+// supportsLocked is [Client.Supports] for callers already holding mu.
+func (c *Client) supportsLocked(name string) bool {
+	name = strings.ToUpper(name)
 	if _, ok := c.caps[name]; ok {
 		return true
 	}

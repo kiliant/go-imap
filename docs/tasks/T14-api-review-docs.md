@@ -31,7 +31,10 @@ A test that reflects over the exported API and asserts:
 2. Every exported struct that callers construct carries the keyed-literal doc
    note (`docs/API-STABILITY.md` §7).
 3. Every exported symbol has a doc comment.
-4. Every blocking method takes `ctx context.Context` first.
+4. Every blocking method takes `ctx context.Context` first. Command-handle
+   constructors do not block and correctly take none; their `Wait`, `Next` and
+   `Collect` methods are the blocking boundary. See
+   [API-STABILITY.md](../API-STABILITY.md) section 2.
 
 Mechanical enforcement, so the rules survive contributors who have not read the
 doc.

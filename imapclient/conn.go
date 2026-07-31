@@ -124,6 +124,7 @@ func (c *Client) startTLS(ctx context.Context, address string) error {
 		c.poison(err)
 		return err
 	}
+	c.writeMu.Lock()
 	c.mu.Lock()
 	c.conn = tlsConn
 	wopts := c.opts.wireOptions()
@@ -132,6 +133,7 @@ func (c *Client) startTLS(ctx context.Context, address string) error {
 	c.caps = make(map[string]struct{}) // Cleartext capabilities are untrusted.
 	c.enabled = make(map[string]struct{})
 	c.mu.Unlock()
+	c.writeMu.Unlock()
 	c.releaseReader()
 	return nil
 }
@@ -207,7 +209,7 @@ func (c *Client) readResponses() {
 				return
 			}
 		case imapwire.ResponseUntagged:
-			cond, handled, err := c.readUntagged(dec)
+			cond, handled, err := c.readUntagged(dec, greeting)
 			if err != nil {
 				c.readerFailure(greeting, err)
 				return
@@ -249,7 +251,7 @@ func (c *Client) readerFailure(greeting bool, err error) {
 // readUntagged returns a non-nil condition only for an untagged status
 // condition. All other untagged data is offered to command collectors before
 // the connection-level handler receives the response types understood here.
-func (c *Client) readUntagged(dec *imapwire.Decoder) (imapwire.RespCond, bool, error) {
+func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.RespCond, bool, error) {
 	if !dec.ExpectSP() {
 		return imapwire.RespCond{}, false, dec.Err()
 	}
@@ -274,9 +276,16 @@ func (c *Client) readUntagged(dec *imapwire.Decoder) (imapwire.RespCond, bool, e
 			c.addCapabilities(strings.Fields(cond.Text.Args))
 		}
 		c.trace(TraceServer, "* "+upper)
-		if upper == "BYE" {
+		if upper == "BYE" && !greeting {
+			// RFC 3501 section 7.1.5: the server closes the connection after an
+			// untagged BYE. Every command except the LOGOUT that may have asked
+			// for it is over, and so is the session — a client that keeps
+			// waiting on this connection waits forever.
 			err := responseError("", cond)
 			c.completeAllExceptLogout(err)
+			if !c.logoutPending() {
+				c.poison(err)
+			}
 		}
 		return cond, true, nil
 	}
@@ -469,6 +478,20 @@ func (c *Client) completeAllExceptLogout(err error) {
 	for _, cmd := range complete {
 		cmd.complete(err)
 	}
+}
+
+// logoutPending reports whether a LOGOUT is still awaiting its tagged
+// completion, which is the one case where an untagged BYE is expected and the
+// connection must stay readable until that completion arrives.
+func (c *Client) logoutPending() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, cmd := range c.pendingQ {
+		if cmd.name == "LOGOUT" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseUint32(s string) (uint32, error) {

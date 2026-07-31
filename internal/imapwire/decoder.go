@@ -64,6 +64,13 @@ type Decoder struct {
 	// into the following response.
 	discardRaw bool
 
+	// capture, when non-nil, receives every octet consumed. It is what lets a
+	// caller keep the verbatim wire text of a value it does not model, instead
+	// of skipping it and losing the data. See [Decoder.CaptureValue].
+	capture         []byte
+	capturing       bool
+	captureOverflow bool
+
 	utf8Accept bool
 }
 
@@ -211,10 +218,54 @@ func (d *Decoder) consume() bool {
 		return d.failFatal("line", ErrLimitExceeded,
 			"line longer than %d octets", d.opts.MaxLineLength)
 	}
-	if _, err := d.r.ReadByte(); err != nil {
+	b, err := d.r.ReadByte()
+	if err != nil {
 		return d.failFatal("read", err, "read failed")
 	}
+	d.captureBytes([]byte{b})
 	return true
+}
+
+// captureBytes records octets for an active CaptureValue. Overflowing the
+// in-memory budget abandons the capture rather than the value: the element is
+// still consumed, so the stream stays aligned and only the copy is lost.
+func (d *Decoder) captureBytes(p []byte) {
+	if !d.capturing {
+		return
+	}
+	if max := d.opts.MaxBufferedLiteralSize; max >= 0 && int64(len(d.capture)+len(p)) > max {
+		d.capture, d.captureOverflow = nil, true
+		d.capturing = false
+		return
+	}
+	d.capture = append(d.capture, p...)
+}
+
+// CaptureValue skips exactly one syntactic element, like [Decoder.DiscardValue],
+// and additionally returns its verbatim wire text. A client uses it for
+// response data it does not model, so that an extension it has never heard of
+// reaches the caller intact rather than being silently dropped.
+//
+// The captured text is held in memory and is therefore bounded by
+// Options.MaxBufferedLiteralSize. A value larger than that is still consumed —
+// the stream stays aligned — but ErrLimitExceeded is returned and dst is left
+// empty.
+func (d *Decoder) CaptureValue(dst *[]byte) error {
+	if d.capturing {
+		return newError("capture", "nested capture")
+	}
+	d.capture, d.capturing, d.captureOverflow = d.capture[:0], true, false
+	err := d.DiscardValue()
+	captured, overflow := d.capture, d.captureOverflow
+	d.capture, d.capturing, d.captureOverflow = nil, false, false
+	if err != nil {
+		return err
+	}
+	if overflow {
+		return newError("capture", "value exceeds the in-memory limit of %d octets", d.opts.MaxBufferedLiteralSize)
+	}
+	*dst = append([]byte(nil), captured...)
+	return nil
 }
 
 // AtEOF reports whether the stream is exhausted. It is the only legitimate way
@@ -237,6 +288,18 @@ func (d *Decoder) Special(b byte) bool {
 		return false
 	}
 	return d.consume()
+}
+
+// PeekSpecial reports whether the octet b is next, without consuming it and
+// without recording an error. It is the lookahead a caller needs where one
+// keyword introduces two different productions — FETCH BODY is a section when
+// "[" follows and a body structure when "(" does.
+func (d *Decoder) PeekSpecial(b byte) bool {
+	if !d.ready("peek") {
+		return false
+	}
+	c, ok := d.peek()
+	return ok && c == b
 }
 
 // ExpectSpecial consumes the octet b, recording an error if it is absent.

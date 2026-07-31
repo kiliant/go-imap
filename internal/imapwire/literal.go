@@ -69,6 +69,7 @@ func (lr *LiteralReader) Read(p []byte) (int, error) {
 		lr.d.failFatal("literal", ErrSyntax, "NUL octet requires literal8")
 		return n, lr.d.err
 	}
+	lr.d.captureBytes(p[:n])
 	return n, nil
 }
 

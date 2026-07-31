@@ -1,6 +1,7 @@
 package imapclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -23,6 +24,14 @@ import (
 type FetchCommand struct {
 	*Command
 	responses chan *imap.FetchMessageData
+
+	// stop is closed once the command has completed, and is never sent on.
+	// The response channel itself must never be closed: closing it would race
+	// with the reader goroutine's send whenever a caller stops consuming a
+	// command that the connection then completes — an abandoned FETCH, or a
+	// cancelled Wait — and a send on a closed channel panics on a goroutine
+	// the caller cannot recover.
+	stop chan struct{}
 }
 
 // fetchLiteralReader couples the decoder's literal interlock to the FETCH
@@ -69,14 +78,22 @@ func (cmd *FetchCommand) Next(ctx context.Context) (*imap.FetchMessageData, erro
 		return nil, fmt.Errorf("imapclient: nil fetch command")
 	}
 	select {
-	case data, ok := <-cmd.responses:
-		if !ok {
-			if err := cmd.Command.Wait(context.Background()); err != nil {
-				return nil, err
-			}
-			return nil, io.EOF
-		}
+	case data := <-cmd.responses:
 		return data, nil
+	case <-cmd.stop:
+		// Responses are sent before the tagged completion is processed, and
+		// both happen on the reader goroutine, so nothing is left in flight
+		// once the command is done. Prefer a pending response anyway, in case
+		// this select saw both cases ready at once.
+		select {
+		case data := <-cmd.responses:
+			return data, nil
+		default:
+		}
+		if err := cmd.Command.err; err != nil {
+			return nil, err
+		}
+		return nil, io.EOF
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -97,15 +114,15 @@ func (c *Client) FetchUID(set imap.UIDSet, items ...imap.FetchItem) *FetchComman
 }
 
 func (c *Client) fetch(name, set string, matches func(imap.SeqNum) bool, items []imap.FetchItem) *FetchCommand {
-	fc := &FetchCommand{responses: make(chan *imap.FetchMessageData)}
+	fc := &FetchCommand{responses: make(chan *imap.FetchMessageData), stop: make(chan struct{})}
 	if set == "" || len(items) == 0 {
 		fc.Command = rejectedCommand(c, name, "FETCH requires a non-empty set and at least one item")
-		close(fc.responses)
+		close(fc.stop)
 		return fc
 	}
 	if err := validateFetchItems(items); err != nil {
 		fc.Command = rejectedCommand(c, name, err.Error())
-		close(fc.responses)
+		close(fc.stop)
 		return fc
 	}
 	fc.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
@@ -114,13 +131,23 @@ func (c *Client) fetch(name, set string, matches func(imap.SeqNum) bool, items [
 		if !resp.hasNum || resp.name != "FETCH" || !matches(imap.SeqNum(resp.number)) {
 			return false, nil
 		}
-		return true, readFetchResponse(resp, func(data *imap.FetchMessageData) { fc.responses <- data })
+		return true, readFetchResponse(resp, fc.deliver)
 	})
 	go func() {
 		<-fc.Command.done
-		close(fc.responses)
+		close(fc.stop)
 	}()
 	return fc
+}
+
+// deliver hands one response to the caller's Next. It gives up once the command
+// has completed, which is what stops the reader goroutine from blocking forever
+// on a FETCH nobody is consuming.
+func (fc *FetchCommand) deliver(data *imap.FetchMessageData) {
+	select {
+	case fc.responses <- data:
+	case <-fc.stop:
+	}
 }
 
 func validateFetchItems(items []imap.FetchItem) error {
@@ -287,7 +314,7 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], imap.FetchDataBinarySectionSize(n))
 			return nil
 		}
-		if upper == "BODY" || upper == "BINARY" {
+		if (upper == "BODY" || upper == "BINARY") && dec.PeekSpecial('[') {
 			var section imapwire.BodySection
 			if !dec.ExpectBodySection(&section) {
 				return dec.Err()
@@ -386,11 +413,35 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 				return dec.Err()
 			}
 			value = imap.FetchDataObjectID(v)
-		default:
-			if err := dec.DiscardValue(); err != nil {
+		case "ENVELOPE":
+			env, err := readEnvelope(dec)
+			if err != nil {
 				return err
 			}
-			value = &imap.FetchDataRaw{Reader: strings.NewReader("")}
+			value = &imap.FetchDataEnvelope{Envelope: env}
+		case "BODY", "BODYSTRUCTURE":
+			// Reached only when no section followed the keyword, so this is the
+			// body structure form. BODY omits the extension fields that
+			// BODYSTRUCTURE carries; the grammar is otherwise identical.
+			bs, err := readBodyStructure(dec, 0)
+			if err != nil {
+				return err
+			}
+			value = &imap.FetchDataBodyStructure{BodyStructure: bs}
+		default:
+			// An item from an extension this client does not model is kept
+			// verbatim rather than skipped: dropping it silently is data loss,
+			// and the caller may well understand what we do not. A value too
+			// large to hold in memory is the one case where it is skipped, and
+			// the empty reader then says so.
+			var raw []byte
+			if err := dec.CaptureValue(&raw); err != nil {
+				if dec.Err() != nil {
+					return err
+				}
+				raw = nil
+			}
+			value = &imap.FetchDataRaw{Reader: bytes.NewReader(raw)}
 		}
 		data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
 		return nil

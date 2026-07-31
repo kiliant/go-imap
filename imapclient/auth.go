@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapsasl"
@@ -63,7 +64,7 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	}
 	cmd := c.beginAuthenticationCommand("LOGIN", func(enc *imapwire.Encoder) {
 		enc.SP().String(username).SP().String(password)
-	}, nil)
+	}, nil, false)
 	if err := cmd.Wait(ctx); err != nil {
 		return redactAuthenticationError(err, username, password)
 	}
@@ -98,12 +99,18 @@ func (c *Client) Authenticate(ctx context.Context, username, password string, op
 		useInitial = initial != nil
 	}
 
-	// Serialise installation with the first command bytes. APPEND uses the
-	// same interlock for synchronising literals, so no other continuation
-	// consumer can replace this handler during the exchange.
-	c.literalMu.Lock()
-	defer c.literalMu.Unlock()
-	clear := c.setContinuation(func(text string) error {
+	// Serialise installation with the first command bytes so that no other
+	// continuation consumer can replace this handler during the exchange.
+	c.continuationOwnerMu.Lock()
+	// A server that keeps sending continuation requests must not be able to
+	// drive a mechanism forever. Every built-in mechanism refuses an
+	// unexpected extra step, but a caller-supplied one need not.
+	steps := 0
+	clearHandler := c.setContinuation(func(text string) error {
+		steps++
+		if steps > maxSASLContinuations {
+			return authProtocolError("server sent more than %d SASL continuation requests", maxSASLContinuations)
+		}
 		challenge, err := decodeSASL(text)
 		if err != nil {
 			return err
@@ -114,17 +121,28 @@ func (c *Client) Authenticate(ctx context.Context, username, password string, op
 		}
 		return c.writeSASLResponse(response)
 	})
+	// Ownership of the continuation slot ends with the tagged completion, and
+	// must end before the post-authentication CAPABILITY: that command claims
+	// the slot for its own arguments like any other.
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			clearHandler()
+			c.continuationOwnerMu.Unlock()
+		})
+	}
+	defer release()
 	cmd := c.beginAuthenticationCommand("AUTHENTICATE", func(enc *imapwire.Encoder) {
 		enc.SP().Atom(name)
 		if useInitial {
 			enc.SP().Atom(encodeSASL(initial))
 		}
-	}, nil)
+	}, nil, true)
 	if err := cmd.Wait(ctx); err != nil {
-		clear()
+		release()
 		return redactAuthenticationError(err, username, password, opts.Token)
 	}
-	clear()
+	release()
 	c.authenticationSucceeded()
 	return c.requestCapability(ctx)
 }
@@ -285,21 +303,32 @@ func encodeSASL(value []byte) string {
 }
 
 func (c *Client) writeSASLResponse(response []byte) error {
+	// writeMu, not mu: the reader goroutine runs this, and mu must stay
+	// available to the rest of the session while it does.
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
-		if c.closeErr != nil {
-			return c.closeErr
+		err := c.closeErr
+		c.mu.Unlock()
+		if err != nil {
+			return err
 		}
 		return netClosedError{}
 	}
-	c.enc.Atom(encodeSASL(response)).CRLF()
-	if err := c.enc.Flush(); err != nil {
+	enc := c.enc
+	c.mu.Unlock()
+	enc.Atom(encodeSASL(response)).CRLF()
+	if err := enc.Flush(); err != nil {
 		return protocolError(err)
 	}
 	// AUTHENTICATE payloads are deliberately absent from traces.
 	return nil
 }
+
+// maxSASLContinuations bounds one AUTHENTICATE exchange. No SASL mechanism in
+// use over IMAP needs anything close to this many round trips.
+const maxSASLContinuations = 16
 
 type netClosedError struct{}
 

@@ -75,10 +75,12 @@ func (c *Client) Append(ctx context.Context, mailbox string, options *AppendOpti
 		o = *options
 	}
 
-	// beginCommand holds Client.mu while the literal is sent. Closing the raw
-	// transport is the only way a cancelled context can interrupt a blocked
-	// network write without waiting for that lock; beginCommand then observes
-	// the write failure and poisons the session in the normal way.
+	// The literal payload is streamed straight to the socket, so a cancelled
+	// context has to interrupt a blocked network write. Closing the transport
+	// is the only way to do that; beginCommand then observes the write failure
+	// and poisons the session in the normal way. Waiting for the continuation
+	// request itself is already interruptible, because the session is closed
+	// and the command completed by the same close.
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -97,31 +99,8 @@ func (c *Client) Append(ctx context.Context, mailbox string, options *AppendOpti
 		}
 	}()
 
-	c.literalMu.Lock()
-	continued := make(chan struct{})
-	clear := c.setContinuation(func(string) error {
-		select {
-		case continued <- struct{}{}:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	})
-	caps := c.Capabilities()
 	var appendErr error
 	cmd := c.beginCommand("APPEND", stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
-		defer clear()
-		defer enc.SetWaitContinuation(nil)
-		enc.SetLiteralPlus(caps["LITERAL+"])
-		enc.SetLiteralMinus(caps["LITERAL-"])
-		enc.SetWaitContinuation(func() error {
-			select {
-			case <-continued:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		})
 		enc.SP().Mailbox(mailbox)
 		if len(o.Flags) != 0 {
 			enc.SP().List(len(o.Flags), func(i int) { enc.Flag(string(o.Flags[i])) })
@@ -142,17 +121,14 @@ func (c *Client) Append(ctx context.Context, mailbox string, options *AppendOpti
 			appendErr = err
 		}
 	}, nil)
-	if cmd.tag == "" {
-		clear()
-	}
-	c.literalMu.Unlock()
 	close(stopCancel)
 	<-cancelDone
 	select {
 	case err := <-cancelled:
-		if appendErr == nil {
-			appendErr = err
-		}
+		// Cancellation takes precedence over whatever the interrupted write
+		// reported: closing the transport is how the cancellation was
+		// delivered, so the write error is its consequence, not its cause.
+		appendErr = err
 	default:
 	}
 	return &AppendCommand{Command: cmd, data: data, appendErr: appendErr}

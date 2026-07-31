@@ -9,7 +9,6 @@ github.com/kiliant/go-imap          package imap
     NO I/O. NO imports of sibling packages.
 
     ├── internal/imapwire    lexer/decoder/encoder for the IMAP wire grammar
-    ├── internal/imapnum     sequence-set and UID-set arithmetic
     ├── internal/imapsasl    SASL mechanisms
     └── imapclient           package imapclient — the client
 ```

@@ -284,7 +284,7 @@ func (cmd *IdleCommand) startCycle() {
 	cmd.reissue = false
 	cmd.mu.Unlock()
 
-	cmd.client.literalMu.Lock()
+	cmd.client.continuationOwnerMu.Lock()
 	var once sync.Once
 	var enteredOnce sync.Once
 	var clear func()
@@ -296,7 +296,7 @@ func (cmd *IdleCommand) startCycle() {
 				clear()
 			}
 			clearMu.Unlock()
-			cmd.client.literalMu.Unlock()
+			cmd.client.continuationOwnerMu.Unlock()
 		})
 	}
 	clearMu.Lock()
@@ -306,9 +306,13 @@ func (cmd *IdleCommand) startCycle() {
 		return nil
 	})
 	clearMu.Unlock()
-	cycle.command = cmd.client.beginCommandWithCompletion("IDLE", stateAuthenticated|stateSelected, nil, nil, func(success bool) {
-		cycle.release()
-		cmd.cycleComplete(cycle)
+	cycle.command = cmd.client.issue("IDLE", commandOptions{
+		allowed: stateAuthenticated | stateSelected,
+		onComplete: func(success bool) {
+			cycle.release()
+			cmd.cycleComplete(cycle)
+		},
+		ownsContinuation: true,
 	})
 	close(cycle.ready)
 	select {
@@ -352,21 +356,26 @@ func (cmd *IdleCommand) stop(reissue bool) error {
 	if cycle == nil || cycle.command == nil {
 		return fmt.Errorf("imapclient: IDLE did not start")
 	}
+	cmd.client.writeMu.Lock()
 	cmd.client.mu.Lock()
 	if cmd.client.closed {
+		err := cmd.client.closeErr
 		cmd.client.mu.Unlock()
-		if cmd.client.closeErr != nil {
-			return cmd.client.closeErr
+		cmd.client.writeMu.Unlock()
+		if err != nil {
+			return err
 		}
 		return netClosedError{}
 	}
-	cmd.client.enc.Atom("DONE").CRLF()
-	if err := cmd.client.enc.Flush(); err != nil {
-		cmd.client.mu.Unlock()
+	enc := cmd.client.enc
+	cmd.client.mu.Unlock()
+	enc.Atom("DONE").CRLF()
+	err := enc.Flush()
+	cmd.client.writeMu.Unlock()
+	if err != nil {
 		cmd.client.poison(protocolError(err))
 		return protocolError(err)
 	}
-	cmd.client.mu.Unlock()
 	cmd.client.trace(TraceClient, "DONE")
 	return nil
 }

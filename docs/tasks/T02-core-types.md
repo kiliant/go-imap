@@ -3,7 +3,7 @@
 **Agent:** `client-core`, reviewed by `api-guardian` · **Milestone:** M0 ·
 **Depends on:** nothing
 
-**Owns:** `*.go` in the module root (`package imap`), `internal/imapnum/**`
+**Owns:** `*.go` in the module root (`package imap`)
 
 Runs in parallel with T01. Both must land before anything else starts.
 
@@ -48,8 +48,11 @@ not model, and dropping them is data loss. Unrecognised items are preserved raw.
 - `BodyStructure` — recursive; single-part and multipart. Include the optional
   extension fields (disposition, language, location).
 - `SearchCriteria` — composable, supporting `AND`/`OR`/`NOT` nesting.
-- `SeqSet` / `UIDSet` in `internal/imapnum` — set arithmetic, `*` handling,
-  range coalescing, iteration. Exported wrappers in `package imap`.
+- `SeqSet` / `UIDSet` — set arithmetic, `*` handling, range coalescing,
+  iteration. They live in `package imap` itself: a sequence set is core
+  vocabulary that both a client and a future server framework name in their
+  exported signatures, so an internal package underneath it would be a wrapper
+  around a type nobody else can see.
 - `NumKind` — the UID-vs-sequence-number distinction must be visible in the type
   system, not a `bool` parameter. Confusing them is the classic IMAP client bug.
 

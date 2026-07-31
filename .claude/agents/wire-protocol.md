@@ -9,8 +9,8 @@ model: opus
 is the single source of truth for the lock. Read your task spec first. Typically
 you own `internal/imapwire/**`.
 
-Note `internal/imapnum` is **not** yours: sequence/UID sets are core vocabulary
-with exported wrappers, so T02 owns them.
+Note sequence and UID sets are **not** yours: they are core vocabulary living in
+`package imap` itself, so T02 owns them.
 
 `internal/imapwire/testdata/` is shared, append-only: you own its layout, while
 T13 (fuzzing) and `interop-harness` may add captured cases. Nobody deletes

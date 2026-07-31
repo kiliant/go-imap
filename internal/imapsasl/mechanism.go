@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,20 @@ type Mechanism struct {
 	Next func(challenge []byte) ([]byte, error)
 }
 
+// checkField rejects the octets that would let a credential escape the field it
+// belongs to. Every mechanism here builds its response by concatenation, so an
+// unchecked NUL or SOH in a username lets a caller who forwards untrusted input
+// forge the remaining fields — an "auth=Bearer" of their choosing, for
+// instance. CR and LF are refused for the same reason one layer up.
+func checkField(mechanism, field, value string) error {
+	if i := strings.IndexFunc(value, func(r rune) bool {
+		return r == 0 || r == '\x01' || r == '\r' || r == '\n'
+	}); i >= 0 {
+		return fmt.Errorf("imapsasl: %s %s contains a control character at offset %d", mechanism, field, i)
+	}
+	return nil
+}
+
 // Plain returns the RFC 4616 PLAIN mechanism.
 func Plain(username, password string) *Mechanism {
 	called := false
@@ -38,6 +53,12 @@ func Plain(username, password string) *Mechanism {
 			return nil, errors.New("imapsasl: unexpected PLAIN challenge")
 		}
 		called = true
+		if err := checkField("PLAIN", "username", username); err != nil {
+			return nil, err
+		}
+		if err := checkField("PLAIN", "password", password); err != nil {
+			return nil, err
+		}
 		return []byte("\x00" + username + "\x00" + password), nil
 	}}
 }
@@ -49,8 +70,14 @@ func Login(username, password string) *Mechanism {
 		step++
 		switch step {
 		case 1:
+			if err := checkField("LOGIN", "username", username); err != nil {
+				return nil, err
+			}
 			return []byte(username), nil
 		case 2:
+			if err := checkField("LOGIN", "password", password); err != nil {
+				return nil, err
+			}
 			return []byte(password), nil
 		default:
 			return nil, errors.New("imapsasl: unexpected LOGIN challenge")
@@ -71,6 +98,14 @@ func CRAMMD5(username, password string) *Mechanism {
 			return nil, errors.New("imapsasl: invalid CRAM-MD5 challenge")
 		}
 		called = true
+		// The response is "username SP digest"; a space in the username would
+		// make the server read a different name than the caller supplied.
+		if err := checkField("CRAM-MD5", "username", username); err != nil {
+			return nil, err
+		}
+		if strings.ContainsAny(username, " ") {
+			return nil, errors.New("imapsasl: CRAM-MD5 username contains a space")
+		}
 		mac := hmac.New(md5.New, []byte(password)) // #nosec G401 -- RFC 2195.
 		_, _ = mac.Write(challenge)
 		return []byte(username + " " + hex.EncodeToString(mac.Sum(nil))), nil
@@ -79,15 +114,25 @@ func CRAMMD5(username, password string) *Mechanism {
 
 // XOAUTH2 returns the widely deployed XOAUTH2 mechanism.
 func XOAUTH2(username, token string) *Mechanism {
-	called := false
+	step := 0
 	return &Mechanism{Name: "XOAUTH2", Next: func([]byte) ([]byte, error) {
-		if !called {
-			called = true
+		step++
+		switch step {
+		case 1:
+			if err := checkField("XOAUTH2", "username", username); err != nil {
+				return nil, err
+			}
+			if err := checkField("XOAUTH2", "token", token); err != nil {
+				return nil, err
+			}
 			return []byte("user=" + username + "\x01auth=Bearer " + token + "\x01\x01"), nil
+		case 2:
+			// Google sends a base64 JSON error challenge before its final NO,
+			// and expects an empty response before it will send that NO.
+			return []byte{}, nil
+		default:
+			return nil, errors.New("imapsasl: unexpected XOAUTH2 challenge")
 		}
-		// Google sends a JSON error challenge before its final NO. RFC 7628
-		// requires an empty reply in the analogous OAUTHBEARER flow too.
-		return []byte{}, nil
 	}}
 }
 
@@ -95,13 +140,22 @@ func XOAUTH2(username, token string) *Mechanism {
 // optional; include them when the token issuer uses them to bind the token to a
 // target service.
 func OAUTHBEARER(username, token, host, port string) *Mechanism {
-	called := false
+	step := 0
 	return &Mechanism{Name: "OAUTHBEARER", Next: func([]byte) ([]byte, error) {
-		if !called {
-			called = true
+		step++
+		switch step {
+		case 1:
+			for field, value := range map[string]string{"username": username, "token": token, "host": host, "port": port} {
+				if err := checkField("OAUTHBEARER", field, value); err != nil {
+					return nil, err
+				}
+			}
 			var b strings.Builder
 			b.WriteString("n,a=")
-			b.WriteString(username)
+			// RFC 7628 section 3.1: the authzid is a GS2 header field, so it
+			// takes the RFC 5801 escaping that keeps a comma or equals sign
+			// from ending it early.
+			b.WriteString(scramEscape(username))
 			b.WriteString(",\x01")
 			if host != "" {
 				b.WriteString("host=")
@@ -117,8 +171,13 @@ func OAUTHBEARER(username, token, host, port string) *Mechanism {
 			b.WriteString(token)
 			b.WriteString("\x01\x01")
 			return []byte(b.String()), nil
+		case 2:
+			// RFC 7628 section 3.2.3: the client answers an error challenge
+			// with a single "%x01" before the server sends its tagged failure.
+			return []byte{}, nil
+		default:
+			return nil, errors.New("imapsasl: unexpected OAUTHBEARER challenge")
 		}
-		return []byte{}, nil
 	}}
 }
 
@@ -145,6 +204,9 @@ func SCRAMSHA1Plus(username, password string, channelBinding []byte) (*Mechanism
 func SCRAMSHA256Plus(username, password string, channelBinding []byte) (*Mechanism, error) {
 	return newSCRAM("SCRAM-SHA-256-PLUS", sha256.New, 32, username, password, channelBinding)
 }
+
+// maxSCRAMIterations bounds the PBKDF2 work a server can ask the client to do.
+const maxSCRAMIterations = 1 << 20
 
 type scram struct {
 	hash           func() hash.Hash
@@ -176,6 +238,9 @@ func (s *scram) next(challenge []byte) ([]byte, error) {
 	s.step++
 	switch s.step {
 	case 1:
+		if err := checkField("SCRAM", "username", s.username); err != nil {
+			return nil, err
+		}
 		nonce, err := scramNonce()
 		if err != nil {
 			return nil, err
@@ -215,9 +280,16 @@ func (s *scram) clientFinal(serverFirst string) ([]byte, error) {
 	if !ok {
 		return nil, errors.New("imapsasl: SCRAM server omitted iteration count")
 	}
-	var iter int
-	if _, err := fmt.Sscanf(iterations, "%d", &iter); err != nil || iter <= 0 || fmt.Sprintf("%d", iter) != iterations {
+	iter, err := strconv.Atoi(iterations)
+	if err != nil || iter <= 0 || strconv.Itoa(iter) != iterations {
 		return nil, errors.New("imapsasl: invalid SCRAM iteration count")
+	}
+	if iter > maxSCRAMIterations {
+		// The count is server-controlled and drives a PBKDF2 loop, so an
+		// unbounded one is a one-line denial of service against the client.
+		// RFC 7677 recommends 4096; deployed servers use up to a few hundred
+		// thousand.
+		return nil, fmt.Errorf("imapsasl: SCRAM iteration count %d exceeds the limit of %d", iter, maxSCRAMIterations)
 	}
 
 	cb := append([]byte(s.gs2Header), s.channelBinding...)

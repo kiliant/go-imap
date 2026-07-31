@@ -81,6 +81,16 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 		enc.SP().Mailbox(mailbox)
 	}, selectCollector(data), func(success bool) {
 		if !success {
+			// RFC 3501 section 6.3.1: a failed SELECT or EXAMINE leaves no
+			// mailbox selected, so a session that had one drops back to the
+			// authenticated state. Staying in the selected state would let the
+			// next FETCH address the previous mailbox.
+			c.mu.Lock()
+			if c.state == StateSelected {
+				c.state = StateAuthenticated
+				c.selectedMailbox = ""
+			}
+			c.mu.Unlock()
 			return
 		}
 		c.mu.Lock()

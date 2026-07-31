@@ -70,11 +70,11 @@ general command rule.
 ## 3. Options structs, never positional parameters
 
 ```go
-// Good
-func (c *Client) List(ctx context.Context, ref, pattern string, opts *ListOptions) ...
+// Good — LIST is a command handle, so the context arrives with Collect/Next.
+func (c *Client) List(ref, pattern string, opts *ListOptions) *ListCommand
 // Bad — LIST-EXTENDED (5258), LIST-STATUS (5819), LIST-MYRIGHTS (8440),
 // LIST-METADATA (9590) each want another parameter.
-func (c *Client) List(ctx context.Context, ref, pattern string, selectOpts, returnOpts int) ...
+func (c *Client) List(ref, pattern string, selectOpts, returnOpts int) *ListCommand
 ```
 
 A `nil` options pointer must always be valid and mean "defaults". This lets us
@@ -144,9 +144,12 @@ comment. Public structs that only *we* construct are safe.
 - **v1.0** freezes the exported API. After it: additive changes only.
 - Removal requires a deprecation notice for at least two minor releases, and
   never lands before v2.
-- CI runs `golang.org/x/exp/cmd/apidiff` against the previous tag on every PR.
-  Post-v1.0 a detected incompatible change fails the build; pre-v1.0 it posts the
-  diff as a comment so the break is deliberate rather than accidental.
+- CI will run `golang.org/x/exp/cmd/apidiff` against the previous tag on every
+  PR. Post-v1.0 a detected incompatible change fails the build; pre-v1.0 it
+  posts the diff as a comment so the break is deliberate rather than accidental.
+  The gate is not wired up yet — it is an exit criterion of M4, tracked by
+  [T15](tasks/T15-release-engineering.md) — so until then the review in the next
+  section is the only thing enforcing this document.
 - Go version floor: the two most recent major Go releases.
 
 ## Reviewing against this document

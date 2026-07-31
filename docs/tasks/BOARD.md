@@ -27,7 +27,7 @@ explicitly assigned in the task table.
 | ID | Task | Milestone | Depends on | Owns | Agent |
 |---|---|---|---|---|---|
 | [T01](T01-wire-codec.md) | Wire codec | M0 | — | `internal/imapwire/**` | wire-protocol |
-| [T02](T02-core-types.md) | Core types & errors | M0 | — | `*.go` (root pkg), `internal/imapnum/**` | client-core + api-guardian |
+| [T02](T02-core-types.md) | Core types & errors | M0 | — | `*.go` (root pkg) | client-core + api-guardian |
 | [T03](T03-connection.md) | Connection & session | M1 | T01, T02 | `imapclient/{client,conn,state}.go` | client-core |
 | [T04](T04-auth.md) | Authentication & SASL | M1 | T03 | `imapclient/auth.go`, `internal/imapsasl/**` | client-core |
 | [T05](T05-mailbox-commands.md) | Mailbox commands | M1 | T03 | `imapclient/{select,list,status,namespace}.go` | client-core |

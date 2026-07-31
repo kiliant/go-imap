@@ -35,14 +35,16 @@ ever leaves beta.
 - A closed constant list or fixed `bool`-field struct for FETCH items, SEARCH
   criteria, STATUS items, capabilities, or response codes. This is rule 1 and it
   is the single most common cause of permanent beta.
-- A blocking method without `ctx context.Context` as its first parameter.
+- A blocking method without `ctx context.Context` as its first parameter. A
+  command-handle constructor that only writes a bounded prelude does not block
+  and takes no context; its `Wait`/`Next`/`Collect` must.
 - A positional parameter that a future RFC would want to extend — anything that
   should have been an options struct.
 - An options struct where passing `nil` is not documented as valid.
 - A new exported interface without an unexported marker method.
 - Any `internal/` type reachable from an exported signature, including as an
   embedded field or an opaque return. Check with:
-  `(go doc -all .; go doc -all ./imapclient) | grep -i 'imapwire\|imapnum\|imapsasl'`
+  `(go doc -all .; go doc -all ./imapclient) | grep -i 'imapwire\|imapsasl'`
 - A new error type instead of a new `ResponseCode` constant.
 - An exported struct that callers construct, lacking the keyed-literal doc note.
 

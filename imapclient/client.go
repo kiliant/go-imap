@@ -119,17 +119,34 @@ type UnilateralDataHandler struct {
 type Client struct {
 	mu sync.Mutex
 
+	// writeMu serialises command serialisation, and is deliberately not mu.
+	// Writing a synchronising literal blocks until the server sends its
+	// continuation request, and the reader goroutine needs mu to deliver
+	// anything at all — the untagged responses that may precede the
+	// continuation, the tagged rejection that can replace it, and the close
+	// that cancellation triggers. Holding mu across a write therefore
+	// deadlocks the whole session.
+	//
+	// Lock order is continuationOwnerMu, then writeMu, then mu.
+	writeMu sync.Mutex
+
 	// authInProgress excludes unrelated commands while an AUTHENTICATE
 	// exchange is consuming continuation requests. IMAP cannot safely
 	// disambiguate a continuation once another command is pipelined beside it.
 	authInProgress bool
 
 	// continuationMu is deliberately separate from mu. A synchronising
-	// literal is written while mu protects the encoder, while the reader must
-	// be able to deliver its continuation without waiting for that write lock.
+	// literal is written while writeMu protects the encoder, while the reader
+	// must be able to deliver its continuation without waiting for that write
+	// lock.
 	continuationMu sync.Mutex
 	continuation   *continuationHandler
-	literalMu      sync.Mutex
+
+	// continuationOwnerMu serialises the installation of continuation
+	// handlers. AUTHENTICATE and IDLE own the slot across several responses
+	// and claim it before issuing their command; every other command installs
+	// a handler only for the duration of its own serialisation.
+	continuationOwnerMu sync.Mutex
 
 	traceMu sync.Mutex
 
@@ -186,6 +203,29 @@ func (c *Client) setContinuation(fn func(string) error) (clear func()) {
 		}
 		c.continuationMu.Unlock()
 	}
+}
+
+// setContinuationIfUnset installs fn only when no handler is currently
+// installed, reporting whether it did. A command that owns the whole
+// continuation exchange — AUTHENTICATE, IDLE — installs its handler before
+// issuing the command, and keeps it: the generic per-command handler must not
+// displace it.
+func (c *Client) setContinuationIfUnset(fn func(string) error) (clear func(), installed bool) {
+	h := &continuationHandler{fn: fn}
+	c.continuationMu.Lock()
+	if c.continuation != nil {
+		c.continuationMu.Unlock()
+		return func() {}, false
+	}
+	c.continuation = h
+	c.continuationMu.Unlock()
+	return func() {
+		c.continuationMu.Lock()
+		if c.continuation == h {
+			c.continuation = nil
+		}
+		c.continuationMu.Unlock()
+	}, true
 }
 
 func (c *Client) deliverContinuation(text string) error {
@@ -389,14 +429,32 @@ func (c *Client) trace(direction TraceDirection, data string) {
 	}
 }
 
+// commandOptions carries the per-command knobs of [Client.issue]. It is
+// internal; new knobs are added here rather than as further positional
+// parameters on the command helpers.
+type commandOptions struct {
+	allowed    stateMask
+	write      func(*imapwire.Encoder)
+	collector  commandCollector
+	onComplete func(success bool)
+
+	// ownsContinuation is set by AUTHENTICATE and IDLE, which install their
+	// own continuation handler before issuing the command and keep it for the
+	// remainder of the exchange.
+	ownsContinuation bool
+}
+
 func (c *Client) beginCommand(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector) *Command {
-	return c.beginCommandWithCompletion(name, allowed, write, collector, nil)
+	return c.issue(name, commandOptions{allowed: allowed, write: write, collector: collector})
 }
 
 // beginAuthenticationCommand reserves the connection for LOGIN or
 // AUTHENTICATE until its tagged completion. A SASL continuation has no command
 // tag, so allowing another command to pipeline beside it would be ambiguous.
-func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.Encoder), collector commandCollector) *Command {
+// ownsContinuation is set for AUTHENTICATE, which installed its SASL handler
+// before issuing the command; LOGIN has no continuation exchange of its own and
+// uses the generic handler so that a credential needing a literal works.
+func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.Encoder), collector commandCollector, ownsContinuation bool) *Command {
 	c.mu.Lock()
 	if c.authInProgress {
 		c.mu.Unlock()
@@ -415,7 +473,13 @@ func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.En
 			c.authenticationSucceeded()
 		}
 	}
-	cmd := c.beginCommandWithCompletion(name, stateNotAuthenticated, write, collector, finished)
+	cmd := c.issue(name, commandOptions{
+		allowed:          stateNotAuthenticated,
+		write:            write,
+		collector:        collector,
+		onComplete:       finished,
+		ownsContinuation: ownsContinuation,
+	})
 	select {
 	case <-cmd.done:
 		// A local validation or write failure has no tagged completion to run
@@ -433,7 +497,25 @@ func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.En
 // response data.  The callback always runs on the reader goroutine before the
 // command is made visible as complete.
 func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector, onComplete func(success bool)) *Command {
-	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: collector, onComplete: onComplete}
+	return c.issue(name, commandOptions{allowed: allowed, write: write, collector: collector, onComplete: onComplete})
+}
+
+// issue validates, registers and serialises one command.
+//
+// Only the validation and registration run under mu; serialisation runs under
+// writeMu alone, because a command argument that needs a synchronising literal
+// blocks here until the server answers, and the reader goroutine must stay free
+// to deliver that answer.
+func (c *Client) issue(name string, opts commandOptions) *Command {
+	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: opts.collector, onComplete: opts.onComplete}
+
+	if !opts.ownsContinuation {
+		c.continuationOwnerMu.Lock()
+		defer c.continuationOwnerMu.Unlock()
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	if c.closed {
 		err := c.closeErr
@@ -459,7 +541,7 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: pipelineConflictText(name)})
 		return cmd
 	}
-	if allowed&c.state.mask() == 0 {
+	if opts.allowed&c.state.mask() == 0 {
 		state := c.state
 		c.mu.Unlock()
 		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: fmt.Sprintf("%s is not valid in %s state", name, state)})
@@ -472,37 +554,104 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 	}
 	c.pending[cmd.tag] = cmd
 	c.pendingQ = append(c.pendingQ, cmd)
-	c.enc.Tag(cmd.tag).SP()
+	enc := c.enc
+	literalPlus, literalMinus := c.supportsLocked("LITERAL+"), c.supportsLocked("LITERAL-")
+	c.mu.Unlock()
+
+	// Any command argument can require a synchronising literal: one non-ASCII
+	// octet in a password or a mailbox name is enough. The handler that
+	// unblocks one is therefore installed for every command, not only for the
+	// commands whose payload is obviously large.
+	rejectedBeforeLiteral := false
+	if !opts.ownsContinuation {
+		continued := make(chan struct{}, 1)
+		clearContinuation, installed := c.setContinuationIfUnset(func(string) error {
+			// Never block the reader goroutine: a duplicate continuation must
+			// not wedge the connection.
+			select {
+			case continued <- struct{}{}:
+			default:
+			}
+			return nil
+		})
+		if installed {
+			defer clearContinuation()
+			enc.SetLiteralPlus(literalPlus)
+			enc.SetLiteralMinus(literalMinus)
+			enc.SetWaitContinuation(func() error {
+				select {
+				case <-continued:
+					return nil
+				case <-cmd.done:
+					// The server answered the command line instead of
+					// requesting the literal, or the session died. Either way
+					// no continuation is coming.
+					rejectedBeforeLiteral = true
+					return errNoContinuation
+				}
+			})
+			defer enc.SetWaitContinuation(nil)
+		}
+	}
+
+	enc.Tag(cmd.tag).SP()
 	// A command name may be a compound IMAP command such as "UID FETCH".
 	// Encode every word as its own atom: feeding the embedded space to Atom
 	// rejects every UID variant before any bytes reach the server.
 	for i, word := range strings.Fields(name) {
 		if i > 0 {
-			c.enc.SP()
+			enc.SP()
 		}
-		c.enc.Atom(word)
+		enc.Atom(word)
 	}
-	if write != nil {
-		write(c.enc)
+	if opts.write != nil {
+		opts.write(enc)
 	}
-	c.enc.CRLF()
-	err := c.enc.Flush()
-	if err != nil {
-		delete(c.pending, cmd.tag)
-		c.removePendingLocked(cmd)
-	}
-	c.mu.Unlock()
-	if err != nil {
-		cmd.complete(protocolError(err))
-		c.poison(err)
+	enc.CRLF()
+	err := enc.Flush()
+	if err == nil {
+		// The trace deliberately contains only the tag and command name. This
+		// is a useful protocol summary while making LOGIN/AUTHENTICATE
+		// credential disclosure impossible even if a future caller supplies
+		// their arguments via write.
+		c.trace(TraceClient, cmd.tag+" "+strings.ToUpper(name))
 		return cmd
 	}
-	// The trace deliberately contains only the tag and command name. This is a
-	// useful protocol summary while making LOGIN/AUTHENTICATE credential
-	// disclosure impossible even if a future caller supplies their arguments via
-	// write.
-	c.trace(TraceClient, cmd.tag+" "+strings.ToUpper(name))
+
+	if rejectedBeforeLiteral {
+		// A command line ending in a synchronising literal announcement that
+		// the server rejects leaves the stream synchronised: RFC 3501 section
+		// 4.3 requires the client not to send the payload. Only the encoder's
+		// sticky error has to be discarded, along with the buffered payload
+		// that must never reach the wire.
+		c.replaceEncoder(enc)
+		return cmd
+	}
+	c.mu.Lock()
+	delete(c.pending, cmd.tag)
+	c.removePendingLocked(cmd)
+	c.mu.Unlock()
+	cmd.complete(protocolError(err))
+	c.poison(err)
 	return cmd
+}
+
+// errNoContinuation reports that a command needing a synchronising literal was
+// answered, or the session ended, before the server requested the payload.
+var errNoContinuation = errors.New("imapclient: server did not request the literal")
+
+// replaceEncoder discards a sticky encoder error and the output buffered behind
+// it. The caller must hold writeMu and must have established that the wire is
+// still synchronised.
+func (c *Client) replaceEncoder(stale *imapwire.Encoder) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.enc != stale {
+		return
+	}
+	utf8Accept := c.enc.UTF8Accept()
+	c.enc = imapwire.NewEncoder(c.conn, nil)
+	c.enc.SetUTF8Accept(utf8Accept)
 }
 
 func pipelineConflict(name string, pending []*Command) bool {
