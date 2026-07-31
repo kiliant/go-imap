@@ -132,8 +132,23 @@ func TestFetchAbandonedBeforeCloseDoesNotPanic(t *testing.T) {
 	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("Close() = %v", err)
 	}
-	if _, err := cmd.Next(testContext(t)); err == nil {
-		t.Fatal("Next() after Close = nil, want an error")
+	// A response the reader was already blocked delivering may still come out
+	// of Next: the responses channel is unbuffered, so once stop is closed both
+	// arms of Next's select are ready and the winner is chosen at random. That
+	// is deliberate — Next documents the preference for a pending response —
+	// so the invariant is that the error surfaces, not that it surfaces first.
+	// Asserting on the very first call made this test fail approximately three
+	// runs in ten.
+	// One more iteration than the three responses the script sends, so a
+	// delivered backlog cannot mask a missing error.
+	err = nil
+	for i := 0; i < 4; i++ {
+		if _, err = cmd.Next(testContext(t)); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		t.Fatal("Next() after Close never reported an error")
 	}
 	time.Sleep(100 * time.Millisecond)
 }
