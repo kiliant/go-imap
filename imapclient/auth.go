@@ -12,6 +12,7 @@ import (
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapsasl"
 	"github.com/kiliant/go-imap/internal/imapwire"
+	"github.com/kiliant/go-imap/internal/saslprep"
 )
 
 // SASLMechanism is a caller-supplied SASL exchange. Next receives each decoded
@@ -52,12 +53,29 @@ type AuthenticateOptions struct {
 	// and must return a non-nil mechanism with a non-nil Next function.
 	SASL func(name string) (*SASLMechanism, error)
 
+	// PrepareCredentials applies SASLprep (RFC 4013) to username and
+	// password before the selected built-in mechanism sees them. It is
+	// false by default.
+	//
+	// RFC 5802 requires SASLprep for SCRAM and RFC 4616 recommends it for
+	// PLAIN, but many deployed servers store and compare the raw password
+	// octets: enabling this against such a server breaks any password
+	// containing a character that SASLprep changes. Enable it only when
+	// the server is known to normalize credentials at enrollment.
+	PrepareCredentials bool
+
 	_ struct{}
 }
 
 // Login authenticates with the RFC 3501 LOGIN command. It refuses to send
 // credentials when the server advertises LOGINDISABLED, or on a cleartext
 // connection unless Options.AllowInsecureAuth was explicitly set.
+//
+// Login does not prepare (SASLprep, RFC 4013) username or password: the
+// command has no options struct and adding a parameter would be a
+// breaking change. Callers that need that transformation should use
+// [Client.Authenticate] with [AuthenticateOptions.PrepareCredentials]
+// instead.
 func (c *Client) Login(ctx context.Context, username, password string) error {
 	if err := c.prepareLogin(); err != nil {
 		return err
@@ -140,7 +158,7 @@ func (c *Client) Authenticate(ctx context.Context, username, password string, op
 	}, nil, true)
 	if err := cmd.Wait(ctx); err != nil {
 		release()
-		return redactAuthenticationError(err, username, password, opts.Token)
+		return redactAuthenticationError(err, authenticationSecrets(name, username, password, opts)...)
 	}
 	release()
 	c.authenticationSucceeded()
@@ -202,12 +220,87 @@ var saslPreference = []string{
 	"LOGIN",
 }
 
+// passwordMechanisms lists the built-in mechanisms whose credentials
+// AuthenticateOptions.PrepareCredentials applies to: every built-in
+// mechanism that sends a username and/or password chosen by the caller,
+// as opposed to an opaque bearer token.
+//
+// CRAM-MD5 (RFC 2195) predates stringprep entirely and RFC 2195 mandates no
+// normalization of its own. It is included here anyway: PrepareCredentials
+// is an explicit caller opt-in that means "prepare my credentials before
+// any password mechanism sends them", and applying it uniformly across
+// every password mechanism is more predictable than silently exempting
+// one of them for a reason the caller has no way to discover. This is a
+// judgement call, not something RFC 2195 requires or forbids.
+var passwordMechanisms = map[string]bool{
+	"PLAIN":              true,
+	"LOGIN":              true,
+	"CRAM-MD5":           true,
+	"SCRAM-SHA-1":        true,
+	"SCRAM-SHA-256":      true,
+	"SCRAM-SHA-1-PLUS":   true,
+	"SCRAM-SHA-256-PLUS": true,
+}
+
+// prepareCredentials applies SASLprep (RFC 4013) to username and password
+// when opts.PrepareCredentials is set, using the query form ([Prepare],
+// not [PrepareStored]): Authenticate is sending a credential, not
+// enrolling one. With the option unset (the default) it returns username
+// and password unchanged, byte for byte.
+//
+// A SASLprep failure (a prohibited code point or a bidi violation) is
+// reported as a protocol error before any mechanism is constructed, so
+// nothing reaches the wire. The underlying saslprep error names only the
+// offending code point and never the credential itself; that property
+// must survive here too, so do not add the username or password to this
+// error.
+func prepareCredentials(opts *AuthenticateOptions, username, password string) (string, string, error) {
+	if !opts.PrepareCredentials {
+		return username, password, nil
+	}
+	preparedUsername, err := saslprep.Prepare(username)
+	if err != nil {
+		return "", "", authProtocolError("SASLprep rejected the user name: %v", err)
+	}
+	preparedPassword, err := saslprep.Prepare(password)
+	if err != nil {
+		return "", "", authProtocolError("SASLprep rejected the password: %v", err)
+	}
+	return preparedUsername, preparedPassword, nil
+}
+
+// authenticationSecrets returns every credential form that may have reached
+// the server, for redaction out of a failed command's text. With
+// PrepareCredentials set, the octets on the wire are the prepared ones, so
+// redacting only what the caller passed in would leave a server that echoes
+// the authentication identity in its NO text unredacted.
+func authenticationSecrets(name, username, password string, opts *AuthenticateOptions) []string {
+	secrets := []string{username, password, opts.Token}
+	if !opts.PrepareCredentials || !passwordMechanisms[name] {
+		return secrets
+	}
+	// The same call already succeeded during mechanism construction, so an
+	// error here means nothing was sent under the prepared form.
+	preparedUsername, preparedPassword, err := prepareCredentials(opts, username, password)
+	if err != nil {
+		return secrets
+	}
+	return append(secrets, preparedUsername, preparedPassword)
+}
+
 func (c *Client) builtinSASL(name, username, password string, opts *AuthenticateOptions) (*SASLMechanism, error) {
 	toClient := func(m *imapsasl.Mechanism) *SASLMechanism {
 		if m == nil {
 			return nil
 		}
 		return &SASLMechanism{Next: m.Next}
+	}
+	if passwordMechanisms[name] {
+		var err error
+		username, password, err = prepareCredentials(opts, username, password)
+		if err != nil {
+			return nil, err
+		}
 	}
 	switch name {
 	case "PLAIN":
