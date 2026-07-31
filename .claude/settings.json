@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go doc:*)",
+      "Bash(go fmt:*)",
+      "Bash(go mod:*)",
+      "Bash(go run:*)",
+      "Bash(gofmt:*)",
+      "Bash(staticcheck:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(podman ps:*)",
+      "Bash(podman logs:*)",
+      "Bash(podman images:*)",
+      "Bash(podman build:*)",
+      "Bash(podman run:*)",
+      "Bash(podman exec:*)",
+      "Bash(podman stop:*)",
+      "Bash(podman kill:*)",
+      "Bash(podman cp:*)",
+      "Bash(podman pull:*)",
+      "Bash(podman port:*)",
+      "Bash(podman inspect:*)",
+      "Bash(podman manifest inspect:*)",
+      "Bash(podman image inspect:*)",
+      "Bash(podman machine list:*)",
+      "Bash(podman machine start:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(podman rm:*)",
+      "Bash(podman rmi:*)",
+      "Bash(podman system prune:*)",
+      "Bash(podman machine rm:*)"
+    ]
+  }
+}

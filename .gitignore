@@ -1,0 +1,23 @@
+# Build output
+/bin/
+*.test
+*.out
+coverage.*
+
+# Fuzzing corpus is committed; crashers are not
+testdata/fuzz/*/crash-*
+
+# Local interop overrides
+interop/servers/**/local.*
+/interop/.state/
+
+# Editors
+.DS_Store
+*.swp
+
+# Mutable agent/work state lives in .state/, which carries its own .gitignore
+# holding "*" plus "!.gitignore" — so it ignores its own contents while the
+# protection itself is tracked and survives a fresh clone. Do NOT add /.state/
+# here: that would un-track the .gitignore and the mechanism would not ship.
+# Task specs are NOT state — they live in docs/tasks/ and are tracked.
+# See CLAUDE.md "Plan vs state".
