@@ -97,10 +97,11 @@ func (c *Client) List(reference, pattern string, options *ListOptions) *ListComm
 }
 
 // Lsub lists subscribed mailboxes. On a server advertising LIST-EXTENDED (or
-// IMAP4rev2), it uses LIST (SUBSCRIBED), because LSUB is deprecated in rev2.
+// with IMAP4rev2 enabled), it uses LIST (SUBSCRIBED), because LSUB is removed
+// from the rev2 command set.
 // Older servers receive the legacy LSUB command.
 func (c *Client) Lsub(reference, pattern string, options *ListOptions) *ListCommand {
-	if c.hasCapability("LIST-EXTENDED") || c.hasCapability("IMAP4REV2") {
+	if c.hasCapability("LIST-EXTENDED") || c.rev2Enabled() {
 		var copied ListOptions
 		if options != nil {
 			copied = *options

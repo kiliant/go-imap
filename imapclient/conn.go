@@ -129,6 +129,7 @@ func (c *Client) startTLS(ctx context.Context, address string) error {
 	c.dec = imapwire.NewDecoder(tlsConn, nil)
 	c.enc = imapwire.NewEncoder(tlsConn, nil)
 	c.caps = make(map[string]struct{}) // Cleartext capabilities are untrusted.
+	c.enabled = make(map[string]struct{})
 	c.mu.Unlock()
 	c.releaseReader()
 	return nil
@@ -314,7 +315,7 @@ func (c *Client) readCapabilities(dec *imapwire.Decoder) error {
 	if !dec.ExpectCRLF() {
 		return dec.Err()
 	}
-	c.addCapabilities(capabilities)
+	c.setCapabilities(capabilities)
 	c.trace(TraceServer, "* CAPABILITY")
 	return nil
 }
@@ -323,6 +324,18 @@ func (c *Client) addCapabilities(capabilities []string) {
 	c.mu.Lock()
 	for _, cap := range capabilities {
 		c.caps[strings.ToUpper(cap)] = struct{}{}
+	}
+	c.mu.Unlock()
+}
+
+// setCapabilities installs the authoritative response from a CAPABILITY
+// command. Unlike [CAPABILITY] response codes, this is a complete set and
+// must replace stale entries rather than accumulating them indefinitely.
+func (c *Client) setCapabilities(capabilities []string) {
+	c.mu.Lock()
+	c.caps = make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		c.caps[strings.ToUpper(capability)] = struct{}{}
 	}
 	c.mu.Unlock()
 }

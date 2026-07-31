@@ -18,12 +18,14 @@
 //
 // IMAP has no general command-abort. Cancelling the context of a command that is
 // already on the wire therefore invalidates the connection: the client closes it
-// rather than leaving the stream desynchronised. IDLE is the exception and
-// cancels cleanly.
+// rather than leaving the stream desynchronised. IDLE cancels cleanly with
+// DONE after the server has accepted it; cancellation before its continuation
+// follows the general rule because DONE is not yet valid.
 //
 // # Status
 //
-// The connection/session layer, authentication, and base mailbox and message
-// commands are implemented and verified across the native server matrix.
-// Extension support is still under active development; see docs/ROADMAP.md.
+// The connection/session layer, authentication, base mailbox and message
+// commands, capability negotiation, ENABLE, and IDLE are implemented and
+// verified across their native server matrices. Extension support is still
+// under active development; see docs/ROADMAP.md.
 package imapclient

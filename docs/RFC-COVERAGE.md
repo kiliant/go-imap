@@ -15,13 +15,13 @@ least two independent servers in the interop matrix).
 | Capability | RFC | Task | Status |
 |---|---|---|---|
 | IMAP4REV1 | 3501 | T01,T02,T05,T06 | verified |
-| IMAP4REV2 | 9051 | T07 | planned |
+| IMAP4REV2 | 9051 | T07 | done |
 | STARTTLS | 3501, 9051 | T03 | done |
 | LOGINDISABLED | 3501, 9051 | T04 | done |
 | AUTH= | 3501, 9051 | T04 | verified |
 | SASL-IR | 4959 | T04 | verified |
-| ENABLE | 5161 | T07 | planned |
-| IDLE | 2177 | T07 | planned |
+| ENABLE | 5161 | T07 | done |
+| IDLE | 2177 | T07 | verified |
 | ID | 2971 | T08 | planned |
 | NAMESPACE | 2342 | T05 | verified |
 | UNSELECT | 3691 | T05 | verified |

@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -46,6 +47,18 @@ type Options struct {
 	// byte-for-byte wire trace. It is called synchronously by the reader or
 	// writer goroutine and must not block.
 	Trace func(TraceEvent)
+
+	// IdleTimeout is the maximum duration of one IDLE command. A positive value
+	// makes Idle re-issue IDLE before the server's 29 minute limit; zero uses
+	// the conservative 25 minute default. Values at or above 29 minutes are
+	// clamped to that default.
+	IdleTimeout time.Duration
+
+	// IdlePollInterval controls the NOOP polling interval used by Idle when the
+	// server does not advertise IDLE. Zero uses one minute. Polling cannot offer
+	// push latency, so applications that need prompt notification should use a
+	// server with IDLE support.
+	IdlePollInterval time.Duration
 }
 
 // TraceDirection identifies whether a trace event came from the client or the
@@ -111,8 +124,10 @@ type Client struct {
 	dec  *imapwire.Decoder
 	enc  *imapwire.Encoder
 
-	state State
-	caps  map[string]struct{}
+	state   State
+	caps    map[string]struct{}
+	enabled map[string]struct{}
+	idle    *IdleCommand
 
 	nextTag  uint64
 	pending  map[string]*Command
@@ -236,6 +251,7 @@ func NewClient(conn net.Conn, opts *Options) *Client {
 		enc:                imapwire.NewEncoder(conn, nil),
 		state:              StateNotAuthenticated,
 		caps:               make(map[string]struct{}),
+		enabled:            make(map[string]struct{}),
 		pending:            make(map[string]*Command),
 		greeting:           make(chan struct{}),
 		readerDone:         make(chan struct{}),
@@ -261,19 +277,6 @@ func (c *Client) State() State {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.state
-}
-
-// Capabilities returns a snapshot of the capability names learned from the
-// greeting or a CAPABILITY response. Names are upper-cased. The returned map
-// is owned by the caller.
-func (c *Client) Capabilities() map[string]bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := make(map[string]bool, len(c.caps))
-	for cap := range c.caps {
-		result[cap] = true
-	}
-	return result
 }
 
 // Noop issues NOOP and returns its command handle immediately.
@@ -403,6 +406,16 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "command is not valid while authentication is in progress"})
 		return cmd
 	}
+	if c.idle != nil && name != "IDLE" {
+		c.mu.Unlock()
+		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "command is not valid while IDLE is active"})
+		return cmd
+	}
+	if pipelineConflict(name, c.pendingQ) {
+		c.mu.Unlock()
+		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: pipelineConflictText(name)})
+		return cmd
+	}
 	if allowed&c.state.mask() == 0 {
 		state := c.state
 		c.mu.Unlock()
@@ -449,6 +462,34 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 	return cmd
 }
 
+func pipelineConflict(name string, pending []*Command) bool {
+	if !isNegotiationCommand(name) {
+		return false
+	}
+	for _, cmd := range pending {
+		if isNegotiationCommand(cmd.name) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNegotiationCommand(name string) bool {
+	switch name {
+	case "ENABLE", "SELECT", "EXAMINE":
+		return true
+	default:
+		return false
+	}
+}
+
+func pipelineConflictText(name string) string {
+	if name == "ENABLE" {
+		return "ENABLE cannot be pipelined with pending ENABLE, SELECT, or EXAMINE"
+	}
+	return fmt.Sprintf("%s cannot be pipelined with pending ENABLE, SELECT, or EXAMINE", name)
+}
+
 func (c *Client) removePendingLocked(want *Command) {
 	for i, cmd := range c.pendingQ {
 		if cmd == want {
@@ -461,6 +502,9 @@ func (c *Client) removePendingLocked(want *Command) {
 }
 
 func (c *Client) completeTagged(tag string, cond imapwire.RespCond) {
+	if cond.Text.Code == "CAPABILITY" {
+		c.addCapabilities(strings.Fields(cond.Text.Args))
+	}
 	c.mu.Lock()
 	cmd := c.pending[tag]
 	if cmd != nil {

@@ -237,15 +237,11 @@ func (c *Client) authenticationSucceeded() {
 	if !c.closed {
 		c.state = StateAuthenticated
 		c.caps = make(map[string]struct{})
+		c.enabled = make(map[string]struct{})
+		c.enc.SetUTF8Accept(false)
+		c.dec.SetUTF8Accept(false)
 	}
 	c.mu.Unlock()
-}
-
-func (c *Client) hasCapability(name string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, ok := c.caps[strings.ToUpper(name)]
-	return ok
 }
 
 func (c *Client) tlsActive() bool {

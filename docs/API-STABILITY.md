@@ -47,18 +47,25 @@ items are preserved in raw form.
 
 ## 2. context.Context from commit one
 
-Every method that writes to or reads from the connection takes
-`ctx context.Context` as its first parameter. No exceptions, including
-`Close`-adjacent operations like `Logout`.
+Every operation that waits for a server response or transfers caller-sized data
+exposes a `context.Context`. Synchronous methods take `ctx context.Context` as
+their first parameter. The asynchronous command-handle API is the deliberate
+exception: its initiating method may write a bounded command prelude and return
+a handle without waiting for the response; each blocking `Wait` or `Next`
+method takes the context. Operations that stream caller data, such as APPEND,
+take a context on the initiating method as well.
 
-Adding `ctx` later is a breaking change to every method simultaneously — it is
-the most expensive retrofit in Go and a frequent cause of permanent v0.
+Adding the context at a blocking boundary later is a breaking change — it is
+the most expensive retrofit in Go and a frequent cause of permanent v0. New
+commands must therefore follow one of the two established shapes rather than
+inventing an uninterruptible blocking call.
 
-Cancellation semantics are documented once, centrally: cancelling a command that
-is already on the wire invalidates the connection (IMAP has no command abort
-except for `IDLE`), so the client marks the connection unusable rather than
-desynchronising the stream. `IDLE` is the one command with a clean cancel path
-(`DONE`).
+Cancellation semantics are documented once, centrally: cancelling a command
+that is already on the wire invalidates the connection (IMAP has no command
+abort except for `IDLE`), so the client marks the connection unusable rather
+than desynchronising the stream. `IDLE` cancels cleanly with `DONE` after the
+server has accepted it; cancellation before the continuation follows the
+general command rule.
 
 ## 3. Options structs, never positional parameters
 
