@@ -28,6 +28,11 @@ type Options struct {
 	// default and must only be used for controlled test servers.
 	InsecureSkipVerify bool
 
+	// AllowInsecureAuth permits PLAIN and LOGIN authentication over a
+	// cleartext connection. It is false by default; prefer DialTLS or
+	// DialStartTLS instead.
+	AllowInsecureAuth bool
+
 	// UnilateralData receives connection-scoped untagged data. A nil handler is
 	// valid. Its callbacks run on the reader goroutine and must not block.
 	UnilateralData *UnilateralDataHandler
@@ -87,6 +92,18 @@ type UnilateralDataHandler struct {
 type Client struct {
 	mu sync.Mutex
 
+	// authInProgress excludes unrelated commands while an AUTHENTICATE
+	// exchange is consuming continuation requests. IMAP cannot safely
+	// disambiguate a continuation once another command is pipelined beside it.
+	authInProgress bool
+
+	// continuationMu is deliberately separate from mu. A synchronising
+	// literal is written while mu protects the encoder, while the reader must
+	// be able to deliver its continuation without waiting for that write lock.
+	continuationMu sync.Mutex
+	continuation   *continuationHandler
+	literalMu      sync.Mutex
+
 	traceMu sync.Mutex
 
 	conn net.Conn
@@ -113,6 +130,43 @@ type Client struct {
 	resume     chan struct{}
 	resumeOnce sync.Once
 	readerDone chan struct{}
+
+	// mailboxUIDValidity retains the last UIDVALIDITY seen for each selected
+	// mailbox.  A changed value invalidates every cached UID for that mailbox,
+	// so it is deliberately connection state rather than an incidental field on
+	// a SELECT response.
+	mailboxUIDValidity map[string]uint32
+	selectedMailbox    string
+}
+
+type continuationHandler struct{ fn func(string) error }
+
+// setContinuation installs the sole handler for a server continuation request.
+// IMAP continuations are ordered with commands, so only one may be outstanding.
+// The returned function removes this particular handler and is safe to call
+// after a replacement has been installed.
+func (c *Client) setContinuation(fn func(string) error) (clear func()) {
+	h := &continuationHandler{fn: fn}
+	c.continuationMu.Lock()
+	c.continuation = h
+	c.continuationMu.Unlock()
+	return func() {
+		c.continuationMu.Lock()
+		if c.continuation == h {
+			c.continuation = nil
+		}
+		c.continuationMu.Unlock()
+	}
+}
+
+func (c *Client) deliverContinuation(text string) error {
+	c.continuationMu.Lock()
+	h := c.continuation
+	c.continuationMu.Unlock()
+	if h == nil {
+		return fmt.Errorf("unexpected continuation request")
+	}
+	return h.fn(text)
 }
 
 // Command is an issued IMAP command. It may be waited on exactly as often as
@@ -126,7 +180,8 @@ type Command struct {
 	once sync.Once
 	err  error
 
-	collector commandCollector
+	collector  commandCollector
+	onComplete func(success bool)
 }
 
 // Tag reports the command's unique client-generated tag.
@@ -175,15 +230,16 @@ func NewClient(conn net.Conn, opts *Options) *Client {
 		o = *opts
 	}
 	c := &Client{
-		conn:       conn,
-		opts:       o,
-		dec:        imapwire.NewDecoder(conn, nil),
-		enc:        imapwire.NewEncoder(conn, nil),
-		state:      StateNotAuthenticated,
-		caps:       make(map[string]struct{}),
-		pending:    make(map[string]*Command),
-		greeting:   make(chan struct{}),
-		readerDone: make(chan struct{}),
+		conn:               conn,
+		opts:               o,
+		dec:                imapwire.NewDecoder(conn, nil),
+		enc:                imapwire.NewEncoder(conn, nil),
+		state:              StateNotAuthenticated,
+		caps:               make(map[string]struct{}),
+		pending:            make(map[string]*Command),
+		greeting:           make(chan struct{}),
+		readerDone:         make(chan struct{}),
+		mailboxUIDValidity: make(map[string]uint32),
 	}
 	go c.readResponses()
 	return c
@@ -288,7 +344,50 @@ func (c *Client) trace(direction TraceDirection, data string) {
 }
 
 func (c *Client) beginCommand(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector) *Command {
-	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: collector}
+	return c.beginCommandWithCompletion(name, allowed, write, collector, nil)
+}
+
+// beginAuthenticationCommand reserves the connection for LOGIN or
+// AUTHENTICATE until its tagged completion. A SASL continuation has no command
+// tag, so allowing another command to pipeline beside it would be ambiguous.
+func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.Encoder), collector commandCollector) *Command {
+	c.mu.Lock()
+	if c.authInProgress {
+		c.mu.Unlock()
+		cmd := &Command{client: c, name: name, done: make(chan struct{})}
+		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "authentication is already in progress"})
+		return cmd
+	}
+	c.authInProgress = true
+	c.mu.Unlock()
+
+	finished := func(success bool) {
+		c.mu.Lock()
+		c.authInProgress = false
+		c.mu.Unlock()
+		if success {
+			c.authenticationSucceeded()
+		}
+	}
+	cmd := c.beginCommandWithCompletion(name, stateNotAuthenticated, write, collector, finished)
+	select {
+	case <-cmd.done:
+		// A local validation or write failure has no tagged completion to run
+		// the callback above.
+		c.mu.Lock()
+		c.authInProgress = false
+		c.mu.Unlock()
+	default:
+	}
+	return cmd
+}
+
+// beginCommandWithCompletion is the command primitive for commands whose
+// successful tagged completion changes session state or finalises collected
+// response data.  The callback always runs on the reader goroutine before the
+// command is made visible as complete.
+func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector, onComplete func(success bool)) *Command {
+	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: collector, onComplete: onComplete}
 	c.mu.Lock()
 	if c.closed {
 		err := c.closeErr
@@ -297,6 +396,11 @@ func (c *Client) beginCommand(name string, allowed stateMask, write func(*imapwi
 		}
 		c.mu.Unlock()
 		cmd.complete(err)
+		return cmd
+	}
+	if c.authInProgress && name != "AUTHENTICATE" && name != "LOGIN" {
+		c.mu.Unlock()
+		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "command is not valid while authentication is in progress"})
 		return cmd
 	}
 	if allowed&c.state.mask() == 0 {
@@ -366,6 +470,9 @@ func (c *Client) completeTagged(tag string, cond imapwire.RespCond) {
 		return
 	}
 	c.trace(TraceServer, tag+" "+cond.Status)
+	if cmd.onComplete != nil {
+		cmd.onComplete(cond.Status == "OK")
+	}
 	if cond.Status == "OK" {
 		cmd.complete(nil)
 	} else {

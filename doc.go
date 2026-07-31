@@ -29,7 +29,8 @@
 //
 // # Status
 //
-// The core vocabulary, wire codec, and connection/session layer are
-// implemented. Authentication, mailbox and message commands, and extensions
-// are still under active development; see docs/ROADMAP.md.
+// The core vocabulary, wire codec, connection/session layer, authentication,
+// and base mailbox and message commands are implemented. Extensions and
+// multi-server verification are still under active development; see
+// docs/ROADMAP.md.
 package imap

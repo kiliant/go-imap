@@ -138,7 +138,10 @@ func (d *Decoder) sectionSpecifier(dst *BodySection, allowMIME bool) bool {
 		fields := []string{}
 		err := d.ExpectList(func() error {
 			var f string
-			if !d.ExpectAstring(&f) {
+			// A bare header field name must stop before the section's closing
+			// bracket; generic Astring would swallow ']'. Quoted names remain
+			// accepted for servers that send the full astring form.
+			if !d.Quoted(&f) && !d.ExpectAtom(&f) {
 				return d.errOrSyntax("header-fld-name")
 			}
 			fields = append(fields, f)

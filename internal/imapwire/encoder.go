@@ -76,6 +76,11 @@ func (e *Encoder) SetLiteralPlus(v bool) { e.opts.LiteralPlus = v }
 // SetLiteralMinus enables or disables RFC 7888 LITERAL- behaviour.
 func (e *Encoder) SetLiteralMinus(v bool) { e.opts.LiteralMinus = v }
 
+// SetWaitContinuation installs the callback used for synchronising literals.
+// It is normally supplied by the connection layer immediately before issuing a
+// command that owns a literal.
+func (e *Encoder) SetWaitContinuation(fn func() error) { e.opts.WaitContinuation = fn }
+
 // SetUTF8Accept selects raw UTF-8 (true) or modified UTF-7 (false) mailbox
 // names.
 func (e *Encoder) SetUTF8Accept(v bool) { e.opts.UTF8Accept = v }

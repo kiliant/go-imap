@@ -354,6 +354,31 @@ func (d *Decoder) ExpectAtom(dst *string) bool {
 	return d.expectFailed("atom")
 }
 
+// ExpectFetchItemName decodes the leading name of a FETCH response item. BODY
+// and BINARY are context-sensitive: '[' is an atom character in the general
+// grammar, but starts their following section without intervening whitespace.
+// Keeping that one exception here avoids treating "BODY[..." as an unknown
+// atom and losing stream alignment at a literal.
+func (d *Decoder) ExpectFetchItemName(dst *string) bool {
+	if !d.ready("fetch-item") {
+		return false
+	}
+	for _, name := range []string{"BINARY.SIZE", "BINARY", "BODY"} {
+		p := d.peekN(len(name) + 1)
+		if len(p) != len(name)+1 || p[len(name)] != '[' || !equalFold(string(p[:len(name)]), name) {
+			continue
+		}
+		for range name {
+			if !d.consume() {
+				return false
+			}
+		}
+		*dst = name
+		return true
+	}
+	return d.ExpectAtom(dst)
+}
+
 func (d *Decoder) expectFailed(op string) bool {
 	if d.err != nil {
 		return false

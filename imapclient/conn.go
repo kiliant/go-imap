@@ -155,6 +155,7 @@ type untaggedResponse struct {
 	number uint32
 	hasNum bool
 	dec    *imapwire.Decoder
+	cond   *imapwire.RespCond
 }
 
 func (c *Client) readResponses() {
@@ -199,11 +200,10 @@ func (c *Client) readResponses() {
 				c.readerFailure(greeting, dec.Err())
 				return
 			}
-			// Continuations belong to literal, AUTHENTICATE and IDLE machinery.
-			// T04/T07 install their command-specific support; an unexpected one
-			// cannot safely be answered, so it is a protocol failure.
-			c.readerFailure(greeting, fmt.Errorf("unexpected continuation request"))
-			return
+			if err := c.deliverContinuation(text); err != nil {
+				c.readerFailure(greeting, err)
+				return
+			}
 		case imapwire.ResponseUntagged:
 			cond, handled, err := c.readUntagged(dec)
 			if err != nil {
@@ -263,6 +263,10 @@ func (c *Client) readUntagged(dec *imapwire.Decoder) (imapwire.RespCond, bool, e
 		}
 		if !dec.ExpectCRLF() {
 			return imapwire.RespCond{}, false, dec.Err()
+		}
+		resp := untaggedResponse{name: upper, dec: dec, cond: &cond}
+		if c.offerCollector(&resp) {
+			return cond, true, nil
 		}
 		if cond.Text.Code == "CAPABILITY" {
 			c.addCapabilities(strings.Fields(cond.Text.Args))
