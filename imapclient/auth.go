@@ -73,8 +73,9 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 
 // Authenticate authenticates using a SASL mechanism advertised by the server.
 // password is used by password mechanisms; OAuth mechanisms use opts.Token
-// when supplied. It refuses PLAIN and LOGIN over cleartext unless
-// Options.AllowInsecureAuth was explicitly set.
+// when supplied. A nil opts selects the strongest advertised built-in
+// mechanism with default settings. Authenticate refuses PLAIN and LOGIN over
+// cleartext unless Options.AllowInsecureAuth was explicitly set.
 func (c *Client) Authenticate(ctx context.Context, username, password string, opts *AuthenticateOptions) error {
 	if opts == nil {
 		opts = &AuthenticateOptions{}

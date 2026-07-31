@@ -61,14 +61,16 @@ func (cmd *SelectCommand) Wait(ctx context.Context) (*MailboxStatus, error) {
 	return cmd.data, nil
 }
 
-// Select selects mailbox for read-write access. A successful SELECT replaces
-// any previously selected mailbox.
+// Select selects mailbox for read-write access. A nil options selects the base
+// command with default settings. A successful SELECT replaces any previously
+// selected mailbox.
 func (c *Client) Select(mailbox string, options *SelectOptions) *SelectCommand {
 	return c.selectMailbox("SELECT", mailbox, options)
 }
 
-// Examine selects mailbox for read-only access. It never permits flag changes
-// or expunges through this session.
+// Examine selects mailbox for read-only access. A nil options selects the base
+// command with default settings. EXAMINE never permits flag changes or
+// expunges through this session.
 func (c *Client) Examine(mailbox string, options *SelectOptions) *SelectCommand {
 	return c.selectMailbox("EXAMINE", mailbox, options)
 }

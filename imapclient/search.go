@@ -62,11 +62,13 @@ func (cmd *SearchCommand) AllUID(ctx context.Context) ([]imap.UID, error) {
 }
 
 // Search issues SEARCH and returns sequence numbers through SearchCommand.All.
+// A nil options selects the base SEARCH command with default settings.
 func (c *Client) Search(criteria imap.SearchCriteria, options *SearchOptions) *SearchCommand {
 	return c.search("SEARCH", criteria, options)
 }
 
-// SearchUID issues UID SEARCH and returns UIDs through SearchCommand.AllUID.
+// SearchUID issues UID SEARCH and returns UIDs through SearchCommand.AllUID. A
+// nil options selects the base UID SEARCH command with default settings.
 func (c *Client) SearchUID(criteria imap.SearchCriteria, options *SearchOptions) *SearchCommand {
 	return c.search("UID SEARCH", criteria, options)
 }

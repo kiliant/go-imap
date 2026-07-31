@@ -118,14 +118,16 @@ func decodeNamespaceDescriptorsAfterOpen(dec *imapwire.Decoder) ([]NamespaceDesc
 			return nil, err
 		}
 		descriptors = append(descriptors, descriptor)
-		if !dec.SP() {
-			break
+		// RFC 2342's examples separate descriptors with spaces, but Courier
+		// emits adjacent descriptors: (("#shared." ".")("shared." ".")).
+		// Accept both forms, plus an optional space before the outer ')'.
+		if dec.Special(')') {
+			return descriptors, nil
+		}
+		if dec.SP() && dec.Special(')') {
+			return descriptors, nil
 		}
 	}
-	if !dec.ExpectSpecial(')') {
-		return nil, dec.Err()
-	}
-	return descriptors, nil
 }
 
 func decodeNamespaceDescriptorAfterOpen(dec *imapwire.Decoder) (NamespaceDescriptor, error) {

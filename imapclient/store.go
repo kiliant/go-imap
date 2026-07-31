@@ -24,12 +24,14 @@ type StoreOptions struct {
 	_      struct{}
 }
 
-// Store changes flags for a sequence-number set.
+// Store changes flags for a sequence-number set. A nil options replaces FLAGS
+// without using .SILENT.
 func (c *Client) Store(set imap.SeqSet, flags []imap.Flag, options *StoreOptions) *Command {
 	return c.store("STORE", set.String(), flags, options)
 }
 
-// StoreUID changes flags for a UID set.
+// StoreUID changes flags for a UID set. A nil options replaces FLAGS without
+// using .SILENT.
 func (c *Client) StoreUID(set imap.UIDSet, flags []imap.Flag, options *StoreOptions) *Command {
 	return c.store("UID STORE", set.String(), flags, options)
 }

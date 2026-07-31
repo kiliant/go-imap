@@ -160,7 +160,7 @@ func TestNamespaceAndMailboxNameEncoding(t *testing.T) {
 		line, _ := r.ReadString('\n')
 		requests <- line
 		tag := strings.Fields(line)[0]
-		_, _ = serverConn.Write([]byte("* NAMESPACE ((\"\" \"/\")) NIL ((\"Shared.\" \".\"))\r\n" + tag + " OK namespace\r\n"))
+		_, _ = serverConn.Write([]byte("* NAMESPACE ((\"\" \"/\")) NIL ((\"#shared.\" \".\")(\"Shared.\" \".\"))\r\n" + tag + " OK namespace\r\n"))
 		line, _ = r.ReadString('\n')
 		requests <- line
 		tag = strings.Fields(line)[0]
@@ -176,7 +176,7 @@ func TestNamespaceAndMailboxNameEncoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ns.Personal) != 1 || ns.Personal[0].Delimiter != '/' || len(ns.Shared) != 1 || ns.Shared[0].Delimiter != '.' {
+	if len(ns.Personal) != 1 || ns.Personal[0].Delimiter != '/' || len(ns.Shared) != 2 || ns.Shared[0].Prefix != "#shared." || ns.Shared[1].Delimiter != '.' {
 		t.Fatalf("NAMESPACE data = %#v", ns)
 	}
 	if request := <-requests; !strings.Contains(request, " NAMESPACE\r\n") {

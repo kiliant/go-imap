@@ -416,7 +416,16 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 	}
 	c.pending[cmd.tag] = cmd
 	c.pendingQ = append(c.pendingQ, cmd)
-	c.enc.Tag(cmd.tag).SP().Atom(name)
+	c.enc.Tag(cmd.tag).SP()
+	// A command name may be a compound IMAP command such as "UID FETCH".
+	// Encode every word as its own atom: feeding the embedded space to Atom
+	// rejects every UID variant before any bytes reach the server.
+	for i, word := range strings.Fields(name) {
+		if i > 0 {
+			c.enc.SP()
+		}
+		c.enc.Atom(word)
+	}
 	if write != nil {
 		write(c.enc)
 	}
