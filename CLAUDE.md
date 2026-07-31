@@ -1,6 +1,6 @@
 # go-imap — agent working rules
 
-A complete, correct, **stable** IMAP client library for Go.
+Goal: a complete, correct, **stable** IMAP client library for Go.
 Module path: `github.com/kiliant/go-imap`.
 
 ## The one goal that shapes every decision
@@ -93,10 +93,12 @@ shells out to `podman`.
 - Interop tests **skip** on absent server capabilities, never fail. A permanently
   red matrix is a matrix nobody reads.
 - Every parser gets a fuzz target. Malformed input from a hostile server must not
-  panic — it must return an `*imap.Error`.
+  panic; internal codecs return an error and the public client boundary returns
+  an `*imap.Error`.
 
-Host note: development is on darwin/arm64 with podman. Tier-1 servers (Dovecot,
-Stalwart, GreenMail) are arm64-native. Apache James is amd64-only and runs
+Host note: development is on darwin/arm64 with podman. The M2 acceptance servers
+(Dovecot, Stalwart, GreenMail) are arm64-native; their harness expense tiers are
+documented separately in `docs/INTEROP.md`. Apache James is amd64-only and runs
 emulated behind `-tags=interop_emulated`.
 
 ## Plan vs state

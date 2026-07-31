@@ -59,7 +59,21 @@ type Options struct {
 	// push latency, so applications that need prompt notification should use a
 	// server with IDLE support.
 	IdlePollInterval time.Duration
+
+	// ReadTimeout is the maximum time an underlying network read may make no
+	// progress. Zero or a negative value uses the 30 minute default. The deadline
+	// is refreshed as progress is made, so large streaming literals may take
+	// longer as long as the server continues sending data.
+	ReadTimeout time.Duration
+
+	// MaxUntaggedResponses is the largest number of command-scoped untagged
+	// responses retained for one command. Zero or a negative value uses the
+	// default of 4096. Streaming FETCH responses are delivered directly and are
+	// therefore not counted as retained responses.
+	MaxUntaggedResponses int
 }
+
+const defaultReadTimeout = 30 * time.Minute
 
 // TraceDirection identifies whether a trace event came from the client or the
 // server.
@@ -244,10 +258,11 @@ func NewClient(conn net.Conn, opts *Options) *Client {
 	if opts != nil {
 		o = *opts
 	}
+	wopts := o.wireOptions()
 	c := &Client{
 		conn:               conn,
 		opts:               o,
-		dec:                imapwire.NewDecoder(conn, nil),
+		dec:                imapwire.NewDecoder(conn, &wopts),
 		enc:                imapwire.NewEncoder(conn, nil),
 		state:              StateNotAuthenticated,
 		caps:               make(map[string]struct{}),
@@ -259,6 +274,33 @@ func NewClient(conn net.Conn, opts *Options) *Client {
 	}
 	go c.readResponses()
 	return c
+}
+
+func (o Options) wireOptions() imapwire.Options {
+	readTimeout := o.ReadTimeout
+	if readTimeout <= 0 {
+		readTimeout = defaultReadTimeout
+	}
+	maxUntagged := o.MaxUntaggedResponses
+	if maxUntagged <= 0 {
+		maxUntagged = imapwire.DefaultMaxUntaggedPerCommand
+	}
+	return imapwire.Options{
+		ReadTimeout:           readTimeout,
+		MaxUntaggedPerCommand: maxUntagged,
+	}
+}
+
+func (c *Client) maxUntaggedResponses() int {
+	return c.opts.wireOptions().MaxUntaggedPerCommand
+}
+
+func countUntaggedResponse(count *int, limit int, command string) error {
+	if *count >= limit {
+		return fmt.Errorf("too many untagged responses for %s (limit %d)", command, limit)
+	}
+	*count = *count + 1
+	return nil
 }
 
 // WaitGreeting waits until the server greeting has been parsed.
@@ -279,7 +321,8 @@ func (c *Client) State() State {
 	return c.state
 }
 
-// Noop issues NOOP and returns its command handle immediately.
+// Noop issues NOOP and returns its command handle after writing its bounded
+// command prelude, without waiting for the server response.
 func (c *Client) Noop() *Command {
 	return c.beginCommand("NOOP", stateNotAuthenticated|stateAuthenticated|stateSelected, nil, nil)
 }

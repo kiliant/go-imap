@@ -24,8 +24,9 @@ breaking the API.
 - One reader goroutine owns the decoder and demultiplexes: tagged responses to
   the pending-command map, untagged to the in-flight command's collector or to
   the connection-level `UnilateralDataHandler`.
-- Commands return a handle immediately; `Wait(ctx)` blocks for completion. This
-  is what makes pipelining expressible without a parallel API.
+- Command initiation may synchronously write a bounded prelude, then returns a
+  handle without waiting for the server response; `Wait(ctx)` blocks for
+  completion. This makes pipelining expressible without a parallel API.
 - The connection state machine (not-authenticated → authenticated → selected →
   logout) rejects invalid commands locally rather than on the wire.
 
@@ -33,8 +34,10 @@ breaking the API.
 
 IMAP has no general command-abort. Cancelling an in-flight command therefore
 **poisons the connection**: close it and return `context.Canceled` rather than
-desynchronising the stream. `IDLE` is the sole exception and cancels cleanly with
-`DONE`. Document it once, centrally; do not re-litigate per command.
+desynchronising the stream. `IDLE` cancels cleanly with `DONE` only after the
+server continuation; cancellation before it follows the general rule. Cancelling
+only `WaitReady` leaves IDLE active. Document this centrally; do not re-litigate
+it per command.
 
 ## API constraints you must not break
 

@@ -56,6 +56,7 @@ func (c *Client) Enable(capabilities ...string) *EnableCommand {
 		requested = append(requested, capability)
 	}
 	var cmd *Command
+	untaggedCount := 0
 	cmd = c.beginCommandWithCompletion("ENABLE", stateAuthenticated, func(enc *imapwire.Encoder) {
 		for _, capability := range requested {
 			enc.SP().Atom(capability)
@@ -63,6 +64,9 @@ func (c *Client) Enable(capabilities ...string) *EnableCommand {
 	}, func(resp *untaggedResponse) (bool, error) {
 		if resp.name != "ENABLED" || resp.hasNum || resp.cond != nil {
 			return false, nil
+		}
+		if err := countUntaggedResponse(&untaggedCount, c.maxUntaggedResponses(), "ENABLE"); err != nil {
+			return true, err
 		}
 		for resp.dec.SP() {
 			var capability string

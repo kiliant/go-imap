@@ -17,14 +17,15 @@ crash, hang, or exhaust the memory of the process using this library.
 
 ## Invariants you enforce
 
-1. **No panics.** Any byte sequence returns an `*imap.Error`. Includes index and
-   slice bounds, nil derefs, and integer overflow in literal length arithmetic.
+1. **No panics.** Any byte sequence returns an error; the public client boundary
+   returns an `*imap.Error`. Includes index and slice bounds, nil derefs, and
+   integer overflow in literal length arithmetic.
 2. **No unbounded allocation.** A literal announcing `{4294967295}` must be
    rejected against a configured limit *before* allocating. Same for deeply
    nested parenthesised lists (body structures nest arbitrarily — cap the depth),
    response line length, and the number of untagged responses buffered.
-3. **No hangs.** Every read observes a deadline. A server that opens a literal
-   and then stalls must time out, not block forever.
+3. **No hangs.** Every production network read observes a deadline. A server
+   that opens a literal and then stalls must time out, not block forever.
 4. **No desynchronisation.** A partially consumed body section must either be
    drained or invalidate the connection. Silent desync produces responses
    attributed to the wrong command, which is a correctness *and* a security bug.
@@ -39,7 +40,7 @@ crash, hang, or exhaust the memory of the process using this library.
   is the highest-risk code in the library.
 - Adversarial integration tests: a scripted fake server that sends truncated
   literals, wrong literal lengths, responses for tags never sent, `BYE` mid-
-  command, 10 MB header lines, and unterminated lists.
+  command, 10 MiB header lines, and unterminated lists.
 
 ## Also yours
 

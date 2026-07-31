@@ -66,7 +66,7 @@ selectable.
 
 ### Streaming body sections
 
-`FETCH BODY[]` on a 200 MB message must not buffer. Sections are exposed as
+`FETCH BODY[]` on a 200 MiB message must not buffer. Sections are exposed as
 `io.Reader`. The decoder must enforce that a section is fully drained or
 explicitly discarded before parsing the next response — otherwise the stream
 desynchronises and later responses are attributed to the wrong command.
@@ -76,15 +76,17 @@ desynchronises and later responses are attributed to the wrong command.
 1. **Total.** Any byte sequence returns an error. No panic, no unbounded
    allocation, no hang. Includes integer overflow in literal-length arithmetic.
 2. **Configurable limits**, checked *before* allocating:
-   - max literal size (default 100 MB)
-   - max line length (default 8 KB for non-literal lines)
+   - max literal size (default 256 MiB, large enough for the 200 MiB streaming
+     regression while rejecting multi-gigabyte announcements)
+   - max line length (default 8 KiB for non-literal lines)
    - max list nesting depth (default 100)
    - max untagged responses buffered per command
    A literal announcing `{4294967295}` must be rejected, not attempted.
 3. **Invisible.** Nothing in this package may become reachable from an exported
    signature — checked by T14's API surface test, but design for it now.
-4. **Deadline-aware.** Every read observes a deadline; a server that opens a
-   literal and stalls must time out.
+4. **Deadline-aware.** The decoder supports deadlines on deadline-capable
+   readers, and the production client configures one for every network read; a
+   server that opens a literal and stalls must time out.
 
 ## Testing
 

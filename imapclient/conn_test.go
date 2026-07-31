@@ -203,7 +203,7 @@ func TestStartTLSDiscardsCapabilitiesAndRequeries(t *testing.T) {
 		_, _ = secure.Write([]byte("* CAPABILITY IMAP4rev1 TLSCAP\r\n"))
 		_, _ = secure.Write([]byte(tag + " OK capabilities\r\n"))
 	}()
-	c := NewClient(clientConn, &Options{InsecureSkipVerify: true})
+	c := NewClient(clientConn, &Options{InsecureSkipVerify: true, ReadTimeout: 2 * time.Second})
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -215,6 +215,9 @@ func TestStartTLSDiscardsCapabilitiesAndRequeries(t *testing.T) {
 	}
 	if caps := c.Capabilities(); len(caps) != 0 {
 		t.Fatalf("capabilities after upgrade = %#v", caps)
+	}
+	if got := c.dec.Options().ReadTimeout; got != 2*time.Second {
+		t.Fatalf("post-STARTTLS ReadTimeout = %v, want %v", got, 2*time.Second)
 	}
 	if err := c.requestCapability(ctx); err != nil {
 		t.Fatalf("CAPABILITY after STARTTLS = %v", err)

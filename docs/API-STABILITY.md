@@ -138,8 +138,9 @@ comment. Public structs that only *we* construct are safe.
 ## Versioning policy
 
 - **v0.x** until every task in the board's M0–M4 milestones is complete and the
-  interop matrix is green on Tier 1. Breaking changes allowed, documented in
-  `CHANGELOG.md`.
+  required native interoperability acceptance matrices are green. Harness tiers
+  describe execution expense, not release priority. Breaking changes allowed,
+  documented in `CHANGELOG.md`.
 - **v1.0** freezes the exported API. After it: additive changes only.
 - Removal requires a deprecation notice for at least two minor releases, and
   never lands before v2.

@@ -15,7 +15,7 @@ Runs in parallel with T04 and T05.
 
 - Items use the open-ended T02 `FetchItem` type. Do not add a bool-field struct.
 - **Streaming.** `BODY[]` of a large message is an `io.Reader`, not a `[]byte`.
-  The API must make it *hard* to accidentally buffer 200 MB. Sections must be
+  The API must make it *hard* to accidentally buffer 200 MiB. Sections must be
   drained in order; an undrained section desynchronises the stream (T01 enforces
   this — surface it as a clear error, not a hang).
 - Section specifiers in full: `BODY[]`, `BODY[HEADER]`, `BODY[TEXT]`,
@@ -59,5 +59,5 @@ Mixing them is *the* classic IMAP client bug, and it corrupts data silently.
 ## Done when
 
 Fetch/store/search/append/copy round-trip against Dovecot and GreenMail,
-including a 5 MB message fetched without buffering (assert peak allocation),
+including a 5 MiB message fetched without buffering (assert peak allocation),
 `HEADER.FIELDS` parsing, and a `BODY.PEEK` that provably does not set `\Seen`.

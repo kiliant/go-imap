@@ -36,9 +36,11 @@ Therefore:
 - rev2-specific behaviour activates via `ENABLE IMAP4rev2` (RFC 5161) when the
   server advertises `IMAP4REV2`.
 - Differences the client must absorb rather than expose: rev2 folds `ESEARCH`
-  response syntax into base `SEARCH`, makes `UIDPLUS`/`MOVE`/`LIST-EXTENDED`
-  mandatory, removes `LSUB` and `CHECK`, and changes `STATUS` size semantics.
-  The public API presents the rev2 shape and emulates it on rev1 servers.
+  response syntax into base `SEARCH`; makes `UIDPLUS`, `MOVE`, `LIST-EXTENDED`,
+  `SPECIAL-USE`, `ENABLE`, `IDLE`, `NAMESPACE`, `SASL-IR`, and `BINARY`
+  mandatory; removes `LSUB` and `RECENT`; deprecates `CHECK`; and changes
+  `STATUS` size semantics. The public API presents the rev2 shape and emulates
+  it on rev1 servers where possible.
 
 The cost of retrofitting rev1 support onto a rev2-only client is a breaking
 change to response handling, so this belongs in the foundation.
@@ -63,8 +65,9 @@ API break.
 - **Reader goroutine** owns the decoder. It routes tagged responses to the
   pending-command map and untagged responses to either the in-flight command's
   collector or the connection-level `UnilateralDataHandler`.
-- **Command handles** are returned immediately; `Wait(ctx)` blocks for completion.
-  This makes pipelining expressible without a second API.
+- **Command handles** may be returned after synchronously writing a bounded
+  command prelude; initiation never waits for the server response. `Wait(ctx)`
+  blocks for completion. This makes pipelining expressible without a second API.
 - **State machine**: not-authenticated → authenticated → selected → logout, with
   the state guarded so invalid commands fail locally rather than on the wire.
 - **Continuation requests** (`+`) are handled by the writer for literals,
@@ -73,8 +76,11 @@ API break.
 
 Cancellation: IMAP has no general command-abort. Cancelling an in-flight command
 therefore poisons the connection rather than desynchronising the stream; the
-client closes it and reports `context.Canceled`. `IDLE` is the exception and
-cancels cleanly with `DONE`. This is documented once, in `API-STABILITY.md` §2.
+client closes it and reports `context.Canceled`. `IDLE` cancels cleanly with
+`DONE` only after the server continuation accepts it. Before that continuation,
+normal connection-poisoning cancellation applies; cancelling `WaitReady` alone
+leaves the IDLE command active. This is documented centrally in
+`API-STABILITY.md` §2 and on `IdleCommand`.
 
 ## Parser
 
@@ -84,11 +90,12 @@ that must be consumed exactly, `astring` vs `string` differs by position), and
 error messages from generated parsers are poor.
 
 Requirements:
-- Streaming. `FETCH BODY[]` of a 200 MB message must not buffer in memory; body
+- Streaming. `FETCH BODY[]` of a 200 MiB message must not buffer in memory; body
   sections are exposed as `io.Reader` and the client enforces that a section is
   drained before the next response is parsed.
-- Total. Any byte sequence a hostile server can send returns an `*imap.Error`.
-  No panics. Enforced by fuzzing (task T13).
+- Total. Any byte sequence a hostile server can send returns an error without a
+  panic; the public client boundary surfaces protocol failures as `*imap.Error`.
+  Enforced by fuzzing (task T13).
 - Zero-copy where cheap, but correctness first.
 
 ## Charset and encoding
@@ -106,8 +113,8 @@ Requirements:
 |---|---|---|
 | M0 | wire codec, core types, number sets | fuzz targets green, no network/session layer |
 | M1 | connection, auth, mailbox + message commands, interop harness | Dovecot interop green |
-| M2 | IDLE, ENABLE, capability negotiation, extension groups A+B | Tier-1 matrix green |
-| M3 | extension groups C+D — full IANA coverage | coverage doc has no gaps |
+| M2 | IDLE, ENABLE, capability negotiation, extension groups A+B | M2 acceptance matrix green |
+| M3 | extension groups C+D+E — full IANA coverage | coverage doc has no gaps |
 | M4 | fuzzing, API review, docs, examples | apidiff gate active |
 | **v1.0** | **API freeze** | |
 | M5 | server framework | separate design doc first |

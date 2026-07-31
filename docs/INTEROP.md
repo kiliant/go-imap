@@ -86,7 +86,7 @@ silently-all-skipping matrix is worse, so profiles are asserted.
 
 Every server starts from the same seeded mailbox state so assertions are shared:
 `INBOX` with 10 messages of known structure (plain, multipart/alternative,
-multipart/mixed with attachment, 8-bit headers needing RFC 2047, a 5 MB message
+multipart/mixed with attachment, 8-bit headers needing RFC 2047, a 5 MiB message
 for streaming, one `\Seen`, one `\Flagged`), plus `Archive`, `Sent`, and a
 mailbox with a non-ASCII name to exercise modified-UTF-7 and `UTF8=ACCEPT`.
 

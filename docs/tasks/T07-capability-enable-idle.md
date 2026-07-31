@@ -43,8 +43,9 @@ rev1 servers**. Differences to absorb:
 
 ## IDLE (RFC 2177)
 
-- The one command with a clean cancellation path (`DONE`) — contrast with the
-  connection-poisoning cancel documented in T03.
+- The one command with a clean cancellation path (`DONE`) after the server has
+  sent its continuation. Before that continuation, cancellation follows T03 and
+  poisons the connection; cancelling only `WaitReady` leaves IDLE active.
 - **Re-issue before the 29-minute limit** the RFC recommends; many servers and
   more middleboxes drop idle connections sooner. Make the interval configurable
   with a sane default (~25 min) and handle the re-issue transparently.

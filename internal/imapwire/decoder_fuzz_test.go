@@ -352,7 +352,7 @@ func TestStalledLiteralObservesReadDeadline(t *testing.T) {
 
 func TestTwoHundredMegabyteLiteralStreamsWithFlatAllocation(t *testing.T) {
 	if testing.Short() {
-		t.Skip("200 MB streaming regression")
+		t.Skip("200 MiB streaming regression")
 	}
 	const size = int64(200 << 20)
 	stream := io.MultiReader(

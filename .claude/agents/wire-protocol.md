@@ -32,7 +32,7 @@ depends on position), which is why.
    an error, never a panic, never an unbounded allocation, never a hang. A
    literal announcing `{4294967295}` must be rejected against a configured limit
    before allocating.
-3. **Streaming.** `FETCH BODY[]` of a 200 MB message must not buffer. Body
+3. **Streaming.** `FETCH BODY[]` of a 200 MiB message must not buffer. Body
    sections are `io.Reader`s; the decoder must enforce that a section is fully
    drained (or explicitly discarded) before the next response is parsed,
    otherwise the stream desynchronises.

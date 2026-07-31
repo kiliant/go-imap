@@ -16,7 +16,8 @@ shape every later task copies, so your API mistakes are the expensive ones. Read
 - Greeting handling: `OK`, `PREAUTH`, `BYE`, with the capability list that
   servers often include in the greeting
 - Reader goroutine that demultiplexes tagged vs untagged responses
-- Command handles: issued immediately, `Wait(ctx)` blocks for completion
+- Command handles: initiation may synchronously write a bounded command prelude
+  but never waits for a response; `Wait(ctx)` blocks for completion
 - Connection state machine: not-authenticated → authenticated → selected →
   logout, rejecting invalid commands locally rather than on the wire
 - `UnilateralDataHandler` as a struct of function fields — never an interface, so
@@ -42,8 +43,9 @@ is in flight. Document the rule you implement.
 
 IMAP has no general command-abort. Cancelling an in-flight command **poisons the
 connection**: close it and return `context.Canceled` rather than desynchronising
-the stream. `IDLE` is the only clean cancel (`DONE`, handled in T07). Write this
-into the package doc; later tasks must not re-litigate it per command.
+the stream. `IDLE` can cancel cleanly with `DONE` only after its continuation
+(`DONE` handling lands in T07). Write this into the package doc; later tasks must
+not re-litigate it per command.
 
 ## Security defaults
 

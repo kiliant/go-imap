@@ -63,7 +63,7 @@ type Options struct {
 	// MaxUntaggedPerCommand is advisory; see [DefaultMaxUntaggedPerCommand].
 	MaxUntaggedPerCommand int
 
-	// ReadTimeout, if non-zero, is applied as a read deadline before every
+	// ReadTimeout, if non-zero, keeps an active read deadline on every
 	// underlying read, provided the reader implements
 	//
 	//	interface{ SetReadDeadline(time.Time) error }

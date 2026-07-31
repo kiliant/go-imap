@@ -6,6 +6,10 @@
 
 ## CI (GitHub Actions)
 
+T13 establishes and records the fuzz/hardening checks locally. T15 owns their
+CI automation after T13 completes, avoiding a dependency from T13 on files that
+only T15 may change.
+
 | Job | Runs |
 |---|---|
 | `test` | `go test -race ./...` on the two most recent Go majors, linux + macOS |

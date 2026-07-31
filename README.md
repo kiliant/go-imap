@@ -1,7 +1,7 @@
 # go-imap
 
-A complete IMAP client library for Go, built to reach a stable v1.0 quickly and
-stay there.
+An IMAP client library for Go, designed to reach complete capability coverage
+and a stable v1.0 without freezing extension-hostile APIs.
 
 ```
 import "github.com/kiliant/go-imap/imapclient"
@@ -9,8 +9,10 @@ import "github.com/kiliant/go-imap/imapclient"
 
 > **Status: early development.** The wire codec, core protocol vocabulary,
 > connection/session layer, authentication, base mailbox and message commands,
-> and interoperability harness are implemented and verified across the native
-> server matrix. Extension support remains in progress. See `docs/ROADMAP.md`.
+> capability negotiation, ENABLE, IDLE, the interoperability harness, and the
+> deterministic adversarial-hardening regressions are implemented. Extension
+> coverage and long-run/release verification remain in progress. See
+> `docs/ROADMAP.md`.
 
 ## Why another one
 

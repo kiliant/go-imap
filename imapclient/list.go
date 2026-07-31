@@ -137,7 +137,7 @@ func (c *Client) list(name, reference, pattern string, options *ListOptions) *Li
 		if len(returns) != 0 {
 			enc.SP().Atom("RETURN").SP().List(len(returns), func(i int) { enc.Atom(returns[i]) })
 		}
-	}, listCollector(&data))
+	}, listCollector(name, &data, c.maxUntaggedResponses()))
 	return &ListCommand{Command: cmd, data: &data}
 }
 
@@ -166,7 +166,8 @@ func listArguments(pattern string, options *ListOptions) ([]string, []string, []
 	return patterns, selection, returns, nil
 }
 
-func listCollector(data *[]*ListData) commandCollector {
+func listCollector(name string, data *[]*ListData, limit int) commandCollector {
+	count := 0
 	return func(resp *untaggedResponse) (bool, error) {
 		if resp.name != "LIST" && resp.name != "LSUB" {
 			return false, nil
@@ -176,6 +177,9 @@ func listCollector(data *[]*ListData) commandCollector {
 				return true, resp.dec.Err()
 			}
 			return false, nil
+		}
+		if err := countUntaggedResponse(&count, limit, name); err != nil {
+			return true, err
 		}
 		var rawAttrs []string
 		if err := resp.dec.ExpectFlagList(&rawAttrs); err != nil {

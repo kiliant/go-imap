@@ -102,6 +102,7 @@ func (c *Client) search(name string, criteria imap.SearchCriteria, options *Sear
 		clear = c.setContinuation(func(string) error { continued <- struct{}{}; return nil })
 		caps = c.Capabilities()
 	}
+	untaggedCount := 0
 	sc.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
 		if needsLiteral {
 			defer clear()
@@ -118,6 +119,9 @@ func (c *Client) search(name string, criteria imap.SearchCriteria, options *Sear
 	}, func(resp *untaggedResponse) (bool, error) {
 		if resp.name != "SEARCH" || resp.hasNum {
 			return false, nil
+		}
+		if err := countUntaggedResponse(&untaggedCount, c.maxUntaggedResponses(), name); err != nil {
+			return true, err
 		}
 		for resp.dec.SP() {
 			var n uint32

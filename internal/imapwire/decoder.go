@@ -72,19 +72,25 @@ type deadlineSetter interface {
 	SetReadDeadline(t time.Time) error
 }
 
-// timeoutReader refreshes the read deadline before every underlying read, so
-// that a server which announces a literal and then stalls cannot block the
-// reader goroutine forever. It sits below the bufio.Reader, which means the
-// deadline covers buffer refills rather than individual token reads.
+// timeoutReader keeps an active read deadline on every underlying read, so that
+// a server which announces a literal and then stalls cannot block the reader
+// goroutine forever. It refreshes the deadline after half the timeout has
+// elapsed; refreshing on every small buffer refill would allocate a network
+// timer per chunk during a large streaming literal.
 type timeoutReader struct {
-	r       io.Reader
-	setter  deadlineSetter
-	timeout time.Duration
+	r        io.Reader
+	setter   deadlineSetter
+	timeout  time.Duration
+	deadline time.Time
 }
 
 func (t *timeoutReader) Read(p []byte) (int, error) {
-	if err := t.setter.SetReadDeadline(time.Now().Add(t.timeout)); err != nil {
-		return 0, err
+	now := time.Now()
+	if t.deadline.IsZero() || !now.Add(t.timeout/2).Before(t.deadline) {
+		t.deadline = now.Add(t.timeout)
+		if err := t.setter.SetReadDeadline(t.deadline); err != nil {
+			return 0, err
+		}
 	}
 	return t.r.Read(p)
 }

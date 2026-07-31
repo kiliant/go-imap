@@ -8,11 +8,13 @@
 //
 // # Concurrency
 //
-// Commands are pipelined. A command method returns a handle immediately; its
-// Wait method blocks for completion. A single reader goroutine demultiplexes
-// tagged completions from unsolicited untagged data. A command-specific
-// collector gets first refusal of an untagged response; responses no collector
-// claims are delivered to the connection's UnilateralDataHandler.
+// Commands are pipelined. A command method may synchronously write a bounded
+// command prelude before returning its handle; it does not wait for the server
+// response. Its Wait method blocks for completion. A single reader goroutine
+// demultiplexes tagged completions from unsolicited untagged data. A
+// command-specific collector gets first refusal of an untagged response;
+// responses no collector claims are delivered to the connection's
+// UnilateralDataHandler.
 //
 // # Cancellation
 //

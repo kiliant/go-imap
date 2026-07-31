@@ -32,8 +32,10 @@ selected, searched, fetched and appended to.
 ENABLE, CAPABILITY handling, IDLE, IMAP4rev2 activation, then extension groups A
 and B.
 
-**Exit:** Tier-1 matrix (Dovecot, Stalwart, GreenMail) green; CONDSTORE/QRESYNC
-resynchronisation verified against two independent servers.
+**Exit:** the M2 acceptance matrix (Dovecot, Stalwart, GreenMail) is green;
+CONDSTORE/QRESYNC resynchronisation is verified against two independent servers.
+This acceptance set is independent of the harness expense tiers in
+`docs/INTEROP.md`.
 
 ## M3 — Full coverage (T10, T11)
 
