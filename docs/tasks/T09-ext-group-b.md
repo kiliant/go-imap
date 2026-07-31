@@ -1,7 +1,6 @@
 # T09 — Extensions group B: synchronisation & identity
 
-**Agent:** `extensions` · **Milestone:** M2 · **Depends on:** T07 ·
-**Status:** blocked
+**Agent:** `extensions` · **Milestone:** M2 · **Depends on:** T07
 
 **Owns:** `imapclient/ext_b_*.go`
 

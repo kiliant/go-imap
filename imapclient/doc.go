@@ -10,8 +10,9 @@
 //
 // Commands are pipelined. A command method returns a handle immediately; its
 // Wait method blocks for completion. A single reader goroutine demultiplexes
-// tagged completions from unsolicited untagged data, the latter being delivered
-// to the connection's UnilateralDataHandler.
+// tagged completions from unsolicited untagged data. A command-specific
+// collector gets first refusal of an untagged response; responses no collector
+// claims are delivered to the connection's UnilateralDataHandler.
 //
 // # Cancellation
 //
@@ -22,5 +23,7 @@
 //
 // # Status
 //
-// Pre-alpha. Not yet implemented — see docs/ROADMAP.md.
+// The connection/session layer is implemented. Authentication, mailbox and
+// message commands, and extension support are still under active development;
+// see docs/ROADMAP.md.
 package imapclient

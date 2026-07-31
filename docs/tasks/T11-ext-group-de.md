@@ -1,7 +1,6 @@
 # T11 — Extensions groups D+E: administrative, server-side, legacy
 
-**Agent:** `extensions` · **Milestone:** M3 · **Depends on:** T08 ·
-**Status:** blocked
+**Agent:** `extensions` · **Milestone:** M3 · **Depends on:** T08
 
 **Owns:** `imapclient/ext_d_*.go`, `imapclient/ext_e_*.go`
 

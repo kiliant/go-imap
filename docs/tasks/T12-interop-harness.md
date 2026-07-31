@@ -1,7 +1,6 @@
 # T12 — Interop harness
 
-**Agent:** `interop-harness` · **Milestone:** M1 · **Depends on:** T03 ·
-**Status:** blocked
+**Agent:** `interop-harness` · **Milestone:** M1 · **Depends on:** T03
 
 **Owns:** `interop/**`, plus write access to `internal/imapwire/testdata/**` for
 captured golden responses
@@ -14,16 +13,19 @@ arrives after the code it was meant to validate has no value.
 Host is darwin/arm64 with **podman**; there is no `docker` binary. Probed
 2026-07-31:
 
-- arm64-native: `dovecot/dovecot`, `stalwartlabs/stalwart`, `greenmail/standalone`
-- amd64-only: `apache/james:demo-3.8.2` → Tier 3, emulated, opt-in
-- No maintained Cyrus or Courier image exists. Build both from Debian packages in
-  `interop/servers/<name>/Containerfile` — arm64-native and reproducible.
+- arm64-native images: `docker.io/dovecot/dovecot:2.4.3` and
+  `docker.io/greenmail/standalone:2.1.9`
+- arm64-native local builds: `interop/servers/stalwart/Containerfile`,
+  `interop/servers/cyrus/Containerfile`, and `interop/servers/courier/Containerfile`
+- amd64-only: `docker.io/apache/james:demo-3.8.2` → emulated, opt-in
+- No maintained Cyrus or Courier image exists. Their local build contexts are
+  reproducible and arm64-native.
 
 ## Deliverables
 
 1. `interop/harness/` — container lifecycle over the `podman` CLI (no SDK; zero
-   dependencies applies to test code too), readiness polling, per-package
-   start/stop in `TestMain`.
+   dependencies applies to test code too), readiness polling, and lifecycle
+   ownership by each harness-backed package's `TestMain`.
 2. `interop/servers/<name>/` — `Containerfile` or pinned image reference, server
    config provisioning `interop@example.test` / `interop-pw`, and `profile.go`
    with the expected capability list.
@@ -58,6 +60,15 @@ Both halves are required. Neither alone is sufficient.
 
 ## Done when
 
-`go test -race -tags=interop ./interop/...` brings up all Tier-1 and Tier-2
-servers, seeds fixtures, runs the T03 smoke test against each, and reports a
-per-server capability table. Cold-start time under 3 minutes, warm under 30 s.
+Run the following commands sequentially:
+
+```bash
+go test -count=1 -race -tags=interop ./imapclient
+go test -count=1 -race -tags=interop ./interop/...
+```
+
+They bring up all native servers, seed fixtures, run the production-client and
+smoke tests against each, and report a per-server capability table. Each package
+with a harness `TestMain` gets an independent lifecycle, so combining these
+package lists can collide on container names. Cold-start time under 3 minutes,
+warm under 30 s.

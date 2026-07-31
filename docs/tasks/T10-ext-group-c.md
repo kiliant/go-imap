@@ -1,7 +1,6 @@
 # T10 — Extensions group C: content & structure
 
-**Agent:** `extensions` · **Milestone:** M3 · **Depends on:** T08 ·
-**Status:** blocked
+**Agent:** `extensions` · **Milestone:** M3 · **Depends on:** T08
 
 **Owns:** `imapclient/ext_c_*.go`
 

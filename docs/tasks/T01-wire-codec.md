@@ -1,7 +1,6 @@
 # T01 — Wire codec
 
-**Agent:** `wire-protocol` · **Milestone:** M0 · **Depends on:** nothing ·
-**Status:** ready
+**Agent:** `wire-protocol` · **Milestone:** M0 · **Depends on:** nothing
 
 **Owns:** `internal/imapwire/**`
 
@@ -26,7 +25,7 @@ these primitives in `imapclient`, and lands with the task that owns the
 corresponding types. This keeps the dependency graph acyclic and keeps T01 and
 T02 genuinely parallel: neither needs the other's output to compile.
 
-### Lexer / decoder (`decoder.go`, `lexer.go`)
+### Lexer / decoder (`decoder.go`, `chars.go`, `literal.go`, `resp.go`)
 
 RFC 3501 §9 formal syntax as the baseline, plus the RFC 9051 §9 additions.
 Primitive productions required:
@@ -91,8 +90,9 @@ desynchronises and later responses are attributed to the wrong command.
 
 - Table-driven tests per production, malformed cases included.
 - Round-trip: `encode(decode(x)) == x` over the seed corpus.
-- `FuzzDecoder`, `FuzzUTF7`, `FuzzBodyStructure` with a seed corpus in
-  `testdata/`. Every bug fixed adds its input to the corpus.
+- `FuzzDecoder`, `FuzzUTF7`, `FuzzDecoderBodySection` with a seed corpus in
+  `testdata/`. Every bug fixed adds its input to the corpus. Semantic body
+  structure decoding and its fuzzing belong to T06/T13.
 - Golden files from real servers once T12 lands — prefer these over hand-written
   examples, because servers do things the RFC does not suggest.
 

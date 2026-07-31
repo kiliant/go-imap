@@ -1,7 +1,6 @@
 # T16 — Server framework (design first)
 
-**Agent:** TBD · **Milestone:** M5 · **Depends on:** v1.0 tagged ·
-**Status:** blocked
+**Agent:** TBD · **Milestone:** M5 · **Depends on:** v1.0 tagged
 
 **Owns:** `docs/SERVER-DESIGN.md` initially. No code until the design is approved.
 

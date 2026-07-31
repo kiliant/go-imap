@@ -1,15 +1,3 @@
-// Package imapclient implements an IMAP4rev1 and IMAP4rev2 client.
-//
-// Commands are pipelined: methods that issue a command return a [Command]
-// immediately, and [Command.Wait] waits for its tagged completion. One reader
-// goroutine owns response parsing and dispatches unsolicited mailbox updates to
-// [UnilateralDataHandler]. A command-specific collector gets first refusal of
-// an untagged response; responses no collector claims are connection-scoped.
-//
-// IMAP has no general command abort. Cancelling [Command.Wait] after its
-// command is on the wire closes and invalidates the connection rather than
-// leaving the stream desynchronised. IDLE is the one protocol exception and
-// has its own clean cancellation path.
 package imapclient
 
 import (
@@ -44,12 +32,14 @@ type Options struct {
 	// valid. Its callbacks run on the reader goroutine and must not block.
 	UnilateralData *UnilateralDataHandler
 
-	// DebugWriter receives a redacted, line-oriented protocol trace. Credentials
-	// and authentication challenges are never written to it.
+	// DebugWriter receives a serialized, redacted protocol summary. It is not a
+	// byte-for-byte wire trace; credentials and authentication challenges are
+	// never written to it.
 	DebugWriter io.Writer
 
-	// Trace receives redacted protocol trace events. It is called synchronously
-	// by the reader or writer goroutine and must not block.
+	// Trace receives serialized, redacted protocol-summary events. It is not a
+	// byte-for-byte wire trace. It is called synchronously by the reader or
+	// writer goroutine and must not block.
 	Trace func(TraceEvent)
 }
 
@@ -64,13 +54,15 @@ const (
 	TraceServer TraceDirection = "server"
 )
 
-// TraceEvent is one redacted protocol trace event.
+// TraceEvent is one redacted protocol-summary event, not raw wire data.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type TraceEvent struct {
+	// Direction identifies the endpoint that produced this summary.
 	Direction TraceDirection
-	Data      string
-	_         struct{}
+	// Data is the redacted protocol summary, not raw wire bytes.
+	Data string
+	_    struct{}
 }
 
 // UnilateralDataHandler receives untagged data that no in-flight command
@@ -79,11 +71,15 @@ type TraceEvent struct {
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type UnilateralDataHandler struct {
-	Exists  func(numMessages uint32)
+	// Exists receives the updated message count for the selected mailbox.
+	Exists func(numMessages uint32)
+	// Expunge receives the sequence number removed from the selected mailbox.
 	Expunge func(seqNum uint32)
-	Recent  func(numRecent uint32)
-	Fetch   func(data *imap.FetchMessageData)
-	_       struct{}
+	// Recent receives the updated count of recent messages.
+	Recent func(numRecent uint32)
+	// Fetch receives an unsolicited FETCH update, currently flag updates.
+	Fetch func(data *imap.FetchMessageData)
+	_     struct{}
 }
 
 // Client is an IMAP session. Its zero value is not usable; obtain one with
@@ -333,8 +329,9 @@ func (c *Client) beginCommand(name string, allowed stateMask, write func(*imapwi
 		return cmd
 	}
 	// The trace deliberately contains only the tag and command name. This is a
-	// useful wire trace while making LOGIN/AUTHENTICATE credential disclosure
-	// impossible even if a future caller supplies their arguments via write.
+	// useful protocol summary while making LOGIN/AUTHENTICATE credential
+	// disclosure impossible even if a future caller supplies their arguments via
+	// write.
 	c.trace(TraceClient, cmd.tag+" "+strings.ToUpper(name))
 	return cmd
 }

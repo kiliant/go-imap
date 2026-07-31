@@ -1,7 +1,6 @@
 # T08 — Extensions group A: core modern
 
-**Agent:** `extensions` · **Milestone:** M2 · **Depends on:** T07 ·
-**Status:** blocked
+**Agent:** `extensions` · **Milestone:** M2 · **Depends on:** T07
 
 **Owns:** `imapclient/ext_a_*.go`
 

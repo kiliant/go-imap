@@ -1,7 +1,6 @@
 # T03 — Connection & session
 
-**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T01, T02 ·
-**Status:** blocked
+**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T01, T02
 
 **Owns:** `imapclient/client.go`, `imapclient/conn.go`, `imapclient/state.go`
 

@@ -22,7 +22,8 @@ ever leaves beta.
 ## Review procedure
 
 1. Get the exported surface of the diff:
-   `go doc -all ./... ` and `git diff` — look only at exported symbols.
+   `go doc -all .; go doc -all ./imapclient` and `git diff` — look only at
+   exported symbols.
 2. For each new or changed exported symbol, check it against the seven rules in
    `docs/API-STABILITY.md`.
 3. For each, name a concrete future RFC that stresses it. If you cannot think of
@@ -41,7 +42,7 @@ ever leaves beta.
 - A new exported interface without an unexported marker method.
 - Any `internal/` type reachable from an exported signature, including as an
   embedded field or an opaque return. Check with:
-  `go doc -all ./... | grep -i 'imapwire\|imapnum\|imapsasl'`
+  `(go doc -all .; go doc -all ./imapclient) | grep -i 'imapwire\|imapnum\|imapsasl'`
 - A new error type instead of a new `ResponseCode` constant.
 - An exported struct that callers construct, lacking the keyed-literal doc note.
 

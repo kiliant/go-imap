@@ -1,7 +1,6 @@
 # T06 — Message commands
 
-**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03 ·
-**Status:** blocked
+**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03
 
 **Owns:** `imapclient/fetch.go`, `store.go`, `search.go`, `append.go`, `copy.go`
 

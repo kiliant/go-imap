@@ -43,14 +43,19 @@ are compiled by `go test`, so they cannot rot silently.
 
 ## Release checklist
 
-1. `go test ./...` and `go test -race -tags=interop ./interop/...` green
+1. `go test ./...` plus these sequential interop runs green:
+   `go test -count=1 -race -tags=interop ./imapclient`, then
+   `go test -count=1 -race -tags=interop ./interop/...`. Keep them separate:
+   independent package `TestMain` harness lifecycles can otherwise collide on
+   generated container names.
 2. `go vet ./...`, `staticcheck ./...` clean
 3. `apidiff` reviewed against the previous tag
 4. `docs/RFC-COVERAGE.md` statuses match reality — spot-check three rows against
    the code rather than trusting the table
 5. CHANGELOG updated, examples compile
-6. Tag, then verify `go install github.com/kiliant/go-imap@<tag>` from a clean
-   module cache
+6. Tag, then from a clean temporary consumer module run `go mod init`,
+   `go get github.com/kiliant/go-imap@<tag>`, and compile and test a small
+   import of the library
 
 Do not mark a coverage row `verified` on the strength of unit tests. `verified`
 means exercised against two independent servers in the interop matrix.

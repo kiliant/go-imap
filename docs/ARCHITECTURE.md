@@ -104,8 +104,8 @@ Requirements:
 
 | Milestone | Content | Exit criterion |
 |---|---|---|
-| M0 | wire codec, core types, number sets | fuzz targets green, no I/O |
-| M1 | connection, auth, mailbox + message commands | Dovecot interop green |
+| M0 | wire codec, core types, number sets | fuzz targets green, no network/session layer |
+| M1 | connection, auth, mailbox + message commands, interop harness | Dovecot interop green |
 | M2 | IDLE, ENABLE, capability negotiation, extension groups A+B | Tier-1 matrix green |
 | M3 | extension groups C+D — full IANA coverage | coverage doc has no gaps |
 | M4 | fuzzing, API review, docs, examples | apidiff gate active |

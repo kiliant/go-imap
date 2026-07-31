@@ -17,13 +17,15 @@ Read `docs/INTEROP.md` first.
 Host is darwin/arm64 with **podman** (no Docker binary; do not write `docker`
 commands). Probed 2026-07-31:
 
-- arm64-native: `dovecot/dovecot`, `stalwartlabs/stalwart`, `greenmail/standalone`
-- amd64-only: `apache/james:demo-3.8.2` → Tier 3, emulated, opt-in behind
-  `-tags='interop interop_emulated'`
+- arm64-native pinned images: `docker.io/dovecot/dovecot:2.4.3` and
+  `docker.io/greenmail/standalone:2.1.9`
+- arm64-native local builds: `interop/servers/stalwart/Containerfile`,
+  `interop/servers/cyrus/Containerfile`, and `interop/servers/courier/Containerfile`
+- amd64-only pinned image: `docker.io/apache/james:demo-3.8.2` → Tier 3,
+  emulated, opt-in behind `-tags='interop interop_emulated'`
 - No maintained Cyrus or Courier image exists — the Docker Hub ones are
-  unmaintained third-party builds. Build both from Debian packages in
-  `interop/servers/<name>/Containerfile`. This is arm64-native and reproducible,
-  which is worth the extra build step.
+  unmaintained third-party builds. Their local build contexts are arm64-native
+  and reproducible.
 
 Shell out to the `podman` CLI. No container SDK — this module has zero
 dependencies, test code included.
@@ -45,9 +47,8 @@ the matrix permanently red.
 **Isolation.** Each test gets a unique mailbox namespace or a fresh container.
 Tests must be safe to run in parallel and must not depend on execution order.
 
-**Determinism.** Pin image tags — never `:latest` in committed code, despite the
-probe commands above using it. Wait for readiness by polling the IMAP greeting
-with a timeout, never `sleep`.
+**Determinism.** Pin image tags — never `:latest` in committed code. Wait for
+readiness by polling the IMAP greeting with a timeout, never `sleep`.
 
 **Diagnosis.** On failure, dump the server-side log and the client wire trace.
 An interop failure that cannot be diagnosed from CI output will be ignored, and

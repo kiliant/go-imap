@@ -1,7 +1,6 @@
 # T07 — CAPABILITY, ENABLE, IDLE, IMAP4rev2
 
-**Agent:** `client-core` · **Milestone:** M2 · **Depends on:** T05, T06 ·
-**Status:** blocked
+**Agent:** `client-core` · **Milestone:** M2 · **Depends on:** T05, T06
 
 **Owns:** `imapclient/capability.go`, `enable.go`, `idle.go`
 

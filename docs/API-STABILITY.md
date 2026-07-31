@@ -87,9 +87,10 @@ a struct of function fields:
 
 ```go
 type UnilateralDataHandler struct {
-    Expunge  func(seqNum uint32)
-    Mailbox  func(data *MailboxData)
-    Fetch    func(msg *FetchMessageData)
+    Exists  func(numMessages uint32)
+    Expunge func(seqNum uint32)
+    Recent  func(numRecent uint32)
+    Fetch   func(data *imap.FetchMessageData)
     // A new unsolicited-response RFC adds a field here. Not a break.
 }
 ```
@@ -98,10 +99,12 @@ type UnilateralDataHandler struct {
 
 ```go
 type Error struct {
-    Type ErrorType  // BAD, NO, BYE, protocol violation, ...
-    Code ResponseCode // e.g. "AUTHENTICATIONFAILED", "OVERQUOTA", "TRYCREATE"
-    Text string
-    Tag  string
+    Type     ErrorType    // NO, BAD, BYE, protocol violation, ...
+    Code     ResponseCode // e.g. "AUTHENTICATIONFAILED", "OVERQUOTA", "TRYCREATE"
+    CodeArgs string       // raw response-code arguments
+    Text     string
+    Tag      string
+    Err      error        // optional underlying protocol/parser cause
 }
 ```
 

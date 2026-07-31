@@ -14,9 +14,9 @@ least two independent servers in the interop matrix).
 
 | Capability | RFC | Task | Status |
 |---|---|---|---|
-| IMAP4REV1 | 3501 | T01,T02,T05,T06 | planned |
+| IMAP4REV1 | 3501 | T01,T02,T05,T06 | in progress |
 | IMAP4REV2 | 9051 | T07 | planned |
-| STARTTLS | 3501, 9051 | T03 | planned |
+| STARTTLS | 3501, 9051 | T03 | done |
 | LOGINDISABLED | 3501, 9051 | T04 | planned |
 | AUTH= | 3501, 9051 | T04 | planned |
 | SASL-IR | 4959 | T04 | planned |
@@ -25,8 +25,8 @@ least two independent servers in the interop matrix).
 | ID | 2971 | T08 | planned |
 | NAMESPACE | 2342 | T05 | planned |
 | UNSELECT | 3691 | T05 | planned |
-| LITERAL+ | 7888 | T01 | planned |
-| LITERAL- | 7888 | T01 | planned |
+| LITERAL+ | 7888 | T01 | done |
+| LITERAL- | 7888 | T01 | done |
 
 ## Group A — core modern (task T08)
 
@@ -122,16 +122,16 @@ break the client; full command support is best-effort.
 
 ## Not in the registry but required
 
-| Item | RFC | Task | Note |
-|---|---|---|---|
-| Response codes | 5530 | T02 | ~20 codes; `ResponseCode` must stay open |
-| SCRAM-SHA-1/-256 | 5802, 7677 | T04 | SASL |
-| SCRAM-SHA-*-PLUS | 5802, 7677 | T04 | channel binding to TLS exporter |
-| OAUTHBEARER | 7628 | T04 | |
-| XOAUTH2 | — | T04 | de-facto, Gmail/Outlook |
-| PLAIN | 4616 | T04 | |
-| CRAM-MD5 | 2195 | T04 | legacy, still common |
-| MIME header encoding | 2047, 2231 | T02 | envelope decoding |
+| Item | RFC | Task | Status | Note |
+|---|---|---|---|---|
+| Response codes | 5530 | T02 | done | ~20 codes; `ResponseCode` must stay open |
+| SCRAM-SHA-1/-256 | 5802, 7677 | T04 | planned | SASL |
+| SCRAM-SHA-*-PLUS | 5802, 7677 | T04 | planned | channel binding to TLS exporter |
+| OAUTHBEARER | 7628 | T04 | planned | |
+| XOAUTH2 | — | T04 | planned | de-facto, Gmail/Outlook |
+| PLAIN | 4616 | T04 | planned | |
+| CRAM-MD5 | 2195 | T04 | planned | legacy, still common |
+| MIME header encoding | 2047, 2231 | T02 | done | envelope decoding |
 
 ## Watch list
 

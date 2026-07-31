@@ -1,7 +1,6 @@
 # T04 — Authentication & SASL
 
-**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03 ·
-**Status:** blocked
+**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03
 
 **Owns:** `imapclient/auth.go`, `internal/imapsasl/**`
 

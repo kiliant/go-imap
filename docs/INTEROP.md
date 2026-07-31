@@ -12,7 +12,25 @@ than using a container SDK, to keep the dependency count at zero.
 
 ```bash
 podman machine start                       # once
-go test -race -tags=interop ./interop/...
+go test -count=1 -race -tags=interop ./imapclient
+go test -count=1 -race -tags=interop ./interop/...
+```
+
+The first command names `./imapclient` explicitly so interop-tagged
+production-client tests run. The commands must remain separate and sequential:
+Go builds and runs one test process per package, and every process with a
+`TestMain` using the harness owns an independent container lifecycle. Combining
+the package lists can start those lifecycles concurrently and collide on
+container names. The current smoke package is one such harness-backed package;
+keep future package invocations separate too.
+
+By default the harness starts every native profile. Restrict a local run to a
+comma-separated subset when iterating, for example:
+
+```bash
+export GO_IMAP_INTEROP_SERVERS=dovecot,greenmail
+go test -count=1 -race -tags=interop ./imapclient
+go test -count=1 -race -tags=interop ./interop/...
 ```
 
 ## Server matrix
@@ -21,18 +39,19 @@ Probed on darwin/arm64, 2026-07-31.
 
 | Server | Image | Arch | Tier | Why it is in the matrix |
 |---|---|---|---|---|
-| Dovecot | `docker.io/dovecot/dovecot` | arm64 native | 1 | The most deployed IMAP server; the de-facto conformance reference |
-| Stalwart | `docker.io/stalwartlabs/stalwart` | arm64 native | 1 | Modern, aggressive RFC coverage incl. IMAP4rev2, OBJECTID, PARTIAL |
-| GreenMail | `docker.io/greenmail/standalone` | arm64 native | 1 | Deliberately minimal — catches assumptions about optional capabilities |
-| Cyrus IMAP | built from Debian packages, `servers/cyrus/Containerfile` | arm64 native | 2 | Large independent codebase; the ANNOTATE/METADATA and ACL reference |
-| Courier | built from Debian packages, `servers/courier/Containerfile` | arm64 native | 2 | Older, quirky, rev1-only — the compatibility canary |
+| Dovecot | `docker.io/dovecot/dovecot:2.4.3` | arm64 native | 1 | The most deployed IMAP server; the de-facto conformance reference |
+| Stalwart | local build: `interop/servers/stalwart/Containerfile` | arm64 native | 1 | Modern, aggressive RFC coverage incl. IMAP4rev2, OBJECTID, PARTIAL |
+| GreenMail | `docker.io/greenmail/standalone:2.1.9` | arm64 native | 1 | Deliberately minimal — catches assumptions about optional capabilities |
+| Cyrus IMAP | local build: `interop/servers/cyrus/Containerfile` | arm64 native | 2 | Large independent codebase; the ANNOTATE/METADATA and ACL reference |
+| Courier | local build: `interop/servers/courier/Containerfile` | arm64 native | 2 | Older, quirky, rev1-only — the compatibility canary |
 | Apache James | `docker.io/apache/james:demo-3.8.2` | **amd64 only** | 3 | JVM implementation, different bug class |
 
-**Tier 1** runs by default. **Tier 2** is built locally on first run (slower, so
-cached). **Tier 3** requires emulation and is opt-in:
+Tiers 1 and 2 run by default; local build contexts are cached by the container
+runtime. Tier 3 (Apache James) requires emulation and is opt-in:
 
 ```bash
-go test -tags='interop interop_emulated' ./interop/...
+go test -count=1 -race -tags='interop interop_emulated' ./imapclient
+go test -count=1 -race -tags='interop interop_emulated' ./interop/...
 ```
 
 There is no maintained Cyrus container image — the ones on Docker Hub are
@@ -56,7 +75,7 @@ silently-all-skipping matrix is worse, so profiles are asserted.
 
 ## Adding a server
 
-1. `interop/servers/<name>/Containerfile` (or an image reference) plus config
+1. `interop/servers/<name>/Containerfile` (or a pinned image reference) plus config
    that provisions a known account: `interop@example.test` / `interop-pw`.
 2. `profile.go` with the expected capability list.
 3. Register in `interop/harness/registry.go`.

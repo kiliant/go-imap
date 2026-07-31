@@ -1,7 +1,6 @@
 # T13 — Fuzzing & hardening
 
-**Agent:** `fuzz-hardening` · **Milestone:** M4 · **Depends on:** T01, T12 ·
-**Status:** blocked
+**Agent:** `fuzz-hardening` · **Milestone:** M4 · **Depends on:** T01, T12
 
 **Owns:** `**/*_fuzz_test.go`, `internal/imapwire/testdata/**`,
 `interop/harness/adversarial/**`

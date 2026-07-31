@@ -1,7 +1,7 @@
 # T14 — API review, documentation & examples
 
 **Agent:** `docs-release` with `api-guardian` · **Milestone:** M4 ·
-**Depends on:** T10, T11 · **Status:** blocked
+**Depends on:** T10, T11
 
 **Owns:** doc comments across `**/*.go`, `examples/**`, `api_surface_test.go`
 
@@ -62,7 +62,8 @@ In `examples/` as runnable programs, and as `Example` functions in
 
 ## Done when
 
-`api_surface_test.go` passes. `go doc -all ./...` reads as a coherent whole.
-Examples compile and run against the interop matrix. `api-guardian` issues a
+`api_surface_test.go` passes. `go list ./... | xargs -n1 go doc -all` reads as
+a coherent whole. Examples compile and run against the interop matrix.
+`api-guardian` issues a
 written `APPROVED` for the v1.0 freeze in `.state/progress/T14.md` — that sign-off is
 the gate for tagging.

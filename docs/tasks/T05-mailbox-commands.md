@@ -1,7 +1,6 @@
 # T05 — Mailbox commands
 
-**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03 ·
-**Status:** blocked
+**Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03
 
 **Owns:** `imapclient/select.go`, `list.go`, `status.go`, `namespace.go`
 

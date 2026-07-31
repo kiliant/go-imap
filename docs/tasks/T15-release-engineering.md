@@ -1,7 +1,6 @@
 # T15 — Release engineering
 
-**Agent:** `docs-release` · **Milestone:** M4 · **Depends on:** T13, T14 ·
-**Status:** blocked
+**Agent:** `docs-release` · **Milestone:** M4 · **Depends on:** T13, T14
 
 **Owns:** `.github/**`, `CHANGELOG.md`
 
@@ -11,8 +10,8 @@
 |---|---|
 | `test` | `go test -race ./...` on the two most recent Go majors, linux + macOS |
 | `vet` | `go vet`, `staticcheck`, `gofmt -l` |
-| `interop` | `go test -race -tags=interop ./interop/...` — Tier 1+2, on push to main and nightly |
-| `interop-emulated` | Tier 3 (Apache James, amd64) — nightly only |
+| `interop` | Run `go test -count=1 -race -tags=interop ./imapclient`, then separately `go test -count=1 -race -tags=interop ./interop/...` — native profiles, on push to main and nightly; separate lifecycles prevent container-name collisions |
+| `interop-emulated` | Run `go test -count=1 -race -tags='interop interop_emulated' ./imapclient`, then separately `go test -count=1 -race -tags='interop interop_emulated' ./interop/...` — Apache James (amd64), nightly only |
 | `fuzz-smoke` | 60 s per fuzz target on every PR |
 | `fuzz-long` | 30 min per target, nightly |
 | `apidiff` | Compare exported API against the previous tag |
@@ -46,8 +45,9 @@ explicitly. This is what makes the apidiff output reviewable rather than noise.
 4. `docs/RFC-COVERAGE.md` statuses match reality — spot-check three rows against
    the code rather than trusting the table
 5. CHANGELOG updated; examples compile
-6. Tag; verify `go install github.com/kiliant/go-imap@<tag>` from a clean module
-   cache
+6. Tag; from a clean temporary consumer module, run `go mod init`,
+   `go get github.com/kiliant/go-imap@<tag>`, then compile and test a small
+   import of the library
 7. Verify the pkg.go.dev entry renders
 
 ## Supply chain

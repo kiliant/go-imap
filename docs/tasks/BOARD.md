@@ -16,6 +16,12 @@ below.
    because these tasks change shared type signatures; starting early produces
    rework, not speed.
 
+Focused unit or integration tests colocated with the production file or file
+prefix they exercise inherit that ownership: for example, T03 may add
+`imapclient/conn_test.go` or `imapclient/conn_interop_test.go`. This does not
+transfer ownership of fuzz tests or shared test infrastructure, which remain
+explicitly assigned in the task table.
+
 ## Tasks
 
 | ID | Task | Milestone | Depends on | Owns | Agent |
@@ -47,9 +53,8 @@ T02 ──┘         └── T06 ──┘         └── T09 ──┴─
                     T12 ──────────────────────── T13 ───┘
 ```
 
-**T01 and T02 may run in parallel and are the only tasks that can start now.**
-Both must land before anything else begins — they fix the type signatures every
-later task consumes.
+T01 and T02 may run in parallel. Both must complete before dependent work
+begins — they fix the type signatures every later task consumes.
 
 T12 should start as soon as T03 lands, in parallel with T04–T06. A matrix that
 arrives after the code it was meant to validate has no value.

@@ -1,7 +1,7 @@
 # T02 — Core types & error taxonomy
 
 **Agent:** `client-core`, reviewed by `api-guardian` · **Milestone:** M0 ·
-**Depends on:** nothing · **Status:** ready
+**Depends on:** nothing
 
 **Owns:** `*.go` in the module root (`package imap`), `internal/imapnum/**`
 

@@ -7,9 +7,10 @@ stay there.
 import "github.com/kiliant/go-imap/imapclient"
 ```
 
-> **Status: pre-alpha.** The repository currently contains the architecture,
-> the API-stability contract and the implementation plan. No functional code has
-> landed yet. See `docs/ROADMAP.md`.
+> **Status: early development.** The wire codec, core protocol vocabulary,
+> connection/session layer, and interoperability harness are implemented. IMAP
+> authentication, mailbox and message commands, and extension support remain in
+> progress. See `docs/ROADMAP.md`.
 
 ## Why another one
 
@@ -57,8 +58,9 @@ decision is measured against is written down in `docs/API-STABILITY.md`:
 
 ```bash
 go test ./...                                  # unit, no network
-go test -race -tags=interop ./interop/...      # real servers, needs podman
-go test -fuzz=FuzzDecoder ./internal/imapwire  # parser robustness
+go test -count=1 -race -tags=interop ./imapclient       # production client, needs podman
+go test -count=1 -race -tags=interop ./interop/...      # harness packages, run after imapclient
+go test -fuzz='^FuzzDecoder$' ./internal/imapwire        # parser robustness
 ```
 
 ## License
