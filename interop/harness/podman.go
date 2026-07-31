@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -92,7 +93,15 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 		}
 	}
 
-	name := fmt.Sprintf("go-imap-%s-%d-%d", profile.Name, time.Now().Unix(), containerSequence.Add(1))
+	// Every package with a TestMain owns an independent harness lifecycle and
+	// runs as its own OS process (see docs/INTEROP.md); "go test ./interop/..."
+	// can start several of those processes concurrently. Two packages that
+	// both start, say, "dovecot" within the same wall-clock second would
+	// otherwise generate identical container names from a per-process
+	// sequence counter and a second-resolution timestamp alone. The PID
+	// disambiguates them; discovered when interop/saslprep and interop/smoke
+	// collided on "go-imap-stalwart-<ts>-2" in the same second.
+	name := fmt.Sprintf("go-imap-%s-%d-%d-%d", profile.Name, os.Getpid(), time.Now().Unix(), containerSequence.Add(1))
 	args := []string{"run", "--detach", "--name", name, "--publish", fmt.Sprintf("127.0.0.1::%d", profile.ContainerPort)}
 	for _, port := range profile.AdditionalPorts {
 		args = append(args, "--publish", fmt.Sprintf("127.0.0.1::%d", port))
