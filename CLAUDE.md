@@ -65,8 +65,9 @@ Anything that violates these needs an explicit, written exception in
 ```
 github.com/kiliant/go-imap            package imap        core types, errors (no I/O)
         ├── internal/imapwire         lexer, decoder, encoder — NEVER exported
-        ├── internal/imapnum          sequence/UID set arithmetic
         ├── internal/imapsasl         SASL mechanisms
+        ├── internal/saslprep         SASLprep (RFC 4013) credential preparation
+        ├── internal/unicodenorm      NFC/NFKC normalisation, generated tables
         └── imapclient                package imapclient  the client
 ```
 

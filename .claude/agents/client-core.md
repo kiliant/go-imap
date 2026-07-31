@@ -59,7 +59,14 @@ LOGIN (legacy), CRAM-MD5 (2195), SCRAM-SHA-1 (5802), SCRAM-SHA-256 (7677) and th
 - `LOGINDISABLED` must be refused before sending credentials, not after.
 - Channel binding (`-PLUS`) uses `tls.ConnectionState.ExportKeyingMaterial`.
 - **Never log credentials.** Redact `AUTHENTICATE` payloads and `LOGIN` arguments
-  in any debug/wire-trace output. Write a test asserting this.
+  in any debug/wire-trace output. Write a test asserting this. Redaction covers
+  every form of a credential that reached the wire, not just the caller's input —
+  see `PrepareCredentials` below.
+- SASLprep (4013) lives in `internal/saslprep` over `internal/unicodenorm`, and is
+  applied only when `AuthenticateOptions.PrepareCredentials` is set. It is off by
+  default because Dovecot and Stalwart both compare raw password octets; do not
+  "fix" that to match the RFC without new interop evidence. Details in
+  `docs/tasks/T04-auth.md`.
 
 ## Security defaults
 

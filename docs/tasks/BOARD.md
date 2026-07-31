@@ -22,6 +22,14 @@ prefix they exercise inherit that ownership: for example, T03 may add
 transfer ownership of fuzz tests or shared test infrastructure, which remain
 explicitly assigned in the task table.
 
+Where a task owns a directory tree and another task owns a filename pattern
+inside it, **the pattern wins**: T13's `**/*_fuzz_test.go` covers
+`internal/saslprep/saslprep_fuzz_test.go` even though T04 owns
+`internal/saslprep/**`. The task that introduces a parser is expected to land its
+fuzz target with it — a parser committed without one is not finished — but T13
+owns that file afterwards, and a campaign result or a corpus addition is T13's
+call, not the originating task's.
+
 ## Tasks
 
 | ID | Task | Milestone | Depends on | Owns | Agent |
@@ -29,7 +37,7 @@ explicitly assigned in the task table.
 | [T01](T01-wire-codec.md) | Wire codec | M0 | — | `internal/imapwire/**` | wire-protocol |
 | [T02](T02-core-types.md) | Core types & errors | M0 | — | `*.go` (root pkg) | client-core + api-guardian |
 | [T03](T03-connection.md) | Connection & session | M1 | T01, T02 | `imapclient/{client,conn,state}.go` | client-core |
-| [T04](T04-auth.md) | Authentication & SASL | M1 | T03 | `imapclient/auth.go`, `internal/imapsasl/**` | client-core |
+| [T04](T04-auth.md) | Authentication & SASL | M1 | T03 | `imapclient/auth.go`, `internal/imapsasl/**`, `internal/saslprep/**`, `internal/unicodenorm/**` | client-core |
 | [T05](T05-mailbox-commands.md) | Mailbox commands | M1 | T03 | `imapclient/{select,list,status,namespace}.go` | client-core |
 | [T06](T06-message-commands.md) | Message commands | M1 | T03 | `imapclient/{fetch,store,search,append,copy}.go` | client-core |
 | [T07](T07-capability-enable-idle.md) | CAPABILITY, ENABLE, IDLE, rev2 | M2 | T05, T06 | `imapclient/{capability,enable,idle}.go` | client-core |

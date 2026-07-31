@@ -10,8 +10,15 @@ github.com/kiliant/go-imap          package imap
 
     ├── internal/imapwire    lexer/decoder/encoder for the IMAP wire grammar
     ├── internal/imapsasl    SASL mechanisms
+    ├── internal/saslprep    SASLprep (RFC 4013) credential preparation
+    ├── internal/unicodenorm NFC/NFKC normalisation, generated tables
     └── imapclient           package imapclient — the client
 ```
+
+`internal/unicodenorm` sits below `internal/saslprep` and imports nothing outside
+the standard library, so the normalisation tables stay reusable by anything else
+that needs them (`UTF8=ACCEPT` comparison, a future server framework) without
+either package growing a dependency on the client.
 
 Dependencies point downward only. The reason `package imap` holds the vocabulary
 and does no I/O is forward-looking: the server framework (milestone M5) reuses
@@ -51,6 +58,20 @@ cannot be stronger than the weakest dependency's. Everything needed is reachable
 with stdlib — `crypto/tls`, `compress/flate` (COMPRESS=DEFLATE), `crypto/hmac`
 + `crypto/sha256` + `golang.org/x/crypto/pbkdf2`-equivalent (SCRAM, implementable
 on stdlib), `mime` and `encoding/base64`.
+
+The one case where the stdlib genuinely lacks the primitive is Unicode
+normalisation, which SASLprep (RFC 4013) requires and which normally means
+`golang.org/x/text`. Resolved by generating the NFC/NFKC tables into
+`internal/unicodenorm` as Go source: generated code committed to the tree is not
+a dependency, so the rule holds without an exception. The generators live in
+`internal/{unicodenorm,saslprep}/gen/` and are run by hand, not at build time —
+`go generate` reaching the network during a build would reintroduce exactly the
+fragility the rule exists to prevent.
+
+The table versions differ on purpose: normalisation tracks the toolchain's
+`unicode.Version` (15.0.0), while the RFC 3454 tables stay frozen at Unicode 3.2
+as that RFC requires. RFC 3454 §7's assigned/unassigned split exists precisely so
+a stringprep profile need not follow new Unicode releases.
 
 The interop harness shells out to `podman` rather than using a container SDK.
 

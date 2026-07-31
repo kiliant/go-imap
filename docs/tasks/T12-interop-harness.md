@@ -27,7 +27,8 @@ Host is darwin/arm64 with **podman**; there is no `docker` binary. Probed
    dependencies applies to test code too), readiness polling, and lifecycle
    ownership by each harness-backed package's `TestMain`.
 2. `interop/servers/<name>/` — `Containerfile` or pinned image reference, server
-   config provisioning `interop@example.test` / `interop-pw`, and `profile.go`
+   config provisioning `interop@example.test` / `interop-pw`, optionally the two
+   SASLprep diagnostic accounts (see `../INTEROP.md`), and `profile.go`
    with the expected capability list.
 3. `interop/harness/fixtures.go` — identical seeded state on every server,
    installed over IMAP `APPEND` after startup (not baked into images, or each new
@@ -67,8 +68,10 @@ go test -count=1 -race -tags=interop ./imapclient
 go test -count=1 -race -tags=interop ./interop/...
 ```
 
-They bring up all native servers, seed fixtures, run the production-client and
-smoke tests against each, and report a per-server capability table. Each package
-with a harness `TestMain` gets an independent lifecycle, so combining these
-package lists can collide on container names. Cold-start time under 3 minutes,
-warm under 30 s.
+They bring up all native servers, seed fixtures, run the production-client,
+smoke and SASLprep tests against each, and report a per-server capability table.
+Each package with a harness `TestMain` gets an independent lifecycle, so
+combining these package lists runs several copies of every server concurrently.
+Container names carry the process ID so the lifecycles cannot collide on a name,
+but keep the runs sequential regardless. Cold-start time under 3 minutes, warm
+under 30 s.

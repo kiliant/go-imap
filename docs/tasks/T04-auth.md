@@ -2,7 +2,8 @@
 
 **Agent:** `client-core` · **Milestone:** M1 · **Depends on:** T03
 
-**Owns:** `imapclient/auth.go`, `internal/imapsasl/**`
+**Owns:** `imapclient/auth.go`, `internal/imapsasl/**`, `internal/saslprep/**`,
+`internal/unicodenorm/**` (fuzz targets in those trees are T13-owned once landed)
 
 ## Goal
 
@@ -25,6 +26,35 @@ crypto only.
 
 Plus `SASL-IR` (RFC 4959) initial-response optimisation when advertised, with
 correct handling of the empty-initial-response `=` encoding — a common bug.
+
+## Credential preparation (SASLprep, RFC 4013)
+
+RFC 5802 *requires* SASLprep for SCRAM and RFC 4616 recommends it for PLAIN, but
+it is **off by default**, exposed as `AuthenticateOptions.PrepareCredentials`.
+This is not a shortcut — it is what the matrix measured. Dovecot 2.4.3 and
+Stalwart 0.11.8 both store and compare raw password octets, so preparing
+unconditionally would *break* authentication against the two most relevant
+servers for any password normalisation changes. A spec-compliant default that
+fails against real servers is the wrong default; the option lets a caller talk to
+a server that does prepare at enrollment.
+
+Rules:
+
+- Prepare once, before any mechanism is constructed, so a prohibited code point
+  or bidi violation aborts before anything reaches the wire. Assert the
+  zero-bytes-written property in a test.
+- Applies to username *and* password for the password mechanisms: PLAIN, SASL
+  LOGIN, CRAM-MD5 and the four SCRAM variants. Never to bearer tokens
+  (XOAUTH2, OAUTHBEARER) or to a caller-supplied mechanism, whose credentials
+  the client never sees.
+- CRAM-MD5's inclusion is deliberate. RFC 2195 predates stringprep and mandates
+  nothing, but exempting one password mechanism from an explicit opt-in would be
+  undiscoverable for callers.
+- Redaction must cover the *prepared* forms as well as the caller's input. The
+  prepared octets are what reached the server, and the two differ by construction
+  for exactly the inputs this option exists to handle.
+- `Client.Login` does not prepare and says so: it has no options struct, and
+  adding a parameter would break every caller.
 
 ## Design
 
@@ -51,4 +81,7 @@ correct handling of the empty-initial-response `=` encoding — a common bug.
 ## Done when
 
 Authenticates against Dovecot with PLAIN, CRAM-MD5, SCRAM-SHA-256, and against
-Stalwart with OAUTHBEARER. Redaction test passes. Downgrade refusals tested.
+Stalwart with OAUTHBEARER. Redaction test passes, including the prepared forms.
+Downgrade refusals tested. `PrepareCredentials` is proven end to end by
+`interop/saslprep`, whose 2×2 over raw-U+00B5 and NFKC-U+03BC stored accounts is a
+hard assertion rather than an observation of server behaviour.

@@ -136,6 +136,8 @@ break the client; full command support is best-effort.
 | XOAUTH2 | — | T04 | done | de-facto, Gmail/Outlook |
 | PLAIN | 4616 | T04 | verified | |
 | CRAM-MD5 | 2195 | T04 | done | legacy, still common |
+| SASLprep | 4013, 3454 | T04 | verified | opt-in; deployed servers compare raw octets |
+| NFC/NFKC normalisation | UAX #15 | T04 | done | generated tables, no `x/text` |
 | MIME header encoding | 2047, 2231 | T02 | done | envelope decoding |
 
 ## Watch list

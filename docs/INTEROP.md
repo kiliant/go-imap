@@ -20,9 +20,19 @@ The first command names `./imapclient` explicitly so interop-tagged
 production-client tests run. The commands must remain separate and sequential:
 Go builds and runs one test process per package, and every process with a
 `TestMain` using the harness owns an independent container lifecycle. Combining
-the package lists can start those lifecycles concurrently and collide on
-container names. The current smoke package is one such harness-backed package;
-keep future package invocations separate too.
+the package lists starts those lifecycles concurrently, which means several
+copies of every server image competing for the same host resources.
+
+Three packages are harness-backed today: `imapclient` (interop-tagged),
+`interop/smoke` and `interop/saslprep`. Keep future package invocations separate
+too.
+
+Container names embed the process ID as well as a timestamp and a per-process
+counter. That is load-bearing rather than decorative: two packages starting the
+same profile within the same wall-clock second previously generated identical
+names and `podman run` failed outright, which is how the second harness-backed
+package announced itself. Name collisions are therefore fixed, but the sequential
+rule above still stands for the resource reason.
 
 By default the harness starts every native profile. Restrict a local run to a
 comma-separated subset when iterating, for example:
@@ -81,6 +91,26 @@ silently-all-skipping matrix is worse, so profiles are asserted.
 3. Register in `interop/harness/registry.go`.
 4. Confirm the arch: `podman manifest inspect <image> | grep architecture`.
    If amd64-only, mark it Tier 3.
+
+Optionally provision the two SASLprep diagnostic accounts, which store the same
+password in the two forms that discriminate Unicode normalisation:
+
+| Account | Stored password | Bytes |
+|---|---|---|
+| `interop-prep@example.test` | `interop-pw-µ` (U+00B5 MICRO SIGN) | `…c2 b5` |
+| `interop-prep-nfkc@example.test` | `interop-pw-μ` (U+03BC GREEK SMALL MU) | `…ce bc` |
+
+`interop/saslprep` skips cleanly on a server that lacks them, so they are not a
+prerequisite for adding a server. Verify the bytes with `xxd` after editing —
+these are the one fixture in the tree where an editor silently normalising a
+source file would make the test assert nothing while still passing. The
+NFKC-stored account exists to emulate a server that prepares credentials at
+enrollment, which none of the matrix servers do.
+
+If the server uses a Dovecot-style `passwd-file` passdb, leave `result_failure`
+at its default (`continue`). An absent user and a wrong password are reported
+identically, so `return-fail` would break fallthrough to the passdb holding
+`interop@example.test`.
 
 ## Fixtures
 
