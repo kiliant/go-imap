@@ -1,0 +1,18 @@
+FROM docker.io/library/debian:12.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y courier-imap=5.0.13+1.0.16-3+b6 courier-authlib-userdb=0.71.4-1+b2 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY imapd /etc/courier/imapd
+COPY authdaemonrc /etc/courier/authdaemonrc
+COPY entrypoint.sh /usr/local/bin/interop-courier
+
+RUN chmod 0755 /usr/local/bin/interop-courier \
+ && useradd --uid 1000 --create-home --home-dir /mail/interop interop \
+ && maildirmake /mail/interop/Maildir \
+ && chown -R interop:interop /mail/interop
+
+EXPOSE 143
+ENTRYPOINT ["/usr/local/bin/interop-courier"]

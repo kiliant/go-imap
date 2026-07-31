@@ -1,0 +1,8 @@
+FROM docker.io/stalwartlabs/mail-server:v0.11.8
+
+COPY config.toml /etc/stalwart/config.toml
+
+EXPOSE 143
+
+ENTRYPOINT ["/usr/local/bin/stalwart-mail"]
+CMD ["--config", "/etc/stalwart/config.toml"]

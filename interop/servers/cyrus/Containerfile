@@ -1,0 +1,16 @@
+FROM docker.io/library/debian:12.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y cyrus-imapd=3.6.1-4+deb12u4 cyrus-admin=3.6.1-4+deb12u4 sasl2-bin \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY imapd.conf /etc/imapd.conf
+COPY cyrus.conf /etc/cyrus.conf
+COPY entrypoint.sh /usr/local/bin/interop-cyrus
+
+RUN chmod 0755 /usr/local/bin/interop-cyrus \
+ && install -d -o cyrus -g mail /var/lib/cyrus /var/spool/cyrus/mail /run/cyrus /run/cyrus/proc /run/cyrus/lock /run/cyrus/socket
+
+EXPOSE 143
+ENTRYPOINT ["/usr/local/bin/interop-cyrus"]

@@ -1,0 +1,33 @@
+[server.listener.imap]
+bind = ["[::]:143"]
+protocol = "imap"
+
+[storage]
+data = "rocksdb"
+fts = "rocksdb"
+blob = "rocksdb"
+lookup = "rocksdb"
+directory = "in-memory"
+
+[store.rocksdb]
+type = "rocksdb"
+path = "/opt/stalwart-mail/data"
+
+[directory.in-memory]
+type = "memory"
+principals = [
+  { name = "interop@example.test", class = "individual", secret = "interop-pw", email = ["interop@example.test"] }
+]
+
+[imap.auth]
+allow-plain-text = true
+directory = "in-memory"
+
+[authentication.fallback-admin]
+user = "admin"
+secret = "interop-admin-pw"
+
+[tracer.stdout]
+type = "stdout"
+level = "info"
+enable = true
