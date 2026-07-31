@@ -6,10 +6,10 @@ import "time"
 // small enough that a hostile one cannot exhaust memory: every one of them is
 // checked *before* the corresponding allocation happens.
 const (
-	// DefaultMaxLiteralSize caps a streamed literal ({n} / ~{n}). 100 MB is
-	// above any realistic message size while still refusing the classic
-	// {4294967295} announcement.
-	DefaultMaxLiteralSize = 100 << 20
+	// DefaultMaxLiteralSize caps a streamed literal ({n} / ~{n}). It permits
+	// the 200 MiB streaming FETCH regression while still refusing the classic
+	// {4294967295} announcement before allocating or reading its payload.
+	DefaultMaxLiteralSize = 256 << 20
 
 	// DefaultMaxBufferedLiteralSize caps a literal that is materialised as an
 	// in-memory string (the string / astring / nstring productions). Callers

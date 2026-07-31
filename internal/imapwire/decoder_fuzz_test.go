@@ -396,6 +396,10 @@ func TestCorpusContainsHostileInputs(t *testing.T) {
 		"testdata/hostile/oversized-literal.imap",
 		"testdata/hostile/truncated-literal.imap",
 		"testdata/hostile/nul-atom.imap",
+		"testdata/hostile/wrong-literal-length.imap",
+		"testdata/hostile/unterminated-list.imap",
+		"testdata/hostile/impossible-star.imap",
+		"testdata/hostile/unknown-tag.imap",
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {

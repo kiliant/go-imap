@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +58,97 @@ func TestFetchBodySectionStreamsAndParsesHeaderFields(t *testing.T) {
 	if err := cmd.Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestFetchTwoHundredMegabyteBodyStreamsWithFlatAllocation exercises the
+// public Client/FETCH path, rather than only the wire decoder. In particular,
+// the FETCH collector must hand the literal to its caller before it continues
+// parsing the rest of the response.
+func TestFetchTwoHundredMegabyteBodyStreamsWithFlatAllocation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("200 MiB streaming regression")
+	}
+	const size = int64(200 << 20)
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		if _, err := io.WriteString(serverConn, "* OK ready\r\n"); err != nil {
+			serverDone <- err
+			return
+		}
+		line, err := bufio.NewReader(serverConn).ReadString('\n')
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		tag := strings.Fields(line)[0]
+		if _, err := io.WriteString(serverConn, fmt.Sprintf("* 1 FETCH (BODY[] {%d}\r\n", size)); err != nil {
+			serverDone <- err
+			return
+		}
+		if _, err := io.Copy(serverConn, io.LimitReader(repeatedMessageByte('x'), size)); err != nil {
+			serverDone <- err
+			return
+		}
+		_, err = io.WriteString(serverConn, ")\r\n"+tag+" OK done\r\n")
+		serverDone <- err
+	}()
+
+	c := NewClient(clientConn, nil)
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	c.state = StateSelected
+	c.mu.Unlock()
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodySection{Peek: true})
+	data, err := cmd.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := data.Items[imap.FetchDataKey("BODY[]")]
+	if len(items) != 1 {
+		t.Fatalf("BODY[] items = %#v", items)
+	}
+	section, ok := items[0].(*imap.FetchDataBodySection)
+	if !ok {
+		t.Fatalf("BODY[] value = %T, want *imap.FetchDataBodySection", items[0])
+	}
+	n, err := io.Copy(io.Discard, section.Literal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if n != size {
+		t.Fatalf("streamed %d bytes, want %d", n, size)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 2<<20 {
+		t.Fatalf("FETCH allocated %d bytes for a %d-byte literal; want <= %d (streaming)", allocated, size, 2<<20)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type repeatedMessageByte byte
+
+func (r repeatedMessageByte) Read(dst []byte) (int, error) {
+	for i := range dst {
+		dst[i] = byte(r)
+	}
+	return len(dst), nil
 }
 
 func TestAppendSynchronisingLiteral(t *testing.T) {
