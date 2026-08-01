@@ -101,6 +101,33 @@ func FuzzParseModifiedSet(f *testing.F) {
 	})
 }
 
+// FuzzParseReplaceAppendUID covers the APPENDUID response-code argument that
+// REPLACE reports the new message's UID with (RFC 8508 section 4.3, RFC 4315
+// section 3). A malformed code must be reported, never turned into a plausible
+// but wrong UID: a caller storing that UID in a cache would address a different
+// message from then on.
+func FuzzParseReplaceAppendUID(f *testing.F) {
+	f.Add("1 2001")
+	f.Add("1521475658 1")
+	f.Add("0 5")
+	f.Add("1 0")
+	f.Add("1")
+	f.Add("1 2 3")
+	f.Add("")
+	f.Add("  1   2001  ")
+	f.Add("4294967296 1")
+	f.Add("-1 -1")
+	f.Fuzz(func(t *testing.T, s string) {
+		validity, uid, err := parseReplaceAppendUID(s)
+		if err != nil {
+			return
+		}
+		if validity == 0 || uid == 0 {
+			t.Fatalf("parseReplaceAppendUID(%q) accepted a zero identifier: (%d, %d)", s, validity, uid)
+		}
+	})
+}
+
 // FuzzWriteNumSet checks that the sequence-set encoder never writes anything the
 // decoder cannot read back, which is what keeps a malformed set from
 // desynchronising a command line.
