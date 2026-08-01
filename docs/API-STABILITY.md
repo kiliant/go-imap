@@ -94,10 +94,11 @@ a struct of function fields:
 
 ```go
 type UnilateralDataHandler struct {
-    Exists  func(numMessages uint32)
-    Expunge func(seqNum uint32)
-    Recent  func(numRecent uint32)
-    Fetch   func(data *imap.FetchMessageData)
+    Exists   func(numMessages uint32)
+    Expunge  func(seqNum uint32)
+    Recent   func(numRecent uint32)
+    Fetch    func(data *imap.FetchMessageData)
+    Vanished func(data VanishedData) // QRESYNC; additive, not a break
     // A new unsolicited-response RFC adds a field here. Not a break.
 }
 ```

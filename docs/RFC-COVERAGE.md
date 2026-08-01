@@ -22,7 +22,7 @@ least two independent servers in the interop matrix).
 | SASL-IR | 4959 | T04 | verified |
 | ENABLE | 5161 | T07 | done |
 | IDLE | 2177 | T07 | verified |
-| ID | 2971 | T08 | planned |
+| ID | 2971 | T08 | planned [^id] |
 | NAMESPACE | 2342 | T05 | verified |
 | UNSELECT | 3691 | T05 | verified |
 | LITERAL+ | 7888 | T01 | verified |
@@ -32,6 +32,10 @@ least two independent servers in the interop matrix).
     and BODYSTRUCTURE fetch items are covered only by unit and fuzz tests so
     far. Real servers disagree about them more than about anything else in the
     grammar, so the row stays at `done` until the matrix exercises both.
+
+[^id]: Listed under T08's base ownership in this table, but never part of the
+    T08 scope table in `docs/tasks/T08-ext-group-a.md`. Remains `planned` for a
+    follow-up; Group A itself is otherwise complete.
 
 ## Group A — core modern (task T08)
 
@@ -76,9 +80,10 @@ servers, Dovecot and Stalwart.
 | PREVIEW | 8970 | verified [^preview] |
 | REPLACE | 8508 | done [^replace] |
 
-CONDSTORE, QRESYNC and STATUS=SIZE are exercised against Dovecot, Stalwart and
-Cyrus, including a disconnect/mutate/reconnect resynchronisation that asserts
-the reported delta.
+CONDSTORE, QRESYNC, OBJECTID, SAVEDATE, STATUS=SIZE and PREVIEW are exercised
+against the servers that advertise them (Dovecot, Stalwart and/or Cyrus),
+including a disconnect/mutate/reconnect QRESYNC resynchronisation and
+CONDSTORE `MODIFIED` on tagged OK.
 
 [^objectid]: `EMAILID`, `THREADID` and STATUS `MAILBOXID` use the RFC 8474
     parenthesised grammar. Verified live against Stalwart and Cyrus.

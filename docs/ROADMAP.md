@@ -37,6 +37,10 @@ CONDSTORE/QRESYNC resynchronisation is verified against two independent servers.
 This acceptance set is independent of the harness expense tiers in
 `docs/INTEROP.md`.
 
+**Status (2026-08-01):** exit criteria met. T07–T09 are done; Group A is fully
+`verified`; Group B is `verified` except APPENDLIMIT/REPLACE (`done`, single
+advertising server each). T10/T11 are unblocked.
+
 ## M3 — Full coverage (T10, T11)
 
 Extension groups C, D and E. Tier-2 servers (Cyrus, Courier) join the matrix.

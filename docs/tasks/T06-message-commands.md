@@ -39,8 +39,11 @@ send flag updates even for `.SILENT` — handle both.
 - `CHARSET` handling: report what the server supports rather than transcoding
   silently. Non-ASCII search on a server without `UTF8=ACCEPT` needs an explicit
   charset.
-- Design for `ESEARCH` (T08) now: the return-options path should be a field to
-  add, not a second method.
+- Design for `ESEARCH` (T08) now: reserve an extensible return-options path on
+  SEARCH rather than a closed enum. T08 shipped typed return options on the
+  sibling `SearchExtended` entry point (Guardian-approved); the earlier
+  `[]string` reservation on base `SearchOptions` was removed rather than left
+  as dead API.
 
 ## APPEND
 

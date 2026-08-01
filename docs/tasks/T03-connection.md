@@ -34,7 +34,7 @@ Commands pipeline; one reader goroutine owns the decoder and routes:
 - tagged → pending-command map
 - untagged, command-scoped → in-flight command's collector
 - untagged, connection-scoped (`EXISTS`, `EXPUNGE`, `RECENT`, `FETCH` flag
-  updates) → `UnilateralDataHandler`
+  updates, and after ENABLE QRESYNC also `VANISHED`) → `UnilateralDataHandler`
 
 The split between the last two is not always obvious and depends on which command
 is in flight. Document the rule you implement.

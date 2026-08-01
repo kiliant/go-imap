@@ -59,14 +59,9 @@ func t09Append(t *testing.T, ctx context.Context, client *imapclient.Client, mai
 	}
 }
 
-// t09EveryUID addresses every message in a mailbox without using "1:*".
-//
-// The dynamic form would be the natural spelling, but Client.FetchUID encodes
-// the set through the plain atom production, which rejects "*" because it is an
-// IMAP list-wildcard rather than an ATOM-CHAR. That is a core bug recorded for
-// escalation in the T09 progress notes, not something this extension may fix;
-// the explicit upper bound is the whole 32-bit UID space and is equivalent.
-var t09EveryUID = imap.UIDSetRange(1, 4294967295)
+// t09EveryUID addresses every message in a mailbox. Prefer the dynamic form
+// "1:*" now that sequence-set encoding writes "*" via Special rather than Atom.
+var t09EveryUID = imap.UIDSetRange(1, 0)
 
 // t09UIDsBySubject returns the UID of every message in the selected mailbox,
 // keyed by its Subject header, so the test can name messages independently of

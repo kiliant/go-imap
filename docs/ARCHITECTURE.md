@@ -133,7 +133,7 @@ Requirements:
 |---|---|---|
 | M0 | wire codec, core types, number sets | fuzz targets green, no network/session layer |
 | M1 | connection, auth, mailbox + message commands, interop harness | Dovecot interop green |
-| M2 | IDLE, ENABLE, capability negotiation, extension groups A+B | M2 acceptance matrix green |
+| M2 | IDLE, ENABLE, capability negotiation, extension groups A+B | M2 acceptance matrix green — **met 2026-08-01** |
 | M3 | extension groups C+D+E — full IANA coverage | coverage doc has no gaps |
 | M4 | fuzzing, API review, docs, examples | apidiff gate active |
 | **v1.0** | **API freeze** | |

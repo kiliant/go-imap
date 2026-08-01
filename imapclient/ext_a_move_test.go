@@ -111,7 +111,7 @@ func TestMoveUIDEmulationUsesUIDExpunge(t *testing.T) {
 		t.Fatal("UID EXPUNGE was used but the wide-expunge warning was set")
 	}
 	if data.UIDPlus.Received() {
-		t.Fatal("emulated MOVE reported COPYUID, which COPY returns in its tagged OK")
+		t.Fatal("emulated MOVE reported COPYUID though the scripted COPY OK carried none")
 	}
 }
 
