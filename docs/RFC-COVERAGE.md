@@ -37,16 +37,35 @@ least two independent servers in the interop matrix).
 
 | Capability | RFC | Status |
 |---|---|---|
-| UIDPLUS | 4315 | planned |
-| MOVE | 6851 | planned |
-| ESEARCH | 4731 | planned |
-| SEARCHRES | 5182 | planned |
-| LIST-EXTENDED | 5258 | planned |
-| LIST-STATUS | 5819 | planned |
-| SPECIAL-USE | 6154 | planned |
-| CREATE-SPECIAL-USE | 6154 | planned |
-| CHILDREN | 3348 | planned |
-| WITHIN | 5032 | planned |
+| UIDPLUS | 4315 | in progress [^uidplus] |
+| MOVE | 6851 | verified |
+| ESEARCH | 4731 | verified |
+| SEARCHRES | 5182 | verified |
+| LIST-EXTENDED | 5258 | verified |
+| LIST-STATUS | 5819 | verified |
+| SPECIAL-USE | 6154 | verified [^specialuse] |
+| CREATE-SPECIAL-USE | 6154 | verified |
+| CHILDREN | 3348 | verified |
+| WITHIN | 5032 | verified |
+
+Verified against the servers that advertise each capability — Dovecot 2.4.3,
+Stalwart 0.11.8 and Cyrus 3.x for most, plus Courier for CHILDREN — with the
+emulated paths exercised on GreenMail 2.1.9 and Courier, which advertise only
+UIDPLUS, MOVE and CHILDREN between them. SEARCHRES has exactly two independent
+servers, Dovecot and Stalwart.
+
+[^uidplus]: `UID EXPUNGE` is complete and verified on all five native servers,
+    and the untagged `COPYUID` that RFC 6851 section 4.3 attaches to `UID MOVE`
+    is read. `APPENDUID` and `COPYUID` for plain `APPEND` and `COPY` arrive in
+    the **tagged** OK (RFC 4315 section 3), which the client core does not yet
+    deliver to a command, so `AppendData.UID` and `CopyData.DestinationUIDs`
+    remain zero. That needs an internal seam in `imapclient/client.go`, which
+    T08 does not own; it is recorded as an escalation in `.state/progress/T08.md`
+    and the row stays below `verified` until it lands.
+
+[^specialuse]: Servers disagree about whether a use attribute appears on a plain
+    `LIST` or only under `RETURN (SPECIAL-USE)`: Cyrus does the former, Stalwart
+    the latter. The client asks explicitly wherever LIST-EXTENDED is available.
 
 ## Group B — synchronisation & identity (task T09)
 
