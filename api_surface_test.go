@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -276,6 +277,62 @@ func TestAPISurfaceContextFirst(t *testing.T) {
 		}
 	})
 }
+
+// TestAPISurfaceOptionsStruct enforces API-STABILITY rule 3 mechanically.
+//
+// Every command entry point on Client must end in a pointer to an options
+// struct, even when that struct is empty today. This is the rule that cannot be
+// repaired after v1.0: adding a parameter to a Go signature breaks every call
+// site regardless of whether nil is an accepted value for it, so a method that
+// ships without an options struct can never gain one. Rules 2, 6 and 7 already
+// had mechanical gates; this rule did not, and three methods shipped without
+// options as a result.
+func TestAPISurfaceOptionsStruct(t *testing.T) {
+	var violations []string
+	clientType := reflect.TypeOf((*imapclient.Client)(nil))
+	for i := 0; i < clientType.NumMethod(); i++ {
+		m := clientType.Method(i)
+		if !m.IsExported() || nonBlockingClientMethods[m.Name] || optionsExemptClientMethods[m.Name] {
+			continue
+		}
+		typ := m.Type
+		isCommand := isReflectCommandHandleConstructor(typ) || looksReflectBlockingClientMethod(m.Name, typ)
+		if !isCommand {
+			continue
+		}
+		// The options parameter need not be last — Append and the streaming
+		// Replace variants take it before the message reader, and the Fetch
+		// family takes it before the variadic item list. What matters is that
+		// one exists, because that is what a future RFC extends.
+		if !hasOptionsParam(typ) {
+			violations = append(violations, fmt.Sprintf(
+				"(*Client).%s takes no *...Options parameter; a future RFC could not extend it without breaking callers", m.Name))
+		}
+	}
+	if len(violations) > 0 {
+		t.Errorf("API-STABILITY rule 3 violations (options structs, never positional):\n  %s",
+			strings.Join(violations, "\n  "))
+	}
+}
+
+// hasOptionsParam reports whether any parameter is a pointer to a struct whose
+// name ends in "Options".
+func hasOptionsParam(typ reflect.Type) bool {
+	for i := 0; i < typ.NumIn(); i++ {
+		p := typ.In(i)
+		if p.Kind() == reflect.Ptr && p.Elem().Kind() == reflect.Struct &&
+			strings.HasSuffix(p.Elem().Name(), "Options") {
+			return true
+		}
+	}
+	return false
+}
+
+// optionsExemptClientMethods lists command entry points that deliberately take
+// no options struct. Every entry needs a written justification here and a
+// matching exception in docs/API-STABILITY.md; an unexplained addition to this
+// map is the same defect the test exists to catch.
+var optionsExemptClientMethods = map[string]bool{}
 
 func checkReflectMethods(typeName string, typ reflect.Type, violations *[]string) {
 	for i := 0; i < typ.NumMethod(); i++ {
@@ -567,29 +624,70 @@ func hasKeyedLiteralNote(docs ...*ast.CommentGroup) bool {
 	return false
 }
 
-func filesFromASTPkg(pkg *ast.Package) []*ast.File {
-	var out []*ast.File
-	for _, f := range pkg.Files {
-		out = append(out, f)
-	}
-	return out
-}
-
-func TestExampleProgramsPresent(t *testing.T) {
+// examplePrograms returns the example programs and the shared helper file they
+// all compile against.
+func examplePrograms(t *testing.T) (programs []string, shared string) {
+	t.Helper()
 	examplesDir := filepath.Join(mustRepoRoot(t), "examples")
 	entries, err := os.ReadDir(examplesDir)
 	if err != nil {
 		t.Fatalf("examples directory: %v", err)
 	}
-	var found int
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
 			continue
 		}
-		found++
+		path := filepath.Join(examplesDir, e.Name())
+		if e.Name() == "config.go" {
+			shared = path
+			continue
+		}
+		programs = append(programs, path)
 	}
-	if found < 8 {
-		t.Fatalf("expected at least 8 example programs, found %d", found)
+	return programs, shared
+}
+
+func TestExampleProgramsPresent(t *testing.T) {
+	programs, shared := examplePrograms(t)
+	if shared == "" {
+		t.Fatal("examples/config.go is missing; the example programs share it")
+	}
+	if len(programs) < 8 {
+		t.Fatalf("expected at least 8 example programs, found %d", len(programs))
+	}
+}
+
+// TestExampleProgramsCompile type-checks every runnable example against the
+// current API.
+//
+// This is not redundant with `go build ./...`: every file under examples/
+// carries a //go:build ignore constraint, so the ordinary build, vet and test
+// commands all skip them entirely — `go list ./examples/...` matches no
+// packages. Without this test an API change silently rots the examples, which
+// is exactly how a misindented loop and a stale signature survived previously.
+// Each program is a package main with its own func main, so they must be
+// compiled one at a time, each paired with the shared config.go.
+func TestExampleProgramsCompile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiling the examples invokes the go tool per program")
+	}
+	programs, shared := examplePrograms(t)
+	if shared == "" {
+		t.Fatal("examples/config.go is missing; the example programs share it")
+	}
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("go tool not available: %v", err)
+	}
+	for _, program := range programs {
+		t.Run(filepath.Base(program), func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command(goTool, "vet", program, shared)
+			cmd.Dir = mustRepoRoot(t)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("example does not compile: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
