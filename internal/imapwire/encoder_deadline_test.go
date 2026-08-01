@@ -18,10 +18,6 @@ type deadlineWriter struct {
 	deadlines []time.Time
 	written   int64
 	stall     bool
-	// perWrite, when positive, advances a synthetic clock by this much on
-	// every write so a long stream can cross a deadline without real sleeping.
-	perWrite time.Duration
-	now      time.Time
 }
 
 func (w *deadlineWriter) SetWriteDeadline(t time.Time) error {

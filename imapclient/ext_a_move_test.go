@@ -254,7 +254,8 @@ func TestMoveRejectsSetAndSavedResultTogether(t *testing.T) {
 	if _, err := c.Move(ctx, nil, "Archive", nil); err == nil {
 		t.Fatal("an empty set with no saved result was accepted")
 	}
-	if _, err := c.Move(nil, imap.SeqSetNum(1), "Archive", nil); err == nil { //nolint:staticcheck // nil ctx is the case under test
+	//lint:ignore SA1012 a nil context is precisely the input under test here
+	if _, err := c.Move(nil, imap.SeqSetNum(1), "Archive", nil); err == nil {
 		t.Fatal("a nil context was accepted")
 	}
 	if _, err := c.Move(ctx, imap.SeqSetNum(1), "", nil); err == nil {

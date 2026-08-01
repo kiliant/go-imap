@@ -27,10 +27,10 @@ func FuzzPrepare(f *testing.F) {
 	f.Add("")
 	f.Add("user")
 	f.Add("USER")
-	f.Add("I­X")                // SOFT HYPHEN, mapped to nothing
+	f.Add("I\u00adX")           // SOFT HYPHEN, mapped to nothing
 	f.Add("ª")                  // FEMININE ORDINAL INDICATOR -> NFKC "a"
 	f.Add("Ⅸ")                  // ROMAN NUMERAL NINE -> NFKC "IX"
-	f.Add("")                  // BELL: prohibited ASCII control character
+	f.Add("\a")                 // BELL: prohibited ASCII control character
 	f.Add("ا1")                 // bidi violation: RandALCat then non-RandALCat
 	f.Add("اب")                 // bidi OK: RandALCat only, both ends RandALCat
 	f.Add("a b")                // NO-BREAK SPACE, mapped to SPACE
@@ -42,7 +42,7 @@ func FuzzPrepare(f *testing.F) {
 	f.Add("\xed\xa0\x80")       // unpaired surrogate (encoded)
 	f.Add(string(rune(0xD800))) // unpaired surrogate (rune conversion)
 	f.Add("�")                  // REPLACEMENT CHARACTER: prohibited (Table C.6)
-	f.Add("​")                  // ZERO WIDTH SPACE: mapped to nothing (Table B.1)
+	f.Add("\u200b")             // ZERO WIDTH SPACE: mapped to nothing (Table B.1)
 	f.Add("")                  // private use (Table C.3): prohibited
 	f.Add("\U0001D160")         // outside the BMP
 	f.Add("　")                  // IDEOGRAPHIC SPACE: mapped to SPACE (Table C.1.2)

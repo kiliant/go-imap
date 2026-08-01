@@ -341,13 +341,6 @@ func readMyRightsResponse(dec *imapwire.Decoder) (*MyRightsData, error) {
 	return &MyRightsData{Mailbox: mailbox, Rights: ACLRights(rights)}, nil
 }
 
-// listWithExtendedReturns issues LIST with structured return options that
-// this package owns (MYRIGHTS, METADATA). Keyword-only returns still go
-// through the ordinary LIST path.
-func (c *Client) listWithExtendedReturns(ctx context.Context, reference, pattern string, options *ListOptions) ([]*ListData, error) {
-	return c.ListMailboxesExt(ctx, reference, pattern, options, nil)
-}
-
 // ListExtOptions carries Group D LIST return options that are not
 // [ListReturnOption] values (so [Client.List] / [Client.ListMailboxes] cannot
 // reject them by accident). A nil pointer means no extended returns.
