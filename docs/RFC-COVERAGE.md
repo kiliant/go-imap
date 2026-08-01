@@ -129,22 +129,22 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 | Capability | RFC | Status |
 |---|---|---|
-| QUOTA | 9208 | planned |
-| QUOTA= | 9208 | planned |
-| QUOTASET | 9208 | planned |
-| ACL | 4314 | planned |
-| RIGHTS= | 4314 | planned |
-| LIST-MYRIGHTS | 8440 | planned |
-| METADATA | 5464 | planned |
-| METADATA-SERVER | 5464 | planned |
-| LIST-METADATA | 9590 | planned |
-| NOTIFY | 5465 | planned |
-| UNAUTHENTICATE | 8437 | planned |
-| UIDONLY | 9586 | planned |
-| INPROGRESS | 9585 | planned |
-| MESSAGELIMIT= | 9738 | planned |
-| SAVELIMIT= | 9738 | planned |
-| JMAPACCESS | 9698 | planned |
+| QUOTA | 9208 | implemented |
+| QUOTA= | 9208 | implemented |
+| QUOTASET | 9208 | implemented |
+| ACL | 4314 | implemented |
+| RIGHTS= | 4314 | implemented |
+| LIST-MYRIGHTS | 8440 | implemented |
+| METADATA | 5464 | implemented |
+| METADATA-SERVER | 5464 | implemented |
+| LIST-METADATA | 9590 | implemented |
+| NOTIFY | 5465 | implemented |
+| UNAUTHENTICATE | 8437 | implemented |
+| UIDONLY | 9586 | implemented |
+| INPROGRESS | 9585 | implemented |
+| MESSAGELIMIT= | 9738 | implemented |
+| SAVELIMIT= | 9738 | implemented |
+| JMAPACCESS | 9698 | implemented |
 
 ## Group E — legacy & niche (task T11, lower priority)
 
@@ -153,18 +153,18 @@ break the client; full command support is best-effort.
 
 | Capability | RFC | Status | Note |
 |---|---|---|---|
-| LOGIN-REFERRALS | 2221 | planned | referral response codes must parse |
-| MAILBOX-REFERRALS | 2193 | planned | as above |
-| URLAUTH | 4467 | planned | needed for CATENATE interop |
-| URLAUTH=BINARY | 5524 | planned | |
-| URL-PARTIAL | 5550 | planned | |
-| LANGUAGE | 5255 | planned | |
-| I18NLEVEL=1 | 5255 | planned | |
-| I18NLEVEL=2 | 5255 | planned | |
-| CONTEXT=SEARCH | 5267 | planned | |
-| CONTEXT=SORT | 5267 | planned | |
-| ESORT | 5267 | planned | |
-| FILTERS | 5466 | planned | |
+| LOGIN-REFERRALS | 2221 | implemented | referral response codes parse |
+| MAILBOX-REFERRALS | 2193 | implemented | as above |
+| URLAUTH | 4467 | implemented | GENURLAUTH / URLFETCH / RESETKEY |
+| URLAUTH=BINARY | 5524 | implemented | capability accepted with URLAUTH |
+| URL-PARTIAL | 5550 | implemented | `;PARTIAL=` in IMAP URLs |
+| LANGUAGE | 5255 | implemented | |
+| I18NLEVEL=1 | 5255 | implemented | capability probe |
+| I18NLEVEL=2 | 5255 | implemented | COMPARATOR command |
+| CONTEXT=SEARCH | 5267 | implemented | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | implemented | as above |
+| ESORT | 5267 | implemented | capability + RETURN keywords; SORT cmd is T10 |
+| FILTERS | 5466 | implemented | UNDEFINED-FILTER parse; SearchFilter escalated to T02 |
 | CONVERT | 5259 | deferred | no known server support |
 | IMAPSIEVE= | 6785 | deferred | server-side; parse only |
 | ANNOTATE-EXPERIMENT-1 | 5257 | deferred | superseded by METADATA |
