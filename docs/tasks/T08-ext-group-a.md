@@ -21,6 +21,7 @@ Runs in parallel with T09. Verify every RFC number against
 | CREATE-SPECIAL-USE | 6154 | `USE` parameter on `CREATE` |
 | CHILDREN | 3348 | `\HasChildren`, `\HasNoChildren` |
 | WITHIN | 5032 | `OLDER`, `YOUNGER` search keys |
+| ID | 2971 | Client/server identification exchange |
 
 ## Requirements
 

@@ -35,6 +35,10 @@ A test that reflects over the exported API and asserts:
    constructors do not block and correctly take none; their `Wait`, `Next` and
    `Collect` methods are the blocking boundary. See
    [API-STABILITY.md](../API-STABILITY.md) section 2.
+5. Every command entry point takes a `*…Options` parameter
+   ([API-STABILITY.md](../API-STABILITY.md) §3), even when the struct is empty
+   today — a method that ships without one can never gain one without breaking
+   callers.
 
 Mechanical enforcement, so the rules survive contributors who have not read the
 doc.

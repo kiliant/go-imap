@@ -22,7 +22,7 @@ least two independent servers in the interop matrix).
 | SASL-IR | 4959 | T04 | verified |
 | ENABLE | 5161 | T07 | done |
 | IDLE | 2177 | T07 | verified |
-| ID | 2971 | T08 | planned [^id] |
+| ID | 2971 | T08 | verified [^id] |
 | NAMESPACE | 2342 | T05 | verified |
 | UNSELECT | 3691 | T05 | verified |
 | LITERAL+ | 7888 | T01 | verified |
@@ -33,9 +33,9 @@ least two independent servers in the interop matrix).
     far. Real servers disagree about them more than about anything else in the
     grammar, so the row stays at `done` until the matrix exercises both.
 
-[^id]: Listed under T08's base ownership in this table, but never part of the
-    T08 scope table in `docs/tasks/T08-ext-group-a.md`. Remains `planned` for a
-    follow-up; Group A itself is otherwise complete.
+[^id]: Implemented as `Client.ID` (`imapclient/ext_a_id.go`). Previously listed
+    under T08's base ownership without appearing in T08's scope table; the scope
+    table now includes it. Verified on Dovecot, Stalwart and Cyrus.
 
 ## Group A — core modern (task T08)
 

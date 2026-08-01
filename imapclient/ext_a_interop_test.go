@@ -23,6 +23,7 @@ import (
 var t08Capabilities = []string{
 	"UIDPLUS", "MOVE", "ESEARCH", "SEARCHRES", "LIST-EXTENDED",
 	"LIST-STATUS", "SPECIAL-USE", "CREATE-SPECIAL-USE", "CHILDREN", "WITHIN",
+	"ID",
 }
 
 func TestExtACapabilityMatrix(t *testing.T) {
@@ -489,6 +490,42 @@ func TestExtAWithin(t *testing.T) {
 		older := imap.SearchWithin{Key: imap.SearchWithinKeyOlder, Seconds: 3600}
 		if got := count(older); got != 0 {
 			t08Fail(t, server, client, fmt.Sprintf("OLDER 3600 matched %d messages, want 0", got), nil)
+		}
+	})
+}
+
+func TestExtAID(t *testing.T) {
+	t08ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, client *imapclient.Client) {
+		if !caps["ID"] {
+			_, err := client.ID(ctx, nil)
+			if !errors.Is(err, imapclient.ErrCapabilityNotAdvertised) {
+				t08Fail(t, server, client, "ID without capability must be refused locally", err)
+			}
+			t.Skip("server does not advertise ID")
+		}
+
+		nilData, err := client.ID(ctx, nil)
+		if err != nil {
+			t08Fail(t, server, client, "ID NIL", err)
+		}
+		if nilData == nil {
+			t08Fail(t, server, client, "ID NIL returned nil data", nil)
+		}
+
+		named, err := client.ID(ctx, &imapclient.IDOptions{
+			Fields: []imapclient.IDField{
+				{Name: "name", Value: imapclient.IDString("go-imap-interop")},
+				{Name: "version", Value: imapclient.IDString("test")},
+			},
+		})
+		if err != nil {
+			t08Fail(t, server, client, "ID with fields", err)
+		}
+		if named == nil {
+			t08Fail(t, server, client, "ID with fields returned nil data", nil)
+		}
+		if named.Received {
+			t.Logf("%s ID response: %#v", server.Profile.Name, named.Fields)
 		}
 	})
 }
