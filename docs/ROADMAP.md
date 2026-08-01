@@ -60,6 +60,11 @@ engineering.
 **Exit:** `apidiff` gate active in CI; API surface test passes; every exported
 symbol has a doc comment; examples compile and run against the matrix.
 
+**Status (2026-08-01):** T13 and T14 are done — all 26 fuzz targets have
+recorded clean 30-minute campaigns; API surface review, examples, and guardian
+sign-off are on `main`. Exit is not yet met: T15 (CI jobs, apidiff gate,
+CHANGELOG, release-candidate tag) has not started.
+
 ## v1.0 — API freeze
 
 After this tag, additive changes only. Removals require two minor releases of
