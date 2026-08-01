@@ -49,8 +49,8 @@ Extension groups C, D and E. Tier-2 servers (Cyrus, Courier) join the matrix.
 `deferred` set.
 
 **Status (2026-08-01):** T10 and T11 are merged; Groups C–E rows are `done`.
-Exit is not yet met: the orphan `ID` (RFC 2971) capability remains `planned`
-(never in T08's scope table; see the coverage footnote).
+The orphan `ID` (RFC 2971) capability is implemented (`Client.ID`); M3 exit is
+met once coverage has no `planned` rows outside the deferred set.
 
 ## M4 — Hardening and the freeze (T13, T14, T15)
 

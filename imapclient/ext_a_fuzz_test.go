@@ -32,6 +32,25 @@ func FuzzESearchResponse(f *testing.F) {
 	})
 }
 
+// FuzzReadIDResponse covers the ID response of RFC 2971 section 3.2.
+func FuzzReadIDResponse(f *testing.F) {
+	for _, seed := range []string{
+		" NIL\r\n",
+		` ("name" "Cyrus" "version" "1.5")` + "\r\n",
+		` ("name" NIL "os" "sunos")` + "\r\n",
+		" ()\r\n",
+		` ("name" "go-imap"` + "\r\n",
+		" (\"a\" \"b\"\r\n",
+		" NIL",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, line string) {
+		_, _ = readIDResponse(imapwire.NewDecoderString(line, nil))
+	})
+}
+
 // FuzzUIDPlusResponseCode drives the COPYUID and APPENDUID response-code
 // parsers, which read attacker-influenced text out of a status response.
 func FuzzUIDPlusResponseCode(f *testing.F) {
