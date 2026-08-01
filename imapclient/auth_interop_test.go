@@ -134,10 +134,10 @@ func testAuthenticationInterop(t *testing.T, server *harness.Server, test authIn
 		err = fmt.Errorf("state after %s authentication = %s, want authenticated", test.mechanism, client.State())
 	}
 	if err == nil {
-		err = client.Noop().Wait(ctx)
+		err = client.Noop(nil).Wait(ctx)
 	}
 	if err == nil {
-		err = client.Logout(ctx)
+		err = client.Logout(ctx, nil)
 	}
 	if err != nil {
 		server.LogDiagnostics(context.Background(), t, trace)

@@ -38,7 +38,7 @@ func TestGreetingCapabilitiesAndPipelining(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatalf("WaitGreeting() = %v", err)
 	}
 	for _, capability := range []string{"IMAP4REV1", "STARTTLS", "AUTH=PLAIN"} {
@@ -46,7 +46,7 @@ func TestGreetingCapabilitiesAndPipelining(t *testing.T) {
 			t.Errorf("capability %q missing", capability)
 		}
 	}
-	first, second := c.Noop(), c.Noop()
+	first, second := c.Noop(nil), c.Noop(nil)
 	if err := first.Wait(ctx); err != nil {
 		t.Errorf("first Wait() = %v", err)
 	}
@@ -64,7 +64,7 @@ func TestGreetingPreauthAndBye(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		if got := c.State(); got != StateAuthenticated {
@@ -78,7 +78,7 @@ func TestGreetingPreauthAndBye(t *testing.T) {
 		c := NewClient(clientConn, nil)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		err := c.WaitGreeting(ctx)
+		err := c.WaitGreeting(ctx, nil)
 		var ierr *imap.Error
 		if !errors.As(err, &ierr) || ierr.Type != imap.ErrorTypeBye {
 			t.Fatalf("WaitGreeting() = %T %[1]v", err)
@@ -96,10 +96,10 @@ func TestWaitCancellationPoisonsConnection(t *testing.T) {
 	c := NewClient(clientConn, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	cmd := c.Noop()
+	cmd := c.Noop(nil)
 	// Let the writer finish before cancelling; the server deliberately never
 	// completes the command.
 	time.Sleep(10 * time.Millisecond)
@@ -125,7 +125,7 @@ func TestLocalStateRejectionAndRedactedTrace(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	bad := c.beginCommand("SELECT", stateSelected, nil, nil)
@@ -162,7 +162,7 @@ func TestUnilateralVanished(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -197,7 +197,7 @@ func TestUnilateralFetchFlags(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -243,7 +243,7 @@ func TestStartTLSDiscardsCapabilitiesAndRequeries(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.startTLS(ctx, "mail.example.test:143"); err != nil {
@@ -290,10 +290,10 @@ func TestMidCommandByeAndLogout(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		err := c.Noop().Wait(ctx)
+		err := c.Noop(nil).Wait(ctx)
 		var ierr *imap.Error
 		if !errors.As(err, &ierr) || ierr.Type != imap.ErrorTypeBye {
 			t.Fatalf("NOOP after BYE = %T %[1]v", err)
@@ -312,10 +312,10 @@ func TestMidCommandByeAndLogout(t *testing.T) {
 		c := NewClient(clientConn, nil)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.Logout(ctx); err != nil {
+		if err := c.Logout(ctx, nil); err != nil {
 			t.Fatalf("Logout() = %v", err)
 		}
 	})

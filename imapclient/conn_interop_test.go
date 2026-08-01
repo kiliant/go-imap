@@ -26,10 +26,10 @@ func TestConnectionLifecycle(t *testing.T) {
 
 			client, err := imapclient.Dial(ctx, server.Address, nil)
 			if err == nil {
-				err = client.Noop().Wait(ctx)
+				err = client.Noop(nil).Wait(ctx)
 			}
 			if err == nil {
-				err = client.Logout(ctx)
+				err = client.Logout(ctx, nil)
 			}
 			if err != nil {
 				if client != nil {

@@ -59,7 +59,7 @@ func main() {
 		Part: []int{partNum},
 		Peek: true,
 	}
-	cmd := client.Fetch(imap.SeqSetNum(imap.SeqNum(seq)), section)
+	cmd := client.Fetch(imap.SeqSetNum(imap.SeqNum(seq)), nil, section)
 	var copied int64
 	for {
 		data, err := cmd.Next(ctx)

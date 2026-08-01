@@ -138,7 +138,7 @@ func TestFetchBinarySize(t *testing.T) {
 		return "* 1 FETCH (BINARY.SIZE[] 42)\r\n" + tag + " OK done\r\n"
 	})
 	extCReady(c, []string{"IMAP4REV1", "BINARY"}, nil, true)
-	size, err := c.FetchBinarySize(extCContext(t), 1, nil)
+	size, err := c.FetchBinarySize(extCContext(t), 1, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestFetchBinarySize(t *testing.T) {
 func TestFetchBinarySizeRequiresCapability(t *testing.T) {
 	c, server := extCDial(t, func(tag, line string) string { return tag + " OK\r\n" })
 	extCReady(c, []string{"IMAP4REV1"}, nil, true)
-	_, err := c.FetchBinarySize(extCContext(t), 1, nil)
+	_, err := c.FetchBinarySize(extCContext(t), 1, nil, nil)
 	if !errors.Is(err, ErrCapabilityNotAdvertised) {
 		t.Fatalf("err = %v", err)
 	}
@@ -162,7 +162,7 @@ func TestFetchBinarySizeRequiresCapability(t *testing.T) {
 func TestFetchBinarySizeRejectsZeroID(t *testing.T) {
 	c, server := extCDial(t, func(tag, line string) string { return tag + " OK\r\n" })
 	extCReady(c, []string{"IMAP4REV1", "BINARY"}, nil, true)
-	_, err := c.FetchBinarySize(extCContext(t), 0, nil)
+	_, err := c.FetchBinarySize(extCContext(t), 0, nil, nil)
 	if err == nil {
 		t.Fatal("expected zero-id rejection")
 	}

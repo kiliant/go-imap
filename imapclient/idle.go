@@ -48,11 +48,20 @@ type idleCycle struct {
 	doneSent bool
 }
 
+// IdleOptions configures IDLE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type IdleOptions struct {
+	_ struct{}
+}
+
 // Idle begins receiving mailbox updates. The command is valid in the
 // authenticated and selected states. While an IDLE command is active, the
 // protocol permits no other command until DONE is sent; the client enforces
 // that rule locally.
-func (c *Client) Idle() *IdleCommand {
+//
+// A nil options pointer selects the defaults.
+func (c *Client) Idle(options *IdleOptions) *IdleCommand {
 	cmd := &IdleCommand{client: c, timeout: c.idleTimeout(), poll: c.idlePollInterval()}
 	c.mu.Lock()
 	if c.closed {
@@ -406,7 +415,7 @@ func (cmd *IdleCommand) waitPolling(ctx context.Context) error {
 			return nil
 		default:
 		}
-		noop := cmd.client.Noop()
+		noop := cmd.client.Noop(nil)
 		select {
 		case <-noop.done:
 			if err := noop.err; err != nil {

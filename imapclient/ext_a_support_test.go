@@ -67,7 +67,7 @@ func newExtATestClient(t *testing.T, greeting string, serve func(s *extAServer))
 		_ = c.Close()
 		<-done
 	})
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatalf("greeting: %v", err)
 	}
 	return c, ctx

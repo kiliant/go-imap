@@ -386,8 +386,20 @@ func countUntaggedResponse(count *int, limit int, command string) error {
 	return nil
 }
 
-// WaitGreeting waits until the server greeting has been parsed.
-func (c *Client) WaitGreeting(ctx context.Context) error {
+// WaitGreetingOptions configures [Client.WaitGreeting]. A nil pointer selects
+// the defaults.
+//
+// It carries no fields today; it keeps the door open for future greeting
+// handling policy without a signature change.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type WaitGreetingOptions struct {
+	_ struct{}
+}
+
+// WaitGreeting waits until the server greeting has been parsed. A nil options
+// pointer selects the defaults.
+func (c *Client) WaitGreeting(ctx context.Context, options *WaitGreetingOptions) error {
 	select {
 	case <-c.greeting:
 		return c.greetingErr
@@ -404,15 +416,35 @@ func (c *Client) State() State {
 	return c.state
 }
 
+// NoopOptions configures NOOP. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type NoopOptions struct {
+	_ struct{}
+}
+
 // Noop issues NOOP and returns its command handle after writing its bounded
-// command prelude, without waiting for the server response.
-func (c *Client) Noop() *Command {
+// command prelude, without waiting for the server response. A nil options
+// pointer selects the defaults.
+func (c *Client) Noop(options *NoopOptions) *Command {
 	return c.beginCommand("NOOP", stateNotAuthenticated|stateAuthenticated|stateSelected, nil, nil)
 }
 
+// LogoutOptions configures [Client.Logout]. A nil pointer selects the
+// defaults.
+//
+// It carries no fields today; it keeps the door open for options such as
+// declining to wait for the tagged completion, without a signature change.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type LogoutOptions struct {
+	_ struct{}
+}
+
 // Logout asks the server to end the session, waits for its tagged completion,
-// and closes the transport. ctx must be non-nil.
-func (c *Client) Logout(ctx context.Context) error {
+// and closes the transport. ctx must be non-nil. A nil options pointer selects
+// the defaults.
+func (c *Client) Logout(ctx context.Context, options *LogoutOptions) error {
 	cmd := c.beginCommand("LOGOUT", stateNotAuthenticated|stateAuthenticated|stateSelected, nil, nil)
 	err := cmd.Wait(ctx)
 	closeErr := c.Close()

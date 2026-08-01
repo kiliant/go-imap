@@ -214,7 +214,7 @@ func (c *Client) replaceEmulated(ctx context.Context, uid bool, number uint32, m
 
 // replaceResolveUID maps a sequence number to a UID for the emulated path.
 func (c *Client) replaceResolveUID(ctx context.Context, seqNum imap.SeqNum) (imap.UID, error) {
-	cmd := c.Fetch(imap.SeqSetNum(seqNum), imap.FetchItemUID)
+	cmd := c.Fetch(imap.SeqSetNum(seqNum), nil, imap.FetchItemUID)
 	var found imap.UID
 	for {
 		data, err := cmd.Next(ctx)

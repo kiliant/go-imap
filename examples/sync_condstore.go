@@ -43,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := client.Enable("CONDSTORE", "QRESYNC").Wait(ctx); err != nil {
+	if _, err := client.Enable(nil, "CONDSTORE", "QRESYNC").Wait(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "enable CONDSTORE/QRESYNC:", err)
 		os.Exit(1)
 	}

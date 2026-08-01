@@ -67,24 +67,48 @@ type AuthenticateOptions struct {
 	_ struct{}
 }
 
+// LoginOptions controls the RFC 3501 LOGIN command. A nil pointer selects the
+// defaults, which send username and password exactly as supplied.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type LoginOptions struct {
+	// PrepareCredentials applies SASLprep (RFC 4013) to username and password
+	// before they are written to the wire. It is false by default.
+	//
+	// The same caution as [AuthenticateOptions.PrepareCredentials] applies:
+	// many deployed servers store and compare raw password octets, so
+	// enabling this against such a server breaks any password containing a
+	// character SASLprep changes. Enable it only when the server is known to
+	// normalize credentials at enrollment.
+	PrepareCredentials bool
+
+	_ struct{}
+}
+
 // Login authenticates with the RFC 3501 LOGIN command. It refuses to send
 // credentials when the server advertises LOGINDISABLED, or on a cleartext
 // connection unless Options.AllowInsecureAuth was explicitly set.
 //
-// Login does not prepare (SASLprep, RFC 4013) username or password: the
-// command has no options struct and adding a parameter would be a
-// breaking change. Callers that need that transformation should use
-// [Client.Authenticate] with [AuthenticateOptions.PrepareCredentials]
-// instead.
-func (c *Client) Login(ctx context.Context, username, password string) error {
+// By default Login does not prepare (SASLprep, RFC 4013) username or password.
+// Set [LoginOptions.PrepareCredentials] to apply it, or use
+// [Client.Authenticate] with [AuthenticateOptions.PrepareCredentials] for the
+// SASL path.
+func (c *Client) Login(ctx context.Context, username, password string, options *LoginOptions) error {
 	if err := c.prepareLogin(); err != nil {
 		return err
 	}
+	prepare := options != nil && options.PrepareCredentials
+	sentUsername, sentPassword, err := prepareCredentials(prepare, username, password)
+	if err != nil {
+		return err
+	}
 	cmd := c.beginAuthenticationCommand("LOGIN", func(enc *imapwire.Encoder) {
-		enc.SP().String(username).SP().String(password)
+		enc.SP().String(sentUsername).SP().String(sentPassword)
 	}, nil, false)
 	if err := cmd.Wait(ctx); err != nil {
-		return redactAuthenticationError(err, username, password)
+		// Both the supplied and the prepared forms may appear in a server's
+		// NO text, so redact both — see authenticationSecrets.
+		return redactAuthenticationError(err, username, password, sentUsername, sentPassword)
 	}
 	c.authenticationSucceeded()
 	return c.requestCapability(ctx)
@@ -254,8 +278,8 @@ var passwordMechanisms = map[string]bool{
 // offending code point and never the credential itself; that property
 // must survive here too, so do not add the username or password to this
 // error.
-func prepareCredentials(opts *AuthenticateOptions, username, password string) (string, string, error) {
-	if !opts.PrepareCredentials {
+func prepareCredentials(prepare bool, username, password string) (string, string, error) {
+	if !prepare {
 		return username, password, nil
 	}
 	preparedUsername, err := saslprep.Prepare(username)
@@ -281,7 +305,7 @@ func authenticationSecrets(name, username, password string, opts *AuthenticateOp
 	}
 	// The same call already succeeded during mechanism construction, so an
 	// error here means nothing was sent under the prepared form.
-	preparedUsername, preparedPassword, err := prepareCredentials(opts, username, password)
+	preparedUsername, preparedPassword, err := prepareCredentials(opts.PrepareCredentials, username, password)
 	if err != nil {
 		return secrets
 	}
@@ -297,7 +321,7 @@ func (c *Client) builtinSASL(name, username, password string, opts *Authenticate
 	}
 	if passwordMechanisms[name] {
 		var err error
-		username, password, err = prepareCredentials(opts, username, password)
+		username, password, err = prepareCredentials(opts.PrepareCredentials, username, password)
 		if err != nil {
 			return nil, err
 		}

@@ -42,7 +42,7 @@ func ExampleClient_Fetch_envelopes() {
 		panic(err)
 	}
 	set := imap.SeqSetRange(imap.SeqNum(status.NumMessages), imap.SeqNum(status.NumMessages))
-	cmd := client.Fetch(set, imap.FetchItemEnvelope, imap.FetchItemUID)
+	cmd := client.Fetch(set, nil, imap.FetchItemEnvelope, imap.FetchItemUID)
 	for {
 		data, err := cmd.Next(ctx)
 		if err == io.EOF {
@@ -66,7 +66,7 @@ func ExampleClient_Fetch_streamAttachment() {
 	var client *imapclient.Client
 
 	section := &imap.FetchItemBodySection{Part: []int{2}, Peek: true}
-	cmd := client.Fetch(imap.SeqSetNum(1), section)
+	cmd := client.Fetch(imap.SeqSetNum(1), nil, section)
 	for {
 		data, err := cmd.Next(ctx)
 		if err == io.EOF {
@@ -91,7 +91,7 @@ func ExampleClient_Idle() {
 	ctx := context.Background()
 	var client *imapclient.Client
 
-	idle := client.Idle()
+	idle := client.Idle(nil)
 	if err := idle.Wait(ctx); err != nil {
 		panic(err)
 	}
@@ -101,7 +101,7 @@ func ExampleClient_SelectSync() {
 	ctx := context.Background()
 	var client *imapclient.Client
 
-	if _, err := client.Enable("CONDSTORE", "QRESYNC").Wait(ctx); err != nil {
+	if _, err := client.Enable(nil, "CONDSTORE", "QRESYNC").Wait(ctx); err != nil {
 		panic(err)
 	}
 	status, err := client.SelectSync("INBOX", &imapclient.SyncSelectOptions{

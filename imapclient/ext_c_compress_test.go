@@ -75,7 +75,7 @@ func TestCompressDeflateLargeFetch(t *testing.T) {
 	c := NewClient(clientConn, &Options{ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := extCContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	extCReady(c, []string{"IMAP4REV1", "COMPRESS=DEFLATE"}, nil, true)
@@ -85,7 +85,7 @@ func TestCompressDeflateLargeFetch(t *testing.T) {
 	if !c.Compressed() {
 		t.Fatal("Compressed() = false after successful COMPRESS")
 	}
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodySection{Peek: true})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodySection{Peek: true})
 	msg, err := cmd.Next(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestCompressBlocksConcurrentWritersDuringUpgrade(t *testing.T) {
 	c := NewClient(clientConn, &Options{ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := extCContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	extCReady(c, []string{"IMAP4REV1", "COMPRESS=DEFLATE"}, nil, true)
@@ -192,7 +192,7 @@ func TestCompressBlocksConcurrentWritersDuringUpgrade(t *testing.T) {
 		defer wg.Done()
 		// Hammer NOOP while COMPRESS upgrades; it must not go out in cleartext.
 		time.Sleep(5 * time.Millisecond)
-		noopErr = c.Noop().Wait(ctx)
+		noopErr = c.Noop(nil).Wait(ctx)
 	}()
 
 	if err := c.Compress(ctx, nil); err != nil {
@@ -241,7 +241,7 @@ func TestCompressRejectsSecondEnable(t *testing.T) {
 	c := NewClient(clientConn, nil)
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := extCContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	extCReady(c, []string{"IMAP4REV1", "COMPRESS=DEFLATE"}, nil, true)

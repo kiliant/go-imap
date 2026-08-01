@@ -100,17 +100,14 @@ type CreateOptions struct {
 	_ struct{}
 }
 
-// CreateMailbox creates mailbox with the RFC 4466 create parameters in options.
-//
-// It is a sibling of [Client.Create] rather than a change to it, because
-// [Client.Create] takes no options struct and adding a parameter would break
-// every caller. A nil options pointer makes the two identical.
+// createMailbox implements [Client.Create], including the RFC 4466 create
+// parameters in options.
 //
 // A server that does not support a requested special use answers NO with the
 // [imap.CodeUseAttr] response code; RFC 6154 section 3 leaves whether the
 // mailbox was still created up to the server, so a caller that cares must LIST
 // afterwards.
-func (c *Client) CreateMailbox(mailbox string, options *CreateOptions) *Command {
+func (c *Client) createMailbox(mailbox string, options *CreateOptions) *Command {
 	if options == nil || len(options.SpecialUse) == 0 {
 		return c.mailboxCommand("CREATE", mailbox)
 	}

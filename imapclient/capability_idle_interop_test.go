@@ -24,11 +24,11 @@ func TestCapabilityEnableInterop(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			client := dialMailboxInteropClient(t, ctx, server)
-			if err := client.Capability(ctx); err != nil {
+			if err := client.Capability(ctx, nil); err != nil {
 				failMailboxInterop(t, server, client, "CAPABILITY refresh", err)
 			}
 			if server.Profile.Name == "stalwart" {
-				enabled, err := client.Enable("IMAP4rev2").Wait(ctx)
+				enabled, err := client.Enable(nil, "IMAP4rev2").Wait(ctx)
 				if err != nil {
 					failMailboxInterop(t, server, client, "ENABLE IMAP4rev2", err)
 				}
@@ -36,7 +36,7 @@ func TestCapabilityEnableInterop(t *testing.T) {
 					failMailboxInterop(t, server, client, "server did not enable IMAP4rev2", nil)
 				}
 			}
-			if err := client.Logout(ctx); err != nil {
+			if err := client.Logout(ctx, nil); err != nil {
 				failMailboxInterop(t, server, client, "LOGOUT", err)
 			}
 		})
@@ -72,7 +72,7 @@ func TestIdlePushInterop(t *testing.T) {
 			// SELECT's EXISTS is collected by SelectCommand, but drain defensively
 			// so the assertion below can only be satisfied by the post-IDLE APPEND.
 			drainExists(updates)
-			idle := client.Idle() // Issue IDLE before the second connection mutates INBOX.
+			idle := client.Idle(nil) // Issue IDLE before the second connection mutates INBOX.
 			if err := idle.WaitReady(ctx); err != nil {
 				failMailboxInterop(t, server, client, "wait for IDLE continuation", err)
 			}
@@ -95,10 +95,10 @@ func TestIdlePushInterop(t *testing.T) {
 			if err := <-idleResult; !errors.Is(err, context.Canceled) {
 				failMailboxInterop(t, server, client, "ending IDLE", err)
 			}
-			if err := client.CloseMailbox().Wait(ctx); err != nil {
+			if err := client.CloseMailbox(nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "CLOSE after IDLE", err)
 			}
-			if err := client.Logout(ctx); err != nil {
+			if err := client.Logout(ctx, nil); err != nil {
 				failMailboxInterop(t, server, client, "LOGOUT", err)
 			}
 		})
@@ -116,7 +116,7 @@ func dialIdleInteropClient(t *testing.T, ctx context.Context, server *harness.Se
 		},
 	})
 	if err == nil {
-		err = client.Login(ctx, authInteropUsername, authInteropPassword)
+		err = client.Login(ctx, authInteropUsername, authInteropPassword, nil)
 	}
 	if err != nil {
 		if client != nil {

@@ -19,7 +19,7 @@ func TestMultiAppendWritesTwoLiterals(t *testing.T) {
 	data, err := c.MultiAppend(extCContext(t), "INBOX", []AppendMessage{
 		{Flags: []imap.Flag{imap.FlagSeen}, Size: int64(len(msg1)), Literal: strings.NewReader(msg1)},
 		{Size: int64(len(msg2)), Literal: strings.NewReader(msg2)},
-	}).Wait(extCContext(t))
+	}, nil).Wait(extCContext(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestMultiAppendRequiresCapability(t *testing.T) {
 	_, err := c.MultiAppend(extCContext(t), "INBOX", []AppendMessage{
 		{Size: 3, Literal: strings.NewReader("a\r\n")},
 		{Size: 3, Literal: strings.NewReader("b\r\n")},
-	}).Wait(extCContext(t))
+	}, nil).Wait(extCContext(t))
 	if !errors.Is(err, ErrCapabilityNotAdvertised) {
 		t.Fatalf("err = %v", err)
 	}
@@ -104,7 +104,7 @@ func TestMultiAppendInternalDate(t *testing.T) {
 	msg := "x\r\n"
 	if _, err := c.MultiAppend(extCContext(t), "INBOX", []AppendMessage{
 		{InternalDate: &when, Size: int64(len(msg)), Literal: strings.NewReader(msg)},
-	}).Wait(extCContext(t)); err != nil {
+	}, nil).Wait(extCContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(server.LastLine(), "1-Jun-2024") {

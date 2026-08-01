@@ -26,10 +26,10 @@ func TestEnableTracksServerSubset(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	enabled, err := c.Enable("IMAP4rev2", "CONDSTORE", "UTF8=ACCEPT").Wait(ctx)
+	enabled, err := c.Enable(nil, "IMAP4rev2", "CONDSTORE", "UTF8=ACCEPT").Wait(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,16 +58,16 @@ func TestEnableRequiresAuthenticatedUnselectedState(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Enable("CONDSTORE").Wait(ctx); err == nil {
+	if _, err := c.Enable(nil, "CONDSTORE").Wait(ctx); err == nil {
 		t.Fatal("ENABLE succeeded before authentication")
 	}
 	c.mu.Lock()
 	c.state = StateSelected
 	c.mu.Unlock()
-	if _, err := c.Enable("CONDSTORE").Wait(ctx); err == nil {
+	if _, err := c.Enable(nil, "CONDSTORE").Wait(ctx); err == nil {
 		t.Fatal("ENABLE succeeded while selected")
 	}
 }
@@ -90,10 +90,10 @@ func TestEnableAndSelectCannotBePipelined(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		enable := c.Enable("CONDSTORE")
+		enable := c.Enable(nil, "CONDSTORE")
 		got := <-request
 		if _, err := c.Select("INBOX", nil).Wait(ctx); err == nil {
 			t.Fatal("SELECT was accepted while ENABLE was in flight")
@@ -124,12 +124,12 @@ func TestEnableAndSelectCannotBePipelined(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		selectCmd := c.Select("INBOX", nil)
 		got := <-request
-		if _, err := c.Enable("CONDSTORE").Wait(ctx); err == nil {
+		if _, err := c.Enable(nil, "CONDSTORE").Wait(ctx); err == nil {
 			t.Fatal("ENABLE was accepted while SELECT was in flight")
 		}
 		if !strings.Contains(got, " SELECT INBOX\r\n") {
@@ -150,12 +150,12 @@ func TestEnableWriteFailureDoesNotMaskClosedError(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Space is forbidden in an IMAP atom, so Encoder.Flush fails after the
 	// command has allocated its tag but before a tagged completion can arrive.
-	_, enableErr := c.Enable("invalid capability").Wait(ctx)
+	_, enableErr := c.Enable(nil, "invalid capability").Wait(ctx)
 	if enableErr == nil {
 		t.Fatal("invalid ENABLE capability succeeded")
 	}
@@ -173,7 +173,7 @@ func TestEnableAndSelectOnClosedClientReturnCloseError(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := c.Enable("CONDSTORE").Wait(ctx); !errors.Is(err, net.ErrClosed) {
+	if _, err := c.Enable(nil, "CONDSTORE").Wait(ctx); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("ENABLE after Close = %v, want closed error", err)
 	}
 	if _, err := c.Select("INBOX", nil).Wait(ctx); !errors.Is(err, net.ErrClosed) {
@@ -199,10 +199,10 @@ func TestEnableUTF8AcceptUpdatesMailboxDecoder(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Enable("UTF8=ACCEPT").Wait(ctx); err != nil {
+	if _, err := c.Enable(nil, "UTF8=ACCEPT").Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	data, err := c.List("", "*", nil).Wait(ctx)

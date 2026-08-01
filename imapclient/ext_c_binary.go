@@ -102,9 +102,9 @@ func (c *Client) fetchBinary(ctx context.Context, byUID bool, id uint32, section
 
 	var cmd *FetchCommand
 	if byUID {
-		cmd = c.FetchUID(imap.UIDSetNum(imap.UID(id)), &req)
+		cmd = c.FetchUID(imap.UIDSetNum(imap.UID(id)), nil, &req)
 	} else {
-		cmd = c.Fetch(imap.SeqSetNum(imap.SeqNum(id)), &req)
+		cmd = c.Fetch(imap.SeqSetNum(imap.SeqNum(id)), nil, &req)
 	}
 	msg, err := cmd.Next(ctx)
 	if err != nil {
@@ -189,9 +189,9 @@ func (c *Client) fetchBinaryFallback(ctx context.Context, byUID bool, id uint32,
 	}
 	var cmd *FetchCommand
 	if byUID {
-		cmd = c.FetchUID(imap.UIDSetNum(imap.UID(id)), body)
+		cmd = c.FetchUID(imap.UIDSetNum(imap.UID(id)), nil, body)
 	} else {
-		cmd = c.Fetch(imap.SeqSetNum(imap.SeqNum(id)), body)
+		cmd = c.Fetch(imap.SeqSetNum(imap.SeqNum(id)), nil, body)
 	}
 	msg, err := cmd.Next(ctx)
 	if err != nil {
@@ -286,18 +286,32 @@ func decodeTransferEncoding(raw []byte, cte string) ([]byte, error) {
 	}
 }
 
+// BinaryFetchSizeOptions configures a BINARY.SIZE lookup. A nil pointer
+// selects the defaults.
+//
+// It carries no fields today. It exists so that a future FETCH modifier — the
+// pressure [SyncFetchOptions.ChangedSince] and [PartialFetchOptions.Range]
+// already apply to ordinary FETCH — can be threaded through BINARY.SIZE
+// without changing this method's signature.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type BinaryFetchSizeOptions struct {
+	_ struct{}
+}
+
 // FetchBinarySize requests BINARY.SIZE for one message part.
-// BINARY, RFC 3516 section 4.2.
-func (c *Client) FetchBinarySize(ctx context.Context, seqNum imap.SeqNum, part []int) (int64, error) {
-	return c.fetchBinarySize(ctx, false, uint32(seqNum), part)
+// BINARY, RFC 3516 section 4.2. A nil options pointer selects the defaults.
+func (c *Client) FetchBinarySize(ctx context.Context, seqNum imap.SeqNum, part []int, options *BinaryFetchSizeOptions) (int64, error) {
+	return c.fetchBinarySize(ctx, false, uint32(seqNum), part, options)
 }
 
-// FetchBinarySizeUID is [Client.FetchBinarySize] by UID.
-func (c *Client) FetchBinarySizeUID(ctx context.Context, uid imap.UID, part []int) (int64, error) {
-	return c.fetchBinarySize(ctx, true, uint32(uid), part)
+// FetchBinarySizeUID is [Client.FetchBinarySize] by UID. A nil options pointer
+// selects the defaults.
+func (c *Client) FetchBinarySizeUID(ctx context.Context, uid imap.UID, part []int, options *BinaryFetchSizeOptions) (int64, error) {
+	return c.fetchBinarySize(ctx, true, uint32(uid), part, options)
 }
 
-func (c *Client) fetchBinarySize(ctx context.Context, byUID bool, id uint32, part []int) (int64, error) {
+func (c *Client) fetchBinarySize(ctx context.Context, byUID bool, id uint32, part []int, _ *BinaryFetchSizeOptions) (int64, error) {
 	if ctx == nil {
 		return 0, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "BINARY.SIZE requires a non-nil context"}
 	}
@@ -310,9 +324,9 @@ func (c *Client) fetchBinarySize(ctx context.Context, byUID bool, id uint32, par
 	item := &imap.FetchItemBinarySectionSize{Part: part}
 	var cmd *FetchCommand
 	if byUID {
-		cmd = c.FetchUID(imap.UIDSetNum(imap.UID(id)), item)
+		cmd = c.FetchUID(imap.UIDSetNum(imap.UID(id)), nil, item)
 	} else {
-		cmd = c.Fetch(imap.SeqSetNum(imap.SeqNum(id)), item)
+		cmd = c.Fetch(imap.SeqSetNum(imap.SeqNum(id)), nil, item)
 	}
 	msg, err := cmd.Next(ctx)
 	if err != nil {

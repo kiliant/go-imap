@@ -46,7 +46,7 @@ func main() {
 	}
 	set := imap.SeqSetRange(start, imap.SeqNum(status.NumMessages))
 
-	cmd := client.Fetch(set, imap.FetchItemEnvelope, imap.FetchItemUID)
+	cmd := client.Fetch(set, nil, imap.FetchItemEnvelope, imap.FetchItemUID)
 	for {
 		data, err := cmd.Next(ctx)
 		if err == io.EOF {
@@ -56,7 +56,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-	for _, item := range data.Items {
+		for _, item := range data.Items {
 			for _, v := range item {
 				env, ok := v.(*imap.FetchDataEnvelope)
 				if !ok {

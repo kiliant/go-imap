@@ -46,8 +46,16 @@ func (cmd *NamespaceCommand) Wait(ctx context.Context) (*NamespaceData, error) {
 	return cmd.data, nil
 }
 
+// NamespaceOptions configures NAMESPACE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type NamespaceOptions struct {
+	_ struct{}
+}
+
 // Namespace requests namespace prefixes and hierarchy delimiters (RFC 2342).
-func (c *Client) Namespace() *NamespaceCommand {
+// A nil options pointer selects the defaults.
+func (c *Client) Namespace(options *NamespaceOptions) *NamespaceCommand {
 	data := &NamespaceData{}
 	cmd := c.beginCommand("NAMESPACE", stateAuthenticated|stateSelected, nil, namespaceCollector(data))
 	return &NamespaceCommand{Command: cmd, data: data}

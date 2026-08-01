@@ -72,7 +72,7 @@ func scriptedServer(t *testing.T, replies ...string) (*Client, chan<- string) {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	return c, extra
@@ -125,7 +125,7 @@ func TestFetchAbandonedBeforeCloseDoesNotPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := c.Fetch(set, imap.FetchItemUID)
+	cmd := c.Fetch(set, nil, imap.FetchItemUID)
 	// Deliberately never call Next: the reader blocks on an undelivered
 	// response, and Close must unwind it.
 	time.Sleep(100 * time.Millisecond)
@@ -180,7 +180,7 @@ func TestLiteralRejectedInsteadOfContinuation(t *testing.T) {
 		t.Fatal("SEARCH with a rejected literal deadlocked")
 	}
 	// The rejection leaves the stream synchronised, so the session survives.
-	if err := c.Noop().Wait(testContext(t)); err != nil {
+	if err := c.Noop(nil).Wait(testContext(t)); err != nil {
 		t.Fatalf("NOOP after a rejected literal = %v", err)
 	}
 }
@@ -195,7 +195,7 @@ func TestLoginNonASCIIPasswordUsesLiteral(t *testing.T) {
 	)
 	c.opts.AllowInsecureAuth = true
 
-	if err := c.Login(testContext(t), "user", "p\u00e4ssw\u00f6rd"); err != nil {
+	if err := c.Login(testContext(t), "user", "p\u00e4ssw\u00f6rd", nil); err != nil {
 		t.Fatalf("Login with a non-ASCII password = %v", err)
 	}
 	if got := c.State(); got != StateAuthenticated {
@@ -232,7 +232,7 @@ func TestMidSessionByeEndsTheSession(t *testing.T) {
 	c, _ := scriptedServer(t, "* BYE server shutting down\r\n")
 	setState(c, StateAuthenticated)
 
-	if err := c.Noop().Wait(testContext(t)); err == nil {
+	if err := c.Noop(nil).Wait(testContext(t)); err == nil {
 		t.Fatal("NOOP answered with BYE = nil, want an error")
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -242,7 +242,7 @@ func TestMidSessionByeEndsTheSession(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := c.Noop().Wait(testContext(t)); err == nil {
+	if err := c.Noop(nil).Wait(testContext(t)); err == nil {
 		t.Fatal("NOOP after BYE = nil, want an error")
 	}
 }
@@ -256,7 +256,7 @@ func TestFetchUnknownItemIsPreservedVerbatim(t *testing.T) {
 	)
 	setState(c, StateSelected)
 
-	cmd := c.Fetch(imap.SeqSetNum(1), imap.FetchItemUID)
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, imap.FetchItemUID)
 	data, err := cmd.Next(testContext(t))
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +286,7 @@ func TestFetchObjectIDSaveDatePreview(t *testing.T) {
 		`* 1 FETCH (EMAILID (M6d99ac3275bb4e) THREADID NIL SAVEDATE "01-Aug-2026 04:59:56 +0000" PREVIEW "hello")`+"\r\n$TAG OK done\r\n",
 	)
 	setState(c, StateSelected)
-	cmd := c.Fetch(imap.SeqSetNum(1), imap.FetchItemEmailID, imap.FetchItemThreadID, imap.FetchItemSaveDate, &imap.FetchItemPreview{})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, imap.FetchItemEmailID, imap.FetchItemThreadID, imap.FetchItemSaveDate, &imap.FetchItemPreview{})
 	data, err := cmd.Next(testContext(t))
 	if err != nil {
 		t.Fatal(err)
@@ -338,11 +338,11 @@ func TestFetchWholeMailboxSet(t *testing.T) {
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
-	if err := c.WaitGreeting(testContext(t)); err != nil {
+	if err := c.WaitGreeting(testContext(t), nil); err != nil {
 		t.Fatal(err)
 	}
 	setState(c, StateSelected)
-	if err := c.Fetch(imap.SeqSetRange(1, 0), imap.FetchItemUID).Wait(testContext(t)); err != nil {
+	if err := c.Fetch(imap.SeqSetRange(1, 0), nil, imap.FetchItemUID).Wait(testContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	line := <-got
@@ -474,7 +474,7 @@ func TestFetchEnvelope(t *testing.T) {
 	)
 	setState(c, StateSelected)
 
-	cmd := c.Fetch(imap.SeqSetNum(1), imap.FetchItemEnvelope)
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, imap.FetchItemEnvelope)
 	data, err := cmd.Next(testContext(t))
 	if err != nil {
 		t.Fatal(err)
@@ -521,7 +521,7 @@ func TestFetchBodyStructure(t *testing.T) {
 	setState(c, StateSelected)
 	// The second part carries a deliberately malformed size; the command must
 	// fail rather than silently mis-parse.
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodyStructure{Extended: true})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodyStructure{Extended: true})
 	if _, err := cmd.Next(testContext(t)); err == nil {
 		t.Fatal("malformed BODYSTRUCTURE = nil, want an error")
 	}
@@ -537,7 +537,7 @@ func TestFetchBodyStructureMultipart(t *testing.T) {
 	)
 	setState(c, StateSelected)
 
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodyStructure{Extended: true})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodyStructure{Extended: true})
 	data, err := cmd.Next(testContext(t))
 	if err != nil {
 		t.Fatal(err)
@@ -594,7 +594,7 @@ func TestFetchNonExtendedBodyStructure(t *testing.T) {
 	)
 	setState(c, StateSelected)
 
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodyStructure{})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodyStructure{})
 	data, err := cmd.Next(testContext(t))
 	if err != nil {
 		t.Fatal(err)
@@ -630,7 +630,7 @@ func TestFetchBodyStructureMessageRFC822(t *testing.T) {
 	)
 	setState(c, StateSelected)
 
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodyStructure{Extended: true})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodyStructure{Extended: true})
 	data, err := cmd.Next(testContext(t))
 	if err != nil {
 		t.Fatal(err)

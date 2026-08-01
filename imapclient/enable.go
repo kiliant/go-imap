@@ -28,14 +28,22 @@ func (cmd *EnableCommand) Wait(ctx context.Context) ([]string, error) {
 	return append([]string(nil), cmd.enabled...), nil
 }
 
+// EnableOptions configures ENABLE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type EnableOptions struct {
+	_ struct{}
+}
+
 // Enable requests the supplied RFC 5161 capabilities. It accepts extension
 // names as open strings so later RFCs do not require an API change. The common
-// values are IMAP4rev2, CONDSTORE, QRESYNC, and UTF8=ACCEPT.
+// values are IMAP4rev2, CONDSTORE, QRESYNC, and UTF8=ACCEPT. A nil options
+// pointer selects the defaults.
 //
 // The command is rejected locally unless the session is authenticated and no
 // mailbox is selected. Use [EnableCommand.Wait] to learn the subset the server
 // actually enabled.
-func (c *Client) Enable(capabilities ...string) *EnableCommand {
+func (c *Client) Enable(options *EnableOptions, capabilities ...string) *EnableCommand {
 	result := &EnableCommand{}
 	if len(capabilities) == 0 {
 		result.Command = rejectedCommand(c, "ENABLE", "ENABLE requires at least one capability")

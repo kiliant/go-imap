@@ -28,7 +28,7 @@ func TestMailboxLifecycle(t *testing.T) {
 			mailbox := harness.UniqueMailbox("mailbox-lifecycle") + "-旅行"
 			renamed := harness.UniqueMailbox("mailbox-renamed") + "-旅行"
 
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "CREATE", err)
 			}
 			if data, err := client.List("", mailbox, nil).Wait(ctx); err != nil {
@@ -37,7 +37,7 @@ func TestMailboxLifecycle(t *testing.T) {
 				failMailboxInterop(t, server, client, "LIST did not return created mailbox", nil)
 			}
 
-			if err := client.Subscribe(mailbox).Wait(ctx); err != nil {
+			if err := client.Subscribe(mailbox, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "SUBSCRIBE", err)
 			}
 			if data, err := client.Lsub("", mailbox, nil).Wait(ctx); err != nil {
@@ -67,13 +67,13 @@ func TestMailboxLifecycle(t *testing.T) {
 			if selected.Mailbox != mailbox || selected.UIDValidity == 0 || selected.ReadOnly {
 				failMailboxInterop(t, server, client, "SELECT returned incomplete mailbox data", nil)
 			}
-			if err := client.Check().Wait(ctx); err != nil {
+			if err := client.Check(nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "CHECK", err)
 			}
 			leaveMailboxInterop(t, ctx, server, client)
 
 			if client.Capabilities()["NAMESPACE"] {
-				namespace, err := client.Namespace().Wait(ctx)
+				namespace, err := client.Namespace(nil).Wait(ctx)
 				if err != nil {
 					failMailboxInterop(t, server, client, "NAMESPACE", err)
 				}
@@ -82,7 +82,7 @@ func TestMailboxLifecycle(t *testing.T) {
 				}
 			}
 
-			if err := client.Rename(mailbox, renamed).Wait(ctx); err != nil {
+			if err := client.Rename(mailbox, renamed, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "RENAME", err)
 			}
 			if data, err := client.List("", renamed, nil).Wait(ctx); err != nil {
@@ -90,14 +90,14 @@ func TestMailboxLifecycle(t *testing.T) {
 			} else if !containsMailbox(data, renamed) {
 				failMailboxInterop(t, server, client, "LIST did not return renamed mailbox", nil)
 			}
-			if err := client.Unsubscribe(renamed).Wait(ctx); err != nil {
+			if err := client.Unsubscribe(renamed, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "UNSUBSCRIBE", err)
 			}
-			if err := client.Delete(renamed).Wait(ctx); err != nil {
+			if err := client.Delete(renamed, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "DELETE", err)
 			}
 
-			if err := client.Logout(ctx); err != nil {
+			if err := client.Logout(ctx, nil); err != nil {
 				failMailboxInterop(t, server, client, "LOGOUT", err)
 			}
 		})
@@ -120,7 +120,7 @@ func TestMailboxCapabilityCommands(t *testing.T) {
 			client := dialMailboxInteropClient(t, ctx, server)
 
 			if caps["NAMESPACE"] {
-				namespace, err := client.Namespace().Wait(ctx)
+				namespace, err := client.Namespace(nil).Wait(ctx)
 				if err != nil {
 					failMailboxInterop(t, server, client, "NAMESPACE", err)
 				}
@@ -132,11 +132,11 @@ func TestMailboxCapabilityCommands(t *testing.T) {
 				if _, err := client.Select("INBOX", nil).Wait(ctx); err != nil {
 					failMailboxInterop(t, server, client, "SELECT before UNSELECT", err)
 				}
-				if err := client.Unselect().Wait(ctx); err != nil {
+				if err := client.Unselect(nil).Wait(ctx); err != nil {
 					failMailboxInterop(t, server, client, "UNSELECT", err)
 				}
 			}
-			if err := client.Logout(ctx); err != nil {
+			if err := client.Logout(ctx, nil); err != nil {
 				failMailboxInterop(t, server, client, "LOGOUT", err)
 			}
 		})
@@ -155,7 +155,7 @@ func TestMailboxUIDValidityChange(t *testing.T) {
 
 			client := dialMailboxInteropClient(t, ctx, server)
 			mailbox := harness.UniqueMailbox("uidvalidity-recreate")
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "CREATE original mailbox", err)
 			}
 			original, err := client.Select(mailbox, nil).Wait(ctx)
@@ -166,7 +166,7 @@ func TestMailboxUIDValidityChange(t *testing.T) {
 				failMailboxInterop(t, server, client, "SELECT returned zero UIDVALIDITY", nil)
 			}
 			leaveMailboxInterop(t, ctx, server, client)
-			if err := client.Delete(mailbox).Wait(ctx); err != nil {
+			if err := client.Delete(mailbox, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "DELETE original mailbox", err)
 			}
 			// GreenMail 2.1.9 derives a newly-created mailbox's UIDVALIDITY from
@@ -178,7 +178,7 @@ func TestMailboxUIDValidityChange(t *testing.T) {
 					time.Sleep(delay)
 				}
 			}
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "CREATE recreated mailbox", err)
 			}
 			recreated, err := client.Examine(mailbox, nil).Wait(ctx)
@@ -190,10 +190,10 @@ func TestMailboxUIDValidityChange(t *testing.T) {
 				failMailboxInterop(t, server, client, "UIDVALIDITY change was not surfaced after delete/recreate", nil)
 			}
 			leaveMailboxInterop(t, ctx, server, client)
-			if err := client.Delete(mailbox).Wait(ctx); err != nil {
+			if err := client.Delete(mailbox, nil).Wait(ctx); err != nil {
 				failMailboxInterop(t, server, client, "DELETE recreated mailbox", err)
 			}
-			if err := client.Logout(ctx); err != nil {
+			if err := client.Logout(ctx, nil); err != nil {
 				failMailboxInterop(t, server, client, "LOGOUT", err)
 			}
 		})
@@ -222,7 +222,7 @@ func dialMailboxInteropClient(t *testing.T, ctx context.Context, server *harness
 		DebugWriter:       &trace,
 	})
 	if err == nil {
-		err = client.Login(ctx, authInteropUsername, authInteropPassword)
+		err = client.Login(ctx, authInteropUsername, authInteropPassword, nil)
 	}
 	if err != nil {
 		if client != nil {
@@ -239,9 +239,9 @@ func leaveMailboxInterop(t *testing.T, ctx context.Context, server *harness.Serv
 	t.Helper()
 	var err error
 	if client.Capabilities()["UNSELECT"] {
-		err = client.Unselect().Wait(ctx)
+		err = client.Unselect(nil).Wait(ctx)
 	} else {
-		err = client.CloseMailbox().Wait(ctx)
+		err = client.CloseMailbox(nil).Wait(ctx)
 	}
 	if err != nil {
 		failMailboxInterop(t, server, client, "leave selected mailbox", err)

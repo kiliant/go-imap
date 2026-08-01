@@ -27,10 +27,10 @@ func TestLoginRefusesDowngradeBeforeCredentials(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	err := c.Login(ctx, "alice", "top-secret")
+	err := c.Login(ctx, "alice", "top-secret", nil)
 	var ierr *imap.Error
 	if !errors.As(err, &ierr) || ierr.Type != imap.ErrorTypeProtocol {
 		t.Fatalf("Login() = %T %[1]v", err)
@@ -54,7 +54,7 @@ func TestAuthenticatePlainCleartextRefusedBeforeCredentials(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	err := c.Authenticate(ctx, "alice", "top-secret", nil)
@@ -93,7 +93,7 @@ func TestAuthenticateSASLIRAndPostAuthCapability(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Authenticate(ctx, "alice", "top-secret", nil); err != nil {
@@ -131,7 +131,7 @@ func TestAuthenticateEmptyInitialResponseUsesEquals(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	err := c.Authenticate(ctx, "", "", &AuthenticateOptions{
@@ -173,7 +173,7 @@ func TestAuthenticateContinuationWithoutSASLIR(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Authenticate(ctx, "alice", "top-secret", nil); err != nil {
@@ -195,10 +195,10 @@ func TestAuthenticationErrorRedactsCredentialsAndPreservesCode(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	err := c.Login(ctx, "alice", "top-secret")
+	err := c.Login(ctx, "alice", "top-secret", nil)
 	var ierr *imap.Error
 	if !errors.As(err, &ierr) || ierr.Code != imap.CodeAuthenticationFailed {
 		t.Fatalf("Login() = %T %[1]v", err)
