@@ -2,6 +2,7 @@ package imapclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,46 @@ import (
 // mailboxes it lists. SPECIAL-USE, RFC 6154 section 2. It is implied by the
 // [ListSelectSpecialUse] selection option.
 const ListReturnSpecialUse ListReturnOptionKeyword = "SPECIAL-USE"
+
+// ListReturnStatus is the LIST-STATUS return option: it asks the server to send
+// the STATUS of every selectable mailbox it lists, in the same round trip.
+// LIST-STATUS, RFC 5819; also part of IMAP4rev2, RFC 9051 section 6.3.9.7.
+//
+// It is a structured [ListReturnOption] rather than a keyword because RFC 5819
+// section 4 gives the option an argument list:
+//
+//	return-option =/ status-option
+//	status-option = "STATUS" SP "(" status-att *(SP status-att) ")"
+//
+// It reaches the wire through [Client.ListMailboxes], which is the entry point
+// that can also emulate it. [Client.List] is the plain command handle and
+// accepts keyword return options only; handed this type it fails the command
+// without writing anything.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ListReturnStatus struct {
+	// Items are the STATUS data items requested for each listed mailbox. It is
+	// the open [imap.StatusItem] set for the reason [StatusOptions.Items] is:
+	// STATUS items are added by nearly every extension. An empty slice requests
+	// the same base counters as a nil [StatusOptions].
+	Items []imap.StatusItem
+
+	// Handler receives one [StatusData] per untagged STATUS response, in
+	// arrival order. The mailbox each one describes is [StatusData.Mailbox]:
+	// RFC 5819 correlates the two responses by name, not by position, and
+	// deliberately sends no STATUS at all for a mailbox that cannot be
+	// selected. A nil Handler discards the data.
+	//
+	// It is called on the reader goroutine and must not block. Appending to a
+	// slice the caller owns is nevertheless safe: [Client.ListMailboxes]
+	// returns only after the command has completed, which orders every
+	// Handler call before the return.
+	Handler func(*StatusData)
+
+	_ struct{}
+}
+
+func (*ListReturnStatus) listReturnOption() {}
 
 // HasChildren reports whether attrs say the mailbox has child mailboxes.
 // CHILDREN, RFC 3348 section 3.
@@ -123,9 +164,34 @@ func (c *Client) CreateMailbox(mailbox string, options *CreateOptions) *Command 
 // that switched on it would otherwise see the fallback as "nothing is
 // subscribed". Any other selection or return option has no plain-LIST
 // equivalent and yields [ErrCapabilityNotAdvertised] without writing anything.
+//
+// A [ListReturnStatus] in the return options additionally requests LIST-STATUS.
+// That option carries a second, independent emulation, described below under
+// "Emulated LIST-STATUS fallback".
+//
+// # Emulated LIST-STATUS fallback
+//
+// Without LIST-STATUS (RFC 5819) and without IMAP4rev2, the listing is
+// performed as above and then one STATUS command is issued per selectable
+// mailbox — the N+1 round trips RFC 5819 section 2 exists to remove. Mailboxes
+// carrying \Noselect or \NonExistent are skipped, matching the servers'
+// obligation in RFC 5819 section 2 to send no STATUS for a mailbox that cannot
+// be selected. The emulation is not atomic: the mailbox set and each mailbox's
+// counters are sampled at different instants, so a mailbox may be deleted
+// between the LIST and its STATUS, and two mailboxes' counters never describe
+// the same moment. A mailbox whose STATUS is refused with NO is skipped rather
+// than failing the whole listing, because RFC 5819 section 2 permits a server to
+// drop a STATUS reply and still answer the LIST with a tagged OK.
 func (c *Client) ListMailboxes(ctx context.Context, reference, pattern string, options *ListOptions) ([]*ListData, error) {
 	if ctx == nil {
 		return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "LIST requires a non-nil context"}
+	}
+	status, rest, err := splitListStatusOption(options)
+	if err != nil {
+		return nil, err
+	}
+	if status != nil {
+		return c.listStatus(ctx, reference, pattern, rest, status)
 	}
 	if c.supportsAny("LIST-EXTENDED") || c.rev2Enabled() {
 		return c.List(reference, pattern, options).Wait(ctx)
@@ -172,6 +238,161 @@ func (c *Client) ListMailboxes(ctx context.Context, reference, pattern string, o
 		}
 	}
 	return merged, nil
+}
+
+// splitListStatusOption separates a [ListReturnStatus] from the other return
+// options, so the remaining options can travel the ordinary LIST path. options
+// is never modified.
+func splitListStatusOption(options *ListOptions) (*ListReturnStatus, *ListOptions, error) {
+	if options == nil {
+		return nil, nil, nil
+	}
+	var status *ListReturnStatus
+	kept := make([]ListReturnOption, 0, len(options.ReturnOptions))
+	for _, option := range options.ReturnOptions {
+		found, ok := option.(*ListReturnStatus)
+		if !ok {
+			kept = append(kept, option)
+			continue
+		}
+		if status != nil {
+			// RFC 5819 section 4 registers one STATUS return option per LIST;
+			// two would leave the requested item set ambiguous.
+			return nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "LIST accepts at most one STATUS return option"}
+		}
+		status = found
+	}
+	if status == nil {
+		return nil, options, nil
+	}
+	rest := *options
+	rest.Patterns = append([]string(nil), options.Patterns...)
+	rest.SelectionOptions = append([]ListSelectOption(nil), options.SelectionOptions...)
+	rest.ReturnOptions = kept
+	return status, &rest, nil
+}
+
+// listStatus performs a LIST with the RFC 5819 STATUS return option, or emulates
+// it. See [Client.ListMailboxes] for the emulation's cost.
+func (c *Client) listStatus(ctx context.Context, reference, pattern string, options *ListOptions, status *ListReturnStatus) ([]*ListData, error) {
+	items, err := statusItems(&StatusOptions{Items: status.Items})
+	if err != nil {
+		return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
+	}
+	// LIST-STATUS is defined as a LIST-EXTENDED return option, so a server
+	// advertising it advertises the RETURN syntax as well. IMAP4rev2 folds both
+	// in, but only once ENABLEd: an un-ENABLEd rev2 server is still a rev1
+	// server on the wire.
+	if c.supportsAny("LIST-STATUS") || c.rev2Enabled() {
+		return c.listStatusCommand(reference, pattern, options, items, status.Handler).Wait(ctx)
+	}
+
+	data, err := c.ListMailboxes(ctx, reference, pattern, options)
+	if err != nil {
+		return nil, err
+	}
+	if status.Handler == nil {
+		return data, nil
+	}
+	for _, item := range data {
+		if imap.ContainsAttr(item.Attrs, imap.MailboxAttrNoSelect) || imap.ContainsAttr(item.Attrs, imap.MailboxAttrNonExistent) {
+			continue
+		}
+		mailboxStatus, err := c.Status(item.Mailbox, &StatusOptions{Items: status.Items}).Wait(ctx)
+		if err != nil {
+			var protocolErr *imap.Error
+			if errors.As(err, &protocolErr) && protocolErr.Type == imap.ErrorTypeNo {
+				continue
+			}
+			return nil, err
+		}
+		status.Handler(mailboxStatus)
+	}
+	return data, nil
+}
+
+// listStatusCommand issues LIST ... RETURN (... STATUS (...)). It builds the
+// command here rather than through [Client.List] because the RETURN list then
+// holds an item with an argument list of its own, which the keyword-only
+// encoding cannot express.
+func (c *Client) listStatusCommand(reference, pattern string, options *ListOptions, items []imap.StatusItemKeyword, handler func(*StatusData)) *ListCommand {
+	patterns := []string{pattern}
+	var selection, returns []string
+	if options != nil {
+		patterns = append(patterns, options.Patterns...)
+		for _, option := range options.SelectionOptions {
+			keyword, ok := option.(ListSelectOptionKeyword)
+			if !ok {
+				return &ListCommand{Command: failedCommand("LIST", fmt.Errorf("imapclient: unsupported LIST selection option %T", option))}
+			}
+			selection = append(selection, string(keyword))
+		}
+		for _, option := range options.ReturnOptions {
+			keyword, ok := option.(ListReturnOptionKeyword)
+			if !ok {
+				return &ListCommand{Command: failedCommand("LIST", fmt.Errorf("imapclient: unsupported LIST return option %T", option))}
+			}
+			returns = append(returns, string(keyword))
+		}
+	}
+
+	data := make([]*ListData, 0)
+	limit := c.maxUntaggedResponses()
+	lists := listCollector("LIST", &data, limit)
+	statuses := listStatusCollector(handler, limit)
+	cmd := c.beginCommand("LIST", stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
+		if len(selection) != 0 {
+			enc.SP().List(len(selection), func(i int) { enc.Atom(selection[i]) })
+		}
+		enc.SP().Mailbox(reference).SP()
+		if len(patterns) == 1 {
+			enc.ListMailbox(patterns[0])
+		} else {
+			enc.List(len(patterns), func(i int) { enc.ListMailbox(patterns[i]) })
+		}
+		// status-option is one return-option carrying a nested list, so the
+		// RETURN list is written element by element rather than with List.
+		enc.SP().Atom("RETURN").SP().Special('(')
+		for _, keyword := range returns {
+			enc.Atom(keyword).SP()
+		}
+		enc.Atom("STATUS").SP().List(len(items), func(i int) { enc.Atom(string(items[i])) })
+		enc.Special(')')
+	}, func(resp *untaggedResponse) (bool, error) {
+		if claimed, err := lists(resp); claimed || err != nil {
+			return claimed, err
+		}
+		return statuses(resp)
+	})
+	return &ListCommand{Command: cmd, data: &data}
+}
+
+// listStatusCollector claims the untagged STATUS responses that RFC 5819
+// section 2 interleaves with the LIST responses. It reuses the STATUS parser
+// rather than repeating it, so an extension STATUS item this package does not
+// model yet survives here exactly as it does after a plain STATUS command.
+func listStatusCollector(handler func(*StatusData), limit int) commandCollector {
+	count := 0
+	return func(resp *untaggedResponse) (bool, error) {
+		if resp.name != "STATUS" || resp.hasNum || resp.cond != nil {
+			return false, nil
+		}
+		// A server sending unbounded STATUS responses is bounded here as the
+		// LIST responses are; the two limits are deliberately separate counters
+		// so one cannot mask the other.
+		if err := countUntaggedResponse(&count, limit, "LIST RETURN (STATUS)"); err != nil {
+			return true, err
+		}
+		data := &StatusData{Values: make(map[imap.StatusItemKeyword]any)}
+		claimed, err := statusCollector(data)(resp)
+		if !claimed || err != nil {
+			return claimed, err
+		}
+		if handler != nil {
+			handler(data)
+		}
+		return true, nil
+	}
 }
 
 // SpecialUseSource records how a special-use assignment was determined. It is a
