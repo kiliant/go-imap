@@ -109,42 +109,42 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 | Capability | RFC | Status |
 |---|---|---|
-| BINARY | 3516 | implemented |
-| CATENATE | 4469 | implemented |
-| MULTIAPPEND | 3502 | implemented |
-| COMPRESS=DEFLATE | 4978 | implemented |
-| UTF8=ACCEPT | 9755 | implemented |
-| UTF8=ALL | 5738, 9755 | implemented |
-| UTF8=APPEND | 5738, 9755 | implemented |
-| UTF8=ONLY | 9755 | implemented |
-| UTF8=USER | 5738, 9755 | implemented |
-| SORT | 5256 | implemented |
-| SORT=DISPLAY | 5957 | implemented |
-| THREAD | 5256 | implemented |
-| MULTISEARCH | 7377 | implemented |
-| PARTIAL | 9394 | implemented |
-| SEARCH=FUZZY | 6203 | implemented |
+| BINARY | 3516 | done |
+| CATENATE | 4469 | done |
+| MULTIAPPEND | 3502 | done |
+| COMPRESS=DEFLATE | 4978 | done |
+| UTF8=ACCEPT | 9755 | done |
+| UTF8=ALL | 5738, 9755 | done |
+| UTF8=APPEND | 5738, 9755 | done |
+| UTF8=ONLY | 9755 | done |
+| UTF8=USER | 5738, 9755 | done |
+| SORT | 5256 | done |
+| SORT=DISPLAY | 5957 | done |
+| THREAD | 5256 | done |
+| MULTISEARCH | 7377 | done |
+| PARTIAL | 9394 | done |
+| SEARCH=FUZZY | 6203 | done |
 
 ## Group D — administrative & server-side (task T11)
 
 | Capability | RFC | Status |
 |---|---|---|
-| QUOTA | 9208 | implemented |
-| QUOTA= | 9208 | implemented |
-| QUOTASET | 9208 | implemented |
-| ACL | 4314 | implemented |
-| RIGHTS= | 4314 | implemented |
-| LIST-MYRIGHTS | 8440 | implemented |
-| METADATA | 5464 | implemented |
-| METADATA-SERVER | 5464 | implemented |
-| LIST-METADATA | 9590 | implemented |
-| NOTIFY | 5465 | implemented |
-| UNAUTHENTICATE | 8437 | implemented |
-| UIDONLY | 9586 | implemented |
-| INPROGRESS | 9585 | implemented |
-| MESSAGELIMIT= | 9738 | implemented |
-| SAVELIMIT= | 9738 | implemented |
-| JMAPACCESS | 9698 | implemented |
+| QUOTA | 9208 | done |
+| QUOTA= | 9208 | done |
+| QUOTASET | 9208 | done |
+| ACL | 4314 | done |
+| RIGHTS= | 4314 | done |
+| LIST-MYRIGHTS | 8440 | done |
+| METADATA | 5464 | done |
+| METADATA-SERVER | 5464 | done |
+| LIST-METADATA | 9590 | done |
+| NOTIFY | 5465 | done |
+| UNAUTHENTICATE | 8437 | done |
+| UIDONLY | 9586 | done |
+| INPROGRESS | 9585 | done |
+| MESSAGELIMIT= | 9738 | done |
+| SAVELIMIT= | 9738 | done |
+| JMAPACCESS | 9698 | done |
 
 ## Group E — legacy & niche (task T11, lower priority)
 
@@ -153,18 +153,18 @@ break the client; full command support is best-effort.
 
 | Capability | RFC | Status | Note |
 |---|---|---|---|
-| LOGIN-REFERRALS | 2221 | implemented | referral response codes parse |
-| MAILBOX-REFERRALS | 2193 | implemented | as above |
-| URLAUTH | 4467 | implemented | GENURLAUTH / URLFETCH / RESETKEY |
-| URLAUTH=BINARY | 5524 | implemented | capability accepted with URLAUTH |
-| URL-PARTIAL | 5550 | implemented | `;PARTIAL=` in IMAP URLs |
-| LANGUAGE | 5255 | implemented | |
-| I18NLEVEL=1 | 5255 | implemented | capability probe |
-| I18NLEVEL=2 | 5255 | implemented | COMPARATOR command |
-| CONTEXT=SEARCH | 5267 | implemented | CANCELUPDATE + RETURN keywords |
-| CONTEXT=SORT | 5267 | implemented | as above |
-| ESORT | 5267 | implemented | capability + RETURN keywords; SORT cmd is T10 |
-| FILTERS | 5466 | implemented | UNDEFINED-FILTER parse; SearchFilter escalated to T02 |
+| LOGIN-REFERRALS | 2221 | done | referral response codes parse |
+| MAILBOX-REFERRALS | 2193 | done | as above |
+| URLAUTH | 4467 | done | GENURLAUTH / URLFETCH / RESETKEY |
+| URLAUTH=BINARY | 5524 | done | capability accepted with URLAUTH |
+| URL-PARTIAL | 5550 | done | `;PARTIAL=` in IMAP URLs |
+| LANGUAGE | 5255 | done | |
+| I18NLEVEL=1 | 5255 | done | capability probe |
+| I18NLEVEL=2 | 5255 | done | COMPARATOR command |
+| CONTEXT=SEARCH | 5267 | done | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | done | as above |
+| ESORT | 5267 | done | capability + RETURN keywords; SORT cmd is T10 |
+| FILTERS | 5466 | done | UNDEFINED-FILTER parse; SearchFilter escalated to T02 |
 | CONVERT | 5259 | deferred | no known server support |
 | IMAPSIEVE= | 6785 | deferred | server-side; parse only |
 | ANNOTATE-EXPERIMENT-1 | 5257 | deferred | superseded by METADATA |

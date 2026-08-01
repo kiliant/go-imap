@@ -27,7 +27,7 @@
 // # Status
 //
 // The connection/session layer, authentication, base mailbox and message
-// commands, capability negotiation, ENABLE, and IDLE are implemented and
-// verified across their native server matrices. Extension support is still
-// under active development; see docs/ROADMAP.md.
+// commands, capability negotiation, ENABLE, IDLE, and extension groups A–E are
+// implemented. Long-run fuzz campaigns and release engineering remain before
+// v1.0; see docs/ROADMAP.md.
 package imapclient

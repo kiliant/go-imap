@@ -39,7 +39,7 @@ This acceptance set is independent of the harness expense tiers in
 
 **Status (2026-08-01):** exit criteria met. T07–T09 are done; Group A is fully
 `verified`; Group B is `verified` except APPENDLIMIT/REPLACE (`done`, single
-advertising server each). T10/T11 are unblocked.
+advertising server each).
 
 ## M3 — Full coverage (T10, T11)
 
@@ -47,6 +47,10 @@ Extension groups C, D and E. Tier-2 servers (Cyrus, Courier) join the matrix.
 
 **Exit:** `docs/RFC-COVERAGE.md` has no `planned` rows outside the explicitly
 `deferred` set.
+
+**Status (2026-08-01):** T10 and T11 are merged; Groups C–E rows are `done`.
+Exit is not yet met: the orphan `ID` (RFC 2971) capability remains `planned`
+(never in T08's scope table; see the coverage footnote).
 
 ## M4 — Hardening and the freeze (T13, T14, T15)
 

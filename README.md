@@ -7,12 +7,13 @@ and a stable v1.0 without freezing extension-hostile APIs.
 import "github.com/kiliant/go-imap/imapclient"
 ```
 
-> **Status: early development.** The wire codec, core protocol vocabulary,
-> connection/session layer, authentication, base mailbox and message commands,
-> capability negotiation, ENABLE, IDLE, the interoperability harness, and the
-> deterministic adversarial-hardening regressions are implemented. Extension
-> coverage and long-run/release verification remain in progress. See
-> `docs/ROADMAP.md`.
+> **Status: pre-v1.0.** The wire codec, core vocabulary, connection/session,
+> authentication, mailbox and message commands, capability negotiation, ENABLE,
+> IDLE, extension groups A–E, the interoperability harness, examples, and the
+> deterministic adversarial-hardening regressions are on `main`. Remaining for
+> v1.0: recorded long-run fuzz campaigns (T13), release engineering (T15), and
+> a few coverage rows still short of `verified` (notably ENVELOPE/BODYSTRUCTURE
+> interop and the orphan `ID` capability). See `docs/ROADMAP.md`.
 
 ## Why another one
 
