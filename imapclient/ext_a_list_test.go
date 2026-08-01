@@ -320,6 +320,54 @@ func TestListMailboxesEmulatesListStatus(t *testing.T) {
 	}
 }
 
+// An empty Items requests the same counters as a nil StatusOptions, so the
+// default wire form is pinned here rather than left to drift.
+func TestListMailboxesStatusDefaultItems(t *testing.T) {
+	var sent string
+	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 LIST-EXTENDED LIST-STATUS] ready", func(s *extAServer) {
+		tag, rest := s.command()
+		sent = rest
+		s.reply(`* LIST () "." "INBOX"`, `* STATUS "INBOX" (MESSAGES 1)`, tag+" OK listed")
+	})
+	var statuses []*StatusData
+	if _, err := c.ListMailboxes(ctx, "", "%", &ListOptions{
+		ReturnOptions: []ListReturnOption{&ListReturnStatus{Handler: collectStatus(&statuses)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sent != `LIST "" % RETURN (STATUS (MESSAGES UIDNEXT UIDVALIDITY UNSEEN RECENT))` {
+		t.Fatalf("default LIST-STATUS wire form = %q", sent)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("STATUS responses = %#v", statuses)
+	}
+}
+
+// RFC 9051 drops RECENT from status-att along with \Recent, so the default item
+// set must not carry it into a rev2 session — a BAD there fails the whole
+// listing, not one mailbox.
+func TestListMailboxesStatusDefaultItemsOmitsRecentOnRev2(t *testing.T) {
+	var sent string
+	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 IMAP4REV2 ENABLE LIST-EXTENDED LIST-STATUS] ready", func(s *extAServer) {
+		tag, _ := s.command()
+		s.reply("* ENABLED IMAP4REV2", tag+" OK enabled")
+		tag, rest := s.command()
+		sent = rest
+		s.reply(`* LIST () "." "INBOX"`, `* STATUS "INBOX" (MESSAGES 1)`, tag+" OK listed")
+	})
+	if _, err := c.Enable("IMAP4REV2").Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListMailboxes(ctx, "", "%", &ListOptions{
+		ReturnOptions: []ListReturnOption{&ListReturnStatus{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sent != `LIST "" % RETURN (STATUS (MESSAGES UIDNEXT UIDVALIDITY UNSEEN))` {
+		t.Fatalf("rev2 default LIST-STATUS wire form = %q", sent)
+	}
+}
+
 func TestListMailboxesRejectsTwoStatusReturnOptions(t *testing.T) {
 	sawCommand := false
 	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 LIST-EXTENDED LIST-STATUS] ready", func(s *extAServer) {

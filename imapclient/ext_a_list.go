@@ -35,7 +35,9 @@ type ListReturnStatus struct {
 	// Items are the STATUS data items requested for each listed mailbox. It is
 	// the open [imap.StatusItem] set for the reason [StatusOptions.Items] is:
 	// STATUS items are added by nearly every extension. An empty slice requests
-	// the same base counters as a nil [StatusOptions].
+	// the same base counters as a nil [StatusOptions], except that RECENT is
+	// left out once IMAP4rev2 is enabled, because RFC 9051 removes it from the
+	// status-att production along with the \Recent flag.
 	Items []imap.StatusItem
 
 	// Handler receives one [StatusData] per untagged STATUS response, in
@@ -279,6 +281,14 @@ func (c *Client) listStatus(ctx context.Context, reference, pattern string, opti
 	if err != nil {
 		return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
 	}
+	if len(status.Items) == 0 && c.rev2Enabled() {
+		// The default item set includes RECENT, and RFC 9051's status-att
+		// production drops it along with \Recent. Asking a rev2 session for it
+		// risks a BAD that would fail the whole listing. An explicitly
+		// requested RECENT is left alone: that is the caller's decision, not a
+		// default this package chose for them.
+		items = withoutStatusItem(items, imap.StatusItemRecent)
+	}
 	// LIST-STATUS is defined as a LIST-EXTENDED return option, so a server
 	// advertising it advertises the RETURN syntax as well. IMAP4rev2 folds both
 	// in, but only once ENABLEd: an un-ENABLEd rev2 server is still a rev1
@@ -309,6 +319,19 @@ func (c *Client) listStatus(ctx context.Context, reference, pattern string, opti
 		status.Handler(mailboxStatus)
 	}
 	return data, nil
+}
+
+// withoutStatusItem returns items with every case-insensitive spelling of
+// unwanted removed.
+func withoutStatusItem(items []imap.StatusItemKeyword, unwanted imap.StatusItemKeyword) []imap.StatusItemKeyword {
+	kept := make([]imap.StatusItemKeyword, 0, len(items))
+	for _, item := range items {
+		if strings.EqualFold(string(item), string(unwanted)) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
 }
 
 // listStatusCommand issues LIST ... RETURN (... STATUS (...)). It builds the
