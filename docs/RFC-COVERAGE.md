@@ -74,10 +74,10 @@ servers, Dovecot and Stalwart.
 | CONDSTORE | 7162 | verified |
 | QRESYNC | 7162 | verified |
 | OBJECTID | 8474 | planned [^objectid] |
-| SAVEDATE | 8514 | in progress [^rawfetch] |
+| SAVEDATE | 8514 | done [^rawfetch] |
 | STATUS=SIZE | 8438 | verified |
 | APPENDLIMIT | 7889 | done [^appendlimit] |
-| PREVIEW | 8970 | in progress [^preview] |
+| PREVIEW | 8970 | done [^preview] |
 | REPLACE | 8508 | done [^replace] |
 
 CONDSTORE, QRESYNC and STATUS=SIZE are exercised against Dovecot, Stalwart and
