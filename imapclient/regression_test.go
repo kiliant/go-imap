@@ -281,6 +281,94 @@ func TestFetchUnknownItemIsPreservedVerbatim(t *testing.T) {
 	}
 }
 
+func TestFetchObjectIDSaveDatePreview(t *testing.T) {
+	c, _ := scriptedServer(t,
+		`* 1 FETCH (EMAILID (M6d99ac3275bb4e) THREADID NIL SAVEDATE "01-Aug-2026 04:59:56 +0000" PREVIEW "hello")`+"\r\n$TAG OK done\r\n",
+	)
+	setState(c, StateSelected)
+	cmd := c.Fetch(imap.SeqSetNum(1), imap.FetchItemEmailID, imap.FetchItemThreadID, imap.FetchItemSaveDate, &imap.FetchItemPreview{})
+	data, err := cmd.Next(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emailID, ok := data.Items[imap.FetchDataKey("EMAILID")][0].(imap.FetchDataObjectID)
+	if !ok || emailID != "M6d99ac3275bb4e" {
+		t.Fatalf("EMAILID = %#v", data.Items[imap.FetchDataKey("EMAILID")])
+	}
+	threadID, ok := data.Items[imap.FetchDataKey("THREADID")][0].(imap.FetchDataObjectID)
+	if !ok || threadID != "" {
+		t.Fatalf("THREADID = %#v", data.Items[imap.FetchDataKey("THREADID")])
+	}
+	saveDate, ok := data.Items[imap.FetchDataKey("SAVEDATE")][0].(*imap.FetchDataSaveDate)
+	if !ok || saveDate.Date == nil || saveDate.Date.UTC().Format(time.RFC3339) != "2026-08-01T04:59:56Z" {
+		t.Fatalf("SAVEDATE = %#v", data.Items[imap.FetchDataKey("SAVEDATE")])
+	}
+	preview, ok := data.Items[imap.FetchDataKey("PREVIEW")][0].(*imap.FetchDataPreview)
+	if !ok || preview.Text == nil || *preview.Text != "hello" {
+		t.Fatalf("PREVIEW = %#v", data.Items[imap.FetchDataKey("PREVIEW")])
+	}
+	if err := cmd.Wait(testContext(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFetchPreviewLazyIsParenthesised(t *testing.T) {
+	var sb strings.Builder
+	enc := imapwire.NewEncoder(&sb, nil)
+	writeFetchItem(enc, &imap.FetchItemPreview{Lazy: true})
+	if err := enc.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got := sb.String(); got != "PREVIEW (LAZY)" {
+		t.Fatalf("wire form = %q, want PREVIEW (LAZY)", got)
+	}
+}
+
+func TestFetchWholeMailboxSet(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	got := make(chan string, 1)
+	go func() {
+		defer serverConn.Close()
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := bufio.NewReader(serverConn).ReadString('\n')
+		got <- line
+		tag := strings.Fields(line)[0]
+		_, _ = serverConn.Write([]byte(tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, nil)
+	defer c.Close()
+	if err := c.WaitGreeting(testContext(t)); err != nil {
+		t.Fatal(err)
+	}
+	setState(c, StateSelected)
+	if err := c.Fetch(imap.SeqSetRange(1, 0), imap.FetchItemUID).Wait(testContext(t)); err != nil {
+		t.Fatal(err)
+	}
+	line := <-got
+	if !strings.Contains(line, "FETCH 1:* (UID)") {
+		t.Fatalf("FETCH wire form = %q, want 1:*", line)
+	}
+}
+
+func TestStatusMailboxID(t *testing.T) {
+	c, _ := scriptedServer(t,
+		"* STATUS INBOX (MAILBOXID (F2212ea87-6097-4256-9d51-71338625) MESSAGES 2)\r\n$TAG OK done\r\n",
+	)
+	setState(c, StateAuthenticated)
+	data, err := c.Status("INBOX", &StatusOptions{Items: []imap.StatusItem{imap.StatusItemMailboxID, imap.StatusItemMessages}}).Wait(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, ok := data.Values[imap.StatusItemMailboxID].(string)
+	if !ok || id != "F2212ea87-6097-4256-9d51-71338625" {
+		t.Fatalf("MAILBOXID = %#v", data.Values[imap.StatusItemMailboxID])
+	}
+	if data.NumMessages != 2 {
+		t.Fatalf("MESSAGES = %d", data.NumMessages)
+	}
+}
+
 func encodeSearch(t *testing.T, criteria imap.SearchCriteria) string {
 	t.Helper()
 	var sb strings.Builder

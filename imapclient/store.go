@@ -55,6 +55,8 @@ func (c *Client) store(name, set string, flags []imap.Flag, options *StoreOption
 		if o.Silent {
 			op += ".SILENT"
 		}
-		enc.SP().Atom(set).SP().Atom(op).SP().List(len(flags), func(i int) { enc.Flag(string(flags[i])) })
+		enc.SP()
+		writeNumSet(enc, set)
+		enc.SP().Atom(op).SP().List(len(flags), func(i int) { enc.Flag(string(flags[i])) })
 	}, nil)
 }

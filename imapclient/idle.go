@@ -308,7 +308,7 @@ func (cmd *IdleCommand) startCycle() {
 	clearMu.Unlock()
 	cycle.command = cmd.client.issue("IDLE", commandOptions{
 		allowed: stateAuthenticated | stateSelected,
-		onComplete: func(success bool) {
+		onComplete: func(_ bool, _, _ string) {
 			cycle.release()
 			cmd.cycleComplete(cycle)
 		},

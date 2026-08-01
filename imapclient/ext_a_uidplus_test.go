@@ -58,12 +58,12 @@ func TestParseCopyUID(t *testing.T) {
 		name    string
 		args    string
 		wantErr bool
-		want    *UIDPlusData
+		want    *CopyData
 	}{
 		{
 			name: "rfc 4315 example",
 			args: "38505 304,319:320 3956:3958",
-			want: &UIDPlusData{
+			want: &CopyData{
 				UIDValidity:     38505,
 				SourceUIDs:      imap.UIDSet{{Start: 304, Stop: 304}, {Start: 319, Stop: 320}},
 				DestinationUIDs: imap.UIDSet{{Start: 3956, Stop: 3958}},
@@ -118,7 +118,7 @@ func TestParseAppendUID(t *testing.T) {
 	if _, err := parseAppendUID("38505 3955 3956"); err == nil {
 		t.Fatal("parseAppendUID accepted three fields")
 	}
-	if (*UIDPlusData)(nil).Received() {
+	if (*CopyData)(nil).Received() {
 		t.Fatal("Received() = true for nil")
 	}
 }

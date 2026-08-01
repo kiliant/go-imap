@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -43,18 +44,18 @@ func (o *MoveOptions) allowFallback() bool { return o != nil && o.AllowNonAtomic
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type MoveData struct {
-	// UIDPlus is the COPYUID data for the move, or a zero-valued
-	// [UIDPlusData] when the server sent none. RFC 6851 section 4.3 advises a
-	// UIDPLUS server to send COPYUID in an untagged OK before the EXPUNGE
-	// responses, which is the form this client reads; that advice was observed
-	// to be followed by Dovecot 2.4.3, Stalwart 0.11.8, Cyrus 3.x and GreenMail
-	// 2.1.9. A server that instead uses the tagged OK of RFC 4315 section 3
-	// leaves this zero-valued.
-	UIDPlus UIDPlusData
+	// UIDPlus is the COPYUID data for the move, or a zero-valued [CopyData]
+	// when the server sent none. RFC 6851 section 4.3 advises a UIDPLUS server
+	// to send COPYUID in an untagged OK before the EXPUNGE responses, which is
+	// the form this client reads first; that advice was observed to be followed
+	// by Dovecot 2.4.3, Stalwart 0.11.8, Cyrus 3.x and GreenMail 2.1.9. A server
+	// that instead uses the tagged OK of RFC 4315 section 3 is also accepted.
+	UIDPlus CopyData
 
 	// Emulated reports that the server does not advertise MOVE and the move
 	// was performed as COPY, STORE and EXPUNGE. See [Client.Move] for what
-	// that costs. UIDPlus is always zero-valued when Emulated is set.
+	// that costs. UIDPlus may still be filled from the intermediate COPY's
+	// tagged COPYUID when the server advertises UIDPLUS.
 	Emulated bool
 
 	// ExpungedEveryDeletedMessage reports that the emulated move finished with
@@ -91,9 +92,9 @@ type MoveData struct {
 //   - a failure after the COPY leaves the source copy behind, flagged \Deleted;
 //   - the \Deleted flag is really set, so a concurrent EXPUNGE or CLOSE from
 //     any client can remove the source messages at a moment of its choosing;
-//   - no COPYUID is available, because RFC 4315 returns it in the tagged OK of
-//     COPY and this client cannot yet read tagged response codes, so
-//     [MoveData.UIDPlus] stays zero-valued.
+//   - no COPYUID is available on the emulated path's intermediate COPY when
+//     the destination rejects UIDPLUS codes, so [MoveData.UIDPlus] stays
+//     zero-valued for that case;
 //
 // The final step is UID EXPUNGE (RFC 4315) wherever UIDPLUS is advertised, so
 // only the moved messages are removed. For a sequence-number move that requires
@@ -135,9 +136,26 @@ func (c *Client) move(ctx context.Context, uid bool, set, destination string, op
 	}
 
 	data := &MoveData{}
-	cmd := c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
-		enc.SP().Atom(argument).SP().Mailbox(destination)
-	}, moveCollector(data))
+	cmd := c.beginCommandWithCompletion(name, stateSelected, func(enc *imapwire.Encoder) {
+		enc.SP()
+		if argument == "$" {
+			enc.Atom(argument)
+		} else {
+			writeNumSet(enc, argument)
+		}
+		enc.SP().Mailbox(destination)
+	}, moveCollector(data), func(success bool, code, args string) {
+		// Prefer the untagged COPYUID already claimed by moveCollector. Some
+		// servers put COPYUID on the tagged OK instead (RFC 4315 section 3).
+		if !success || data.UIDPlus.Received() || !strings.EqualFold(code, string(imap.CodeCopyUID)) {
+			return
+		}
+		parsed, err := parseCopyUID(args)
+		if err != nil {
+			return
+		}
+		data.UIDPlus = *parsed
+	})
 	if err := cmd.Wait(ctx); err != nil {
 		return nil, err
 	}
@@ -185,8 +203,12 @@ func (c *Client) moveEmulated(ctx context.Context, uid bool, argument, destinati
 	if uid {
 		copyName, storeName = "UID COPY", "UID STORE"
 	}
-	if err := c.copy(copyName, argument, destination).Command.Wait(ctx); err != nil {
+	copied, err := c.copy(copyName, argument, destination).Wait(ctx)
+	if err != nil {
 		return nil, err
+	}
+	if copied != nil && copied.Received() {
+		data.UIDPlus = *copied
 	}
 	storeOptions := &StoreOptions{Op: StoreFlagsAdd, Silent: true}
 	if err := c.store(storeName, argument, []imap.Flag{imap.FlagDeleted}, storeOptions).Wait(ctx); err != nil {

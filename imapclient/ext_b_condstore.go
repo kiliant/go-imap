@@ -166,7 +166,7 @@ func (c *Client) fetchSync(name, set string, matches func(imap.SeqNum) bool, opt
 			return false, nil
 		}
 		return true, readFetchResponse(resp, fc.deliver)
-	}, func(success bool) {
+	}, func(success bool, _, _ string) {
 		if success && o.ChangedSince != 0 {
 			// RFC 7162 section 3.1: a FETCH with the CHANGEDSINCE modifier is a
 			// CONDSTORE enabling command in its own right.
@@ -256,16 +256,6 @@ type SyncStoreCommand struct {
 // When a server instead reports MODIFIED on a tagged NO — which RFC 7162
 // section 3.1 permits — the returned error is the usual [imap.Error] carrying
 // [imap.CodeModified], and the failure set is still filled in.
-//
-// KNOWN GAP: the failure set from a MODIFIED code on a tagged OK is not yet
-// populated. The client core does not currently expose a successful command's
-// tagged response code to the command that issued it, so this path has nothing
-// to read; it is recorded for escalation in the T09 progress notes and needs a
-// change to the connection layer, which this extension must not make. Until
-// then, a caller that must not lose a conditional-store failure should re-fetch
-// MODSEQ for the affected set — the server also sends an untagged FETCH with
-// the new mod-sequence for every message it did change, which is enough to tell
-// the two apart.
 func (cmd *SyncStoreCommand) Wait(ctx context.Context) (*SyncStoreData, error) {
 	if cmd == nil || cmd.Command == nil {
 		return nil, fmt.Errorf("imapclient: nil store command")
@@ -365,11 +355,16 @@ func (c *Client) storeSync(name, set string, uid bool, flags []imap.Flag, option
 			op += ".SILENT"
 		}
 		enc.SP().Atom(op).SP().List(len(flags), func(i int) { enc.Flag(string(flags[i])) })
-	}, nil, func(success bool) {
+	}, nil, func(success bool, code, args string) {
 		if success && o.UnchangedSince != nil {
 			// RFC 7162 section 3.1: a STORE with UNCHANGEDSINCE is a CONDSTORE
 			// enabling command.
 			c.markCondStoreEnabled()
+		}
+		if success && strings.EqualFold(code, string(imap.CodeModified)) {
+			// RFC 7162 section 3.1.3: a partial conditional STORE completes OK
+			// with [MODIFIED …] naming the messages that failed the test.
+			_ = data.parseModified(args, uid)
 		}
 	})
 	return result

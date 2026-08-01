@@ -126,7 +126,9 @@ func (c *Client) fetch(name, set string, matches func(imap.SeqNum) bool, items [
 		return fc
 	}
 	fc.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
-		enc.SP().Atom(set).SP().List(len(items), func(i int) { writeFetchItem(enc, items[i]) })
+		enc.SP()
+		writeNumSet(enc, set)
+		enc.SP().List(len(items), func(i int) { writeFetchItem(enc, items[i]) })
 	}, func(resp *untaggedResponse) (bool, error) {
 		if !resp.hasNum || resp.name != "FETCH" || !matches(imap.SeqNum(resp.number)) {
 			return false, nil
@@ -244,7 +246,8 @@ func writeFetchItem(enc *imapwire.Encoder, item imap.FetchItem) {
 	case *imap.FetchItemPreview:
 		enc.Atom("PREVIEW")
 		if item != nil && item.Lazy {
-			enc.SP().Atom("LAZY")
+			// RFC 8970 section 6: "PREVIEW" [SP "(" preview-mod *(SP preview-mod) ")"]
+			enc.SP().List(1, func(int) { enc.Atom("LAZY") })
 		}
 	default:
 		enc.Atom("")
@@ -407,12 +410,55 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 				return err
 			}
 			value = imap.FetchDataModSeq(n)
-		case "EMAILID", "THREADID":
-			var v string
-			if !dec.ExpectAstring(&v) {
+		case "EMAILID":
+			id, err := readFetchObjectID(dec)
+			if err != nil {
+				return err
+			}
+			value = imap.FetchDataObjectID(id)
+		case "THREADID":
+			if dec.PeekSpecial('(') {
+				id, err := readFetchObjectID(dec)
+				if err != nil {
+					return err
+				}
+				value = imap.FetchDataObjectID(id)
+			} else {
+				var unused string
+				var isNil bool
+				if !dec.ExpectNString(&unused, &isNil) || !isNil {
+					return fmt.Errorf("THREADID value is neither (objectid) nor NIL")
+				}
+				value = imap.FetchDataObjectID("")
+			}
+		case "SAVEDATE":
+			// RFC 8514 section 5: SAVEDATE SP (date-time / nil)
+			if dec.PeekSpecial('"') {
+				var t time.Time
+				if !dec.ExpectDateTime(&t) {
+					return dec.Err()
+				}
+				value = &imap.FetchDataSaveDate{Date: &t}
+			} else {
+				var unused string
+				var isNil bool
+				if !dec.ExpectNString(&unused, &isNil) || !isNil {
+					return fmt.Errorf("SAVEDATE value is neither date-time nor NIL")
+				}
+				value = &imap.FetchDataSaveDate{}
+			}
+		case "PREVIEW":
+			// RFC 8970 section 6: PREVIEW SP nstring
+			var s string
+			var isNil bool
+			if !dec.ExpectNString(&s, &isNil) {
 				return dec.Err()
 			}
-			value = imap.FetchDataObjectID(v)
+			if isNil {
+				value = &imap.FetchDataPreview{}
+			} else {
+				value = &imap.FetchDataPreview{Text: &s}
+			}
 		case "ENVELOPE":
 			env, err := readEnvelope(dec)
 			if err != nil {
@@ -454,6 +500,24 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 	}
 	emitNow()
 	return nil
+}
+
+// readFetchObjectID reads the parenthesised objectid used by EMAILID and
+// THREADID. RFC 8474 section 7: fetch-emailid-resp = "EMAILID" SP "(" objectid ")"
+func readFetchObjectID(dec *imapwire.Decoder) (string, error) {
+	var id string
+	if err := dec.ExpectList(func() error {
+		if !dec.ExpectAtom(&id) {
+			return dec.Err()
+		}
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	if _, err := parseObjectID(id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func bodySectionData(section *imapwire.BodySection, literal io.Reader) imap.FetchData {

@@ -129,7 +129,12 @@ type UnilateralDataHandler struct {
 	Recent func(numRecent uint32)
 	// Fetch receives an unsolicited FETCH update, currently flag updates.
 	Fetch func(data *imap.FetchMessageData)
-	_     struct{}
+	// Vanished receives UIDs removed from the selected mailbox after
+	// ENABLE QRESYNC. Earlier is true for VANISHED (EARLIER), which reports
+	// expunges that happened while disconnected and does not renumber
+	// sequence numbers. See [VanishedData].
+	Vanished func(data VanishedData)
+	_        struct{}
 }
 
 // Client is an IMAP session. Its zero value is not usable; obtain one with
@@ -268,8 +273,15 @@ type Command struct {
 	err  error
 
 	collector  commandCollector
-	onComplete func(success bool)
+	onComplete taggedCompleteFunc
 }
+
+// taggedCompleteFunc is invoked on the reader goroutine with the tagged
+// completion of a command, before Wait unblocks. On success, code and args are
+// the resp-text-code and its arguments (empty when the server sent none). On
+// failure they are empty; the error path already carries Code/CodeArgs on
+// [*imap.Error].
+type taggedCompleteFunc func(success bool, code, args string)
 
 // Tag reports the command's unique client-generated tag.
 func (cmd *Command) Tag() string { return cmd.tag }
@@ -467,7 +479,7 @@ type commandOptions struct {
 	allowed    stateMask
 	write      func(*imapwire.Encoder)
 	collector  commandCollector
-	onComplete func(success bool)
+	onComplete taggedCompleteFunc
 
 	// ownsContinuation is set by AUTHENTICATE and IDLE, which install their
 	// own continuation handler before issuing the command and keep it for the
@@ -496,7 +508,7 @@ func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.En
 	c.authInProgress = true
 	c.mu.Unlock()
 
-	finished := func(success bool) {
+	finished := func(success bool, _, _ string) {
 		c.mu.Lock()
 		c.authInProgress = false
 		c.mu.Unlock()
@@ -527,7 +539,7 @@ func (c *Client) beginAuthenticationCommand(name string, write func(*imapwire.En
 // successful tagged completion changes session state or finalises collected
 // response data.  The callback always runs on the reader goroutine before the
 // command is made visible as complete.
-func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector, onComplete func(success bool)) *Command {
+func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector, onComplete taggedCompleteFunc) *Command {
 	return c.issue(name, commandOptions{allowed: allowed, write: write, collector: collector, onComplete: onComplete})
 }
 
@@ -748,7 +760,11 @@ func (c *Client) completeTagged(tag string, cond imapwire.RespCond) {
 	}
 	c.trace(TraceServer, tag+" "+cond.Status)
 	if cmd.onComplete != nil {
-		cmd.onComplete(cond.Status == "OK")
+		if cond.Status == "OK" {
+			cmd.onComplete(true, cond.Text.Code, cond.Text.Args)
+		} else {
+			cmd.onComplete(false, "", "")
+		}
 	}
 	if cond.Status == "OK" {
 		cmd.complete(nil)

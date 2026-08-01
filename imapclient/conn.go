@@ -415,6 +415,17 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 			return nil
 		}
 	}
+	if !resp.hasNum && resp.name == "VANISHED" {
+		data, err := readVanished(resp.dec)
+		if err != nil {
+			return err
+		}
+		if h != nil && h.Vanished != nil {
+			h.Vanished(data)
+		}
+		c.trace(TraceServer, "* VANISHED")
+		return nil
+	}
 	// Unknown unsolicited responses are discarded without losing stream
 	// alignment. Command-specific parsers get the first opportunity above.
 	return resp.dec.DiscardLine()

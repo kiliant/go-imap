@@ -79,7 +79,7 @@ func (c *Client) Enable(capabilities ...string) *EnableCommand {
 			return true, resp.dec.Err()
 		}
 		return true, nil
-	}, func(success bool) {
+	}, func(success bool, _, _ string) {
 		if !success {
 			return
 		}

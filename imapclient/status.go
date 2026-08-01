@@ -112,17 +112,27 @@ func statusCollector(data *StatusData) commandCollector {
 			if !resp.dec.ExpectAtom(&item) || !resp.dec.ExpectSP() {
 				return resp.dec.Err()
 			}
+			key := imap.StatusItemKeyword(strings.ToUpper(item))
+			if key == imap.StatusItemMailboxID {
+				// RFC 8474 section 7: "MAILBOXID" SP "(" objectid ")"
+				id, err := readFetchObjectID(resp.dec)
+				if err != nil {
+					return err
+				}
+				values[key] = id
+				return nil
+			}
 			var rawValue string
 			if !resp.dec.ExpectAstring(&rawValue) {
 				return resp.dec.Err()
 			}
 			if value, err := strconv.ParseUint(rawValue, 10, 64); err == nil {
-				values[imap.StatusItemKeyword(strings.ToUpper(item))] = value
+				values[key] = value
 			} else {
-				// STATUS extensions such as MAILBOXID return an astring rather
-				// than a number. Keep it intact until that extension grows a
+				// STATUS extensions that return an astring rather than a
+				// number. Keep the text intact until the extension grows a
 				// typed convenience field.
-				values[imap.StatusItemKeyword(strings.ToUpper(item))] = rawValue
+				values[key] = rawValue
 			}
 			return nil
 		})

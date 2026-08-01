@@ -120,7 +120,7 @@ func (c *Client) replace(ctx context.Context, uid bool, number uint32, mailbox s
 
 	data := &ReplaceData{}
 	var replaceErr error
-	cmd := c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+	cmd := c.beginCommandWithCompletion(name, stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Number(number).SP().Mailbox(mailbox)
 		if len(o.Flags) != 0 {
 			enc.SP().List(len(o.Flags), func(i int) { enc.Flag(string(o.Flags[i])) })
@@ -150,6 +150,17 @@ func (c *Client) replace(ctx context.Context, uid bool, number uint32, mailbox s
 		}
 		data.UIDValidity, data.UID = validity, newUID
 		return true, nil
+	}, func(success bool, code, args string) {
+		// Prefer the untagged APPENDUID claimed above. RFC 8508 section 4.3
+		// also permits the tagged form.
+		if !success || data.UIDValidity != 0 || !strings.EqualFold(code, string(imap.CodeAppendUID)) {
+			return
+		}
+		validity, newUID, err := parseReplaceAppendUID(args)
+		if err != nil {
+			return
+		}
+		data.UIDValidity, data.UID = validity, newUID
 	})
 	if replaceErr != nil {
 		_ = cmd.Wait(ctx)

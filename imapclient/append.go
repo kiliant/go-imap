@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/kiliant/go-imap"
@@ -18,8 +19,12 @@ type AppendOptions struct {
 	_            struct{}
 }
 
-// AppendData is data returned by APPEND. UIDValidity and UID are zero until
-// UIDPLUS APPENDUID response-code parsing is enabled.
+// AppendData is data returned by APPEND. UIDValidity and UID are filled from
+// a tagged APPENDUID response code when the server sends one (UIDPLUS, RFC
+// 4315 section 3). They stay zero when the server omits the code — for
+// example when the destination is not selectable or has UIDNOTSTICKY status.
+// MULTIAPPEND may return a UID set; this type reports a single UID and leaves
+// UID zero when more than one destination UID is assigned.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type AppendData struct {
@@ -100,7 +105,7 @@ func (c *Client) Append(ctx context.Context, mailbox string, options *AppendOpti
 	}()
 
 	var appendErr error
-	cmd := c.beginCommand("APPEND", stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
+	cmd := c.beginCommandWithCompletion("APPEND", stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox)
 		if len(o.Flags) != 0 {
 			enc.SP().List(len(o.Flags), func(i int) { enc.Flag(string(o.Flags[i])) })
@@ -120,7 +125,22 @@ func (c *Client) Append(ctx context.Context, mailbox string, options *AppendOpti
 		if err := literal.Close(); err != nil && appendErr == nil {
 			appendErr = err
 		}
-	}, nil)
+	}, nil, func(success bool, code, args string) {
+		if !success || !strings.EqualFold(code, string(imap.CodeAppendUID)) {
+			return
+		}
+		parsed, err := parseAppendUID(args)
+		if err != nil {
+			return
+		}
+		data.UIDValidity = parsed.UIDValidity
+		if countUIDs(parsed.DestinationUIDs) == 1 {
+			for _, r := range parsed.DestinationUIDs {
+				data.UID = r.Start
+				break
+			}
+		}
+	})
 	close(stopCancel)
 	<-cancelDone
 	select {

@@ -37,7 +37,7 @@ least two independent servers in the interop matrix).
 
 | Capability | RFC | Status |
 |---|---|---|
-| UIDPLUS | 4315 | in progress [^uidplus] |
+| UIDPLUS | 4315 | verified [^uidplus] |
 | MOVE | 6851 | verified |
 | ESEARCH | 4731 | verified |
 | SEARCHRES | 5182 | verified |
@@ -54,14 +54,10 @@ emulated paths exercised on GreenMail 2.1.9 and Courier, which advertise only
 UIDPLUS, MOVE and CHILDREN between them. SEARCHRES has exactly two independent
 servers, Dovecot and Stalwart.
 
-[^uidplus]: `UID EXPUNGE` is complete and verified on all five native servers,
-    and the untagged `COPYUID` that RFC 6851 section 4.3 attaches to `UID MOVE`
-    is read. `APPENDUID` and `COPYUID` for plain `APPEND` and `COPY` arrive in
-    the **tagged** OK (RFC 4315 section 3), which the client core does not yet
-    deliver to a command, so `AppendData.UID` and `CopyData.DestinationUIDs`
-    remain zero. That needs an internal seam in `imapclient/client.go`, which
-    T08 does not own; it is recorded as an escalation in `.state/progress/T08.md`
-    and the row stays below `verified` until it lands.
+[^uidplus]: `UID EXPUNGE` is verified on all five native servers. Untagged
+    `COPYUID` on `UID MOVE` (RFC 6851 section 4.3) and tagged `APPENDUID` /
+    `COPYUID` on plain `APPEND` / `COPY` (RFC 4315 section 3) are both read
+    into `AppendData` / `CopyData`.
 
 [^specialuse]: Servers disagree about whether a use attribute appears on a plain
     `LIST` or only under `RETURN (SPECIAL-USE)`: Cyrus does the former, Stalwart
@@ -73,31 +69,22 @@ servers, Dovecot and Stalwart.
 |---|---|---|
 | CONDSTORE | 7162 | verified |
 | QRESYNC | 7162 | verified |
-| OBJECTID | 8474 | planned [^objectid] |
-| SAVEDATE | 8514 | done [^rawfetch] |
+| OBJECTID | 8474 | verified [^objectid] |
+| SAVEDATE | 8514 | verified [^savedate] |
 | STATUS=SIZE | 8438 | verified |
 | APPENDLIMIT | 7889 | done [^appendlimit] |
-| PREVIEW | 8970 | done [^preview] |
+| PREVIEW | 8970 | verified [^preview] |
 | REPLACE | 8508 | done [^replace] |
 
 CONDSTORE, QRESYNC and STATUS=SIZE are exercised against Dovecot, Stalwart and
 Cyrus, including a disconnect/mutate/reconnect resynchronisation that asserts
 the reported delta.
 
-[^objectid]: The request side is reachable through the existing open FETCH and
-    STATUS item sets, but two response parsers reject the OBJECTID grammar and
-    fail the connection rather than the command: `EMAILID`/`THREADID` are
-    `"(" objectid ")"` (RFC 8474 section 5.3) and the STATUS `MAILBOXID` value
-    is likewise parenthesised (section 4.3), while both are read as an
-    `astring`. Fixing either means editing a file T09 does not own, so it is
-    escalated rather than worked around. No interop test requests these items:
-    against Stalwart and Cyrus they would take the session down.
+[^objectid]: `EMAILID`, `THREADID` and STATUS `MAILBOXID` use the RFC 8474
+    parenthesised grammar. Verified live against Stalwart and Cyrus.
 
-[^rawfetch]: The `SAVEDATE` item is requested and its value reaches the caller
-    intact, verified against Dovecot and Cyrus, but as a raw `imap.FetchDataRaw`
-    value rather than the typed `imap.FetchDataSaveDate` — the FETCH response
-    reader has no case for it. No data is lost; the typed decode is a
-    one-case addition to a file T09 does not own.
+[^savedate]: Typed `imap.FetchDataSaveDate` decode verified against Dovecot
+    and Cyrus.
 
 [^appendlimit]: Only Cyrus advertises `APPENDLIMIT` anywhere in the matrix, and
     only in the server-wide `APPENDLIMIT=4294967295` form, so the two-server
@@ -105,11 +92,8 @@ the reported delta.
     implemented and unit-tested, and the server-wide form is exercised live
     against Cyrus.
 
-[^preview]: Requesting `PREVIEW` and receiving its value is verified against
-    Dovecot, Stalwart and Cyrus, but as raw data for the same reason as
-    `SAVEDATE`. The `LAZY` modifier is additionally unusable: it is encoded
-    unparenthesised, which RFC 8970 section 6 does not allow, so the server
-    sees two fetch items. Both are escalated.
+[^preview]: Typed `imap.FetchDataPreview` decode and the parenthesised
+    `PREVIEW (LAZY)` request form verified against Dovecot, Stalwart and Cyrus.
 
 [^replace]: Only Dovecot advertises `REPLACE`, so the two-server bar cannot be
     met. The native command is verified against Dovecot and the opt-in

@@ -269,6 +269,28 @@ func TestStoreSyncSurfacesModifiedOnNo(t *testing.T) {
 	})
 }
 
+// TestStoreSyncSurfacesModifiedOnOK is the tagged-OK half of RFC 7162
+// section 3.1.3: a partial conditional STORE completes successfully and names
+// the failures in [MODIFIED …].
+func TestStoreSyncSurfacesModifiedOnOK(t *testing.T) {
+	c, _ := extBDial(t, func(tag, line string) string {
+		return "* 5 FETCH (MODSEQ (320162350))\r\n" + tag + " OK [MODIFIED 7,9] Conditional STORE completed\r\n"
+	})
+	extBReady(c, strings.Fields(qresyncCaps), []string{"CONDSTORE"}, true)
+	modSeq := uint64(320162338)
+	data, err := c.StoreSync(imap.SeqSetNum(7, 5, 9), []imap.Flag{imap.FlagDeleted},
+		&SyncStoreOptions{Op: StoreFlagsAdd, Silent: true, UnchangedSince: &modSeq}).Wait(extBContext(t))
+	if err != nil {
+		t.Fatalf("tagged OK with MODIFIED must not be an error: %v", err)
+	}
+	if data == nil || data.ModifiedSeqNums.String() != "7,9" {
+		t.Fatalf("ModifiedSeqNums = %#v", data)
+	}
+	if !data.HasModified() {
+		t.Error("HasModified reported no failures")
+	}
+}
+
 func TestStoreSyncRejectsUnchangedSinceWithoutCondStore(t *testing.T) {
 	c, server := extBDial(t, func(tag, line string) string { return tag + " OK done\r\n" })
 	extBReady(c, []string{"IMAP4REV1"}, nil, true)

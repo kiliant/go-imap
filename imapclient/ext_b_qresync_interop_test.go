@@ -563,9 +563,10 @@ func TestCondStoreUnchangedSinceInterop(t *testing.T) {
 			if imap.ContainsFlag(flags, imap.FlagAnswered) {
 				t.Fatalf("UNCHANGEDSINCE 0 applied a change it must have refused: flags = %v", flags)
 			}
-			// The failure list itself is only reachable on the tagged NO path
-			// today; see the T09 progress notes. Report what the server did so
-			// the matrix records it either way.
+			if data == nil || !data.HasModified() || !data.ModifiedUIDs.Contains(uid) {
+				t.Fatalf("%s refused the store but MODIFIED did not name UID %d: %#v (err=%v)",
+					server.Profile.Name, uid, data, err)
+			}
 			t.Logf("%s reported the refused conditional store as err=%v modified=%v",
 				server.Profile.Name, err, data)
 		})
@@ -658,23 +659,9 @@ func TestReplaceInterop(t *testing.T) {
 	}
 }
 
-// TestSaveDatePreviewRawInterop covers the request side of SAVEDATE (RFC 8514)
-// and PREVIEW (RFC 8970) against every server that advertises them.
-//
-// Both items are requested through the existing open FETCH item set and both
-// arrive intact. Neither is decoded into its typed T02 value yet — the FETCH
-// response reader has no case for either, so both land as *imap.FetchDataRaw
-// under the exact key the server sent. That is preserved data rather than lost
-// data, which is what this test pins: the caller can still read the value, and
-// the typed decode is a two-case addition to a file this task does not own,
-// recorded for escalation in the T09 progress notes.
-//
-// The PREVIEW LAZY modifier is deliberately not exercised: the encoder writes
-// it unparenthesised, which is a malformed fetch-att, and asking a live server
-// for it would produce a red matrix cell rather than a skip. Same reason
-// EMAILID, THREADID and STATUS MAILBOXID are absent here — those responses are
-// parenthesised and the current parsers reject them, poisoning the connection.
-func TestSaveDatePreviewRawInterop(t *testing.T) {
+// TestSaveDatePreviewObjectIDInterop covers SAVEDATE (RFC 8514), PREVIEW
+// (RFC 8970) and OBJECTID (RFC 8474) against every server that advertises them.
+func TestSaveDatePreviewObjectIDInterop(t *testing.T) {
 	for _, server := range harness.RunningServers() {
 		server := server
 		t.Run(server.Profile.Name, func(t *testing.T) {
@@ -683,8 +670,8 @@ func TestSaveDatePreviewRawInterop(t *testing.T) {
 			client := t09Dial(t, ctx, server, false)
 			defer client.Close()
 			capabilities := client.Capabilities()
-			if !capabilities["SAVEDATE"] && !capabilities["PREVIEW"] {
-				t.Skip("server advertises neither SAVEDATE nor PREVIEW")
+			if !capabilities["SAVEDATE"] && !capabilities["PREVIEW"] && !capabilities["OBJECTID"] {
+				t.Skip("server advertises none of SAVEDATE, PREVIEW, OBJECTID")
 			}
 
 			mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t09-items")
@@ -693,23 +680,38 @@ func TestSaveDatePreviewRawInterop(t *testing.T) {
 			}
 			defer func() { _ = client.Delete(mailbox).Wait(ctx) }()
 			t09Append(t, ctx, client, mailbox, "t09-items-a")
+
+			if capabilities["OBJECTID"] {
+				status, err := client.Status(mailbox, &imapclient.StatusOptions{
+					Items: []imap.StatusItem{imap.StatusItemMailboxID},
+				}).Wait(ctx)
+				if err != nil {
+					t.Fatalf("STATUS MAILBOXID: %v", err)
+				}
+				id, ok := status.Values[imap.StatusItemMailboxID].(string)
+				if !ok || id == "" {
+					t.Fatalf("MAILBOXID = %#v", status.Values[imap.StatusItemMailboxID])
+				}
+				t.Logf("MAILBOXID = %q", id)
+			}
+
 			if _, err := client.Select(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("SELECT: %v", err)
 			}
 
 			items := []imap.FetchItem{imap.FetchItemUID}
-			var want []imap.FetchDataKey
 			if capabilities["SAVEDATE"] {
 				items = append(items, imap.FetchItemSaveDate)
-				want = append(want, "SAVEDATE")
 			}
 			if capabilities["PREVIEW"] {
-				items = append(items, &imap.FetchItemPreview{})
-				want = append(want, "PREVIEW")
+				items = append(items, &imap.FetchItemPreview{Lazy: true})
+			}
+			if capabilities["OBJECTID"] {
+				items = append(items, imap.FetchItemEmailID, imap.FetchItemThreadID)
 			}
 
-			cmd := client.FetchUID(t09EveryUID, items...)
-			seen := make(map[imap.FetchDataKey]string)
+			cmd := client.FetchUID(imap.UIDSetRange(1, 0), items...)
+			var sawSaveDate, sawPreview, sawEmailID bool
 			for {
 				data, err := cmd.Next(ctx)
 				if errors.Is(err, io.EOF) {
@@ -717,34 +719,40 @@ func TestSaveDatePreviewRawInterop(t *testing.T) {
 				}
 				if err != nil {
 					server.LogDiagnostics(context.Background(), t, nil)
-					t.Fatalf("UID FETCH %v: %v", want, err)
+					t.Fatalf("UID FETCH: %v", err)
 				}
-				for key, values := range data.Items {
-					for _, value := range values {
-						raw, ok := value.(*imap.FetchDataRaw)
-						if !ok {
-							continue
-						}
-						body, err := io.ReadAll(raw.Reader)
-						if err != nil {
-							t.Fatalf("reading %s: %v", key, err)
-						}
-						seen[key] = string(body)
+				if values := data.Items[imap.FetchDataKey("SAVEDATE")]; len(values) != 0 {
+					if _, ok := values[0].(*imap.FetchDataSaveDate); !ok {
+						t.Fatalf("SAVEDATE = %#v, want *FetchDataSaveDate", values[0])
 					}
+					sawSaveDate = true
+				}
+				if values := data.Items[imap.FetchDataKey("PREVIEW")]; len(values) != 0 {
+					if _, ok := values[0].(*imap.FetchDataPreview); !ok {
+						t.Fatalf("PREVIEW = %#v, want *FetchDataPreview", values[0])
+					}
+					sawPreview = true
+				}
+				if values := data.Items[imap.FetchDataKey("EMAILID")]; len(values) != 0 {
+					id, ok := values[0].(imap.FetchDataObjectID)
+					if !ok || id == "" {
+						t.Fatalf("EMAILID = %#v", values[0])
+					}
+					sawEmailID = true
+					t.Logf("EMAILID = %q", id)
 				}
 			}
 			if err := cmd.Wait(ctx); err != nil {
 				t.Fatalf("UID FETCH completion: %v", err)
 			}
-			for _, key := range want {
-				value, ok := seen[key]
-				if !ok {
-					t.Fatalf("%s was requested but no value reached the caller: %v", key, seen)
-				}
-				if strings.TrimSpace(value) == "" {
-					t.Fatalf("%s arrived empty: %q", key, value)
-				}
-				t.Logf("%s %s = %s", server.Profile.Name, key, value)
+			if capabilities["SAVEDATE"] && !sawSaveDate {
+				t.Fatal("SAVEDATE was requested but no typed value reached the caller")
+			}
+			if capabilities["PREVIEW"] && !sawPreview {
+				t.Fatal("PREVIEW was requested but no typed value reached the caller")
+			}
+			if capabilities["OBJECTID"] && !sawEmailID {
+				t.Fatal("EMAILID was requested but no typed value reached the caller")
 			}
 		})
 	}

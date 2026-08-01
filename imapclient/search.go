@@ -10,17 +10,16 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// SearchOptions configures SEARCH. ReturnOptions is reserved for ESEARCH and
-// lets that extension add typed options without introducing a second method.
-// Construct with keyed fields only.
+// SearchOptions configures SEARCH. A nil pointer selects the defaults.
+// Extended SEARCH RETURN options live on [ESearchOptions] and reach the wire
+// through [Client.SearchExtended] / [Client.SearchExtendedUID].
+//
+// Construct with keyed fields only; fields may be added in a future release.
 type SearchOptions struct {
 	// Charset is the charset understood by the server for string criteria. The
 	// client never transcodes values implicitly.
 	Charset string
-	// ReturnOptions is sent in the ESEARCH RETURN position when that extension
-	// is enabled. Base SEARCH rejects non-empty options.
-	ReturnOptions []string
-	_             struct{}
+	_       struct{}
 }
 
 // SearchCommand is an in-flight SEARCH or UID SEARCH command.
@@ -82,10 +81,6 @@ func (c *Client) search(name string, criteria imap.SearchCriteria, options *Sear
 	o := SearchOptions{}
 	if options != nil {
 		o = *options
-	}
-	if len(o.ReturnOptions) != 0 {
-		sc.Command = rejectedCommand(c, name, "SEARCH RETURN options require ESEARCH")
-		return sc
 	}
 	if err := validateSearchCriteria(criteria); err != nil {
 		sc.Command = rejectedCommand(c, name, err.Error())
@@ -194,9 +189,10 @@ func writeSearchKey(enc *imapwire.Encoder, criterion imap.SearchCriteria) {
 	case imap.SearchSize:
 		enc.Atom(string(c.Key)).SP().Number64(c.Size)
 	case imap.SearchSeqNum:
-		enc.Atom(c.Set.String())
+		writeNumSet(enc, c.Set.String())
 	case imap.SearchUID:
-		enc.Atom("UID").SP().Atom(c.Set.String())
+		enc.Atom("UID").SP()
+		writeNumSet(enc, c.Set.String())
 	case imap.SearchSavedResult:
 		enc.Atom("$")
 	case imap.SearchWithin:

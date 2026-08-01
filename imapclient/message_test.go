@@ -168,7 +168,7 @@ func TestAppendSynchronisingLiteral(t *testing.T) {
 		if string(body) != "hey\r\n" {
 			return
 		}
-		_, _ = serverConn.Write([]byte(strings.Fields(line)[0] + " OK appended\r\n"))
+		_, _ = serverConn.Write([]byte(strings.Fields(line)[0] + " OK [APPENDUID 38505 3955] appended\r\n"))
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
@@ -184,8 +184,8 @@ func TestAppendSynchronisingLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data == nil || data.UIDValidity != 0 || data.UID != 0 {
-		t.Fatalf("APPEND data = %#v, want zero UIDPLUS data before parsing is enabled", data)
+	if data == nil || data.UIDValidity != 38505 || data.UID != 3955 {
+		t.Fatalf("APPEND data = %#v, want APPENDUID 38505 3955", data)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestCopyReturnsTypedData(t *testing.T) {
 		if len(fields) != 4 || fields[1] != "COPY" || fields[2] != "1" || fields[3] != "Archive" {
 			return
 		}
-		_, _ = serverConn.Write([]byte(fields[0] + " OK copied\r\n"))
+		_, _ = serverConn.Write([]byte(fields[0] + " OK [COPYUID 38505 304 3956] copied\r\n"))
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
@@ -286,8 +286,10 @@ func TestCopyReturnsTypedData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data == nil || data.UIDValidity != 0 || data.SourceUIDs != nil || data.DestinationUIDs != nil {
-		t.Fatalf("COPY data = %#v, want zero UIDPLUS data before parsing is enabled", data)
+	if data == nil || !data.Received() || data.UIDValidity != 38505 ||
+		!data.SourceUIDs.Equal(imap.UIDSetNum(304)) ||
+		!data.DestinationUIDs.Equal(imap.UIDSetNum(3956)) {
+		t.Fatalf("COPY data = %#v, want COPYUID 38505 304 3956", data)
 	}
 }
 

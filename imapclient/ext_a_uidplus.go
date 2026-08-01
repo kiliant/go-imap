@@ -59,40 +59,18 @@ func (o *UIDExpungeOptions) savedSearchResult() *SavedSearchResult {
 // argument is either a UID set or the SEARCHRES "$" marker.
 func (c *Client) uidExpunge(argument string) *Command {
 	return c.beginCommand("UID EXPUNGE", stateSelected, func(enc *imapwire.Encoder) {
-		enc.SP().Atom(argument)
+		enc.SP()
+		if argument == "$" {
+			enc.Atom(argument)
+		} else {
+			writeNumSet(enc, argument)
+		}
 	}, nil)
 }
 
-// UIDPlusData is the UIDPLUS response-code data reported for a command that
-// placed messages into a mailbox. RFC 4315 section 3.
-//
-// The zero value means the server sent no such response code. RFC 4315 permits
-// that: a server omits COPYUID and APPENDUID when the destination mailbox is not
-// selectable by this user, and when the destination has UIDNOTSTICKY status.
-// A caller that finds UIDValidity zero must fall back to locating the messages
-// with SEARCH or FETCH, and must accept the race that implies — another client
-// may have appended between the two commands, so a search for a Message-ID can
-// legitimately match more than the message just written.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type UIDPlusData struct {
-	// UIDValidity is the UIDVALIDITY of the destination mailbox. Zero means
-	// no response code was received.
-	UIDValidity uint32
-
-	// SourceUIDs are the UIDs in the source mailbox, in the order the
-	// messages were copied or moved. It is empty for APPENDUID.
-	SourceUIDs imap.UIDSet
-
-	// DestinationUIDs are the UIDs assigned in the destination mailbox, in
-	// the same order as SourceUIDs.
-	DestinationUIDs imap.UIDSet
-
-	_ struct{}
-}
-
-// Received reports whether the server supplied a UIDPLUS response code.
-func (d *UIDPlusData) Received() bool { return d != nil && d.UIDValidity != 0 }
+// Received reports whether the server supplied a UIDPLUS response code
+// (COPYUID or APPENDUID). See [CopyData].
+func (d *CopyData) Received() bool { return d != nil && d.UIDValidity != 0 }
 
 // parseCopyUID parses the arguments of a COPYUID response code:
 //
@@ -100,7 +78,7 @@ func (d *UIDPlusData) Received() bool { return d != nil && d.UIDValidity != 0 }
 //
 // RFC 4315 section 4. The source and destination sets correspond positionally,
 // so neither may contain "*" and both must contain the same number of UIDs.
-func parseCopyUID(args string) (*UIDPlusData, error) {
+func parseCopyUID(args string) (*CopyData, error) {
 	fields := strings.Fields(args)
 	if len(fields) != 3 {
 		return nil, fmt.Errorf("invalid COPYUID response code %q", args)
@@ -124,7 +102,7 @@ func parseCopyUID(args string) (*UIDPlusData, error) {
 	if countUIDs(source) != countUIDs(destination) {
 		return nil, fmt.Errorf("COPYUID source and destination sets have different lengths: %q", args)
 	}
-	return &UIDPlusData{UIDValidity: validity, SourceUIDs: source, DestinationUIDs: destination}, nil
+	return &CopyData{UIDValidity: validity, SourceUIDs: source, DestinationUIDs: destination}, nil
 }
 
 // parseAppendUID parses the arguments of an APPENDUID response code:
@@ -133,7 +111,7 @@ func parseCopyUID(args string) (*UIDPlusData, error) {
 //
 // RFC 4315 section 4. With MULTIAPPEND the second value is a uid-set rather
 // than a single UID; both spellings are accepted here.
-func parseAppendUID(args string) (*UIDPlusData, error) {
+func parseAppendUID(args string) (*CopyData, error) {
 	fields := strings.Fields(args)
 	if len(fields) != 2 {
 		return nil, fmt.Errorf("invalid APPENDUID response code %q", args)
@@ -146,7 +124,7 @@ func parseAppendUID(args string) (*UIDPlusData, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &UIDPlusData{UIDValidity: validity, DestinationUIDs: destination}, nil
+	return &CopyData{UIDValidity: validity, DestinationUIDs: destination}, nil
 }
 
 func parseUIDValidity(s string) (uint32, error) {

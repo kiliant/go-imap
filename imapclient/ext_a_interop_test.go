@@ -45,7 +45,11 @@ func TestExtACapabilityMatrix(t *testing.T) {
 func TestExtAUIDPlus(t *testing.T) {
 	t08ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, client *imapclient.Client) {
 		mailbox := t08Mailbox(t, ctx, server, client, "uidplus")
-		t08Append(t, ctx, client, mailbox, "one")
+		message := "From: sender@example.test\r\nTo: interop@example.test\r\nSubject: one\r\n\r\none\r\n"
+		appended, err := client.Append(ctx, mailbox, nil, int64(len(message)), strings.NewReader(message)).Wait(ctx)
+		if err != nil {
+			t08Fail(t, server, client, "APPEND", err)
+		}
 		t08Append(t, ctx, client, mailbox, "two")
 		t08Append(t, ctx, client, mailbox, "three")
 		if _, err := client.Select(mailbox, nil).Wait(ctx); err != nil {
@@ -54,6 +58,25 @@ func TestExtAUIDPlus(t *testing.T) {
 		uids := t08AllUIDs(t, ctx, server, client)
 		if len(uids) != 3 {
 			t08Fail(t, server, client, fmt.Sprintf("expected 3 UIDs, got %v", uids), nil)
+		}
+		if caps["UIDPLUS"] {
+			if appended == nil || appended.UIDValidity == 0 || appended.UID == 0 {
+				t08Fail(t, server, client, fmt.Sprintf("APPENDUID missing: %#v", appended), nil)
+			}
+			if appended.UID != uids[0] {
+				t08Fail(t, server, client, fmt.Sprintf("APPENDUID UID %d != first mailbox UID %d", appended.UID, uids[0]), nil)
+			}
+			dest := t08Mailbox(t, ctx, server, client, "uidplus-copy")
+			var one imap.UIDSet
+			one.AddNum(uids[0])
+			copied, err := client.CopyUID(one, dest).Wait(ctx)
+			if err != nil {
+				t08Fail(t, server, client, "UID COPY", err)
+			}
+			if copied == nil || !copied.Received() || copied.UIDValidity == 0 ||
+				!copied.SourceUIDs.Equal(one) || copied.DestinationUIDs.IsEmpty() {
+				t08Fail(t, server, client, fmt.Sprintf("COPYUID missing: %#v", copied), nil)
+			}
 		}
 
 		var all imap.UIDSet
@@ -69,7 +92,7 @@ func TestExtAUIDPlus(t *testing.T) {
 
 		var first imap.UIDSet
 		first.AddNum(uids[0])
-		err := client.UIDExpunge(first, nil).Wait(ctx)
+		err = client.UIDExpunge(first, nil).Wait(ctx)
 		if !caps["UIDPLUS"] {
 			// No emulation exists on purpose: plain EXPUNGE would remove the
 			// other two messages as well. See Client.UIDExpunge.

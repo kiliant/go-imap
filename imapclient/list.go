@@ -46,8 +46,15 @@ const (
 
 // ListOptions configures LIST. Patterns supplements pattern with additional
 // mailbox patterns; it is included now because LIST-EXTENDED supports multiple
-// patterns. T08 can add structured selection and return option types without
+// patterns. Structured selection and return option types can be added without
 // changing this method's signature.
+//
+// ReturnOptions is shared by [Client.List] and [Client.ListMailboxes], but the
+// accepted element set depends on the entry point: [Client.List] encodes
+// keyword return options only ([ListReturnOptionKeyword]); structured options
+// that carry arguments — today [*ListReturnStatus], and later LIST-METADATA /
+// LIST-MYRIGHTS — must go through [Client.ListMailboxes]. Handing a structured
+// option to [Client.List] fails the command without writing anything.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type ListOptions struct {
@@ -92,6 +99,10 @@ func (cmd *ListCommand) Wait(ctx context.Context) ([]*ListData, error) {
 // pointer selects the base LIST syntax. Selection and return options are sent
 // using LIST-EXTENDED syntax; callers should use them only when the server
 // advertises LIST-EXTENDED.
+//
+// ReturnOptions may contain [ListReturnOptionKeyword] values only. Structured
+// return options such as [*ListReturnStatus] are rejected here; use
+// [Client.ListMailboxes] for those. See [ListOptions.ReturnOptions].
 func (c *Client) List(reference, pattern string, options *ListOptions) *ListCommand {
 	return c.list("LIST", reference, pattern, options)
 }

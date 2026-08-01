@@ -75,6 +75,10 @@ type QResyncOptions struct {
 // SyncSelectOptions configures the synchronisation-aware SELECT and EXAMINE.
 // A nil pointer is valid and selects the plain command.
 //
+// Plain SELECT/EXAMINE options that are not CONDSTORE/QRESYNC enabling
+// parameters belong on [SelectOptions]; this type is the home for the
+// synchronisation select parameters from RFC 7162.
+//
 // Construct with keyed fields only; fields may be added in a future release.
 type SyncSelectOptions struct {
 	// CondStore sends the CONDSTORE select parameter, which makes this a
@@ -206,7 +210,7 @@ func (c *Client) selectSync(name, mailbox string, options *SyncSelectOptions) *S
 	result.Command = c.beginCommandWithCompletion(name, stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox)
 		writeSelectParams(enc, &o)
-	}, syncSelectCollector(data, selectCollector(base), &untagged, limit, name), func(success bool) {
+	}, syncSelectCollector(data, selectCollector(base), &untagged, limit, name), func(success bool, _, _ string) {
 		c.finishSelectSync(success, data, &o)
 	})
 	return result

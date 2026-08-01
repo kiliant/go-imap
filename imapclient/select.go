@@ -12,6 +12,11 @@ import (
 
 // SelectOptions configures SELECT and EXAMINE. The zero value is valid.
 //
+// CONDSTORE and QRESYNC select parameters are not fields here: they live on
+// [SyncSelectOptions] and reach the wire through [Client.SelectSync] /
+// [Client.ExamineSync]. Future plain select parameters that are not sync
+// enabling commands belong on this type.
+//
 // Construct with keyed fields only; fields may be added in a future release.
 type SelectOptions struct {
 	_ struct{}
@@ -79,7 +84,7 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 	data := &MailboxStatus{Mailbox: normalisedMailbox(mailbox), ReadOnly: name == "EXAMINE"}
 	cmd := c.beginCommandWithCompletion(name, stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox)
-	}, selectCollector(data), func(success bool) {
+	}, selectCollector(data), func(success bool, _, _ string) {
 		if !success {
 			// RFC 3501 section 6.3.1: a failed SELECT or EXAMINE leaves no
 			// mailbox selected, so a session that had one drops back to the
@@ -223,7 +228,7 @@ func responseCodeFlags(args string) ([]imap.Flag, error) {
 	return flagsFromRaw(raw), nil
 }
 
-func (c *Client) finishCloseMailbox(success bool) {
+func (c *Client) finishCloseMailbox(success bool, _, _ string) {
 	if !success {
 		return
 	}

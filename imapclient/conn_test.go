@@ -147,6 +147,42 @@ func TestLocalStateRejectionAndRedactedTrace(t *testing.T) {
 	}
 }
 
+func TestUnilateralVanished(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	updates := make(chan VanishedData, 2)
+	go func() {
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		_, _ = serverConn.Write([]byte("* VANISHED 41,43\r\n"))
+		_, _ = serverConn.Write([]byte("* VANISHED (EARLIER) 44:46\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		Vanished: func(data VanishedData) { updates <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case data := <-updates:
+		if data.Earlier || !data.UIDs.Equal(imap.UIDSet{{Start: 41, Stop: 41}, {Start: 43, Stop: 43}}) {
+			t.Fatalf("first VANISHED = %#v", data)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive VANISHED")
+	}
+	select {
+	case data := <-updates:
+		if !data.Earlier || !data.UIDs.Equal(imap.UIDSetRange(44, 46)) {
+			t.Fatalf("EARLIER VANISHED = %#v", data)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive VANISHED (EARLIER)")
+	}
+}
+
 func TestUnilateralFetchFlags(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()
