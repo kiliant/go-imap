@@ -489,7 +489,12 @@ type SpecialUseOptions struct {
 //   - SPECIAL-USE advertised: the server's own attributes, from
 //     LIST (SPECIAL-USE) where LIST-EXTENDED is available and from an ordinary
 //     LIST otherwise, since RFC 6154 section 6 adds the use attributes to
-//     mbx-list-oflag and they therefore appear in any LIST response.
+//     mbx-list-oflag and they therefore appear in any LIST response. Servers
+//     disagree about that last point and the extended form is preferred for
+//     that reason: Cyrus 3.x reports \Archive on a plain LIST, while Stalwart
+//     0.11.8 reports it only when the LIST asks with RETURN (SPECIAL-USE). A
+//     SPECIAL-USE server that does not also advertise LIST-EXTENDED may
+//     therefore under-report here; none in the interoperability matrix does.
 //   - Otherwise XLIST advertised: the non-standard XLIST command, translated.
 //     \Spam becomes \Junk and \Starred becomes \Flagged; \Inbox has no RFC 6154
 //     equivalent and is dropped.
