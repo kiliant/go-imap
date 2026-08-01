@@ -1,0 +1,364 @@
+package imapclient
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapwire"
+)
+
+// PartialRange selects a slice of SEARCH/FETCH results by 1-based index into
+// the result set (not into mailbox sequence numbers). PARTIAL, RFC 9394.
+//
+// Exactly one of First/Last forms is used. FirstStart:FirstEnd selects from
+// the oldest matching result; LastStart:LastEnd (both negative in the wire
+// form, e.g. -1:-100) selects from the newest. A zero End with a non-zero
+// Start is rejected — both ends are mandatory.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type PartialRange struct {
+	// FirstStart and FirstEnd select results counted from the oldest match
+	// (wire form N:M with both positive). Both must be non-zero together.
+	FirstStart uint32
+	FirstEnd   uint32
+
+	// LastStart and LastEnd select results counted from the newest match
+	// (wire form -N:-M). Both must be non-zero together. LastStart is the
+	// magnitude of the first index (1 = newest).
+	LastStart uint32
+	LastEnd   uint32
+
+	_ struct{}
+}
+
+func (r PartialRange) validate() error {
+	first := r.FirstStart != 0 || r.FirstEnd != 0
+	last := r.LastStart != 0 || r.LastEnd != 0
+	switch {
+	case first == last:
+		return fmt.Errorf("PARTIAL range must set either First* or Last*, not both or neither")
+	case first && (r.FirstStart == 0 || r.FirstEnd == 0):
+		return fmt.Errorf("PARTIAL FirstStart and FirstEnd must both be non-zero")
+	case last && (r.LastStart == 0 || r.LastEnd == 0):
+		return fmt.Errorf("PARTIAL LastStart and LastEnd must both be non-zero")
+	}
+	return nil
+}
+
+func (r PartialRange) wire() string {
+	if r.LastStart != 0 {
+		return fmt.Sprintf("-%d:-%d", r.LastStart, r.LastEnd)
+	}
+	return fmt.Sprintf("%d:%d", r.FirstStart, r.FirstEnd)
+}
+
+// SearchReturnPartial is the PARTIAL SEARCH return option. PARTIAL, RFC 9394.
+//
+// Prefer [Client.SearchPartial] / [Client.SearchPartialUID]: T08's
+// SearchExtended encoder currently accepts only keyword RETURN options, so
+// placing this value in [ESearchOptions.ReturnOptions] is rejected until that
+// helper learns to encode parameterised options. The type exists so the set
+// of SearchReturnOption values stays open.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type SearchReturnPartial struct {
+	Range PartialRange
+	_     struct{}
+}
+
+func (SearchReturnPartial) searchReturnOption() {}
+
+// ESearchReturnKeyPartial is the PARTIAL return-data item. RFC 9394 section 3.1.
+const ESearchReturnKeyPartial ESearchReturnKey = "PARTIAL"
+
+// PartialSearchData is the PARTIAL item of an ESEARCH response.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type PartialSearchData struct {
+	// Range is the range the client asked for, echoed by the server.
+	Range PartialRange
+
+	// All holds matching sequence numbers when the command was not UID.
+	All imap.SeqSet
+	// AllUIDs holds matching UIDs when the command was UID SEARCH.
+	AllUIDs imap.UIDSet
+
+	// HasResults is false when the server answered NIL for the range
+	// (no results in that window). Distinguishes "empty page" from "no item".
+	HasResults bool
+
+	_ struct{}
+}
+
+// PartialSearchOptions configures a PARTIAL SEARCH. A nil pointer is invalid
+// for [Client.SearchPartial] / [Client.SearchPartialUID] — the range is
+// mandatory. Companion RETURN options (MIN, MAX, COUNT, SAVE, RELEVANCY, …)
+// go in ReturnOptions; ALL is rejected (RFC 9394 forbids ALL with PARTIAL).
+// Do not place [SearchReturnPartial] in ReturnOptions — Range is encoded as
+// the PARTIAL return option.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type PartialSearchOptions struct {
+	// Range selects which page of matches to return. Mandatory.
+	Range PartialRange
+
+	// Charset is the charset understood by the server for string criteria.
+	Charset string
+
+	// ReturnOptions requests companion RETURN items alongside PARTIAL
+	// (MIN/MAX/COUNT/SAVE/RELEVANCY/…). ALL is forbidden with PARTIAL.
+	ReturnOptions []SearchReturnOption
+
+	_ struct{}
+}
+
+// SearchPartial issues SEARCH RETURN (PARTIAL …) and returns the page.
+// PARTIAL, RFC 9394 section 3.1.
+//
+// Requires the PARTIAL capability (or CONTEXT=SEARCH for the older form).
+// There is no faithful client-side fallback that preserves server-side result
+// ordering and the NIL-beyond-end semantics without transferring the full set.
+//
+// A nil options pointer is invalid — Range is mandatory. The returned
+// [SavedSearchResult] is non-nil only when SearchReturnSave was among
+// [PartialSearchOptions.ReturnOptions] and the command completed; see
+// [ESearchCommand.SavedResult].
+func (c *Client) SearchPartial(ctx context.Context, criteria imap.SearchCriteria, options *PartialSearchOptions) (*ESearchData, *PartialSearchData, *SavedSearchResult, error) {
+	return c.searchPartial(ctx, false, criteria, options)
+}
+
+// SearchPartialUID issues UID SEARCH RETURN (PARTIAL …). See [Client.SearchPartial].
+func (c *Client) SearchPartialUID(ctx context.Context, criteria imap.SearchCriteria, options *PartialSearchOptions) (*ESearchData, *PartialSearchData, *SavedSearchResult, error) {
+	return c.searchPartial(ctx, true, criteria, options)
+}
+
+func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.SearchCriteria, options *PartialSearchOptions) (*ESearchData, *PartialSearchData, *SavedSearchResult, error) {
+	name := "SEARCH"
+	if uid {
+		name = "UID SEARCH"
+	}
+	if ctx == nil {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: name + " requires a non-nil context"}
+	}
+	if options == nil {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: name + " PARTIAL requires options"}
+	}
+	if err := options.Range.validate(); err != nil {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
+	}
+	if criteria == nil {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "SEARCH requires criteria"}
+	}
+	if err := validateSearchCriteria(criteria); err != nil {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
+	}
+	if !c.Supports("PARTIAL") && !c.Supports("CONTEXT=SEARCH") {
+		return nil, nil, nil, capabilityError("SEARCH RETURN (PARTIAL)", "PARTIAL")
+	}
+	if searchNeedsCharset(criteria) && options.Charset == "" && !c.utf8AcceptEnabled() {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "non-ASCII SEARCH criteria require an explicit charset until UTF8=ACCEPT is enabled"}
+	}
+	returnOpts, save, err := partialSearchReturnKeywords(options.ReturnOptions)
+	if err != nil {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
+	}
+	if save && !c.supportsAny("SEARCHRES") {
+		return nil, nil, nil, capabilityError("SEARCH RETURN (SAVE)", "SEARCHRES")
+	}
+	if c.searchPending() {
+		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "an extended SEARCH cannot be pipelined with another pending SEARCH on the same connection"}
+	}
+
+	rng := options.Range
+	charset := options.Charset
+	cmd := &ESearchCommand{data: &ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}, uid: uid}
+	if save {
+		cmd.saved = c.newSavedSearchResult(uid)
+	}
+	cmd.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+		enc.SP().Atom("RETURN").SP().Special('(').Atom("PARTIAL").SP()
+		writePartialRange(enc, rng)
+		for _, tok := range returnOpts {
+			enc.SP().Atom(tok)
+		}
+		enc.Special(')')
+		if charset != "" {
+			enc.SP().Atom("CHARSET").SP().Astring(charset)
+		}
+		enc.SP()
+		writeSearchCriteria(enc, criteria)
+	}, esearchCollector(cmd))
+	data, err := cmd.Wait(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	partial, err := ParsePartialSearchData(data)
+	if err != nil {
+		return data, nil, nil, err
+	}
+	return data, partial, cmd.SavedResult(), nil
+}
+
+// partialSearchReturnKeywords renders companion RETURN options for PARTIAL
+// SEARCH. ALL is forbidden (RFC 9394); PARTIAL itself is carried by Range.
+func partialSearchReturnKeywords(options []SearchReturnOption) ([]string, bool, error) {
+	keywords, save, err := searchReturnKeywords(options)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, kw := range keywords {
+		if kw == string(SearchReturnAll) {
+			return nil, false, fmt.Errorf("SEARCH RETURN (ALL) is forbidden with PARTIAL (RFC 9394)")
+		}
+	}
+	return keywords, save, nil
+}
+
+func writePartialRange(enc *imapwire.Encoder, rng PartialRange) {
+	if rng.LastStart != 0 {
+		enc.Atom(fmt.Sprintf("-%d", rng.LastStart)).Special(':').Atom(fmt.Sprintf("-%d", rng.LastEnd))
+		return
+	}
+	enc.Number(rng.FirstStart).Special(':').Number(rng.FirstEnd)
+}
+
+// ParsePartialSearchData extracts the PARTIAL return item from ESEARCH data.
+// Unknown or absent PARTIAL yields (nil, nil).
+func ParsePartialSearchData(data *ESearchData) (*PartialSearchData, error) {
+	if data == nil {
+		return nil, nil
+	}
+	raw, ok := data.Values[ESearchReturnKeyPartial]
+	if !ok {
+		return nil, nil
+	}
+	return parsePartialReturnValue(raw, data.UID)
+}
+
+func parsePartialReturnValue(raw string, uid bool) (*PartialSearchData, error) {
+	// Wire form: (partial-range partial-results) where partial-results is a
+	// sequence-set or NIL. CaptureValue keeps the parentheses.
+	s := strings.TrimSpace(raw)
+	if !strings.HasPrefix(s, "(") || !strings.HasSuffix(s, ")") {
+		return nil, fmt.Errorf("invalid ESEARCH PARTIAL value %q", raw)
+	}
+	inner := strings.TrimSpace(s[1 : len(s)-1])
+	rangeTok, rest, ok := strings.Cut(inner, " ")
+	if !ok {
+		return nil, fmt.Errorf("invalid ESEARCH PARTIAL value %q", raw)
+	}
+	rng, err := parsePartialRangeToken(rangeTok)
+	if err != nil {
+		return nil, err
+	}
+	rest = strings.TrimSpace(rest)
+	out := &PartialSearchData{Range: rng}
+	if strings.EqualFold(rest, "NIL") {
+		return out, nil
+	}
+	out.HasResults = true
+	if uid {
+		set, err := imap.ParseUIDSet(rest)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ESEARCH PARTIAL uid set %q: %w", rest, err)
+		}
+		out.AllUIDs = set
+	} else {
+		set, err := imap.ParseSeqSet(rest)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ESEARCH PARTIAL sequence set %q: %w", rest, err)
+		}
+		out.All = set
+	}
+	return out, nil
+}
+
+func parsePartialRangeToken(tok string) (PartialRange, error) {
+	a, b, ok := strings.Cut(tok, ":")
+	if !ok {
+		return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
+	}
+	if strings.HasPrefix(a, "-") || strings.HasPrefix(b, "-") {
+		start, err1 := strconv.ParseUint(strings.TrimPrefix(a, "-"), 10, 32)
+		end, err2 := strconv.ParseUint(strings.TrimPrefix(b, "-"), 10, 32)
+		if err1 != nil || err2 != nil || start == 0 || end == 0 {
+			return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
+		}
+		return PartialRange{LastStart: uint32(start), LastEnd: uint32(end)}, nil
+	}
+	start, err1 := strconv.ParseUint(a, 10, 32)
+	end, err2 := strconv.ParseUint(b, 10, 32)
+	if err1 != nil || err2 != nil || start == 0 || end == 0 {
+		return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
+	}
+	return PartialRange{FirstStart: uint32(start), FirstEnd: uint32(end)}, nil
+}
+
+// PartialFetchOptions configures the PARTIAL FETCH modifier. A nil pointer is
+// invalid for [Client.FetchPartial] — the range is mandatory.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type PartialFetchOptions struct {
+	Range PartialRange
+	_     struct{}
+}
+
+// FetchPartial issues FETCH with the PARTIAL modifier. PARTIAL, RFC 9394
+// section 3.3. Sequence-number FETCH with PARTIAL is allowed by the RFC's
+// fetch-modifier production; prefer [Client.FetchUIDPartial] when paging a
+// UID set of unknown size.
+func (c *Client) FetchPartial(set imap.SeqSet, options *PartialFetchOptions, items ...imap.FetchItem) *FetchCommand {
+	return c.fetchPartial("FETCH", set.String(), func(n imap.SeqNum) bool { return set.Contains(n) }, options, items)
+}
+
+// FetchUIDPartial issues UID FETCH with the PARTIAL modifier. RFC 9394
+// section 3.3.
+func (c *Client) FetchUIDPartial(set imap.UIDSet, options *PartialFetchOptions, items ...imap.FetchItem) *FetchCommand {
+	return c.fetchPartial("UID FETCH", set.String(), func(imap.SeqNum) bool { return true }, options, items)
+}
+
+func (c *Client) fetchPartial(name, set string, matches func(imap.SeqNum) bool, options *PartialFetchOptions, items []imap.FetchItem) *FetchCommand {
+	fc := &FetchCommand{responses: make(chan *imap.FetchMessageData), stop: make(chan struct{})}
+	fail := func(err error) *FetchCommand {
+		fc.Command = failedCommand(name, err)
+		close(fc.stop)
+		return fc
+	}
+	if options == nil {
+		return fail(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "FETCH PARTIAL requires options"})
+	}
+	if err := options.Range.validate(); err != nil {
+		return fail(&imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()})
+	}
+	if set == "" || len(items) == 0 {
+		return fail(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "FETCH requires a non-empty set and at least one item"})
+	}
+	if err := validateFetchItems(items); err != nil {
+		return fail(&imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()})
+	}
+	if !c.Supports("PARTIAL") {
+		return fail(capabilityError("FETCH PARTIAL", "PARTIAL"))
+	}
+	rng := options.Range
+	fc.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+		enc.SP()
+		writeNumSet(enc, set)
+		enc.SP().List(len(items), func(i int) { writeFetchItem(enc, items[i]) })
+		enc.SP().Special('(').Atom("PARTIAL").SP()
+		writePartialRange(enc, rng)
+		enc.Special(')')
+	}, func(resp *untaggedResponse) (bool, error) {
+		if !resp.hasNum || resp.name != "FETCH" || !matches(imap.SeqNum(resp.number)) {
+			return false, nil
+		}
+		return true, readFetchResponse(resp, fc.deliver)
+	})
+	go func() {
+		<-fc.Command.done
+		close(fc.stop)
+	}()
+	return fc
+}

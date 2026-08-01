@@ -109,21 +109,21 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 | Capability | RFC | Status |
 |---|---|---|
-| BINARY | 3516 | planned |
-| CATENATE | 4469 | planned |
-| MULTIAPPEND | 3502 | planned |
-| COMPRESS=DEFLATE | 4978 | planned |
-| UTF8=ACCEPT | 9755 | planned |
-| UTF8=ALL | 5738, 9755 | planned |
-| UTF8=APPEND | 5738, 9755 | planned |
-| UTF8=ONLY | 9755 | planned |
-| UTF8=USER | 5738, 9755 | planned |
-| SORT | 5256 | planned |
-| SORT=DISPLAY | 5957 | planned |
-| THREAD | 5256 | planned |
-| MULTISEARCH | 7377 | planned |
-| PARTIAL | 9394 | planned |
-| SEARCH=FUZZY | 6203 | planned |
+| BINARY | 3516 | implemented |
+| CATENATE | 4469 | implemented |
+| MULTIAPPEND | 3502 | implemented |
+| COMPRESS=DEFLATE | 4978 | implemented |
+| UTF8=ACCEPT | 9755 | implemented |
+| UTF8=ALL | 5738, 9755 | implemented |
+| UTF8=APPEND | 5738, 9755 | implemented |
+| UTF8=ONLY | 9755 | implemented |
+| UTF8=USER | 5738, 9755 | implemented |
+| SORT | 5256 | implemented |
+| SORT=DISPLAY | 5957 | implemented |
+| THREAD | 5256 | implemented |
+| MULTISEARCH | 7377 | implemented |
+| PARTIAL | 9394 | implemented |
+| SEARCH=FUZZY | 6203 | implemented |
 
 ## Group D — administrative & server-side (task T11)
 

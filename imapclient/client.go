@@ -592,7 +592,7 @@ func (c *Client) issue(name string, opts commandOptions) *Command {
 	}
 	c.nextTag++
 	cmd.tag = fmt.Sprintf("A%04d", c.nextTag)
-	if name == "STARTTLS" && c.paused != nil {
+	if (name == "STARTTLS" || name == "COMPRESS") && c.paused != nil {
 		c.pauseTag = cmd.tag
 	}
 	c.pending[cmd.tag] = cmd
@@ -699,6 +699,15 @@ func (c *Client) replaceEncoder(stale *imapwire.Encoder) {
 }
 
 func pipelineConflict(name string, pending []*Command) bool {
+	// RFC 4978: COMPRESS must not be pipelined with any other command.
+	if name == "COMPRESS" && len(pending) > 0 {
+		return true
+	}
+	for _, cmd := range pending {
+		if cmd.name == "COMPRESS" {
+			return true
+		}
+	}
 	if !isNegotiationCommand(name) {
 		return false
 	}
@@ -712,7 +721,7 @@ func pipelineConflict(name string, pending []*Command) bool {
 
 func isNegotiationCommand(name string) bool {
 	switch name {
-	case "ENABLE", "SELECT", "EXAMINE":
+	case "ENABLE", "SELECT", "EXAMINE", "STARTTLS":
 		return true
 	default:
 		return false
@@ -720,10 +729,13 @@ func isNegotiationCommand(name string) bool {
 }
 
 func pipelineConflictText(name string) string {
-	if name == "ENABLE" {
-		return "ENABLE cannot be pipelined with pending ENABLE, SELECT, or EXAMINE"
+	if name == "COMPRESS" {
+		return "COMPRESS cannot be pipelined with pending commands (RFC 4978)"
 	}
-	return fmt.Sprintf("%s cannot be pipelined with pending ENABLE, SELECT, or EXAMINE", name)
+	if name == "ENABLE" {
+		return "ENABLE cannot be pipelined with pending ENABLE, SELECT, EXAMINE, STARTTLS, or COMPRESS"
+	}
+	return fmt.Sprintf("%s cannot be pipelined with a pending COMPRESS or with pending ENABLE, SELECT, EXAMINE, or STARTTLS", name)
 }
 
 func (c *Client) removePendingLocked(want *Command) {
