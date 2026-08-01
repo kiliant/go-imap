@@ -9,10 +9,14 @@ import "github.com/kiliant/go-imap/imapclient"
 
 > **Status: pre-v1.0.** The wire codec, core vocabulary, connection/session,
 > authentication, mailbox and message commands, capability negotiation, ENABLE,
-> IDLE, extension groups A–E, the interoperability harness, examples, API freeze
-> review (T14), and recorded 30-minute fuzz campaigns for every target (T13) are
-> on `main`. Remaining for v1.0: release engineering (T15 — CI, apidiff,
-> CHANGELOG, release-candidate tag), and a few coverage rows still short of
+> IDLE, extension groups A–E, the interoperability harness and examples are on
+> `main`. The API freeze review (T14) and the fuzz campaign (T13) were reopened
+> by the 2026-08-01 audit and are back in review: 28 exported methods were
+> missing the options struct that rule 3 requires, and extension groups C–E had
+> no fuzz targets at all. Both are fixed but not yet committed. Remaining for
+> v1.0: release engineering (T15 — CI, apidiff, CHANGELOG, release-candidate
+> tag), a full 30-minute campaign over all 60 fuzz targets, an interop re-run
+> against the changed signatures, and a few coverage rows still short of
 > `verified` (notably ENVELOPE/BODYSTRUCTURE interop and the orphan `ID`
 > capability). See `docs/ROADMAP.md`.
 

@@ -48,13 +48,6 @@ func (r PartialRange) validate() error {
 	return nil
 }
 
-func (r PartialRange) wire() string {
-	if r.LastStart != 0 {
-		return fmt.Sprintf("-%d:-%d", r.LastStart, r.LastEnd)
-	}
-	return fmt.Sprintf("%d:%d", r.FirstStart, r.FirstEnd)
-}
-
 // SearchReturnPartial is the PARTIAL SEARCH return option. PARTIAL, RFC 9394.
 //
 // Prefer [Client.SearchPartial] / [Client.SearchPartialUID]: T08's

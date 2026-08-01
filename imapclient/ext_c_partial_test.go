@@ -242,7 +242,7 @@ func TestEnableUTF8Accept(t *testing.T) {
 		return tag + " BAD\r\n"
 	})
 	extCReady(c, []string{"IMAP4REV1", "ENABLE", "UTF8=ACCEPT"}, nil, false)
-	enabled, err := c.EnableUTF8Accept().Wait(extCContext(t))
+	enabled, err := c.EnableUTF8Accept(nil).Wait(extCContext(t))
 	if err != nil {
 		t.Fatal(err)
 	}

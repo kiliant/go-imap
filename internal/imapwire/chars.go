@@ -51,9 +51,6 @@ func isListChar(b byte) bool { return b == '%' || b == '*' || isAstringChar(b) }
 // letting it through invites downstream C-string confusion.
 func isTextChar(b byte) bool { return b != 0 && b != '\r' && b != '\n' }
 
-// isQuotedChar reports whether b may appear unescaped inside a quoted string.
-func isQuotedChar(b byte) bool { return isTextChar(b) && b != '"' && b != '\\' }
-
 // isDigit reports whether b is an ASCII digit.
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 

@@ -42,7 +42,7 @@ func runAuthenticate(t *testing.T, capabilities string, username, password strin
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	authErr = c.Authenticate(ctx, username, password, opts)
@@ -122,7 +122,7 @@ func TestPrepareCredentialsEnabledSCRAMTransformsPassword(t *testing.T) {
 	const rawPassword = "interop-pw-\u00b5"
 	const wantPassword = "interop-pw-\u03bc"
 
-	_, preparedPassword, err := prepareCredentials(&AuthenticateOptions{PrepareCredentials: true}, "alice", rawPassword)
+	_, preparedPassword, err := prepareCredentials(true, "alice", rawPassword)
 	if err != nil {
 		t.Fatalf("prepareCredentials: unexpected error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestPrepareCredentialsProhibitedRefusesBeforeWire(t *testing.T) {
 			defer c.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			if err := c.WaitGreeting(ctx); err != nil {
+			if err := c.WaitGreeting(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			err := c.Authenticate(ctx, tc.username, tc.password, &AuthenticateOptions{
@@ -245,7 +245,7 @@ func TestPrepareCredentialsErrorDoesNotLeakCredentials(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	err := c.Authenticate(ctx, username, password, &AuthenticateOptions{
@@ -322,7 +322,7 @@ func TestPrepareCredentialsRedactsPreparedForm(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	err := c.Authenticate(ctx, username, "hunter2", &AuthenticateOptions{
@@ -334,5 +334,73 @@ func TestPrepareCredentialsRedactsPreparedForm(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), prepared) {
 		t.Fatalf("error leaks the prepared user name %q: %q", prepared, err)
+	}
+}
+
+// TestLoginPrepareCredentialsTransformsWireForm pins the LOGIN half of the
+// SASLprep option. Before LoginOptions existed, LOGIN could not prepare
+// credentials at all — the method's own doc comment recorded that as a
+// permanent limitation caused by the missing options struct — so this asserts
+// the octets on the wire, not just that the call succeeds.
+func TestLoginPrepareCredentialsTransformsWireForm(t *testing.T) {
+	// U+00B5 MICRO SIGN maps to U+03BC GREEK SMALL LETTER MU under SASLprep's
+	// NFKC step (RFC 4013 section 2.2).
+	const rawPassword = "interop-pw-µ"
+	const preparedPassword = "interop-pw-μ"
+
+	for _, tc := range []struct {
+		name    string
+		options *LoginOptions
+		want    string
+	}{
+		{"nil options sends the raw octets", nil, rawPassword},
+		{"disabled sends the raw octets", &LoginOptions{}, rawPassword},
+		{"enabled sends the prepared octets", &LoginOptions{PrepareCredentials: true}, preparedPassword},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clientConn, serverConn := net.Pipe()
+			defer serverConn.Close()
+			lines := make(chan string, 1)
+			go func() {
+				_, _ = serverConn.Write([]byte("* OK [CAPABILITY IMAP4rev1] ready\r\n"))
+				r := bufio.NewReader(serverConn)
+				line, _ := r.ReadString('\n')
+				full := line
+				// A non-ASCII password is sent as a literal, so the octets under
+				// test arrive only after a continuation request.
+				for strings.HasSuffix(strings.TrimRight(line, "\r\n"), "}") {
+					_, _ = serverConn.Write([]byte("+ ready\r\n"))
+					line, _ = r.ReadString('\n')
+					full += line
+				}
+				lines <- full
+				if tag := strings.Fields(full); len(tag) > 0 {
+					_, _ = serverConn.Write([]byte(tag[0] + " OK done\r\n"))
+				}
+				// Answer the post-authentication CAPABILITY refresh.
+				if line, _ := r.ReadString('\n'); line != "" {
+					if f := strings.Fields(line); len(f) > 0 {
+						_, _ = serverConn.Write([]byte("* CAPABILITY IMAP4rev1\r\n" + f[0] + " OK done\r\n"))
+					}
+				}
+			}()
+			c := NewClient(clientConn, &Options{AllowInsecureAuth: true})
+			defer c.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := c.WaitGreeting(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Login(ctx, "alice", rawPassword, tc.options); err != nil {
+				t.Fatalf("Login: %v", err)
+			}
+			got := <-lines
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("LOGIN wire form = %q, want it to carry %q", got, tc.want)
+			}
+			if tc.want == preparedPassword && strings.Contains(got, rawPassword) {
+				t.Fatalf("LOGIN sent the unprepared password: %q", got)
+			}
+		})
 	}
 }

@@ -34,14 +34,14 @@ func TestHasChildren(t *testing.T) {
 	}
 }
 
-func TestCreateMailboxSendsUseParameter(t *testing.T) {
+func TestCreateSendsUseParameter(t *testing.T) {
 	var sent string
 	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 CREATE-SPECIAL-USE] ready", func(s *extAServer) {
 		tag, rest := s.command()
 		sent = rest
 		s.ok(tag)
 	})
-	err := c.CreateMailbox("MySpecial", &CreateOptions{
+	err := c.Create("MySpecial", &CreateOptions{
 		SpecialUse: []imap.MailboxAttr{imap.MailboxAttrDrafts, imap.MailboxAttrSent},
 	}).Wait(ctx)
 	if err != nil {
@@ -52,14 +52,14 @@ func TestCreateMailboxSendsUseParameter(t *testing.T) {
 	}
 }
 
-func TestCreateMailboxWithoutOptionsMatchesCreate(t *testing.T) {
+func TestCreateWithNilOptionsSendsPlainCreate(t *testing.T) {
 	var sent string
 	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1] ready", func(s *extAServer) {
 		tag, rest := s.command()
 		sent = rest
 		s.ok(tag)
 	})
-	if err := c.CreateMailbox("Plain", nil).Wait(ctx); err != nil {
+	if err := c.Create("Plain", nil).Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if sent != "CREATE Plain" {
@@ -67,7 +67,7 @@ func TestCreateMailboxWithoutOptionsMatchesCreate(t *testing.T) {
 	}
 }
 
-func TestCreateMailboxGatesOnCreateSpecialUse(t *testing.T) {
+func TestCreateGatesOnCreateSpecialUse(t *testing.T) {
 	sawCommand := false
 	// SPECIAL-USE alone is not enough: RFC 6154 section 3 makes setting the
 	// attributes a separate capability from reporting them.
@@ -77,21 +77,21 @@ func TestCreateMailboxGatesOnCreateSpecialUse(t *testing.T) {
 			s.ok(tag)
 		}
 	})
-	err := c.CreateMailbox("Drafts", &CreateOptions{SpecialUse: []imap.MailboxAttr{imap.MailboxAttrDrafts}}).Wait(ctx)
+	err := c.Create("Drafts", &CreateOptions{SpecialUse: []imap.MailboxAttr{imap.MailboxAttrDrafts}}).Wait(ctx)
 	if !errors.Is(err, ErrCapabilityNotAdvertised) {
-		t.Fatalf("CreateMailbox without CREATE-SPECIAL-USE error = %v", err)
+		t.Fatalf("Create with SpecialUse but without CREATE-SPECIAL-USE error = %v", err)
 	}
 	if sawCommand {
 		t.Fatal("a CREATE reached the wire although CREATE-SPECIAL-USE is absent")
 	}
 }
 
-func TestCreateMailboxRejectsMalformedAttribute(t *testing.T) {
+func TestCreateRejectsMalformedAttribute(t *testing.T) {
 	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 CREATE-SPECIAL-USE] ready", func(s *extAServer) {})
 	for _, attr := range []imap.MailboxAttr{"Drafts", "\\Bad Attr", "\\"} {
-		err := c.CreateMailbox("X", &CreateOptions{SpecialUse: []imap.MailboxAttr{attr}}).Wait(ctx)
+		err := c.Create("X", &CreateOptions{SpecialUse: []imap.MailboxAttr{attr}}).Wait(ctx)
 		if err == nil {
-			t.Fatalf("CreateMailbox accepted the attribute %q", attr)
+			t.Fatalf("Create accepted the attribute %q", attr)
 		}
 	}
 }
@@ -179,7 +179,8 @@ func TestListMailboxesRefusesInexpressibleOptions(t *testing.T) {
 	}); !errors.Is(err, ErrCapabilityNotAdvertised) {
 		t.Fatalf("selection options without LIST-EXTENDED error = %v", err)
 	}
-	if _, err := c.ListMailboxes(nil, "", "*", nil); err == nil { //nolint:staticcheck // nil ctx is the case under test
+	//lint:ignore SA1012 a nil context is precisely the input under test here
+	if _, err := c.ListMailboxes(nil, "", "*", nil); err == nil {
 		t.Fatal("a nil context was accepted")
 	}
 }
@@ -355,7 +356,7 @@ func TestListMailboxesStatusDefaultItemsOmitsRecentOnRev2(t *testing.T) {
 		sent = rest
 		s.reply(`* LIST () "." "INBOX"`, `* STATUS "INBOX" (MESSAGES 1)`, tag+" OK listed")
 	})
-	if _, err := c.Enable("IMAP4REV2").Wait(ctx); err != nil {
+	if _, err := c.Enable(nil, "IMAP4REV2").Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.ListMailboxes(ctx, "", "%", &ListOptions{

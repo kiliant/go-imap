@@ -221,7 +221,7 @@ func (c *Client) moveEmulated(ctx context.Context, uid bool, argument, destinati
 		return data, nil
 	}
 	data.ExpungedEveryDeletedMessage = true
-	if err := c.Expunge().Wait(ctx); err != nil {
+	if err := c.Expunge(nil).Wait(ctx); err != nil {
 		return nil, err
 	}
 	return data, nil

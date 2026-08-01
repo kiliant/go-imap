@@ -71,6 +71,18 @@ func statusUint64(data *StatusData, item imap.StatusItemKeyword) (uint64, bool) 
 	return value, ok
 }
 
+// MailboxSizeOptions configures [Client.MailboxSize]. A nil pointer selects
+// the defaults.
+//
+// It carries no fields today. STATUS is an open-ended item set, so this exists
+// to let a future RFC add a modifier to this lookup without changing the
+// method's signature.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MailboxSizeOptions struct {
+	_ struct{}
+}
+
 // MailboxSize issues STATUS (SIZE) for mailbox and returns its total size in
 // octets. STATUS=SIZE, RFC 8438.
 //
@@ -79,7 +91,7 @@ func statusUint64(data *StatusData, item imap.StatusItemKeyword) (uint64, bool) 
 // emulation: the base-protocol equivalent is a FETCH of RFC822.SIZE for every
 // message in the mailbox, which is exactly the round trip this extension
 // exists to avoid, and which would silently turn one command into thousands.
-func (c *Client) MailboxSize(ctx context.Context, mailbox string) (int64, error) {
+func (c *Client) MailboxSize(ctx context.Context, mailbox string, options *MailboxSizeOptions) (int64, error) {
 	if !c.Supports("STATUS=SIZE") {
 		return 0, capabilityError("STATUS (SIZE)", "STATUS=SIZE")
 	}
@@ -92,6 +104,18 @@ func (c *Client) MailboxSize(ctx context.Context, mailbox string) (int64, error)
 		return 0, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "server did not return a SIZE status item"}
 	}
 	return size, nil
+}
+
+// AppendLimitOptions configures [Client.AppendLimit]. A nil pointer selects
+// the defaults.
+//
+// It carries no fields today. A future field could, for example, force the
+// STATUS form even when the server advertises a fixed capability value; adding
+// it here costs callers nothing.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type AppendLimitOptions struct {
+	_ struct{}
 }
 
 // AppendLimitData is the result of an APPENDLIMIT lookup. APPENDLIMIT, RFC
@@ -127,6 +151,8 @@ type AppendLimitData struct {
 // "APPENDLIMIT" declares per-mailbox limits, which are read with
 // STATUS (APPENDLIMIT).
 //
+// A nil options pointer selects the defaults; see [AppendLimitOptions].
+//
 // The capability form is consulted first, and that order is load-bearing rather
 // than an optimisation: RFC 7889 section 3 introduces the STATUS item for
 // servers whose per-mailbox values are "not advertised as part of the
@@ -139,7 +165,7 @@ type AppendLimitData struct {
 // way to ask, and guessing a limit would either reject messages the server
 // would have taken or let an APPEND fail after the whole message has been
 // streamed.
-func (c *Client) AppendLimit(ctx context.Context, mailbox string) (*AppendLimitData, error) {
+func (c *Client) AppendLimit(ctx context.Context, mailbox string, options *AppendLimitOptions) (*AppendLimitData, error) {
 	if values := c.CapabilityValues("APPENDLIMIT"); len(values) > 0 {
 		limit, err := strconv.ParseInt(values[0], 10, 64)
 		if err != nil || limit < 0 {
@@ -161,8 +187,21 @@ func (c *Client) AppendLimit(ctx context.Context, mailbox string) (*AppendLimitD
 	return &AppendLimitData{Limit: limit, Unlimited: unlimited}, nil
 }
 
+// MailboxHighestModSeqOptions configures [Client.MailboxHighestModSeq]. A nil
+// pointer selects the defaults.
+//
+// It carries no fields today; it keeps the door open for a future CONDSTORE or
+// STATUS modifier without a signature change.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MailboxHighestModSeqOptions struct {
+	_ struct{}
+}
+
 // MailboxHighestModSeq issues STATUS (HIGHESTMODSEQ) for mailbox. CONDSTORE,
 // RFC 7162 section 3.1.7.
+//
+// A nil options pointer selects the defaults.
 //
 // This is a CONDSTORE enabling command in its own right (RFC 7162 section 3.1),
 // so a successful call also switches the session into CONDSTORE mode for the
@@ -175,7 +214,7 @@ func (c *Client) AppendLimit(ctx context.Context, mailbox string) (*AppendLimitD
 //
 // This value together with the mailbox's UIDVALIDITY is the synchronisation
 // anchor to cache; neither half is usable without the other.
-func (c *Client) MailboxHighestModSeq(ctx context.Context, mailbox string) (uint64, error) {
+func (c *Client) MailboxHighestModSeq(ctx context.Context, mailbox string, options *MailboxHighestModSeqOptions) (uint64, error) {
 	if !c.condStoreAvailable() {
 		return 0, capabilityError("STATUS (HIGHESTMODSEQ)", "CONDSTORE")
 	}

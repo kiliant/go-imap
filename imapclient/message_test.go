@@ -30,13 +30,13 @@ func TestFetchBodySectionStreamsAndParsesHeaderFields(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
 	c.state = StateSelected
 	c.mu.Unlock()
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"From", "To"}, Peek: true}, imap.FetchItemFlags)
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"From", "To"}, Peek: true}, imap.FetchItemFlags)
 	data, err := cmd.Next(ctx)
 	if err != nil {
 		if e, ok := c.closeErr.(*imap.Error); ok {
@@ -100,7 +100,7 @@ func TestFetchTwoHundredMegabyteBodyStreamsWithFlatAllocation(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
@@ -110,7 +110,7 @@ func TestFetchTwoHundredMegabyteBodyStreamsWithFlatAllocation(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	cmd := c.Fetch(imap.SeqSetNum(1), &imap.FetchItemBodySection{Peek: true})
+	cmd := c.Fetch(imap.SeqSetNum(1), nil, &imap.FetchItemBodySection{Peek: true})
 	data, err := cmd.Next(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestAppendSynchronisingLiteral(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
@@ -205,7 +205,7 @@ func TestAppendContextCancelsSynchronisingLiteral(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
@@ -246,7 +246,7 @@ func TestAppendReaderErrorIsReturnedByTypedWait(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
@@ -276,13 +276,13 @@ func TestCopyReturnsTypedData(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
 	c.state = StateSelected
 	c.mu.Unlock()
-	data, err := c.Copy(imap.SeqSetNum(1), "Archive").Wait(ctx)
+	data, err := c.Copy(imap.SeqSetNum(1), "Archive", nil).Wait(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestUIDSearchEncodesCompoundCommand(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()

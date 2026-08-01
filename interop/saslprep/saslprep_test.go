@@ -239,7 +239,7 @@ func authenticateProbe(t *testing.T, server *harness.Server, mechanism, username
 	})
 	switch {
 	case err == nil:
-		if logoutErr := client.Logout(ctx); logoutErr != nil {
+		if logoutErr := client.Logout(ctx, nil); logoutErr != nil {
 			t.Logf("logout after successful %s authentication: %v", mechanism, logoutErr)
 		}
 		return outcomeAuthenticated

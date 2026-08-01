@@ -97,7 +97,7 @@ func extCDial(t *testing.T, respond func(tag, line string) string) (*Client, *ex
 	t.Cleanup(func() { _ = c.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatalf("greeting: %v", err)
 	}
 	return c, server

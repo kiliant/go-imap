@@ -1,8 +1,6 @@
 package imapclient
 
 import (
-	"strings"
-
 	"github.com/kiliant/go-imap"
 )
 
@@ -38,13 +36,4 @@ func uidRequiredError(operation string) *imap.Error {
 // FETCH/STORE are not rewritten here.
 func (c *Client) requireUIDCommands() bool {
 	return c.UIDOnlyEnabled()
-}
-
-// parseUIDRequiredArgs is a no-op placeholder for response-code symmetry;
-// UIDREQUIRED takes no arguments (RFC 9586).
-func parseUIDRequiredArgs(args string) error {
-	if strings.TrimSpace(args) != "" {
-		return &imap.Error{Type: imap.ErrorTypeProtocol, Text: "UIDREQUIRED response code must not carry arguments"}
-	}
-	return nil
 }

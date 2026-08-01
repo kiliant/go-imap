@@ -238,49 +238,110 @@ func (c *Client) finishCloseMailbox(success bool, _, _ string) {
 	c.mu.Unlock()
 }
 
+// CloseMailboxOptions configures CLOSE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type CloseMailboxOptions struct {
+	_ struct{}
+}
+
 // CloseMailbox issues CLOSE. CLOSE expunges messages marked \Deleted before
 // returning to the authenticated state. Use Unselect when abandoning a
 // selected mailbox without expunging; confusing the two silently loses mail.
-func (c *Client) CloseMailbox() *Command {
+//
+// A nil options pointer selects the defaults.
+func (c *Client) CloseMailbox(options *CloseMailboxOptions) *Command {
 	return c.beginCommandWithCompletion("CLOSE", stateSelected, nil, nil, c.finishCloseMailbox)
+}
+
+// UnselectOptions configures UNSELECT. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type UnselectOptions struct {
+	_ struct{}
 }
 
 // Unselect issues UNSELECT (RFC 3691), returning to the authenticated state
 // without expunging messages marked \Deleted.
-func (c *Client) Unselect() *Command {
+//
+// A nil options pointer selects the defaults.
+func (c *Client) Unselect(options *UnselectOptions) *Command {
 	return c.beginCommandWithCompletion("UNSELECT", stateSelected, nil, nil, c.finishCloseMailbox)
+}
+
+// CheckOptions configures CHECK. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type CheckOptions struct {
+	_ struct{}
 }
 
 // Check requests a checkpoint of the selected mailbox. Servers may treat it
 // as a no-op; it does not expunge messages.
-func (c *Client) Check() *Command {
+//
+// A nil options pointer selects the defaults.
+func (c *Client) Check(options *CheckOptions) *Command {
 	return c.beginCommand("CHECK", stateSelected, nil, nil)
 }
 
-// Create creates mailbox.
-func (c *Client) Create(mailbox string) *Command {
-	return c.mailboxCommand("CREATE", mailbox)
+// Create creates mailbox. A nil options pointer creates a plain mailbox; see
+// [CreateOptions] for the RFC 4466 create parameters, including the RFC 6154
+// USE parameter.
+func (c *Client) Create(mailbox string, options *CreateOptions) *Command {
+	return c.createMailbox(mailbox, options)
 }
 
-// Delete deletes mailbox.
-func (c *Client) Delete(mailbox string) *Command {
+// DeleteOptions configures DELETE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type DeleteOptions struct {
+	_ struct{}
+}
+
+// Delete deletes mailbox. A nil options pointer selects the defaults.
+func (c *Client) Delete(mailbox string, options *DeleteOptions) *Command {
 	return c.mailboxCommand("DELETE", mailbox)
 }
 
-// Rename renames mailbox to newName.
-func (c *Client) Rename(mailbox, newName string) *Command {
+// RenameOptions configures RENAME. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type RenameOptions struct {
+	_ struct{}
+}
+
+// Rename renames mailbox to newName. A nil options pointer selects the
+// defaults.
+func (c *Client) Rename(mailbox, newName string, options *RenameOptions) *Command {
 	return c.beginCommand("RENAME", stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox).SP().Mailbox(newName)
 	}, nil)
 }
 
-// Subscribe subscribes the session's user to mailbox.
-func (c *Client) Subscribe(mailbox string) *Command {
+// SubscribeOptions configures SUBSCRIBE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type SubscribeOptions struct {
+	_ struct{}
+}
+
+// Subscribe subscribes the session's user to mailbox. A nil options pointer
+// selects the defaults.
+func (c *Client) Subscribe(mailbox string, options *SubscribeOptions) *Command {
 	return c.mailboxCommand("SUBSCRIBE", mailbox)
 }
 
-// Unsubscribe removes the session's user's subscription to mailbox.
-func (c *Client) Unsubscribe(mailbox string) *Command {
+// UnsubscribeOptions configures UNSUBSCRIBE. A nil pointer selects the
+// defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type UnsubscribeOptions struct {
+	_ struct{}
+}
+
+// Unsubscribe removes the session's user's subscription to mailbox. A nil
+// options pointer selects the defaults.
+func (c *Client) Unsubscribe(mailbox string, options *UnsubscribeOptions) *Command {
 	return c.mailboxCommand("UNSUBSCRIBE", mailbox)
 }
 

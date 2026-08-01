@@ -34,7 +34,7 @@ func TestMessageCommandsRoundTrip(t *testing.T) {
 
 			client, err := imapclient.Dial(ctx, server.Address, &imapclient.Options{AllowInsecureAuth: true})
 			if err == nil {
-				err = client.Login(ctx, "interop@example.test", "interop-pw")
+				err = client.Login(ctx, "interop@example.test", "interop-pw", nil)
 			}
 			if err != nil {
 				if client != nil {
@@ -51,17 +51,17 @@ func TestMessageCommandsRoundTrip(t *testing.T) {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cleanupCancel()
 				if client.State() == imapclient.StateSelected {
-					_ = client.CloseMailbox().Wait(cleanupCtx)
+					_ = client.CloseMailbox(nil).Wait(cleanupCtx)
 				}
-				_ = client.Delete(destination).Wait(cleanupCtx)
-				_ = client.Delete(source).Wait(cleanupCtx)
+				_ = client.Delete(destination, nil).Wait(cleanupCtx)
+				_ = client.Delete(source, nil).Wait(cleanupCtx)
 			}
 			defer cleanup()
 
-			if err := client.Create(source).Wait(ctx); err != nil {
+			if err := client.Create(source, nil).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := client.Create(destination).Wait(ctx); err != nil {
+			if err := client.Create(destination, nil).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
 
@@ -109,7 +109,7 @@ func TestMessageCommandsRoundTrip(t *testing.T) {
 			if err := client.StoreUID(imap.UIDSetNum(uid), []imap.Flag{imap.FlagFlagged}, &imapclient.StoreOptions{Op: imapclient.StoreFlagsRemove, Silent: true}).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
-			uidData, err := t06FetchOne(ctx, client.FetchUID(imap.UIDSetNum(uid), imap.FetchItemUID, imap.FetchItemFlags))
+			uidData, err := t06FetchOne(ctx, client.FetchUID(imap.UIDSetNum(uid), nil, imap.FetchItemUID, imap.FetchItemFlags))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,10 +121,10 @@ func TestMessageCommandsRoundTrip(t *testing.T) {
 				t.Fatalf("UID STORE/FETCH got UID %d flags %v, want UID %d without %s", gotUID, gotFlags, uid, imap.FlagFlagged)
 			}
 
-			if _, err := client.Copy(imap.SeqSetNum(seqNum), destination).Wait(ctx); err != nil {
+			if _, err := client.Copy(imap.SeqSetNum(seqNum), destination, nil).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := client.CopyUID(imap.UIDSetNum(uid), destination).Wait(ctx); err != nil {
+			if _, err := client.CopyUID(imap.UIDSetNum(uid), destination, nil).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := client.Select(destination, nil).Wait(ctx); err != nil {
@@ -144,7 +144,7 @@ func TestMessageCommandsRoundTrip(t *testing.T) {
 			if err := client.StoreUID(imap.UIDSetNum(uid), []imap.Flag{imap.FlagDeleted}, &imapclient.StoreOptions{Op: imapclient.StoreFlagsAdd, Silent: true}).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := client.Expunge().Wait(ctx); err != nil {
+			if err := client.Expunge(nil).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
 			remaining, err := client.Search(imap.SearchHeaderField{Field: "Subject", Value: subject}, nil).All(ctx)
@@ -161,7 +161,7 @@ func TestMessageCommandsRoundTrip(t *testing.T) {
 
 func t06CheckHeaderFields(t *testing.T, ctx context.Context, client *imapclient.Client, seqNum imap.SeqNum, subject string) {
 	t.Helper()
-	data, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNum), &imap.FetchItemBodySection{
+	data, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNum), nil, &imap.FetchItemBodySection{
 		Specifier:    imap.PartSpecifierHeader,
 		HeaderFields: []string{"From", "Subject"},
 		Peek:         true,
@@ -188,7 +188,7 @@ func t06CheckHeaderFields(t *testing.T, ctx context.Context, client *imapclient.
 
 func t06CheckBodyPeekDoesNotSetSeen(t *testing.T, ctx context.Context, client *imapclient.Client, seqNum imap.SeqNum) {
 	t.Helper()
-	data, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNum), &imap.FetchItemBodySection{Peek: true}))
+	data, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNum), nil, &imap.FetchItemBodySection{Peek: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func t06CheckLargeFetchStreaming(t *testing.T, ctx context.Context, client *imap
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	data, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNums[0]), &imap.FetchItemBodySection{Peek: true}))
+	data, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNums[0]), nil, &imap.FetchItemBodySection{Peek: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func dataWait(ctx context.Context, result *fetchResult) error { return result.co
 
 func t06FetchUIDAndFlags(t *testing.T, ctx context.Context, client *imapclient.Client, seqNum imap.SeqNum) (imap.UID, []imap.Flag) {
 	t.Helper()
-	result, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNum), imap.FetchItemUID, imap.FetchItemFlags))
+	result, err := t06FetchOne(ctx, client.Fetch(imap.SeqSetNum(seqNum), nil, imap.FetchItemUID, imap.FetchItemFlags))
 	if err != nil {
 		t.Fatal(err)
 	}

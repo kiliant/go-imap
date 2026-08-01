@@ -42,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	idle := client.Idle()
+	idle := client.Idle(nil)
 	if err := idle.Wait(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

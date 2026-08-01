@@ -27,8 +27,9 @@ const (
 // Callers that see UTF8=ONLY should still send ENABLE UTF8=ACCEPT when the
 // server also advertises ENABLE, because that is how the client and server
 // agree the session is in UTF-8 mode.
-func (c *Client) EnableUTF8Accept() *EnableCommand {
-	return c.Enable(CapabilityUTF8Accept)
+// A nil options pointer selects the defaults.
+func (c *Client) EnableUTF8Accept(options *EnableOptions) *EnableCommand {
+	return c.Enable(options, CapabilityUTF8Accept)
 }
 
 // UTF8AcceptEnabled reports whether ENABLE UTF8=ACCEPT has succeeded on this

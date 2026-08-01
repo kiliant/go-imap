@@ -69,7 +69,7 @@ func TestExtAUIDPlus(t *testing.T) {
 			dest := t08Mailbox(t, ctx, server, client, "uidplus-copy")
 			var one imap.UIDSet
 			one.AddNum(uids[0])
-			copied, err := client.CopyUID(one, dest).Wait(ctx)
+			copied, err := client.CopyUID(one, dest, nil).Wait(ctx)
 			if err != nil {
 				t08Fail(t, server, client, "UID COPY", err)
 			}
@@ -284,13 +284,13 @@ func TestExtAListExtendedAndChildren(t *testing.T) {
 			t.Skip("server reports no hierarchy delimiter, so it has no child mailboxes")
 		}
 		child := parent + string(delimiter) + "child"
-		if err := client.Create(child).Wait(ctx); err != nil {
+		if err := client.Create(child, nil).Wait(ctx); err != nil {
 			t08Fail(t, server, client, "CREATE child mailbox", err)
 		}
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			_ = client.Delete(child).Wait(cleanupCtx)
+			_ = client.Delete(child, nil).Wait(cleanupCtx)
 		})
 
 		options := &imapclient.ListOptions{Patterns: []string{parent + string(delimiter) + "%"}}
@@ -411,7 +411,7 @@ func TestExtACreateSpecialUse(t *testing.T) {
 	t08ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, client *imapclient.Client) {
 		mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t08-create-special-use")
 		if !caps["CREATE-SPECIAL-USE"] {
-			err := client.CreateMailbox(mailbox, &imapclient.CreateOptions{
+			err := client.Create(mailbox, &imapclient.CreateOptions{
 				SpecialUse: []imap.MailboxAttr{imap.MailboxAttrArchive},
 			}).Wait(ctx)
 			if !errors.Is(err, imapclient.ErrCapabilityNotAdvertised) {
@@ -420,7 +420,7 @@ func TestExtACreateSpecialUse(t *testing.T) {
 			t.Skip("server does not advertise CREATE-SPECIAL-USE")
 		}
 
-		if err := client.CreateMailbox(mailbox, &imapclient.CreateOptions{
+		if err := client.Create(mailbox, &imapclient.CreateOptions{
 			SpecialUse: []imap.MailboxAttr{imap.MailboxAttrArchive},
 		}).Wait(ctx); err != nil {
 			t08Fail(t, server, client, "CREATE ... USE (\\Archive)", err)
@@ -428,7 +428,7 @@ func TestExtACreateSpecialUse(t *testing.T) {
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			_ = client.Delete(mailbox).Wait(cleanupCtx)
+			_ = client.Delete(mailbox, nil).Wait(cleanupCtx)
 		})
 
 		if !caps["SPECIAL-USE"] {
@@ -518,7 +518,7 @@ func t08Dial(t *testing.T, ctx context.Context, server *harness.Server) *imapcli
 	t.Helper()
 	client, err := imapclient.Dial(ctx, server.Address, &imapclient.Options{AllowInsecureAuth: true})
 	if err == nil {
-		err = client.Login(ctx, authInteropUsername, authInteropPassword)
+		err = client.Login(ctx, authInteropUsername, authInteropPassword, nil)
 	}
 	if err != nil {
 		if client != nil {
@@ -536,7 +536,7 @@ func t08Dial(t *testing.T, ctx context.Context, server *harness.Server) *imapcli
 func t08Mailbox(t *testing.T, ctx context.Context, server *harness.Server, client *imapclient.Client, name string) string {
 	t.Helper()
 	mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t08-"+name)
-	if err := client.Create(mailbox).Wait(ctx); err != nil {
+	if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 		t08Fail(t, server, client, "CREATE "+mailbox, err)
 	}
 	t.Cleanup(func() {
@@ -544,12 +544,12 @@ func t08Mailbox(t *testing.T, ctx context.Context, server *harness.Server, clien
 		defer cancel()
 		if client.State() == imapclient.StateSelected {
 			if client.Capabilities()["UNSELECT"] {
-				_ = client.Unselect().Wait(cleanupCtx)
+				_ = client.Unselect(nil).Wait(cleanupCtx)
 			} else {
-				_ = client.CloseMailbox().Wait(cleanupCtx)
+				_ = client.CloseMailbox(nil).Wait(cleanupCtx)
 			}
 		}
-		_ = client.Delete(mailbox).Wait(cleanupCtx)
+		_ = client.Delete(mailbox, nil).Wait(cleanupCtx)
 	})
 	return mailbox
 }

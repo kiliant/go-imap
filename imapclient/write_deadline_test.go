@@ -29,7 +29,7 @@ func deafServer(t *testing.T, writeTimeout time.Duration) *Client {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	return c
@@ -40,7 +40,7 @@ func TestWriteTimeoutUnblocksStalledCommand(t *testing.T) {
 	c := deafServer(t, 150*time.Millisecond)
 
 	start := time.Now()
-	cmd := c.Noop()
+	cmd := c.Noop(nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := cmd.Wait(ctx)
@@ -67,7 +67,7 @@ func TestWriteTimeoutSurfacesAsImapError(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err := c.Noop().Wait(ctx)
+	err := c.Noop(nil).Wait(ctx)
 	if err == nil {
 		t.Fatal("no error from a stalled write")
 	}
@@ -86,14 +86,14 @@ func TestWriteTimeoutPoisonsSession(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := c.Noop().Wait(ctx); err == nil {
+	if err := c.Noop(nil).Wait(ctx); err == nil {
 		t.Fatal("no error from the first stalled write")
 	}
 
 	// The second command must fail immediately from the poisoned session rather
 	// than blocking for another full write timeout.
 	start := time.Now()
-	err := c.Noop().Wait(ctx)
+	err := c.Noop(nil).Wait(ctx)
 	if err == nil {
 		t.Fatal("a command on a poisoned session succeeded")
 	}

@@ -60,10 +60,24 @@ engineering.
 **Exit:** `apidiff` gate active in CI; API surface test passes; every exported
 symbol has a doc comment; examples compile and run against the matrix.
 
-**Status (2026-08-01):** T13 and T14 are done — all 26 fuzz targets have
-recorded clean 30-minute campaigns; API surface review, examples, and guardian
-sign-off are on `main`. Exit is not yet met: T15 (CI jobs, apidiff gate,
-CHANGELOG, release-candidate tag) has not started.
+**Status (2026-08-01, after audit):** T13 and T14 were marked done and both were
+reopened. An audit of that claim found seven issues, all since fixed:
+
+- 28 exported `Client` methods took no options struct, violating rule 3. This is
+  the irreversible class — it cannot be repaired after v1.0.
+- `docs/API-STABILITY.md` §3 asserted, incorrectly, that a method without an
+  options parameter can gain one without breaking callers. That false premise is
+  what licensed the above. Rule 3 now has a mechanical gate, as rules 2, 6 and 7
+  already did.
+- Extension groups C–E shipped with **no** fuzz targets, against the standing
+  rule that every parser gets one. Targets went 26 → 60, and the campaign runner
+  now discovers them rather than reading a hand-maintained list.
+- `staticcheck` had 21 findings, `gofmt` was dirty, and nothing compiled
+  `examples/**` at all.
+
+Exit is still not met. T15 (CI jobs, apidiff gate, CHANGELOG, release-candidate
+tag) has not started; a full 30-minute campaign over all 60 targets and an
+interop re-run against the changed signatures are both outstanding.
 
 ## v1.0 — API freeze
 

@@ -23,16 +23,16 @@ func t09Dial(t *testing.T, ctx context.Context, server *harness.Server, enableQR
 	if err != nil {
 		t.Fatalf("dial %s: %v", server.Profile.Name, err)
 	}
-	if err := client.Login(ctx, "interop@example.test", "interop-pw"); err != nil {
+	if err := client.Login(ctx, "interop@example.test", "interop-pw", nil); err != nil {
 		_ = client.Close()
 		t.Fatalf("login %s: %v", server.Profile.Name, err)
 	}
-	if err := client.Capability(ctx); err != nil {
+	if err := client.Capability(ctx, nil); err != nil {
 		_ = client.Close()
 		t.Fatalf("capability %s: %v", server.Profile.Name, err)
 	}
 	if enableQResync {
-		enabled, err := client.Enable("QRESYNC").Wait(ctx)
+		enabled, err := client.Enable(nil, "QRESYNC").Wait(ctx)
 		if err != nil {
 			_ = client.Close()
 			t.Fatalf("ENABLE QRESYNC on %s: %v", server.Profile.Name, err)
@@ -69,7 +69,7 @@ var t09EveryUID = imap.UIDSetRange(1, 0)
 func t09UIDsBySubject(t *testing.T, ctx context.Context, client *imapclient.Client) map[string]imap.UID {
 	t.Helper()
 	uids := make(map[string]imap.UID)
-	cmd := client.FetchUID(t09EveryUID, imap.FetchItemUID, imap.FetchItemEnvelope)
+	cmd := client.FetchUID(t09EveryUID, nil, imap.FetchItemUID, imap.FetchItemEnvelope)
 	for {
 		data, err := cmd.Next(ctx)
 		if errors.Is(err, io.EOF) {
@@ -195,14 +195,14 @@ func TestQResyncIncrementalResyncInterop(t *testing.T) {
 			// --- Phase 1: initial synchronisation. ------------------------------
 			first := t09Dial(t, ctx, server, true)
 			defer first.Close()
-			if err := first.Create(mailbox).Wait(ctx); err != nil {
+			if err := first.Create(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("CREATE %s: %v", mailbox, err)
 			}
 			t09Publish(t, ctx, observer, mailbox)
 			defer func() {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cleanupCancel()
-				_ = observer.Delete(mailbox).Wait(cleanupCtx)
+				_ = observer.Delete(mailbox, nil).Wait(cleanupCtx)
 			}()
 			for _, subject := range []string{"t09-a", "t09-b", "t09-c", "t09-d"} {
 				t09Append(t, ctx, first, mailbox, subject)
@@ -236,7 +236,7 @@ func TestQResyncIncrementalResyncInterop(t *testing.T) {
 			cachedModSeq := anchor.Status.HighestModSeq
 
 			// --- Phase 2: disconnect. -------------------------------------------
-			if err := first.Logout(ctx); err != nil {
+			if err := first.Logout(ctx, nil); err != nil {
 				t.Fatalf("LOGOUT: %v", err)
 			}
 
@@ -260,10 +260,10 @@ func TestQResyncIncrementalResyncInterop(t *testing.T) {
 				&imapclient.StoreOptions{Op: imapclient.StoreFlagsAdd, Silent: true}).Wait(ctx); err != nil {
 				t.Fatalf("second connection UID STORE \\Deleted: %v", err)
 			}
-			if err := second.Expunge().Wait(ctx); err != nil {
+			if err := second.Expunge(nil).Wait(ctx); err != nil {
 				t.Fatalf("second connection EXPUNGE: %v", err)
 			}
-			if err := second.Logout(ctx); err != nil {
+			if err := second.Logout(ctx, nil); err != nil {
 				t.Fatalf("second connection LOGOUT: %v", err)
 			}
 
@@ -387,16 +387,16 @@ func TestQResyncRejectedAnchorInterop(t *testing.T) {
 
 			probe := t09Dial(t, ctx, server, false)
 			capabilities := probe.Capabilities()
-			_ = probe.Logout(ctx)
+			_ = probe.Logout(ctx, nil)
 			harness.RequireCapabilities(t, capabilities, "QRESYNC")
 
 			mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t09-anchor")
 			client := t09Dial(t, ctx, server, true)
 			defer client.Close()
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("CREATE: %v", err)
 			}
-			defer func() { _ = client.Delete(mailbox).Wait(ctx) }()
+			defer func() { _ = client.Delete(mailbox, nil).Wait(ctx) }()
 			t09Append(t, ctx, client, mailbox, "t09-anchor-a")
 
 			status, err := client.SelectSync(mailbox, &imapclient.SyncSelectOptions{CondStore: true}).Wait(ctx)
@@ -406,10 +406,10 @@ func TestQResyncRejectedAnchorInterop(t *testing.T) {
 			if status.NoModSeq {
 				t.Skipf("%s reports NOMODSEQ for this mailbox", server.Profile.Name)
 			}
-			if err := client.Unselect().Wait(ctx); err != nil {
+			if err := client.Unselect(nil).Wait(ctx); err != nil {
 				// UNSELECT is not universal; CLOSE is an acceptable substitute
 				// here because the mailbox has no \Deleted messages.
-				if err := client.CloseMailbox().Wait(ctx); err != nil {
+				if err := client.CloseMailbox(nil).Wait(ctx); err != nil {
 					t.Fatalf("closing the mailbox: %v", err)
 				}
 			}
@@ -445,16 +445,16 @@ func TestGroupBStatusItemsInterop(t *testing.T) {
 			capabilities := client.Capabilities()
 
 			mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t09-status")
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("CREATE: %v", err)
 			}
-			defer func() { _ = client.Delete(mailbox).Wait(ctx) }()
+			defer func() { _ = client.Delete(mailbox, nil).Wait(ctx) }()
 			message := t09Message("t09-status-a")
 			t09Append(t, ctx, client, mailbox, "t09-status-a")
 
 			t.Run("size", func(t *testing.T) {
 				harness.RequireCapabilities(t, capabilities, "STATUS=SIZE")
-				size, err := client.MailboxSize(ctx, mailbox)
+				size, err := client.MailboxSize(ctx, mailbox, nil)
 				if err != nil {
 					t.Fatalf("STATUS (SIZE): %v", err)
 				}
@@ -467,7 +467,7 @@ func TestGroupBStatusItemsInterop(t *testing.T) {
 
 			t.Run("highestmodseq", func(t *testing.T) {
 				harness.RequireCapabilities(t, capabilities, "CONDSTORE")
-				modSeq, err := client.MailboxHighestModSeq(ctx, mailbox)
+				modSeq, err := client.MailboxHighestModSeq(ctx, mailbox, nil)
 				if err != nil {
 					t.Fatalf("STATUS (HIGHESTMODSEQ): %v", err)
 				}
@@ -483,7 +483,7 @@ func TestGroupBStatusItemsInterop(t *testing.T) {
 				if len(client.CapabilityValues("APPENDLIMIT")) == 0 {
 					harness.RequireCapabilities(t, capabilities, "APPENDLIMIT")
 				}
-				data, err := client.AppendLimit(ctx, mailbox)
+				data, err := client.AppendLimit(ctx, mailbox, nil)
 				if err != nil {
 					t.Fatalf("APPENDLIMIT: %v", err)
 				}
@@ -508,10 +508,10 @@ func TestCondStoreUnchangedSinceInterop(t *testing.T) {
 			harness.RequireCapabilities(t, client.Capabilities(), "CONDSTORE")
 
 			mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t09-condstore")
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("CREATE: %v", err)
 			}
-			defer func() { _ = client.Delete(mailbox).Wait(ctx) }()
+			defer func() { _ = client.Delete(mailbox, nil).Wait(ctx) }()
 			t09Append(t, ctx, client, mailbox, "t09-condstore-a")
 
 			status, err := client.SelectSync(mailbox, &imapclient.SyncSelectOptions{CondStore: true}).Wait(ctx)
@@ -570,7 +570,7 @@ func TestCondStoreUnchangedSinceInterop(t *testing.T) {
 
 func t09FetchFlags(t *testing.T, ctx context.Context, client *imapclient.Client, uid imap.UID) []imap.Flag {
 	t.Helper()
-	cmd := client.FetchUID(imap.UIDSetNum(uid), imap.FetchItemUID, imap.FetchItemFlags)
+	cmd := client.FetchUID(imap.UIDSetNum(uid), nil, imap.FetchItemUID, imap.FetchItemFlags)
 	var flags []imap.Flag
 	for {
 		data, err := cmd.Next(ctx)
@@ -606,10 +606,10 @@ func TestReplaceInterop(t *testing.T) {
 			}
 
 			mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t09-replace")
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("CREATE: %v", err)
 			}
-			defer func() { _ = client.Delete(mailbox).Wait(ctx) }()
+			defer func() { _ = client.Delete(mailbox, nil).Wait(ctx) }()
 			t09Append(t, ctx, client, mailbox, "t09-replace-old")
 			if _, err := client.Select(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("SELECT: %v", err)
@@ -633,8 +633,8 @@ func TestReplaceInterop(t *testing.T) {
 			}
 
 			// The mailbox must now hold exactly the replacement.
-			if err := client.Unselect().Wait(ctx); err != nil {
-				_ = client.CloseMailbox().Wait(ctx)
+			if err := client.Unselect(nil).Wait(ctx); err != nil {
+				_ = client.CloseMailbox(nil).Wait(ctx)
 			}
 			if _, err := client.Select(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("re-SELECT: %v", err)
@@ -670,10 +670,10 @@ func TestSaveDatePreviewObjectIDInterop(t *testing.T) {
 			}
 
 			mailbox := server.Profile.MailboxPrefix + harness.UniqueMailbox("t09-items")
-			if err := client.Create(mailbox).Wait(ctx); err != nil {
+			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
 				t.Fatalf("CREATE: %v", err)
 			}
-			defer func() { _ = client.Delete(mailbox).Wait(ctx) }()
+			defer func() { _ = client.Delete(mailbox, nil).Wait(ctx) }()
 			t09Append(t, ctx, client, mailbox, "t09-items-a")
 
 			if capabilities["OBJECTID"] {
@@ -705,7 +705,7 @@ func TestSaveDatePreviewObjectIDInterop(t *testing.T) {
 				items = append(items, imap.FetchItemEmailID, imap.FetchItemThreadID)
 			}
 
-			cmd := client.FetchUID(imap.UIDSetRange(1, 0), items...)
+			cmd := client.FetchUID(imap.UIDSetRange(1, 0), nil, items...)
 			var sawSaveDate, sawPreview, sawEmailID bool
 			for {
 				data, err := cmd.Next(ctx)

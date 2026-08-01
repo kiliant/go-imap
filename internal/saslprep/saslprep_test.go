@@ -24,7 +24,7 @@ func TestRFC4013Examples(t *testing.T) {
 	}{
 		{
 			name: "SOFT HYPHEN (U+00AD) mapped to nothing",
-			in:   "I­X",
+			in:   "I\u00adX",
 			want: "IX",
 		},
 		{
@@ -49,7 +49,7 @@ func TestRFC4013Examples(t *testing.T) {
 		},
 		{
 			name:    "prohibited character: BELL (U+0007), ASCII control",
-			in:      "",
+			in:      "\a",
 			wantErr: true,
 		},
 		{
@@ -145,7 +145,7 @@ func TestErrorsDoNotLeakInput(t *testing.T) {
 		in     string
 		marker string
 	}{
-		{"prohibited control character", "hunter2MARKERONE", "MARKERONE"},
+		{"prohibited control character", "hunter2MARKERONE\a", "MARKERONE"},
 		{"bidi violation", "اMARKERTWO1", "MARKERTWO"},
 		{"invalid UTF-8 becomes prohibited U+FFFD", "correcthorsebatterystapleMARKERTHREE" + string(rune(0xD800)), "MARKERTHREE"},
 	}
@@ -177,7 +177,7 @@ func TestIdempotent(t *testing.T) {
 		"",
 		"user",
 		"USER",
-		"I­X",
+		"I\u00adX",
 		"ª",
 		"Ⅸ",
 		"a b",
@@ -389,12 +389,12 @@ func TestTableAnchorMembership(t *testing.T) {
 // not an accident, so it is pinned here to prevent it silently drifting if
 // mapChars is refactored.
 func TestZeroWidthSpaceMapping(t *testing.T) {
-	got, err := Prepare("a​b") // U+200B between 'a' and 'b'
+	got, err := Prepare("a\u200bb") // U+200B between 'a' and 'b'
 	if err != nil {
 		t.Fatalf("Prepare: unexpected error: %v", err)
 	}
 	if want := "ab"; got != want {
-		t.Fatalf("Prepare(%q) = %q, want %q (U+200B should be deleted per Table B.1, not turned into a space per Table C.1.2)", "a​b", got, want)
+		t.Fatalf("Prepare(%q) = %q, want %q (U+200B should be deleted per Table B.1, not turned into a space per Table C.1.2)", "a\u200bb", got, want)
 	}
 }
 

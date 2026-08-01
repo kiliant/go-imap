@@ -2,7 +2,6 @@ package imapclient
 
 import (
 	"context"
-	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -196,13 +195,4 @@ func readComparatorResponse(dec *imapwire.Decoder) (*ComparatorData, error) {
 		return nil, dec.Err()
 	}
 	return data, nil
-}
-
-// parseBadComparatorArgs is a no-op: BADCOMPARATOR takes no arguments
-// (RFC 5255 section 4.9).
-func parseBadComparatorArgs(args string) error {
-	if strings.TrimSpace(args) != "" {
-		return &imap.Error{Type: imap.ErrorTypeProtocol, Text: "BADCOMPARATOR response code must not carry arguments"}
-	}
-	return nil
 }

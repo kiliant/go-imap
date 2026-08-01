@@ -6,12 +6,27 @@ import (
 	"strings"
 )
 
+// CapabilityOptions configures [Client.Capability]. A nil pointer selects the
+// defaults.
+//
+// It carries no fields today; capability names are an open-ended set and this
+// keeps a future refresh policy or filter addable without a signature change.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type CapabilityOptions struct {
+	_ struct{}
+}
+
 // Capability asks the server for its current capability set. Servers commonly
 // change this set after STARTTLS and authentication, so callers normally do
 // not need this method: DialStartTLS and the authentication methods refresh it
 // automatically. The newly received set replaces the previous CAPABILITY
 // command result.
-func (c *Client) Capability(ctx context.Context) error { return c.requestCapability(ctx) }
+//
+// A nil options pointer selects the defaults.
+func (c *Client) Capability(ctx context.Context, options *CapabilityOptions) error {
+	return c.requestCapability(ctx)
+}
 
 // Capabilities returns a snapshot of the capability names learned from the
 // greeting or a CAPABILITY response. Names are upper-cased. The returned map

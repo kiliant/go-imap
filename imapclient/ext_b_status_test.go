@@ -13,7 +13,7 @@ func TestMailboxSize(t *testing.T) {
 		return "* STATUS frop (SIZE 44421)\r\n" + tag + " OK STATUS completed\r\n"
 	})
 	extBReady(c, []string{"IMAP4REV1", "STATUS=SIZE"}, nil, false)
-	size, err := c.MailboxSize(extBContext(t), "frop")
+	size, err := c.MailboxSize(extBContext(t), "frop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestMailboxSizeIs63Bit(t *testing.T) {
 		return "* STATUS big (SIZE 9223372036854775807)\r\n" + tag + " OK done\r\n"
 	})
 	extBReady(c, []string{"IMAP4REV1", "STATUS=SIZE"}, nil, false)
-	size, err := c.MailboxSize(extBContext(t), "big")
+	size, err := c.MailboxSize(extBContext(t), "big", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestMailboxSizeIs63Bit(t *testing.T) {
 func TestMailboxSizeRequiresCapability(t *testing.T) {
 	c, server := extBDial(t, func(tag, line string) string { return tag + " OK done\r\n" })
 	extBReady(c, []string{"IMAP4REV1"}, nil, false)
-	if _, err := c.MailboxSize(extBContext(t), "frop"); !errors.Is(err, ErrCapabilityNotAdvertised) {
+	if _, err := c.MailboxSize(extBContext(t), "frop", nil); !errors.Is(err, ErrCapabilityNotAdvertised) {
 		t.Fatalf("err = %v, want ErrCapabilityNotAdvertised", err)
 	}
 	if len(server.Lines()) != 0 {
@@ -57,7 +57,7 @@ func TestAppendLimitPerMailbox(t *testing.T) {
 		return "* STATUS INBOX (APPENDLIMIT 257890)\r\n" + tag + " OK STATUS completed\r\n"
 	})
 	extBReady(c, []string{"IMAP4REV1", "APPENDLIMIT"}, nil, false)
-	data, err := c.AppendLimit(extBContext(t), "INBOX")
+	data, err := c.AppendLimit(extBContext(t), "INBOX", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestAppendLimitNil(t *testing.T) {
 		return "* STATUS INBOX (APPENDLIMIT NIL)\r\n" + tag + " OK done\r\n"
 	})
 	extBReady(c, []string{"IMAP4REV1", "APPENDLIMIT"}, nil, false)
-	data, err := c.AppendLimit(extBContext(t), "INBOX")
+	data, err := c.AppendLimit(extBContext(t), "INBOX", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAppendLimitNil(t *testing.T) {
 func TestAppendLimitServerWide(t *testing.T) {
 	c, server := extBDial(t, func(tag, line string) string { return tag + " OK done\r\n" })
 	extBReady(c, []string{"IMAP4REV1", "APPENDLIMIT=4294967295"}, nil, false)
-	data, err := c.AppendLimit(extBContext(t), "INBOX")
+	data, err := c.AppendLimit(extBContext(t), "INBOX", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestAppendLimitServerWide(t *testing.T) {
 func TestAppendLimitRequiresCapability(t *testing.T) {
 	c, _ := extBDial(t, func(tag, line string) string { return tag + " OK done\r\n" })
 	extBReady(c, []string{"IMAP4REV1"}, nil, false)
-	if _, err := c.AppendLimit(extBContext(t), "INBOX"); !errors.Is(err, ErrCapabilityNotAdvertised) {
+	if _, err := c.AppendLimit(extBContext(t), "INBOX", nil); !errors.Is(err, ErrCapabilityNotAdvertised) {
 		t.Fatalf("err = %v, want ErrCapabilityNotAdvertised", err)
 	}
 }
@@ -116,7 +116,7 @@ func TestMailboxHighestModSeq(t *testing.T) {
 		return "* STATUS blurdybloop (HIGHESTMODSEQ 7011231777)\r\n" + tag + " OK STATUS completed\r\n"
 	})
 	extBReady(c, []string{"IMAP4REV1", "CONDSTORE"}, nil, false)
-	modSeq, err := c.MailboxHighestModSeq(extBContext(t), "blurdybloop")
+	modSeq, err := c.MailboxHighestModSeq(extBContext(t), "blurdybloop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestMailboxHighestModSeqZero(t *testing.T) {
 		return "* STATUS legacy (HIGHESTMODSEQ 0)\r\n" + tag + " OK done\r\n"
 	})
 	extBReady(c, []string{"IMAP4REV1", "CONDSTORE"}, nil, false)
-	modSeq, err := c.MailboxHighestModSeq(extBContext(t), "legacy")
+	modSeq, err := c.MailboxHighestModSeq(extBContext(t), "legacy", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestStatusAccessorsPreserveAbsence(t *testing.T) {
 func TestMailboxHighestModSeqRequiresCondStore(t *testing.T) {
 	c, server := extBDial(t, func(tag, line string) string { return tag + " OK done\r\n" })
 	extBReady(c, []string{"IMAP4REV1"}, nil, false)
-	if _, err := c.MailboxHighestModSeq(extBContext(t), "INBOX"); !errors.Is(err, ErrCapabilityNotAdvertised) {
+	if _, err := c.MailboxHighestModSeq(extBContext(t), "INBOX", nil); !errors.Is(err, ErrCapabilityNotAdvertised) {
 		t.Fatalf("err = %v, want ErrCapabilityNotAdvertised", err)
 	}
 	if len(server.Lines()) != 0 {
@@ -181,7 +181,7 @@ func TestMailboxHighestModSeqRequiresCondStore(t *testing.T) {
 		return "* STATUS INBOX (HIGHESTMODSEQ 5)\r\n" + tag + " OK done\r\n"
 	})
 	extBReady(c2, []string{"IMAP4REV1", "QRESYNC"}, nil, false)
-	if _, err := c2.MailboxHighestModSeq(extBContext(t), "INBOX"); err != nil {
+	if _, err := c2.MailboxHighestModSeq(extBContext(t), "INBOX", nil); err != nil {
 		t.Fatalf("QRESYNC implies CONDSTORE but the command was refused: %v", err)
 	}
 }

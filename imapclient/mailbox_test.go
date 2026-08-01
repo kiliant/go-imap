@@ -45,7 +45,7 @@ func TestSelectCollectsStatusAndDetectsUIDValidityChange(t *testing.T) {
 	c := NewClient(clientConn, nil)
 	defer c.Close()
 	ctx := mailboxTestContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := c.Select("INBOX", nil).Wait(ctx)
@@ -61,7 +61,7 @@ func TestSelectCollectsStatusAndDetectsUIDValidityChange(t *testing.T) {
 	if c.State() != StateSelected {
 		t.Fatalf("State() after SELECT = %q", c.State())
 	}
-	if err := c.CloseMailbox().Wait(ctx); err != nil {
+	if err := c.CloseMailbox(nil).Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if c.State() != StateAuthenticated {
@@ -89,7 +89,7 @@ func TestStatusUsesOpenStatusItems(t *testing.T) {
 	c := NewClient(clientConn, nil)
 	defer c.Close()
 	ctx := mailboxTestContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := c.Status("Archive", &StatusOptions{Items: []imap.StatusItem{
@@ -124,7 +124,7 @@ func TestListExtendedOptionsAndLsubMapping(t *testing.T) {
 	c := NewClient(clientConn, nil)
 	defer c.Close()
 	ctx := mailboxTestContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := c.List("", "Projects", &ListOptions{
@@ -169,10 +169,10 @@ func TestNamespaceAndMailboxNameEncoding(t *testing.T) {
 	c := NewClient(clientConn, nil)
 	defer c.Close()
 	ctx := mailboxTestContext(t)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	ns, err := c.Namespace().Wait(ctx)
+	ns, err := c.Namespace(nil).Wait(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestNamespaceAndMailboxNameEncoding(t *testing.T) {
 	if request := <-requests; !strings.Contains(request, " NAMESPACE\r\n") {
 		t.Fatalf("NAMESPACE request = %q", request)
 	}
-	if err := c.Create("旅行").Wait(ctx); err != nil {
+	if err := c.Create("旅行", nil).Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := imapwire.EncodeMailboxName("旅行")

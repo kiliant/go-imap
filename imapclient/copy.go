@@ -60,13 +60,23 @@ func (cmd *CopyCommand) Wait(ctx context.Context) (*CopyData, error) {
 	return cmd.data, nil
 }
 
-// Copy copies messages addressed by sequence number into destination.
-func (c *Client) Copy(set imap.SeqSet, destination string) *CopyCommand {
+// CopyOptions configures COPY and UID COPY. A nil pointer selects the
+// defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type CopyOptions struct {
+	_ struct{}
+}
+
+// Copy copies messages addressed by sequence number into destination. A nil
+// options pointer selects the defaults.
+func (c *Client) Copy(set imap.SeqSet, destination string, options *CopyOptions) *CopyCommand {
 	return c.copy("COPY", set.String(), destination)
 }
 
-// CopyUID copies messages addressed by UID into destination.
-func (c *Client) CopyUID(set imap.UIDSet, destination string) *CopyCommand {
+// CopyUID copies messages addressed by UID into destination. A nil options
+// pointer selects the defaults.
+func (c *Client) CopyUID(set imap.UIDSet, destination string, options *CopyOptions) *CopyCommand {
 	return c.copy("UID COPY", set.String(), destination)
 }
 
@@ -92,6 +102,16 @@ func (c *Client) copy(name, set, destination string) *CopyCommand {
 	return &CopyCommand{Command: cmd, data: data}
 }
 
+// ExpungeOptions configures EXPUNGE. A nil pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ExpungeOptions struct {
+	_ struct{}
+}
+
 // Expunge permanently removes messages marked with \Deleted from the selected
-// mailbox. CLOSE also expunges, while UNSELECT does not.
-func (c *Client) Expunge() *Command { return c.beginCommand("EXPUNGE", stateSelected, nil, nil) }
+// mailbox. CLOSE also expunges, while UNSELECT does not. A nil options pointer
+// selects the defaults.
+func (c *Client) Expunge(options *ExpungeOptions) *Command {
+	return c.beginCommand("EXPUNGE", stateSelected, nil, nil)
+}

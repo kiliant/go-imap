@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -33,20 +32,6 @@ type InProgressData struct {
 	Text string
 
 	_ struct{}
-}
-
-// inProgressOptions is reserved for command-scoped progress callbacks once
-// core command options grow an InProgress field (see the T11 escalation).
-// Until then callers parse [imap.CodeInProgress] arguments with
-// [ParseInProgressArgs].
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type inProgressOptions struct {
-	// Handler receives progress notifications claimed by a collector that
-	// wraps [claimInProgress]. A nil Handler ignores notifications.
-	// Called on the reader goroutine; must not block.
-	Handler func(*InProgressData)
-	_       struct{}
 }
 
 // SupportsInProgress reports whether the server advertises INPROGRESS.
@@ -118,28 +103,4 @@ func ParseInProgressArgs(args string) (*InProgressData, error) {
 		return nil, fmt.Errorf("INPROGRESS progress %d not less than goal %d", data.Progress, data.Goal)
 	}
 	return data, nil
-}
-
-// claimInProgress recognises an untagged OK [INPROGRESS ...] and invokes
-// handler when non-nil. It is intended for collectors that wrap another
-// collector; connection-level delivery requires a Client.Options / conn.go
-// hook owned by T03 (escalated in .state/progress/T11.md).
-func claimInProgress(resp *untaggedResponse, handler func(*InProgressData)) (bool, error) {
-	if resp == nil || resp.cond == nil || resp.name != "OK" {
-		return false, nil
-	}
-	if !strings.EqualFold(resp.cond.Text.Code, string(imap.CodeInProgress)) {
-		return false, nil
-	}
-	data, err := ParseInProgressArgs(resp.cond.Text.Args)
-	if err != nil {
-		// Malformed or security-rejected notifications are disregarded, not
-		// fatal to the command — RFC 9585 section 6.
-		return true, nil
-	}
-	data.Text = resp.cond.Text.Text
-	if handler != nil {
-		handler(data)
-	}
-	return true, nil
 }

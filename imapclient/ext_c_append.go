@@ -108,6 +108,20 @@ func (cmd *MultiAppendCommand) Wait(ctx context.Context) (*MultiAppendData, erro
 	return cmd.data, nil
 }
 
+// MultiAppendOptions configures [Client.MultiAppend]. A nil pointer selects
+// the defaults.
+//
+// It carries no fields today: flags and internal dates are per-message and
+// live on [AppendMessage]. It exists so a future command-wide MULTIAPPEND or
+// CATENATE modifier can be added without changing the method's signature,
+// matching [Client.Append] and [Client.CatenateAppend], which both take
+// options already.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MultiAppendOptions struct {
+	_ struct{}
+}
+
 // MultiAppend appends one or more messages in a single APPEND command.
 // MULTIAPPEND, RFC 3502.
 //
@@ -116,8 +130,11 @@ func (cmd *MultiAppendCommand) Wait(ctx context.Context) (*MultiAppendData, erro
 // message may optionally use CATENATE when that capability is advertised.
 //
 // ctx controls the synchronous literal phase; the returned command's Wait
-// waits for the tagged completion.
-func (c *Client) MultiAppend(ctx context.Context, mailbox string, messages []AppendMessage) *MultiAppendCommand {
+// waits for the tagged completion. A nil options pointer selects the defaults.
+//
+// Per-message flags and internal dates belong on each [AppendMessage];
+// [MultiAppendOptions] carries command-wide settings only.
+func (c *Client) MultiAppend(ctx context.Context, mailbox string, messages []AppendMessage, options *MultiAppendOptions) *MultiAppendCommand {
 	data := &MultiAppendData{}
 	if ctx == nil {
 		return &MultiAppendCommand{Command: rejectedCommand(c, "APPEND", "APPEND requires a non-nil context"), data: data}
@@ -212,7 +229,7 @@ func (c *Client) CatenateAppend(ctx context.Context, mailbox string, parts []Cat
 		msg.Flags = options.Flags
 		msg.InternalDate = options.InternalDate
 	}
-	return c.MultiAppend(ctx, mailbox, []AppendMessage{msg})
+	return c.MultiAppend(ctx, mailbox, []AppendMessage{msg}, nil)
 }
 
 func validateAppendMessage(m *AppendMessage) error {

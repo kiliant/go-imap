@@ -77,8 +77,37 @@ func (c *Client) List(ref, pattern string, opts *ListOptions) *ListCommand
 func (c *Client) List(ref, pattern string, selectOpts, returnOpts int) *ListCommand
 ```
 
-A `nil` options pointer must always be valid and mean "defaults". This lets us
-add an options struct to a method that has none without breaking callers.
+A `nil` options pointer must always be valid and mean "defaults". That is what
+lets us add *fields to an existing options struct* without breaking callers.
+
+It does **not** rescue a method that shipped without an options parameter.
+Adding a parameter to a Go signature breaks every call site regardless of
+whether `nil` is an accepted value for it, so the options struct has to be
+there from the first commit — even when it is empty. Every command entry point
+therefore takes one, and dozens are empty structs today purely to keep that door
+open. An earlier revision of this document claimed the opposite; three methods
+shipped without options on the strength of it, and were only caught at the v1.0
+freeze review.
+
+This rule is enforced mechanically by `TestAPISurfaceOptionsStruct` in
+`api_surface_test.go`, which walks every exported `Client` command entry point
+and fails when one has no `*...Options` parameter.
+
+There are **two** ways a method escapes that gate, and both need justification:
+
+1. `optionsExemptClientMethods` — command entry points deliberately shipped
+   without options. Each entry needs a written exception in this section. The
+   map is empty today.
+2. `nonBlockingClientMethods` — accessors that are not command entry points at
+   all, shared with the context-first gate. A method belongs here only if it
+   neither writes to the wire nor waits for a response: capability and session
+   accessors reading cached state, plus `Close`, which matches `io.Closer` and
+   so can never take an options parameter.
+
+The second list is the looser one and therefore the easier to abuse: adding a
+wire-writing method to it silences the rule-3 gate *and* the context-first gate
+at once. Adding an entry there is an API decision, not a test fix — it needs the
+same scrutiny as an entry in the first list.
 
 **Exception — PARTIAL options (RFC 9394, approved at T10 / v1.0 freeze).**
 `*PartialFetchOptions` and `*PartialSearchOptions` require a non-nil pointer

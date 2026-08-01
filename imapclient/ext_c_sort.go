@@ -288,13 +288,13 @@ func (c *Client) sortClientSide(ctx context.Context, uid bool, numbers []uint32,
 		for _, n := range numbers {
 			set.AddNum(imap.UID(n))
 		}
-		cmd = c.FetchUID(set, items...)
+		cmd = c.FetchUID(set, nil, items...)
 	} else {
 		var set imap.SeqSet
 		for _, n := range numbers {
 			set.AddNum(imap.SeqNum(n))
 		}
-		cmd = c.Fetch(set, items...)
+		cmd = c.Fetch(set, nil, items...)
 	}
 	rows := make(map[uint32]*sortRow, len(numbers))
 	seen := make(map[uint32]bool, len(numbers))

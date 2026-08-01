@@ -23,7 +23,7 @@ func TestCapabilityValuesAndRefresh(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := c.CapabilityValues("AUTH"); strings.Join(got, ",") != "PLAIN,SCRAM-SHA-256" {
@@ -32,7 +32,7 @@ func TestCapabilityValuesAndRefresh(t *testing.T) {
 	if got := c.CapabilityValues("APPENDLIMIT"); len(got) != 1 || got[0] != "1234" {
 		t.Fatalf("APPENDLIMIT values = %#v", got)
 	}
-	if err := c.Capability(ctx); err != nil {
+	if err := c.Capability(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	caps := c.Capabilities()
@@ -58,10 +58,10 @@ func TestCapabilityResponseCodeAddsCapabilities(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Noop().Wait(ctx); err != nil {
+	if err := c.Noop(nil).Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if caps := c.Capabilities(); !caps["IMAP4REV1"] || !caps["IDLE"] || !caps["UTF8=ACCEPT"] || !caps["MOVE"] {

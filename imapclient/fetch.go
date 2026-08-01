@@ -99,17 +99,29 @@ func (cmd *FetchCommand) Next(ctx context.Context) (*imap.FetchMessageData, erro
 	}
 }
 
+// FetchOptions configures a plain FETCH. A nil pointer selects the defaults.
+//
+// It carries no fields today. FETCH modifiers that already exist have their own
+// entry points — [Client.FetchSync] for CONDSTORE/QRESYNC CHANGEDSINCE and
+// [Client.FetchPartial] for the PARTIAL range — because this method had no
+// options struct to extend. New modifiers belong here.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type FetchOptions struct {
+	_ struct{}
+}
+
 // Fetch issues FETCH for a sequence-number set. To fetch by UID, use
 // [Client.FetchUID]; the distinct methods make mixing the two address spaces
-// impossible at the call site.
-func (c *Client) Fetch(set imap.SeqSet, items ...imap.FetchItem) *FetchCommand {
+// impossible at the call site. A nil options pointer selects the defaults.
+func (c *Client) Fetch(set imap.SeqSet, options *FetchOptions, items ...imap.FetchItem) *FetchCommand {
 	return c.fetch("FETCH", set.String(), func(n imap.SeqNum) bool { return set.Contains(n) }, items)
 }
 
 // FetchUID issues UID FETCH for a UID set. FETCH responses still carry the
 // server's sequence number; include [imap.FetchItemUID] when the UID is needed
-// in the returned data.
-func (c *Client) FetchUID(set imap.UIDSet, items ...imap.FetchItem) *FetchCommand {
+// in the returned data. A nil options pointer selects the defaults.
+func (c *Client) FetchUID(set imap.UIDSet, options *FetchOptions, items ...imap.FetchItem) *FetchCommand {
 	return c.fetch("UID FETCH", set.String(), func(imap.SeqNum) bool { return true }, items)
 }
 

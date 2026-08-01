@@ -19,7 +19,7 @@ func Dial(ctx context.Context, address string, opts *Options) (*Client, error) {
 		return nil, err
 	}
 	c := NewClient(conn, opts)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func DialTLS(ctx context.Context, address string, opts *Options) (*Client, error
 		return nil, err
 	}
 	c := NewClient(tlsConn, opts)
-	if err := c.WaitGreeting(ctx); err != nil {
+	if err := c.WaitGreeting(ctx, nil); err != nil {
 		_ = c.Close()
 		return nil, err
 	}

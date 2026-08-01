@@ -30,10 +30,10 @@ func TestIdleDoneRoutesResponsesUntilTaggedCompletion(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	idle := c.Idle()
+	idle := c.Idle(nil)
 	result := make(chan error, 1)
 	go func() { result <- idle.Wait(ctx) }()
 	select {
@@ -74,10 +74,10 @@ func TestIdleWaitReady(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.Idle().WaitReady(ctx); err != nil {
+		if err := c.Idle(nil).WaitReady(ctx); err != nil {
 			t.Fatalf("WaitReady() = %v", err)
 		}
 	})
@@ -95,10 +95,10 @@ func TestIdleWaitReady(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.Idle().WaitReady(ctx); err == nil || !strings.Contains(err.Error(), "IDLE disabled") {
+		if err := c.Idle(nil).WaitReady(ctx); err == nil || !strings.Contains(err.Error(), "IDLE disabled") {
 			t.Fatalf("WaitReady() = %v", err)
 		}
 	})
@@ -119,10 +119,10 @@ func TestIdleWaitReady(t *testing.T) {
 		}()
 		c := NewClient(clientConn, nil)
 		defer c.Close()
-		if err := c.WaitGreeting(context.Background()); err != nil {
+		if err := c.WaitGreeting(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
-		idle := c.Idle()
+		idle := c.Idle(nil)
 		readyCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if err := idle.WaitReady(readyCtx); !errors.Is(err, context.Canceled) {
@@ -162,11 +162,11 @@ func TestIdleReissuesBeforeConfiguredTimeout(t *testing.T) {
 	}()
 	c := NewClient(clientConn, &Options{IdleTimeout: 10 * time.Millisecond})
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	idle := c.Idle()
+	idle := c.Idle(nil)
 	result := make(chan error, 1)
 	go func() { result <- idle.Wait(ctx) }()
 	select {
@@ -204,12 +204,12 @@ func TestIdleFallsBackToNoopPolling(t *testing.T) {
 	}()
 	c := NewClient(clientConn, &Options{IdlePollInterval: 5 * time.Millisecond})
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	go func() { result <- c.Idle().Wait(ctx) }()
+	go func() { result <- c.Idle(nil).Wait(ctx) }()
 	select {
 	case <-twoNoops:
 	case <-time.After(time.Second):
@@ -236,12 +236,12 @@ func TestIdlePollingCancellationWaitsForInFlightNoop(t *testing.T) {
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	go func() { result <- c.Idle().Wait(ctx) }()
+	go func() { result <- c.Idle(nil).Wait(ctx) }()
 	select {
 	case <-noopRead:
 	case <-time.After(time.Second):
@@ -277,10 +277,10 @@ func TestIdleDoneStopsNoopPollingAfterInFlightCompletion(t *testing.T) {
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	idle := c.Idle()
+	idle := c.Idle(nil)
 	result := make(chan error, 1)
 	go func() { result <- idle.Wait(context.Background()) }()
 	select {
@@ -333,12 +333,12 @@ func TestIdleFirstDoneIntentWinsOverConcurrentDone(t *testing.T) {
 	}()
 	c := NewClient(clientConn, &Options{IdleTimeout: 5 * time.Millisecond})
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	idle := c.Idle()
+	idle := c.Idle(nil)
 	result := make(chan error, 1)
 	go func() { result <- idle.Wait(ctx) }()
 	select {
@@ -383,11 +383,11 @@ func TestIdleCancellationWhileRenewalWaitsForTaggedCompletion(t *testing.T) {
 	}()
 	c := NewClient(clientConn, &Options{IdleTimeout: 5 * time.Millisecond})
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	idle := c.Idle()
+	idle := c.Idle(nil)
 	result := make(chan error, 1)
 	go func() { result <- idle.Wait(ctx) }()
 	select {
@@ -427,11 +427,11 @@ func TestIdleRejectsConcurrentWait(t *testing.T) {
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	idle := c.Idle()
+	idle := c.Idle(nil)
 	first := make(chan error, 1)
 	go func() { first <- idle.Wait(ctx) }()
 	select {
@@ -470,12 +470,12 @@ func TestIdleCancellationBeforeContinuationClosesConnection(t *testing.T) {
 	}()
 	c := NewClient(clientConn, nil)
 	defer c.Close()
-	if err := c.WaitGreeting(context.Background()); err != nil {
+	if err := c.WaitGreeting(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := c.Idle().Wait(ctx); !errors.Is(err, context.Canceled) {
+	if err := c.Idle(nil).Wait(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("IDLE Wait() = %v", err)
 	}
 	if c.State() != StateLogout {
@@ -492,10 +492,10 @@ func TestIdleInvalidStateAndClosedReturnStartError(t *testing.T) {
 		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := c.WaitGreeting(ctx); err != nil {
+		if err := c.WaitGreeting(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		idle := c.Idle()
+		idle := c.Idle(nil)
 		if err := idle.Wait(ctx); err == nil || !strings.Contains(err.Error(), "not valid in not-authenticated state") {
 			t.Fatalf("Idle Wait() = %v", err)
 		}
@@ -511,7 +511,7 @@ func TestIdleInvalidStateAndClosedReturnStartError(t *testing.T) {
 		if err := c.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.Idle().Wait(context.Background()); !errors.Is(err, net.ErrClosed) {
+		if err := c.Idle(nil).Wait(context.Background()); !errors.Is(err, net.ErrClosed) {
 			t.Fatalf("Idle Wait() after Close = %v", err)
 		}
 	})

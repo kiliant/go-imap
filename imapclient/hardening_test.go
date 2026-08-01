@@ -36,7 +36,7 @@ func TestClientReadDeadline(t *testing.T) {
 		defer client.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		err := client.WaitGreeting(ctx)
+		err := client.WaitGreeting(ctx, nil)
 		var protocolErr *imap.Error
 		if !errors.As(err, &protocolErr) || protocolErr.Type != imap.ErrorTypeProtocol {
 			t.Fatalf("WaitGreeting() = %T %[1]v, want protocol timeout", err)
@@ -84,7 +84,7 @@ func TestClientCapsBufferedUntaggedResponses(t *testing.T) {
 			defer client.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			if err := client.WaitGreeting(ctx); err != nil {
+			if err := client.WaitGreeting(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			client.mu.Lock()
@@ -113,10 +113,10 @@ func TestClientRejectsAdversarialResponses(t *testing.T) {
 			defer func() { _ = server.Close() }()
 			client := NewClient(clientConn, nil)
 			defer client.Close()
-			if err := client.WaitGreeting(ctx); err != nil {
+			if err := client.WaitGreeting(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
-			if err := client.Noop().Wait(ctx); err == nil {
+			if err := client.Noop(nil).Wait(ctx); err == nil {
 				t.Fatal("hostile response completed NOOP successfully")
 			}
 		})
