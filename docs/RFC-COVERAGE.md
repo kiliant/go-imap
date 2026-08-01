@@ -52,14 +52,50 @@ least two independent servers in the interop matrix).
 
 | Capability | RFC | Status |
 |---|---|---|
-| CONDSTORE | 7162 | planned |
-| QRESYNC | 7162 | planned |
-| OBJECTID | 8474 | planned |
-| SAVEDATE | 8514 | planned |
-| STATUS=SIZE | 8438 | planned |
-| APPENDLIMIT | 7889 | planned |
-| PREVIEW | 8970 | planned |
-| REPLACE | 8508 | planned |
+| CONDSTORE | 7162 | verified |
+| QRESYNC | 7162 | verified |
+| OBJECTID | 8474 | planned [^objectid] |
+| SAVEDATE | 8514 | in progress [^rawfetch] |
+| STATUS=SIZE | 8438 | verified |
+| APPENDLIMIT | 7889 | done [^appendlimit] |
+| PREVIEW | 8970 | in progress [^preview] |
+| REPLACE | 8508 | done [^replace] |
+
+CONDSTORE, QRESYNC and STATUS=SIZE are exercised against Dovecot, Stalwart and
+Cyrus, including a disconnect/mutate/reconnect resynchronisation that asserts
+the reported delta.
+
+[^objectid]: The request side is reachable through the existing open FETCH and
+    STATUS item sets, but two response parsers reject the OBJECTID grammar and
+    fail the connection rather than the command: `EMAILID`/`THREADID` are
+    `"(" objectid ")"` (RFC 8474 section 5.3) and the STATUS `MAILBOXID` value
+    is likewise parenthesised (section 4.3), while both are read as an
+    `astring`. Fixing either means editing a file T09 does not own, so it is
+    escalated rather than worked around. No interop test requests these items:
+    against Stalwart and Cyrus they would take the session down.
+
+[^rawfetch]: The `SAVEDATE` item is requested and its value reaches the caller
+    intact, verified against Dovecot and Cyrus, but as a raw `imap.FetchDataRaw`
+    value rather than the typed `imap.FetchDataSaveDate` — the FETCH response
+    reader has no case for it. No data is lost; the typed decode is a
+    one-case addition to a file T09 does not own.
+
+[^appendlimit]: Only Cyrus advertises `APPENDLIMIT` anywhere in the matrix, and
+    only in the server-wide `APPENDLIMIT=4294967295` form, so the two-server
+    bar for `verified` cannot be met. Both forms RFC 7889 defines are
+    implemented and unit-tested, and the server-wide form is exercised live
+    against Cyrus.
+
+[^preview]: Requesting `PREVIEW` and receiving its value is verified against
+    Dovecot, Stalwart and Cyrus, but as raw data for the same reason as
+    `SAVEDATE`. The `LAZY` modifier is additionally unusable: it is encoded
+    unparenthesised, which RFC 8970 section 6 does not allow, so the server
+    sees two fetch items. Both are escalated.
+
+[^replace]: Only Dovecot advertises `REPLACE`, so the two-server bar cannot be
+    met. The native command is verified against Dovecot and the opt-in
+    non-atomic fallback of RFC 8508 section 3.4 against Stalwart, GreenMail,
+    Cyrus and Courier.
 
 ## Group C — content & structure (task T10)
 
