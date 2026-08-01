@@ -9,8 +9,11 @@ import (
 type StoreFlagsOp string
 
 const (
-	StoreFlagsSet    StoreFlagsOp = "FLAGS"
-	StoreFlagsAdd    StoreFlagsOp = "+FLAGS"
+	// StoreFlagsSet replaces the entire flag set (RFC 3501 FLAGS).
+	StoreFlagsSet StoreFlagsOp = "FLAGS"
+	// StoreFlagsAdd adds flags without removing others (RFC 3501 +FLAGS).
+	StoreFlagsAdd StoreFlagsOp = "+FLAGS"
+	// StoreFlagsRemove removes flags without affecting others (RFC 3501 -FLAGS).
 	StoreFlagsRemove StoreFlagsOp = "-FLAGS"
 )
 

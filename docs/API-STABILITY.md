@@ -80,6 +80,15 @@ func (c *Client) List(ref, pattern string, selectOpts, returnOpts int) *ListComm
 A `nil` options pointer must always be valid and mean "defaults". This lets us
 add an options struct to a method that has none without breaking callers.
 
+**Exception — PARTIAL options (RFC 9394, approved at T10 / v1.0 freeze).**
+`*PartialFetchOptions` and `*PartialSearchOptions` require a non-nil pointer
+with `Range` set: the PARTIAL modifier has no sensible default range, so a nil
+options pointer is invalid and is rejected locally. Optional companion fields
+(`ReturnOptions`, future PARTIAL modifiers) remain on those structs once the
+pointer is non-nil. Callers must pass `&PartialFetchOptions{Range: ...}` or
+`&PartialSearchOptions{Range: ...}`; do not "fix" this by making nil mean a
+magic default range.
+
 ## 4. Exported interfaces are a liability
 
 Adding a method to an exported interface breaks every external implementer.
