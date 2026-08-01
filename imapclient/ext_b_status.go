@@ -17,11 +17,20 @@ import (
 // accept 63-bit values, so the size is int64 rather than anything narrower.
 func StatusSize(data *StatusData) (int64, bool) {
 	value, ok := statusUint64(data, imap.StatusItemSize)
-	if !ok || value > uint64(MaxModSeq) {
+	if !ok || value > maxInt64 {
 		return 0, false
 	}
 	return int64(value), true
 }
+
+// maxInt64 is the ceiling shared by the 63-bit values in this group. RFC 8438
+// section 3 caps a mailbox SIZE at 63 bits and RFC 7162 section 3.1 caps a
+// mod-sequence at 63 bits, both for the same stated reason — so that
+// implementations on platforms without an unsigned 64-bit integer type remain
+// possible. They are separate decisions in separate RFCs that happen to
+// coincide, so this constant is deliberately not [MaxModSeq]: a size is not a
+// mod-sequence.
+const maxInt64 = uint64(1<<63 - 1)
 
 // StatusAppendLimit returns the APPENDLIMIT value from a STATUS response: the
 // largest message, in octets, that the server will accept into this mailbox.
@@ -42,7 +51,7 @@ func StatusAppendLimit(data *StatusData) (limit int64, unlimited bool, ok bool) 
 	}
 	switch v := raw.(type) {
 	case uint64:
-		if v > uint64(MaxModSeq) {
+		if v > maxInt64 {
 			return 0, false, false
 		}
 		return int64(v), false, true
@@ -117,6 +126,13 @@ type AppendLimitData struct {
 // is answered from the capability list without a round trip. A bare
 // "APPENDLIMIT" declares per-mailbox limits, which are read with
 // STATUS (APPENDLIMIT).
+//
+// The capability form is consulted first, and that order is load-bearing rather
+// than an optimisation: RFC 7889 section 3 introduces the STATUS item for
+// servers whose per-mailbox values are "not advertised as part of the
+// CAPABILITY response", and a server that does advertise a fixed limit need not
+// implement the item at all. Cyrus is exactly such a server — it advertises
+// APPENDLIMIT=4294967295 and answers STATUS (APPENDLIMIT) with a tagged BAD.
 //
 // When neither is advertised it returns an [imap.Error] wrapping
 // [ErrCapabilityNotAdvertised]. There is no fallback: the base protocol has no
