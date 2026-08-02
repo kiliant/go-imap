@@ -420,12 +420,18 @@ func (*FetchDataPreview) fetchData() {}
 // server sent it; Reader yields the exact wire bytes of the corresponding
 // value, excluding the item name and its separating whitespace.
 //
-// Reader is streaming so an unknown extension cannot force an unbounded
-// allocation by returning a large literal. It is owned by this value and must
-// be drained or explicitly closed when it also implements [io.Closer] before
-// the client can decode the next response. The reader becomes invalid when the
-// command or connection ends. Callers that need to retain the bytes must copy
-// them before then.
+// An unknown extension cannot force an unbounded allocation: a value too large
+// to hold in memory is consumed from the connection but not retained, and
+// Reader is then empty. An empty Reader therefore does not distinguish an empty
+// value from one that was too large to keep.
+//
+// Reader is owned by this value. Treat it as valid only until the command ends:
+// drain it, or close it when it also implements [io.Closer], before the client
+// decodes the next response, and copy the bytes if they must outlive the
+// command. The current implementation buffers, so a reader often survives
+// longer than that — do not rely on it. These obligations are what keep the
+// library free to stream this value in a future release without breaking
+// callers.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataRaw struct {
