@@ -1,7 +1,7 @@
 # go-imap
 
-An IMAP client library for Go, designed to reach complete capability coverage
-and a stable v1.0 without freezing extension-hostile APIs.
+An IMAP client library for Go, built so that complete capability coverage and a
+stable v1.0 are compatible goals rather than competing ones.
 
 ```
 import "github.com/kiliant/go-imap/imapclient"
@@ -10,27 +10,43 @@ import "github.com/kiliant/go-imap/imapclient"
 > **Status: pre-v1.0.** The wire codec, core vocabulary, connection/session,
 > authentication, mailbox and message commands, capability negotiation, ENABLE,
 > IDLE, extension groups A–E, the interoperability harness and examples are on
-> `main`. The API freeze review (T14) and the fuzz campaign (T13) were reopened
-> by the 2026-08-01 audit and are back in review: 28 exported methods were
-> missing the options struct that rule 3 requires, and extension groups C–E had
-> no fuzz targets at all. Both are fixed but not yet committed. Remaining for
-> v1.0: release engineering (T15 — CI, apidiff, CHANGELOG, release-candidate
-> tag), a full 30-minute campaign over all 60 fuzz targets, an interop re-run
-> against the changed signatures, and a few coverage rows still short of
-> `verified` (notably ENVELOPE/BODYSTRUCTURE interop and the orphan `ID`
-> capability). See `docs/ROADMAP.md`.
+> `main`, as are the fixes from the 2026-08-01 freeze audit — the rule-3
+> options-struct gate over the `Client` surface is mechanical and green, and the
+> extension groups C–E that shipped without fuzz targets now have them.
+> Remaining for v1.0: release engineering (T15 —
+> CI, apidiff, CHANGELOG, release-candidate tag), a full campaign over all fuzz
+> targets, an interop re-run against the changed signatures, and a few coverage
+> rows still short of `verified`. See `docs/ROADMAP.md`.
 
-## Why another one
+## The design constraint
 
-The existing Go IMAP libraries have spent years in beta. The cause is structural,
-not effort: their public APIs model FETCH items, SEARCH criteria and STATUS items
-as closed sets, so every newly implemented RFC forces a breaking change, and the
-API can never be frozen.
+IMAP is not a finished protocol. FETCH items, SEARCH criteria, STATUS items and
+capability names all grow with nearly every new RFC, so an API that models them
+as closed sets has to break its callers to implement the next one. That is what
+makes an IMAP client hard to freeze — not the volume of features.
 
-This library treats that as the primary design constraint. The rule every API
-decision is measured against is written down in `docs/API-STABILITY.md`:
+So this library measures every public API decision against one question, written
+down in `docs/API-STABILITY.md`:
 
 > Can an extension nobody has written yet be added without a breaking change?
+
+In practice that means open-ended sets get open-ended types. FETCH items are a
+sum type over concrete items, not a struct of booleans. SEARCH criteria are an
+expression tree that mirrors the grammar. STATUS items and response codes are
+open string-backed types. A capability this library has never heard of can still
+be requested, and data it cannot model is preserved rather than dropped:
+
+```go
+// Works today, before the library models the item.
+imap.FetchItemKeyword("FUTURE-ITEM")   // request it
+// ... comes back as *imap.FetchDataRaw, keyed by its wire name, not discarded.
+```
+
+When that RFC is implemented later, it adds a constant or a concrete type.
+Nothing that already compiles stops compiling. `context.Context` is the first
+parameter of every blocking call, options travel in structs, and protocol
+failures all surface as one `*imap.Error` carrying the response code — for the
+same reason.
 
 ## Goals
 
@@ -39,7 +55,10 @@ decision is measured against is written down in `docs/API-STABILITY.md`:
 - **Stable.** v1.0 with a real compatibility promise, enforced in CI by `apidiff`.
 - **Verified against real servers.** Dovecot, Stalwart, GreenMail, Cyrus, Courier
   and Apache James under podman — not just against a mock. See `docs/INTEROP.md`.
-- **Zero dependencies.** Standard library only, test code included.
+- **Zero dependencies.** Standard library only, test code included. SASL,
+  SASLprep, Unicode normalisation, DEFLATE and charset decoding are all reachable
+  from the standard library, and a `go.sum` entry is a stability liability this
+  project does not control.
 - **Safe against hostile servers.** Every parser is fuzzed; malformed input
   returns an error, never a panic.
 
