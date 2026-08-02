@@ -37,8 +37,10 @@ mailboxes.
 
 Therefore:
 
-- The parser accepts the rev1 grammar as its baseline, which is a superset of
-  what rev2 servers send in practice.
+- The parser accepts the union of the rev1 and rev2 wire forms as its baseline —
+  neither grammar is a subset of the other. Deliberate decoding deviations (8-bit
+  atoms where servers send UTF-8, 63-bit `number64`) are documented in
+  `internal/imapwire`.
 - rev2-specific behaviour activates via `ENABLE IMAP4rev2` (RFC 5161) when the
   server advertises `IMAP4REV2`.
 - Differences the client must absorb rather than expose: rev2 folds `ESEARCH`
