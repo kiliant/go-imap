@@ -158,10 +158,24 @@ func TestStatusAccessorsPreserveAbsence(t *testing.T) {
 	if _, _, ok := StatusAppendLimit(empty); ok {
 		t.Error("StatusAppendLimit reported a value for an absent item")
 	}
+	if _, ok := empty.Number(imap.StatusItemSize); ok {
+		t.Error("Number reported a value for an absent item")
+	}
+	if _, ok := (*StatusData)(nil).Number(imap.StatusItemSize); ok {
+		t.Error("Number on nil StatusData reported a value")
+	}
 	zero := &StatusData{Values: map[imap.StatusItemKeyword]any{imap.StatusItemSize: uint64(0)}}
 	size, ok := StatusSize(zero)
 	if !ok || size != 0 {
 		t.Errorf("StatusSize(zero) = (%d, %v)", size, ok)
+	}
+	if n, ok := zero.Number(imap.StatusItemSize); !ok || n != 0 {
+		t.Errorf("Number(SIZE) = (%d, %v)", n, ok)
+	}
+	// APPENDLIMIT NIL is stored as a string, not a uint64.
+	nilLimit := &StatusData{Values: map[imap.StatusItemKeyword]any{imap.StatusItemAppendLimit: "NIL"}}
+	if _, ok := nilLimit.Number(imap.StatusItemAppendLimit); ok {
+		t.Error("Number reported a string-valued STATUS item as uint64")
 	}
 }
 

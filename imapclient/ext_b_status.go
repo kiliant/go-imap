@@ -64,11 +64,7 @@ func StatusAppendLimit(data *StatusData) (limit int64, unlimited bool, ok bool) 
 }
 
 func statusUint64(data *StatusData, item imap.StatusItemKeyword) (uint64, bool) {
-	if data == nil || data.Values == nil {
-		return 0, false
-	}
-	value, ok := data.Values[item].(uint64)
-	return value, ok
+	return data.Number(item)
 }
 
 // MailboxSizeOptions configures [Client.MailboxSize]. A nil pointer selects
