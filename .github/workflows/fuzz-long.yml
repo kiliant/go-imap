@@ -1,0 +1,88 @@
+name: Fuzz (long)
+
+# 10 minutes per discovered target, nightly. The duration is the human-approved
+# policy of 2026-08-03; the per-pull-request 60 s smoke run lives in ci.yml.
+#
+# Sharded eight ways at FUZZ_PARALLEL=1. That is not throughput tuning: running
+# targets concurrently starves each one of executions — the entire point of a
+# long campaign — and it is what produces the `context deadline exceeded`
+# artifact that .github/scripts/fuzz.sh has to retry around.
+
+on:
+  schedule:
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Duration per target'
+        required: false
+        default: '10m'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-long
+  cancel-in-progress: false
+
+jobs:
+  fuzz-long:
+    name: fuzz-long ${{ matrix.shard }}/8
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      SHARD_INDEX: ${{ matrix.shard }}
+      SHARD_TOTAL: 8
+      FUZZ_PARALLEL: 1
+      FUZZ_OUT: ${{ github.workspace }}/fuzz-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: campaign
+        env:
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '10m' }}
+        run: .github/scripts/fuzz.sh "$FUZZTIME"
+
+      - name: upload logs and any crashers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-long-shard-${{ matrix.shard }}
+          path: |
+            fuzz-out/
+            **/testdata/fuzz/**
+          retention-days: 30
+
+      - name: report a crasher
+        # A crasher is a corpus file the engine wrote into the working tree. It
+        # must reach the repository, not evaporate with the runner — the
+        # artifact above holds it, and this makes the run's summary say so
+        # instead of leaving it to whoever opens the logs.
+        if: failure()
+        run: |
+          # --ignored as well as --untracked: .gitignore excludes
+          # testdata/fuzz/*/crash-*, so a plain status would hide exactly the
+          # files this step exists to surface.
+          crashers="$(git status --porcelain --untracked-files=all \
+            --ignored=matching -- '*testdata/fuzz*')"
+          if [ -n "$crashers" ]; then
+            {
+              echo "### New fuzz crashers"
+              echo
+              echo 'Commit these into the corpus with the fix:'
+              echo '```'
+              echo "$crashers"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no crasher files written; see the shard logs for the failure" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi

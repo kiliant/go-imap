@@ -1,0 +1,186 @@
+name: CI
+
+# Everything that must be green before a change lands. The container-backed
+# interop matrix and the long fuzz campaign live in interop.yml and
+# fuzz-long.yml: they need a container runtime or hours of CPU, and a gate that
+# slow stops being a gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The module has no dependencies, so there is nothing to download and nothing
+  # a proxy could substitute. Failing closed is cheaper than discovering later
+  # that a dependency arrived unnoticed.
+  GOFLAGS: -mod=readonly
+
+jobs:
+  test:
+    # Two most recent Go majors. The older of the two must equal the `go`
+    # directive in go.mod: testing below it is meaningless, testing only above
+    # it leaves the declared floor unverified. If go.mod's floor moves, move
+    # this matrix in the same commit.
+    name: test (go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ['1.24.x', '1.25.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+          # No dependencies means no module cache worth restoring, and a cache
+          # miss on a dependency-free module is pure latency.
+          cache: false
+      - name: go build
+        run: go build ./...
+      - name: go test -race
+        # Not -short: the examples/ compile gate and the API surface walk in
+        # api_surface_test.go both skip under -short, and the examples are the
+        # only thing that compiles examples/**, whose files all carry
+        # `//go:build ignore` and are therefore invisible to `go build ./...`.
+        run: go test -race -count=1 ./...
+
+  vet:
+    name: vet, staticcheck, gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt reported unformatted files:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+          echo "gofmt: clean"
+
+      - name: go vet
+        run: go vet ./...
+
+      # The tagged variants are the point of this job, not an extra. Interop
+      # test files are excluded from an untagged `go vet ./...`, so a vet job
+      # that omits the tags reports clean while the tagged build has findings —
+      # which is exactly how a `testing.Output requires go1.25` violation
+      # survived unnoticed. Type-checking only; no container runtime needed.
+      - name: go vet -tags=interop
+        run: go vet -tags=interop ./...
+
+      - name: go vet -tags='interop interop_emulated'
+        run: go vet -tags='interop interop_emulated' ./...
+
+      - name: install staticcheck
+        # From a scratch directory: `go install pkg@version` is module-aware and
+        # ignores the surrounding go.mod, but running it elsewhere makes that
+        # independence obvious rather than a thing you have to know.
+        run: |
+          cd "$(mktemp -d)"
+          GOFLAGS= go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: staticcheck
+        run: |
+          "$(go env GOPATH)/bin/staticcheck" ./...
+          "$(go env GOPATH)/bin/staticcheck" -tags=interop ./...
+          "$(go env GOPATH)/bin/staticcheck" -tags='interop interop_emulated' ./...
+
+      - name: tools left go.mod alone
+        run: git diff --exit-code -- go.mod go.sum
+
+  supply-chain:
+    # The zero-dependency policy, mechanised. Without this assertion the policy
+    # erodes on the first convenient import and nothing notices.
+    name: zero dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: .github/scripts/check-no-dependencies.sh
+
+  fuzz-smoke:
+    # 60 s per target on every pull request. Sharded because discovery finds 61
+    # targets and 61 minutes is not a pull-request gate. FUZZ_PARALLEL=1: the
+    # deadline artifact documented in .github/scripts/fuzz.sh is caused by
+    # oversubscription, and hosted runners have few cores.
+    name: fuzz-smoke ${{ matrix.shard }}/4
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      SHARD_INDEX: ${{ matrix.shard }}
+      SHARD_TOTAL: 4
+      FUZZ_PARALLEL: 1
+      FUZZ_OUT: ${{ github.workspace }}/fuzz-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: .github/scripts/fuzz.sh 60s
+      - name: upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-shard-${{ matrix.shard }}
+          path: fuzz-out/
+          retention-days: 7
+
+  apidiff:
+    name: apidiff
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # apidiff needs the tag history to find the previous tag.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - name: run apidiff
+        env:
+          APIDIFF_OUT: ${{ github.workspace }}/apidiff-out
+        run: .github/scripts/apidiff.sh
+      - name: comment on the pull request
+        # Best effort. A pull request from a fork gets a read-only token, so the
+        # comment fails there; the report is also written to the job summary,
+        # which is always readable.
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -s apidiff-out/report.md ] || exit 0
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file apidiff-out/report.md

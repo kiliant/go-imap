@@ -1,0 +1,102 @@
+name: Interop
+
+# Real servers under a container runtime. Correctness against the RFC is
+# necessary but not sufficient: servers disagree, and the disagreements are
+# where client bugs live.
+#
+# Not on pull requests. Starting five server images per run would make the
+# pull-request gate an order of magnitude slower than the code review it gates,
+# and the harness skips on absent capabilities rather than failing, so a run
+# here is informative rather than blocking.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly, 03:17 UTC. Off the hour so this run does not queue behind every
+    # other project's midnight cron.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      servers:
+        description: 'Comma-separated subset (GO_IMAP_INTEROP_SERVERS); empty means all'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  interop:
+    name: interop (native profiles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GO_IMAP_INTEROP_SERVERS: ${{ github.event.inputs.servers }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: container engine
+        run: .github/scripts/container-engine.sh
+
+      # The two commands below must stay separate and sequential. Go runs one
+      # test process per package, and every process with a TestMain using the
+      # harness owns an independent container lifecycle; combining the package
+      # lists starts those lifecycles concurrently, which means several copies
+      # of every server image competing for the same runner. Container names
+      # embed the PID so they no longer collide outright, but the resource
+      # argument stands. See docs/INTEROP.md.
+      - name: imapclient (interop-tagged)
+        run: go test -count=1 -race -tags=interop ./imapclient
+
+      - name: interop packages
+        run: go test -count=1 -race -tags=interop ./interop/...
+
+      - name: container diagnostics
+        if: failure()
+        run: |
+          podman ps -a || true
+          echo "engine was: ${GO_IMAP_CONTAINER_ENGINE:-unknown}"
+
+  interop-emulated:
+    # Apache James only: amd64-only image, tier 3. Hosted runners are amd64, so
+    # on GitHub this is native and the tag is only what enables the profile —
+    # on the arm64 dev host it genuinely emulates. Nightly only either way,
+    # because a JVM server is the slowest thing in the matrix.
+    name: interop (emulated profiles)
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: container engine
+        run: .github/scripts/container-engine.sh
+
+      - name: enable cross-architecture execution
+        # A no-op on an amd64 runner; present so this job behaves the same way
+        # if it is ever moved to an arm64 runner.
+        run: |
+          if [ "$(uname -m)" != "x86_64" ]; then
+            docker run --rm --privileged docker.io/tonistiigi/binfmt:latest --install amd64
+          else
+            echo "runner is amd64; the tier 3 image runs natively here"
+          fi
+
+      - name: imapclient (interop-tagged, emulated)
+        run: go test -count=1 -race -tags='interop interop_emulated' ./imapclient
+
+      - name: interop packages (emulated)
+        run: go test -count=1 -race -tags='interop interop_emulated' ./interop/...
