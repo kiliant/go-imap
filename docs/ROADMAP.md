@@ -75,9 +75,27 @@ reopened. An audit of that claim found seven issues, all since fixed:
 - `staticcheck` had 21 findings, `gofmt` was dirty, and nothing compiled
   `examples/**` at all.
 
-Exit is still not met. T15 (CI jobs, apidiff gate, CHANGELOG, release-candidate
-tag) has not started; a full 30-minute campaign over all 60 targets and an
-interop re-run against the changed signatures are both outstanding.
+Both previously-outstanding items are since closed: a full 10-minute campaign
+over all 61 discovered fuzz targets completed 2026-08-03 (61/61 pass, no
+crasher — three `context deadline exceeded` hits at the fuzztime boundary
+confirmed as a `FUZZ_PARALLEL=4` scheduling artifact, not a real failure), and
+the native interop matrix re-ran green against the changed signatures.
+
+**Status (2026-08-03):** T15's engineering is done and committed to local
+`main` — `.github/**` (test/vet/interop/interop-emulated/fuzz-smoke/fuzz-long/
+apidiff/supply-chain workflows) and `CHANGELOG.md`, plus the two follow-ups it
+surfaced (a `staticcheck` suppression in a T08-owned test, and a podman/docker
+engine-discovery fix in `interop/harness`). All local verification is green:
+full race suite, `go vet`/`staticcheck`/`gofmt` clean untagged and under both
+interop tag sets, examples compile, Go 1.24/1.25 floor both build, and a
+scratch consumer module imports the library cleanly.
+
+Exit is still not met, and the reason is no longer engineering: T15's own
+"done when" requires CI jobs green on `main`, the `apidiff` gate having run on
+a real PR, and a release-candidate tag cut and verified end to end — none of
+which can happen without pushing these commits to `origin`. The user was asked
+and chose not to push yet, so this is a deliberate hold pending a human
+go-ahead, not an open task. See `.state/status.md`'s T15 row.
 
 ## v1.0 — API freeze
 

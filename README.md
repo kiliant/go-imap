@@ -12,11 +12,13 @@ import "github.com/kiliant/go-imap/imapclient"
 > IDLE, extension groups A–E, the interoperability harness and examples are on
 > `main`, as are the fixes from the 2026-08-01 freeze audit — the rule-3
 > options-struct gate over the `Client` surface is mechanical and green, and the
-> extension groups C–E that shipped without fuzz targets now have them.
-> Remaining for v1.0: release engineering (T15 —
-> CI, apidiff, CHANGELOG, release-candidate tag), a full campaign over all fuzz
-> targets, an interop re-run against the changed signatures, and a few coverage
-> rows still short of `verified`. See `docs/ROADMAP.md`.
+> extension groups C–E that shipped without fuzz targets now have them. A full
+> 10-minute campaign over all 61 fuzz targets and a native interop re-run
+> against the changed signatures both completed green 2026-08-03. Release
+> engineering (T15 — CI workflows, the `apidiff` gate, `CHANGELOG.md`) is built
+> and locally verified but not yet pushed to `origin`, pending a deliberate
+> human go-ahead; a few coverage rows are still short of `verified`. See
+> `docs/ROADMAP.md` and `.state/status.md`.
 
 ## The design constraint
 
