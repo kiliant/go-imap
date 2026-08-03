@@ -31,13 +31,23 @@ type commandRunner interface {
 	Run(context.Context, ...string) (string, error)
 }
 
-type podmanRunner struct{}
+// engineRunner shells out to whichever container engine this host has. The
+// harness writes podman command lines; translateArgs adapts them when the
+// resolved engine is docker, so a CI runner with only docker needs no PATH
+// shim. Resolution is deferred to the first command — a missing engine is a
+// harness error at Start time, not a package-initialisation panic.
+type engineRunner struct{}
 
-func (podmanRunner) Run(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "podman", args...)
+func (engineRunner) Run(ctx context.Context, args ...string) (string, error) {
+	engine, err := detectEngineOnce()
+	if err != nil {
+		return "", err
+	}
+	args = translateArgs(engine.kind, args)
+	cmd := exec.CommandContext(ctx, engine.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("podman %s: %w\n%s", strings.Join(args, " "), err, out)
+		return string(out), fmt.Errorf("%s %s: %w\n%s", engine.kind, strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -52,10 +62,11 @@ type Manager struct {
 	servers []*Server
 }
 
-// NewManager constructs a podman-backed container manager.
+// NewManager constructs a container manager backed by the host's container
+// engine (podman by default, docker as a fallback; see EngineEnv).
 func NewManager() *Manager {
 	return &Manager{
-		runner:       podmanRunner{},
+		runner:       engineRunner{},
 		interopRoot:  interopRoot(),
 		startTimeout: defaultStartTimeout,
 	}
@@ -191,7 +202,7 @@ func extractContainerID(output string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("interop: podman run returned no container ID:\n%s", output)
+	return "", fmt.Errorf("interop: container run returned no container ID:\n%s", output)
 }
 
 func (m *Manager) waitReady(ctx context.Context, server *Server) (string, error) {
@@ -228,7 +239,7 @@ func (m *Manager) publishedAddress(ctx context.Context, server *Server, port int
 	}
 	line := strings.TrimSpace(strings.Split(out, "\n")[0])
 	if line == "" {
-		return "", fmt.Errorf("interop: podman returned no published port")
+		return "", fmt.Errorf("interop: container engine returned no published port")
 	}
 	host, publishedPort, err := net.SplitHostPort(line)
 	if err != nil {
