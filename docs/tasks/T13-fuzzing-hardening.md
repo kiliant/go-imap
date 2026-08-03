@@ -53,7 +53,8 @@ Do not make the change yourself — you do not own those files.
 
 ## Done when
 
-All fuzz targets have recorded 30-minute clean runs. The adversarial suite,
+All fuzz targets have recorded 10-minute clean runs (human-approved campaign
+duration, 2026-08-03). The adversarial suite,
 module-wide `-race` run, memory-bound streaming regression, production read
 deadline, and buffered-response limits pass. T15 owns promoting these established
 checks into the 60-second PR fuzz smoke and nightly long-run CI jobs; CI file

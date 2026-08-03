@@ -17,7 +17,7 @@ only T15 may change.
 | `interop` | Run `go test -count=1 -race -tags=interop ./imapclient`, then separately `go test -count=1 -race -tags=interop ./interop/...` — native profiles, on push to main and nightly; separate lifecycles prevent container-name collisions |
 | `interop-emulated` | Run `go test -count=1 -race -tags='interop interop_emulated' ./imapclient`, then separately `go test -count=1 -race -tags='interop interop_emulated' ./interop/...` — Apache James (amd64), nightly only |
 | `fuzz-smoke` | 60 s per fuzz target on every PR |
-| `fuzz-long` | 30 min per target, nightly |
+| `fuzz-long` | 10 min per target, nightly (human-approved 2026-08-03) |
 | `apidiff` | Compare exported API against the previous tag |
 
 The `vet` job must run the tagged variants, not just the default build. Interop
