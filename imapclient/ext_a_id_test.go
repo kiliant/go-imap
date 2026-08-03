@@ -99,6 +99,7 @@ func TestIDRequiresContext(t *testing.T) {
 			s.ok(tag)
 		}
 	})
+	//lint:ignore SA1012 deliberately exercising the nil-context rejection path
 	_, err := c.ID(nil, nil)
 	var imapErr *imap.Error
 	if !errors.As(err, &imapErr) || imapErr.Text == "" {
