@@ -2,13 +2,17 @@
 #
 # CI fuzz runner.
 #
-# Targets are DISCOVERED, never listed. A hand-maintained list is how
-# FuzzParseSeqSet went uncampaigned and how extension groups C/D/E shipped with
-# no targets at all: nothing failed, the list simply did not mention them. This
-# mirrors .state/run-fuzz.sh (the local campaign runner) with three CI-specific
-# differences:
+# Targets are DISCOVERED, never listed. A hand-maintained list is how go-imap's
+# FuzzParseSeqSet went uncampaigned and how its extension groups C/D/E shipped
+# with no targets at all: nothing failed, the list simply did not mention them.
 #
-#   1. sharding, so a 61-target campaign fits inside a job's time budget;
+# This file is kept byte-identical in go-imap and go-smtp. It is
+# repository-agnostic by construction — nothing here names a module, package or
+# target — and the duplication is the zero-dependency policy's own consequence,
+# since sharing it would mean a module dependency between the two. Diff the two
+# copies before editing either. Three CI-specific properties:
+#
+#   1. sharding, so a large campaign fits inside a job's time budget;
 #   2. FUZZ_PARALLEL defaults to 1, because the deadline artifact below is
 #      caused by oversubscription and CI runners have few cores;
 #   3. the retry-solo policy for that artifact.
