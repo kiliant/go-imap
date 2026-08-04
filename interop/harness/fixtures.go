@@ -76,7 +76,11 @@ func (r byteReader) Read(dst []byte) (int, error) {
 func Seed(ctx context.Context, session *Session, profile definition.Profile) error {
 	for _, mailbox := range []string{"Archive", "Sent", "T&AOs-st"} { // "Tëst" in modified UTF-7.
 		wireName := profile.MailboxPrefix + mailbox
-		if err := session.Create(ctx, wireName); err != nil {
+		if err := session.Create(ctx, wireName); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exist") {
+			// James's demo image auto-provisions a standard mailbox set
+			// (including Archive and Sent) on first login, before Seed ever
+			// runs. A mailbox that already exists is exactly the state this
+			// loop wants, so that specific failure is not fatal.
 			return fmt.Errorf("create fixture mailbox %s: %w", mailbox, err)
 		}
 	}
