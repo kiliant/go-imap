@@ -108,7 +108,7 @@ func TestIdlePushInterop(t *testing.T) {
 func dialIdleInteropClient(t *testing.T, ctx context.Context, server *harness.Server, updates chan<- uint32) *imapclient.Client {
 	t.Helper()
 	var trace bytes.Buffer
-	client, err := imapclient.Dial(ctx, server.Address, &imapclient.Options{
+	client, err := interopDial(ctx, server, &imapclient.Options{
 		AllowInsecureAuth: true,
 		DebugWriter:       &trace,
 		UnilateralData: &imapclient.UnilateralDataHandler{

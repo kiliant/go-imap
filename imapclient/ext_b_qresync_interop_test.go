@@ -19,7 +19,7 @@ import (
 // t09Session is one live client plus the mailbox name it works on.
 func t09Dial(t *testing.T, ctx context.Context, server *harness.Server, enableQResync bool) *imapclient.Client {
 	t.Helper()
-	client, err := imapclient.Dial(ctx, server.Address, &imapclient.Options{AllowInsecureAuth: true})
+	client, err := interopDial(ctx, server, &imapclient.Options{AllowInsecureAuth: true})
 	if err != nil {
 		t.Fatalf("dial %s: %v", server.Profile.Name, err)
 	}

@@ -553,7 +553,7 @@ func t08ForEachServer(t *testing.T, body func(*testing.T, context.Context, *harn
 
 func t08Dial(t *testing.T, ctx context.Context, server *harness.Server) *imapclient.Client {
 	t.Helper()
-	client, err := imapclient.Dial(ctx, server.Address, &imapclient.Options{AllowInsecureAuth: true})
+	client, err := interopDial(ctx, server, &imapclient.Options{AllowInsecureAuth: true})
 	if err == nil {
 		err = client.Login(ctx, authInteropUsername, authInteropPassword, nil)
 	}

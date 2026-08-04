@@ -5,6 +5,7 @@ package imapclient_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,27 @@ import (
 	"github.com/kiliant/go-imap/imapclient"
 	"github.com/kiliant/go-imap/interop/harness"
 )
+
+// interopDial dials server, using implicit TLS when its profile requires
+// LOGIN over an encrypted connection instead of the plaintext harness
+// address. James is the one profile that needs this today: its demo image
+// refuses LOGIN on a cleartext connection (see interop/definition/profile.go
+// and interop/servers/james/profile.go).
+func interopDial(ctx context.Context, server *harness.Server, opts *imapclient.Options) (*imapclient.Client, error) {
+	if server.Profile.TLSPort == 0 {
+		return imapclient.Dial(ctx, server.Address, opts)
+	}
+	addr, ok := server.AddressForPort(server.Profile.TLSPort)
+	if !ok {
+		return nil, fmt.Errorf("no host port resolved for TLS port %d", server.Profile.TLSPort)
+	}
+	cloned := imapclient.Options{}
+	if opts != nil {
+		cloned = *opts
+	}
+	cloned.InsecureSkipVerify = true
+	return imapclient.DialTLS(ctx, addr, &cloned)
+}
 
 // TestMailboxLifecycle exercises the T05 commands against the two M1 server
 // implementations. The mailbox name deliberately contains non-ASCII text so
@@ -217,7 +239,7 @@ func mailboxInteropServers(t *testing.T) []*harness.Server {
 func dialMailboxInteropClient(t *testing.T, ctx context.Context, server *harness.Server) *imapclient.Client {
 	t.Helper()
 	var trace bytes.Buffer
-	client, err := imapclient.Dial(ctx, server.Address, &imapclient.Options{
+	client, err := interopDial(ctx, server, &imapclient.Options{
 		AllowInsecureAuth: true,
 		DebugWriter:       &trace,
 	})
