@@ -172,9 +172,8 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 		if len(command) == 0 {
 			return nil, fmt.Errorf("interop: %s has an empty provision command", profile.Name)
 		}
-		args := append([]string{"exec", server.ID}, command...)
-		if _, err := m.runner.Run(ctx, args...); err != nil {
-			return nil, fmt.Errorf("interop: provision %s with %q: %w", profile.Name, command, err)
+		if err := m.runProvisionCommand(ctx, server, profile.Name, command); err != nil {
+			return nil, err
 		}
 	}
 
@@ -182,6 +181,33 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 	m.servers = append(m.servers, server)
 	m.mu.Unlock()
 	return server, nil
+}
+
+// runProvisionCommand runs one provisioning command against server, retrying
+// on failure until ctx is done. Provisioning fires as soon as the readiness
+// probe's port opens, but a server's own internal subsystems can still be
+// initializing after that. Confirmed live for James: its JMX port accepts
+// TCP connections well before its JMX auth realm is loaded, so the first
+// james-cli command can fail with "Authentication failed! Credentials
+// required" even though the identical command succeeds moments later on the
+// same container.
+func (m *Manager) runProvisionCommand(ctx context.Context, server *Server, name string, command []string) error {
+	args := append([]string{"exec", server.ID}, command...)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		if _, err := m.runner.Run(ctx, args...); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("interop: provision %s with %q: %w (last attempt: %v)", name, command, ctx.Err(), lastErr)
+		case <-ticker.C:
+		}
+	}
 }
 
 func extractContainerID(output string) (string, error) {
