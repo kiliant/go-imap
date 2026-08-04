@@ -52,13 +52,27 @@ Extension groups C, D and E. Tier-2 servers (Cyrus, Courier) join the matrix.
 The orphan `ID` (RFC 2971) capability is implemented (`Client.ID`); M3 exit is
 met once coverage has no `planned` rows outside the deferred set.
 
-## M4 — Hardening and the freeze (T13, T14, T15)
+## M4 — Hardening and the freeze (T13, T14, T15, T17)
 
 Fuzzing corpus, API surface review, documentation and examples, release
-engineering.
+engineering, and the bidirectional vocabulary audit.
 
 **Exit:** `apidiff` gate active in CI; API surface test passes; every exported
-symbol has a doc comment; examples compile and run against the matrix.
+symbol has a doc comment; examples compile and run against the matrix; **and
+`package imap` has been reviewed from the server direction (T17), with any
+reshaping of an existing type landed before the tag.**
+
+The last criterion was added 2026-08-03 and is the one thing v1.0 gained from
+scoping the server early. Rationale: adding types after the freeze is additive
+and always allowed, but reshaping one is not, and a vocabulary exercised in only
+one direction can hold a type a server can consume but cannot naturally produce.
+A client-side review cannot find that, because the client is the direction that
+works. See `docs/tasks/T17-bidirectional-vocabulary-audit.md` and
+`docs/SERVER-DESIGN.md` §9.
+
+A verdict of "nothing needs to change" is the likely outcome and is a perfectly
+good result — the architecture was built for this. It is worth something only if
+it is written down per type rather than assumed.
 
 **Status (2026-08-01, after audit):** T13 and T14 were marked done and both were
 reopened. An audit of that claim found seven issues, all since fixed:
@@ -97,27 +111,74 @@ which can happen without pushing these commits to `origin`. The user was asked
 and chose not to push yet, so this is a deliberate hold pending a human
 go-ahead, not an open task. See `.state/status.md`'s T15 row.
 
+## M5 — Server design (T16) — runs *before* v1.0
+
+Design document only. No `imapserver` code.
+
+This milestone was moved ahead of the v1.0 tag on 2026-08-03. The implementation
+still waits; the design does not, because the design is what tells us the freeze
+is safe (see M4's added exit criterion). Running it during the T15 hold costs
+nothing on the critical path.
+
+**Exit:** `docs/SERVER-DESIGN.md` approved by the human, including its
+recommendation on the `imapserver` versioning carve-out (§8); T19–T25 specs
+written against the approved abstraction.
+
+**Status (2026-08-03):** design drafted, awaiting approval. T17 and T18 are
+specced; T19–T25 are scoped on the board without specs, deliberately — they
+depend on the abstraction the approval decides.
+
 ## v1.0 — API freeze
 
 After this tag, additive changes only. Removals require two minor releases of
 deprecation and do not land before v2.
 
-## M5 — Server framework (T16)
+Open question for the tag, raised by `SERVER-DESIGN.md` §9 and **not yet
+decided**: whether `imapserver/**` sits inside or outside this promise. Landing
+it inside a v1 module freezes the backend abstraction on its first commit,
+before any third-party backend has ever been written against it — which is the
+trap this project exists to avoid, one layer up.
 
-Design document first, then implementation. Deliberately after v1.0 of the
-client: the shared `package imap` vocabulary already makes this additive, so
-there is no cost to waiting and a real cost to rushing it.
+The recommendation is a **nested module** for `imapserver`, versioned v0.x
+independently of the v1.x root. An earlier revision recommended a same-module
+carve-out enforced by the `apidiff` gate; that was reversed, because an
+`apidiff` scope constrains us and not the user's expectation, and a module
+tagged v1 sets that expectation regardless of what CI does. It needs a written
+exception in `docs/API-STABILITY.md`.
+
+## M6 — Server implementation (T18–T25) — after v1.0
+
+Server-direction codec and message analysis first — they are the bulk of the
+work and neither depends on the backend abstraction. Then the server core,
+backend contract and reference backend, the base command set, extensions,
+conformance testing, and the `imapserver` release.
+
+**Exit:** the reference server passes Dovecot's `imaptest`; it appears in the
+interop matrix as a first-class entry with a capability table comparable to
+Dovecot's and Stalwart's; server-side fuzz targets are green over a recorded
+campaign; `imapserver` has a documented stability status.
 
 ## Sequencing
 
 ```
 T01 ──┬── T03 ──┬── T04 ──┐
       │         ├── T05 ──┼── T07 ──┬── T08 ──┬── T10 ──┐
-T02 ──┘         └── T06 ──┘         └── T09 ──┴── T11 ──┼── T14 ── T15 ── v1.0
-                                                        │
-                    T12 ──────────────────────── T13 ───┘
+T02 ──┘         └── T06 ──┘         └── T09 ──┴── T11 ──┼── T14 ── T15 ──┐
+                                                        │                ├── v1.0
+                    T12 ──────────────────────── T13 ───┘                │
+                                                                         │
+                    T16 ── T17 ──────────────────────────────────────────┘
+                     │
+                     └── T18 ──┬── T19 ── T20 ──┬── T22 ──┬── T23 ──┐
+                               │                │         │         ├── T25
+                               └── T21 ─────────┘         └── T24 ──┘
+                                        (M6 — after v1.0)
 ```
 
 T12 (interop harness) has no dependency on the client beyond T03 and should start
 early and in parallel — the matrix is worthless if it arrives after the code it
 was supposed to validate.
+
+T18 and T21 are M6's parallel pair, and between them they are most of the server
+project. Neither waits on the backend abstraction, so if M6 needs to start
+quickly, it starts with those two.

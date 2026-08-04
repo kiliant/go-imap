@@ -75,6 +75,13 @@ Dependencies point downward only. `package imap` must not import `imapclient`,
 and must not perform I/O — it is the shared vocabulary, which is what lets the
 future server framework reuse it without an API break.
 
+The server framework is **scoped but not approved**: `docs/SERVER-DESIGN.md`
+(milestone M5 design, M6 implementation) adds `imapserver`, `internal/imapcodec`
+and `internal/imapmessage` to the tree above. **No `imapserver` code may be
+written until that document is approved by the human and v1.0 is tagged.** One
+consequence lands before then: T17, a bidirectional audit of `package imap`, is a
+v1.0 exit criterion, because reshaping a type after the freeze is not additive.
+
 ## Zero external dependencies
 
 The standard library only. A `go.sum` entry is a stability liability we do not

@@ -66,10 +66,27 @@ same reason.
 
 ## Non-goals
 
-- A mail *server* framework — deferred to milestone M5, after v1.0 of the client.
-  The core types are already split into a shared package so this can be added
-  without an API break.
 - SMTP, POP3, JMAP, MIME composition. Use dedicated libraries.
+- Mail *storage* — maildir, SQL, delivery, a user database. The planned server
+  framework (below) defines a backend interface; it does not implement one for
+  production.
+
+## Not yet, but scoped
+
+A server framework, milestone M6, after v1.0 of the client. The core types were
+split into a shared I/O-free package from the first commit precisely so this can
+be added without an API break, and that has held up.
+
+Its design is scoped now rather than after the tag, for one reason: adding types
+to the shared package after v1.0 is additive and always allowed, but *reshaping*
+one is not — and a vocabulary that has only ever been exercised in the client
+direction can contain a type a server can consume but cannot naturally produce.
+No client-side review finds that. So the design runs before the freeze, the
+implementation after it, and a bidirectional review of the shared vocabulary is a
+v1.0 exit criterion.
+
+See `docs/SERVER-DESIGN.md` — **proposed, not yet approved**. No server code
+exists.
 
 ## Documentation
 
@@ -81,6 +98,7 @@ same reason.
 | `docs/RFC-COVERAGE.md` | Capability → RFC → status, from the IANA registry |
 | `docs/INTEROP.md` | Server matrix and how to run it |
 | `docs/ROADMAP.md` | Milestones and exit criteria |
+| `docs/SERVER-DESIGN.md` | Server framework design — proposed, not approved |
 | `CLAUDE.md` | Working rules for AI agents contributing here |
 
 ## Testing

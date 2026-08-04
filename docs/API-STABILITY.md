@@ -141,6 +141,33 @@ type UnilateralDataHandler struct {
 }
 ```
 
+### The hard case: a server backend — proposed, not yet approved
+
+The server framework's backend is the worst instance of this rule in the
+library, and `docs/SERVER-DESIGN.md` §2 proposes an answer that is *not* a
+function struct. Summarised here because it is a proposed amendment to this rule
+rather than an application of it:
+
+- **A function struct is the wrong shape** for the primary abstraction. IMAP
+  backends are stateful and hierarchical (`Backend` → `Session` → `SelectedMailbox`), so
+  a flat struct forces every backend to reimplement session plumbing by closure;
+  there is no compile-time completeness check; and the nine extensions that
+  already want method groups take it to ~60 nilable fields.
+- **The proposal is a small mandatory interface set plus optional capability
+  interfaces discovered by type assertion.** This does not violate the rule's
+  *reason*: a new RFC never adds a method to an existing interface, it adds a new
+  single-purpose one. External implementers keep compiling.
+- **It needs a gate, not a promise.** The proposed rule is *"a new extension may
+  add a new optional interface; it may never add a method to an existing one"*,
+  enforced by a golden test over `imapserver`'s interface method sets — the same
+  mechanism rules 2, 3, 6 and 7 already have. §3 of this document is the standing
+  reminder of what happens when a rule has no gate.
+- **Backend→client updates stay a function struct**, exactly like
+  `UnilateralDataHandler`, because that direction has the same growth pressure
+  and the rule as written is right for it.
+
+Nothing may be written against this until `SERVER-DESIGN.md` is approved.
+
 ## 5. A single error type
 
 ```go
@@ -190,6 +217,47 @@ comment. Public structs that only *we* construct are safe.
   [T15](tasks/T15-release-engineering.md) — so until then the review in the next
   section is the only thing enforcing this document.
 - Go version floor: the two most recent major Go releases.
+
+### Proposed exception: `imapserver` outside the v1 promise — NOT APPROVED
+
+**Status: proposed by `docs/SERVER-DESIGN.md` §9. Not approved. Nothing enforces
+it, and no `imapserver` code exists.**
+
+The policy above says "v1.0 freezes the exported API" without qualifying by
+package. Taken literally, `imapserver` inherits the freeze the moment it lands —
+which would freeze the backend abstraction, the hardest API in this library, on
+its first commit, before a single third-party backend has been written against
+it. That is the failure this project exists to avoid, relocated one layer up.
+
+**The proposal is a nested module:** `imapserver` gets its own `go.mod` and is
+versioned v0.x independently while the root module is v1.x.
+
+An earlier revision proposed the opposite — keeping `imapserver` in this module
+with a carve-out enforced by scoping the `apidiff` gate — and that was wrong.
+An `apidiff` scope is a gate on *us*; it changes nothing a user sees. Someone
+importing a package from a module tagged v1 reasonably expects it not to break,
+and Go's compatibility guidance is built on that expectation. No CI
+configuration resets it, and a doc comment claiming the package is exempt is a
+promise, which is the mechanism this document distrusts everywhere else.
+
+The nested module's costs are real but operational: two tags per release,
+explicit version coordination, and a deliberate bump of the root-module
+dependency. Two objections raised against it do not survive contact:
+
+- *Development ergonomics.* Go workspaces (`go.work`) exist to develop
+  interdependent modules in one repository without committing `replace`
+  directives.
+- *The `go.sum` entry.* The zero-dependency rule exists because a `go.sum` entry
+  is a stability liability **we do not control**. A self-referential entry on our
+  own module is one we control entirely, so this is a narrow, well-founded
+  exception rather than a hole in the policy.
+
+Fallback, if the nested module proves unworkable in practice: same-module with a
+documented stability exception — needing its own separate approval.
+
+Per `CLAUDE.md`, this needs an explicit written approval from the human before it
+becomes real. Until then it is a recorded open question, and the safe default is
+the literal reading: do not land `imapserver` in a v1 module without deciding.
 
 ## Reviewing against this document
 

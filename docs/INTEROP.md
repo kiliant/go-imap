@@ -123,3 +123,65 @@ mailbox with a non-ASCII name to exercise modified-UTF-7 and `UTF8=ACCEPT`.
 Fixtures live in `interop/harness/fixtures.go` and are installed over IMAP
 `APPEND` after the server starts, not baked into images — otherwise each new
 server needs its own mailbox-format tooling.
+
+## Testing our own server — planned, milestone M6
+
+No `imapserver` code exists yet; this section is the runbook the server work
+(T24) implements against, recorded now so the design in `docs/SERVER-DESIGN.md`
+§6 is committed to something concrete rather than a good intention.
+
+The client's rule — verified against at least two independent implementations
+before a capability is `verified` — has an obvious problem in the other
+direction: our client testing our server is one implementation talking to
+itself. A shared misreading of an RFC passes both sides and neither notices. So
+loopback is the inner loop, and the validation is external.
+
+### 1. Loopback — fast, hermetic, not validation
+
+Our client against our server over `net.Pipe`, in-process, no containers. Runs in
+the default `go test ./...` because it needs no runtime. Catches regressions;
+proves nothing about RFC conformance.
+
+### 2. The matrix, pointed at ourselves — highest value per unit of work
+
+`imapserver` + the in-memory backend becomes an entry in
+`interop/servers/goimap/`, exactly like Dovecot and Stalwart: a `profile.go`
+declaring expected capabilities, registered in `interop/harness/registry.go`.
+
+Everything in this document then applies unchanged — same fixtures installed over
+`APPEND`, same skip/assert distinction, same per-capability table. The result is
+our server's coverage reported in the same units as Dovecot's, which is the
+comparison that actually means something.
+
+It differs from every other entry in one way worth noting: the profile assertion
+("a server not advertising a capability its profile claims → fail") becomes a
+real regression test rather than a container-health check, because we control
+both halves. That is a feature — it is the one entry where the assertion can
+catch our own bug.
+
+Being in-process rather than containerised, it needs no image and no `podman`;
+the harness must not assume every profile has a container.
+
+### 3. `imaptest` — the external check that matters
+
+Dovecot's `imaptest` is the de-facto IMAP server conformance and stress tool,
+written by people who have fielded every client bug there is. Run it against our
+server in a container, as a Tier 2 entry.
+
+This is the highest-value single external check available, and the one thing on
+this list that can find a conformance bug our own code is blind to.
+
+### 4. Real client software
+
+`mbsync`/`isync` and `offlineimap`, scripted against our server. They exercise
+long-tail sequencing — UIDVALIDITY changes mid-sync, partial fetches resumed,
+CONDSTORE replay — that no suite written alongside the server thinks to
+exercise.
+
+### 5. Server-side fuzzing
+
+The mirror of T13, and non-optional. The command parser faces hostile input from
+*unauthenticated remote clients*, which is a larger exposure than the client's
+hostile-server case. Bar unchanged: no panic, no hang, no unbounded allocation.
+The corpus starts from real client traffic captured here and from `imaptest`,
+not from invention.
