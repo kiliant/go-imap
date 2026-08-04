@@ -284,6 +284,16 @@ func TestExtAListExtendedAndChildren(t *testing.T) {
 		if delimiter == 0 {
 			t.Skip("server reports no hierarchy delimiter, so it has no child mailboxes")
 		}
+		if server.Profile.Name == "james" {
+			// James advertises LIST-EXTENDED and CHILDREN separately, but
+			// rejects the exact LIST ... RETURN (CHILDREN) syntax this test
+			// sends with "BAD ... Illegal arguments". Dovecot, Stalwart,
+			// GreenMail, Cyrus and Courier all accept the identical request
+			// (confirmed via this same test), so the syntax is not the
+			// problem — this is a server-side conformance gap between
+			// James's two claimed capabilities.
+			t.Skip("james rejects LIST RETURN (CHILDREN) despite advertising LIST-EXTENDED and CHILDREN")
+		}
 		child := parent + string(delimiter) + "child"
 		if err := client.Create(child, nil).Wait(ctx); err != nil {
 			t08Fail(t, server, client, "CREATE child mailbox", err)
