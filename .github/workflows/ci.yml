@@ -144,7 +144,11 @@ jobs:
     # targets and 61 minutes is not a pull-request gate. FUZZ_PARALLEL=1: the
     # deadline artifact documented in .github/scripts/fuzz.sh is caused by
     # oversubscription, and hosted runners have few cores.
-    name: fuzz-smoke ${{ matrix.shard }}/4
+    # No custom `name:`. A matrix expression in a job name is not expanded when
+    # the job is skipped — the matrix is never expanded either — so the run
+    # summary rendered the literal text `fuzz-smoke ${{ matrix.shard }}/4` on
+    # every push. Letting GitHub append the matrix value gives `fuzz-smoke (0)`
+    # when it runs and a clean `fuzz-smoke` when it does not.
     if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
