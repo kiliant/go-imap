@@ -22,6 +22,14 @@ prefix they exercise inherit that ownership: for example, T03 may add
 transfer ownership of fuzz tests or shared test infrastructure, which remain
 explicitly assigned in the task table.
 
+A **completed** task's lock passes to a later task that explicitly supersedes it,
+named in both task specs. The rule exists to make *concurrent* work safe; once a
+task is done there is no concurrent writer to protect against, and the
+alternative is that finished work becomes permanently unmaintainable. T18 takes
+`imapclient/{fetch,search,structure}.go` from T06 on exactly these terms. This
+is a narrow exception and needs naming in both specs — not an invitation to edit
+across boundaries because a task looks finished.
+
 Where a task owns a directory tree and another task owns a filename pattern
 inside it, **the pattern wins**: T13's `**/*_fuzz_test.go` covers
 `internal/saslprep/saslprep_fuzz_test.go` even though T04 owns
@@ -49,17 +57,67 @@ call, not the originating task's.
 | [T13](T13-fuzzing-hardening.md) | Fuzzing & hardening | M4 | T01, T12 | `**/*_fuzz_test.go`, `internal/imapwire/testdata/**` | fuzz-hardening |
 | [T14](T14-api-review-docs.md) | API review & docs | M4 | T10, T11 | doc comments, `examples/**`, `api_surface_test.go` | docs-release + api-guardian |
 | [T15](T15-release-engineering.md) | Release engineering | M4 | T13, T14 | `.github/**`, `CHANGELOG.md` | docs-release |
-| [T16](T16-server-framework.md) | Server framework design | M5 | v1.0 tagged | `docs/SERVER-DESIGN.md` | — |
+| [T17](T17-bidirectional-vocabulary-audit.md) | Bidirectional vocabulary audit | M4 — **blocks v1.0** | T16 | `*.go` (root pkg) | api-guardian + client-core |
+| [T16](T16-server-framework.md) | Server framework design | M5 | — | `docs/SERVER-DESIGN.md` | — (human-led) |
+| [T18](T18-server-direction-codec.md) | Server-direction codec | M6 | T16, v1.0 | `internal/imapwire/{command,respenc}.go`, `internal/imapcodec/**`, and `imapclient/{fetch,search,structure}.go` for the migration only (lock passes from T06) | wire-protocol |
+| T19 | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18 | `imapserver/{server,conn,session,state,dispatch,capability}.go` | server-core |
+| T20 | Backend contract, `memory`, `backendtest` | M6 | T19 | `imapserver/backend.go`, `imapserver/{memory,backendtest}/**` | server-core |
+| [T21](T21-message-analysis.md) | Message analysis: bodystructure/envelope generation, search evaluation helper | M6 | T18 | `internal/imapmessage/**` | wire-protocol |
+| T22 | Base command set, server side | M6 | T20, T21 | `imapserver/cmd_*.go` | server-core |
+| T23 | Server extensions, groups A–E | M6 | T22 | `imapserver/ext_*.go` | extensions |
+| T24 | Server conformance, interop and fuzzing | M6 | T22 | `imapserver/**/*_fuzz_test.go`, `interop/servers/goimap/**` | fuzz-hardening + interop-harness |
+| T25 | Server API review, docs, release | M6 | T23, T24 | `imapserver` doc comments, `examples/server/**` | docs-release + api-guardian |
+
+T16 is deliberately out of numeric order: it is the design task, it has no
+dependencies, and T17 depends on it. See "Why T16 moved" below.
+
+**T19, T20 and T22–T25 have no spec files yet, on purpose.** They depend on the
+backend abstraction that `../SERVER-DESIGN.md` §2 recommends and that is still
+awaiting approval; writing them now would encode a guess at the answer. Their
+rows here fix the dependency order and the ownership boundaries, which are
+knowable without it.
+
+T18 and T21 are the exceptions and are specced: neither depends on the
+abstraction, and between them they are the bulk of the server project. If M6
+needs to start quickly, it starts with those two in parallel.
 
 ## Critical path
 
 ```
 T01 ──┬── T03 ──┬── T04 ──┐
       │         ├── T05 ──┼── T07 ──┬── T08 ──┬── T10 ──┐
-T02 ──┘         └── T06 ──┘         └── T09 ──┴── T11 ──┼── T14 ── T15 ── v1.0
-                                                        │
-                    T12 ──────────────────────── T13 ───┘
+T02 ──┘         └── T06 ──┘         └── T09 ──┴── T11 ──┼── T14 ── T15 ──┐
+                                                        │                ├── v1.0
+                    T12 ──────────────────────── T13 ───┘                │
+                                                                         │
+                    T16 ── T17 ──────────────────────────────────────────┘
+                     │
+                     └── T18 ──┬── T19 ── T20 ──┬── T22 ──┬── T23 ──┐
+                               │                │         │         ├── T25
+                               └── T21 ─────────┘         └── T24 ──┘
+                                        (M6 — after v1.0)
 ```
+
+## Why T16 moved ahead of v1.0
+
+T16 used to be gated on "v1.0 tagged". It was moved on 2026-08-03, and the
+reason is a specific risk rather than eagerness.
+
+The argument for waiting was that the architecture had already paid for the
+server — `package imap` holds the vocabulary and does no I/O, so the server
+lands without touching an existing signature. That still holds, and it is still
+why the *implementation* (M6) waits.
+
+What it does not cover: adding types to `package imap` after v1.0 is additive
+and always allowed, but **reshaping an existing type is not**. A vocabulary
+exercised in only one direction can contain a type a server can consume but
+cannot naturally produce, and no client-side review finds it, because the client
+is the direction that works. `../SERVER-DESIGN.md` §0 shows the semantic codec
+exists in exactly one direction for every one of these types.
+
+So the design runs before the freeze and the implementation runs after it, with
+T17 — the bidirectional audit the design makes possible — as a v1.0 exit
+criterion. Design is what tells us the freeze is safe.
 
 T01 and T02 may run in parallel. Both must complete before dependent work
 begins — they fix the type signatures every later task consumes.
