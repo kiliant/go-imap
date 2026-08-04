@@ -28,7 +28,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-APIDIFF_VERSION="${APIDIFF_VERSION:-latest}"
+# Pinned, not `latest`: this gate is only worth having if its verdict is
+# reproducible, and an upstream apidiff release must not be able to change the
+# answer without a commit here. ci.yml sets the same value; the default keeps a
+# local run honest. Kept identical to the sibling go-smtp repository.
+APIDIFF_VERSION="${APIDIFF_VERSION:-v0.0.0-20260709172345-9ea1abe57597}"
 # Under .state/ (gitignored) by default so a local run leaves nothing untracked;
 # CI overrides it to a runner-temp path.
 OUT="${APIDIFF_OUT:-$ROOT/.state/ci-apidiff}"

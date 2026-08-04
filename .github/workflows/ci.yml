@@ -24,22 +24,41 @@ env:
   # that a dependency arrived unnoticed.
   GOFLAGS: -mod=readonly
 
+  # CI tools are pinned. They are not module requirements — see
+  # check-no-dependencies.sh — but `@latest` still means an upstream release can
+  # turn main red with no commit here, and apidiff in particular is the gate
+  # CLAUDE.md calls the deliverable. A gate that changes underneath you is not a
+  # gate. Bumping these is a commit, which is the point.
+  #
+  # Keep these values identical to the sibling go-smtp repository's ci.yml.
+  STATICCHECK_VERSION: v0.7.0
+  APIDIFF_VERSION: v0.0.0-20260709172345-9ea1abe57597
+
+  # The toolchain the single-version jobs use. The test matrix below is separate
+  # and deliberately wider.
+  GO_VERSION: '1.26.x'
+
 jobs:
   test:
-    # Two most recent Go majors. The older of the two must equal the `go`
-    # directive in go.mod: testing below it is meaningless, testing only above
-    # it leaves the declared floor unverified. If go.mod's floor moves, move
-    # this matrix in the same commit.
+    # Floor and ceiling. The lower entry must equal the `go` directive in
+    # go.mod — testing above the floor only leaves the declared floor
+    # unverified, and a user on the version we advertise finds the breakage
+    # instead of CI. The upper entry is the newest release, so a toolchain
+    # regression surfaces here rather than in a bug report. If go.mod's floor
+    # moves, move this matrix in the same commit.
     name: test (go ${{ matrix.go }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        go: ['1.24.x', '1.25.x']
+        # ubuntu is pinned rather than -latest so a runner-image rollout is a
+        # deliberate bump. macos stays floating: Apple's images age out fast
+        # enough that a pin becomes a dead label sooner than it becomes useful.
+        os: [ubuntu-24.04, macos-latest]
+        go: ['1.24.x', '1.26.x']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -57,12 +76,12 @@ jobs:
 
   vet:
     name: vet, staticcheck, gofmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: ${{ env.GO_VERSION }}
           cache: false
 
       - name: gofmt
@@ -89,13 +108,14 @@ jobs:
       - name: go vet -tags='interop interop_emulated'
         run: go vet -tags='interop interop_emulated' ./...
 
-      - name: install staticcheck
+      - name: install staticcheck (${{ env.STATICCHECK_VERSION }})
         # From a scratch directory: `go install pkg@version` is module-aware and
         # ignores the surrounding go.mod, but running it elsewhere makes that
         # independence obvious rather than a thing you have to know.
         run: |
           cd "$(mktemp -d)"
-          GOFLAGS= go install honnef.co/go/tools/cmd/staticcheck@latest
+          GOFLAGS= go install \
+            "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
 
       - name: staticcheck
         run: |
@@ -110,12 +130,12 @@ jobs:
     # The zero-dependency policy, mechanised. Without this assertion the policy
     # erodes on the first convenient import and nothing notices.
     name: zero dependencies
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: ${{ env.GO_VERSION }}
           cache: false
       - run: .github/scripts/check-no-dependencies.sh
 
@@ -126,7 +146,7 @@ jobs:
     # oversubscription, and hosted runners have few cores.
     name: fuzz-smoke ${{ matrix.shard }}/4
     if: github.event_name != 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -138,15 +158,15 @@ jobs:
       FUZZ_PARALLEL: 1
       FUZZ_OUT: ${{ github.workspace }}/fuzz-out
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: ${{ env.GO_VERSION }}
           cache: false
       - run: .github/scripts/fuzz.sh 60s
       - name: upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-smoke-shard-${{ matrix.shard }}
           path: fuzz-out/
@@ -155,18 +175,18 @@ jobs:
   apidiff:
     name: apidiff
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # apidiff needs the tag history to find the previous tag.
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: run apidiff
         env:
@@ -176,11 +196,15 @@ jobs:
         # Best effort. A pull request from a fork gets a read-only token, so the
         # comment fails there; the report is also written to the job summary,
         # which is always readable.
+        #
+        # The script edits its previous comment instead of adding one per push.
+        # A ten-push pull request otherwise accumulates ten API reports, nine of
+        # them stale, and the reviewer has to work out which is current.
         if: always() && github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           [ -s apidiff-out/report.md ] || exit 0
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --body-file apidiff-out/report.md
+          .github/scripts/comment-apidiff.sh apidiff-out/report.md "$PR_NUMBER"

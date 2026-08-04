@@ -12,13 +12,26 @@ only T15 may change.
 
 | Job | Runs |
 |---|---|
-| `test` | `go test -race ./...` on the two most recent Go majors, linux + macOS |
+| `test` | `go test -race ./...` on the `go.mod` floor and the current Go release, linux + macOS |
 | `vet` | `go vet`, `staticcheck`, `gofmt -l` — **and `go vet -tags=interop`**, plus `-tags='interop interop_emulated'` |
 | `interop` | Run `go test -count=1 -race -tags=interop ./imapclient`, then separately `go test -count=1 -race -tags=interop ./interop/...` — native profiles, on push to main and nightly; separate lifecycles prevent container-name collisions |
 | `interop-emulated` | Run `go test -count=1 -race -tags='interop interop_emulated' ./imapclient`, then separately `go test -count=1 -race -tags='interop interop_emulated' ./interop/...` — Apache James (amd64), nightly only |
 | `fuzz-smoke` | 60 s per fuzz target on every PR |
 | `fuzz-long` | 10 min per target, nightly (human-approved 2026-08-03) |
 | `apidiff` | Compare exported API against the previous tag |
+
+The `test` matrix is floor-and-ceiling, not "the newest two". The lower entry
+must equal the `go` directive in `go.mod`: testing only above the floor leaves
+the version the module advertises unverified, so a user on it finds the
+breakage before CI does. The upper entry is the current release. When the floor
+moves, the matrix moves in the same commit.
+
+Every tool the workflows install is pinned to an exact version — `staticcheck`
+and `apidiff` today. `@latest` lets an upstream release turn `main` red with no
+commit here, and for `apidiff` it is worse than noise: a compatibility gate
+whose verdict is not reproducible is not a gate. The pins are kept identical to
+the sibling `go-smtp` repository, and bumping one is a commit, which is the
+point.
 
 The `vet` job must run the tagged variants, not just the default build. Interop
 test files are excluded from an untagged `go vet ./...`, so a vet job that omits
