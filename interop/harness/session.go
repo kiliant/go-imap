@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -83,6 +84,26 @@ func DialSession(ctx context.Context, address string, trace *Trace) (*Session, e
 		return nil, err
 	}
 	return openSession(ctx, conn, trace)
+}
+
+// DialSessionTLS is DialSession over implicit TLS, for the one profile
+// (James) whose LOGIN the harness cannot exercise in cleartext. Certificate
+// verification is intentionally skipped: these are self-signed containers
+// on loopback, not a real deployment.
+func DialSessionTLS(ctx context.Context, address string, trace *Trace) (*Session, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = tlsConn.SetDeadline(deadline)
+	}
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("interop: TLS handshake: %w", err)
+	}
+	return openSession(ctx, tlsConn, trace)
 }
 
 func openSession(ctx context.Context, conn net.Conn, trace *Trace) (*Session, error) {

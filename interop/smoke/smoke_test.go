@@ -4,6 +4,7 @@ package smoke
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,7 +19,20 @@ func TestAuthenticatedSmoke(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			trace := new(harness.Trace)
-			session, err := harness.DialSession(ctx, server.Address, trace)
+			var session *harness.Session
+			var err error
+			if server.Profile.TLSPort != 0 {
+				var addr string
+				var ok bool
+				addr, ok = server.AddressForPort(server.Profile.TLSPort)
+				if !ok {
+					err = fmt.Errorf("no host port resolved for TLS port %d", server.Profile.TLSPort)
+				} else {
+					session, err = harness.DialSessionTLS(ctx, addr, trace)
+				}
+			} else {
+				session, err = harness.DialSession(ctx, server.Address, trace)
+			}
 			if err == nil {
 				defer session.Close()
 				err = session.Login(ctx)

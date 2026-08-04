@@ -42,7 +42,20 @@ func Run(m *testing.M, profiles []definition.Profile) int {
 	for _, server := range servers {
 		profile := server.Profile
 		trace := new(Trace)
-		session, err := DialSession(ctx, server.Address, trace)
+		var session *Session
+		var err error
+		if profile.TLSPort != 0 {
+			var addr string
+			var ok bool
+			addr, ok = server.AddressForPort(profile.TLSPort)
+			if !ok {
+				err = fmt.Errorf("no host port resolved for TLS port %d", profile.TLSPort)
+			} else {
+				session, err = DialSessionTLS(ctx, addr, trace)
+			}
+		} else {
+			session, err = DialSession(ctx, server.Address, trace)
+		}
 		if err == nil {
 			err = session.Login(ctx)
 		}

@@ -36,5 +36,11 @@ type Profile struct {
 	// use the empty string; Courier exposes personal folders under INBOX.
 	MailboxPrefix string
 	Tier          Tier
-	_             struct{}
+	// TLSPort is a container port (present in AdditionalPorts) that speaks
+	// implicit-TLS IMAP and requires LOGIN over that instead of ContainerPort.
+	// Zero means the profile accepts LOGIN in cleartext on ContainerPort, the
+	// harness default. James is the one profile so far that needs this: its
+	// demo image refuses LOGIN on a cleartext connection.
+	TLSPort int
+	_       struct{}
 }
