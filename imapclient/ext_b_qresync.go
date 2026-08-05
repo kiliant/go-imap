@@ -176,7 +176,7 @@ func (c *Client) selectSync(name, mailbox string, options *SyncSelectOptions) *S
 	if options != nil {
 		o = *options
 	}
-	base := &MailboxStatus{Mailbox: normalisedMailbox(mailbox), ReadOnly: name == "EXAMINE"}
+	base := &MailboxStatus{MailboxStatus: imap.MailboxStatus{Mailbox: normalisedMailbox(mailbox), ReadOnly: name == "EXAMINE"}}
 	data := &SyncMailboxStatus{Status: base}
 	result := &SyncSelectCommand{data: data}
 

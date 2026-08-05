@@ -101,6 +101,56 @@ type ListData struct {
 	_         struct{}
 }
 
+// MailboxStatus is the state of a mailbox as reported while selecting it: the
+// untagged responses and response codes of a SELECT or EXAMINE. RFC 3501
+// section 6.3.1, RFC 9051 section 6.3.2.
+//
+// Every field here is mailbox state that both protocol directions can express.
+// A client-side observation derived by comparing this against a cache — "the
+// UIDVALIDITY differs from the one I last saw" — is deliberately not here: no
+// server can produce it, and a field one side can never fill is evidence the
+// shared type has the wrong boundary. The client carries such observations on
+// its own type.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MailboxStatus struct {
+	// Mailbox is the name of the selected mailbox.
+	Mailbox string
+
+	// Flags are the flags defined in the mailbox, and PermanentFlags those a
+	// client may change persistently. A nil PermanentFlags means no
+	// PERMANENTFLAGS response code was reported, which is not the same as an
+	// empty one.
+	Flags          []Flag
+	PermanentFlags []Flag
+
+	// NumMessages is the EXISTS count and NumRecent the RECENT count.
+	// RFC 9051 removes RECENT from IMAP4rev2.
+	NumMessages uint32
+	NumRecent   uint32
+
+	// UIDNext is the UID predicted for the next message appended, or zero if
+	// it was not reported. UIDValidity is the mailbox's UID validity value.
+	UIDNext     UID
+	UIDValidity uint32
+
+	// Unseen is the sequence number of the first unseen message from the
+	// UNSEEN response code, or zero if none was reported. It is a sequence
+	// number, not a count; the STATUS item of the same name is a count.
+	Unseen uint32
+
+	// HighestModSeq is the highest modification sequence in the mailbox.
+	// CONDSTORE, RFC 7162 section 3.1.2.2. Zero means it was not reported,
+	// which a NOMODSEQ mailbox must signal separately.
+	HighestModSeq uint64
+
+	// ReadOnly reports that the mailbox was opened read-only: EXAMINE, or
+	// SELECT answered with the READ-ONLY response code.
+	ReadOnly bool
+
+	_ struct{}
+}
+
 // NamespaceDescriptor describes one namespace prefix and its hierarchy
 // delimiter. A zero Delimiter means NIL. RFC 2342.
 //

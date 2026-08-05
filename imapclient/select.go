@@ -22,26 +22,32 @@ type SelectOptions struct {
 	_ struct{}
 }
 
-// MailboxStatus is the state reported while selecting a mailbox.
+// MailboxStatus is the state reported while selecting a mailbox: the shared
+// [imap.MailboxStatus], plus the one observation only a client can make.
+//
+// The embedded fields are promoted, so status.UIDValidity and the rest are read
+// exactly as before. A keyed literal must name the embedded value:
+//
+//	&MailboxStatus{MailboxStatus: imap.MailboxStatus{Mailbox: name}}
 //
 // UIDValidityChanged is a cache-invalidation event. When it is true, callers
 // must discard every cached UID and message state for Mailbox before using the
 // newly selected mailbox: UIDs are meaningful only within one UIDVALIDITY.
 //
+// It is not part of [imap.MailboxStatus] because no server produces it. It is
+// derived here, by comparing the reported UIDVALIDITY against the one this
+// client last saw for the same mailbox, and it is therefore client state rather
+// than protocol vocabulary.
+//
 // Construct with keyed fields only; fields may be added in a future release.
 type MailboxStatus struct {
-	Mailbox            string
-	Flags              []imap.Flag
-	PermanentFlags     []imap.Flag
-	NumMessages        uint32
-	NumRecent          uint32
-	UIDNext            imap.UID
-	UIDValidity        uint32
-	Unseen             uint32
-	HighestModSeq      uint64
-	ReadOnly           bool
+	imap.MailboxStatus
+
+	// UIDValidityChanged reports that the mailbox's UIDVALIDITY differs from
+	// the one this client last observed for it.
 	UIDValidityChanged bool
-	_                  struct{}
+
+	_ struct{}
 }
 
 // SelectData is kept as an alias for the data returned by SELECT and EXAMINE.
@@ -81,7 +87,7 @@ func (c *Client) Examine(mailbox string, options *SelectOptions) *SelectCommand 
 }
 
 func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCommand {
-	data := &MailboxStatus{Mailbox: normalisedMailbox(mailbox), ReadOnly: name == "EXAMINE"}
+	data := &MailboxStatus{MailboxStatus: imap.MailboxStatus{Mailbox: normalisedMailbox(mailbox), ReadOnly: name == "EXAMINE"}}
 	cmd := c.beginCommandWithCompletion(name, stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox)
 	}, selectCollector(data), func(success bool, _, _ string) {
