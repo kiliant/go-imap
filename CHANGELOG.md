@@ -188,6 +188,12 @@ move these entries under its own heading.
   server can fill either. Field reads are unchanged by promotion; a keyed
   literal setting a shared field must name the embedded value.
 
+- **`imap.MailboxStatus` can express NOMODSEQ (T17).** Exported API:
+  `imap.MailboxStatus` gained `NoModSeq bool`. Additive. The client already
+  decoded the NOMODSEQ response code onto `imapclient.SyncMailboxStatus`, so the
+  shared SELECT vocabulary was the only side that could not say it — an
+  asymmetry, not a symmetric gap, and therefore fixed rather than deferred.
+
 - **BREAKING — `ESearchData` split, and its parse helpers became methods
   (T17).** Exported API: `imap.ESearchData` is new and carries no `Emulated`
   field; it gains the value-receiver methods `Partial() (*PartialSearchData,
@@ -208,13 +214,20 @@ move these entries under its own heading.
   able to call them without importing `imapclient`. The receivers are values so
   that `result.Data.Partial()` works on a non-addressable field.
 
-- **BREAKING — seven structs gained unkeyed-literal guards (T17).** Exported
-  API: `BodyStructureSinglePartExt`, `BodyStructureMultiPartExt`, `Envelope`,
-  `FetchDataLiteral`, `FetchDataBodySection`, `FetchDataBinarySection` and
-  `FetchDataRaw` each gained an unexported `_ struct{}` field. Keyed literals
-  are unaffected; unkeyed ones no longer compile. These are the structs future
-  RFCs will add fields to, and adding the guard is itself a breaking change, so
-  it can only be done before the tag.
+- **BREAKING — every exported struct in `package imap` gained an
+  unkeyed-literal guard (T17).** Exported API: 39 structs gained an unexported
+  `_ struct{}` field, including all thirteen `Search*` criteria structs, the
+  five `FetchItem*` request structs, the five `BodyStructure` concrete types,
+  `Envelope`, `Address`, `Error`, `FetchMessageData`, `SectionPartial` and the
+  four streaming fetch values. Keyed literals are unaffected; unkeyed ones no
+  longer compile, and nothing in the tree, the tests or the examples used one
+  under any build tag.
+
+  There is one exception, `NumRange[N]`: a range is exactly a start and a stop,
+  so `NumRange[SeqNum]{1, 5}` stays legal. `docs/API-STABILITY.md` rule 7 now
+  states the requirement by principle and lists that exception with its reason.
+  Adding a guard is itself a breaking change, so this could only be done before
+  the tag.
 
 - **BREAKING — `MailboxStatus` split into shared state and client observation
   (T17).** Exported API: `imap.MailboxStatus` is new and carries the mailbox
