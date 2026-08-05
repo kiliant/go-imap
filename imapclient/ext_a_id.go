@@ -25,18 +25,9 @@ type IDOptions struct {
 	_      struct{}
 }
 
-// IDData is the server identification from an untagged ID response.
-//
-// Fields is nil when the server sent ID NIL. A non-nil (possibly empty) slice
-// is a parameter list. Received is false when the command completed without an
-// untagged ID — allowed by RFC 2971 section 3.1 ("OPTIONAL untagged response").
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type IDData struct {
-	Received bool
-	Fields   []IDField
-	_        struct{}
-}
+// IDData is the server identification from an untagged ID response. It is an
+// alias for [imap.IDData], which both protocol directions share.
+type IDData = imap.IDData
 
 // IDString is a convenience for building a present ID field value.
 func IDString(s string) *string { return &s }

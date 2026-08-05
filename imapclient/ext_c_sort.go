@@ -58,18 +58,9 @@ func (o *SortOptions) allowFallback() bool { return o != nil && o.AllowClientFal
 // alias for [imap.SortKeySpec], which both protocol directions share.
 type SortKeySpec = imap.SortKeySpec
 
-// SortData is the result of SORT or UID SORT.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type SortData struct {
-	// SeqNums is filled by [Client.Sort]; empty for UID SORT.
-	SeqNums []imap.SeqNum
-	// UIDs is filled by [Client.SortUID]; empty for sequence SORT.
-	UIDs []imap.UID
-	// Emulated reports that the order was computed client-side. See [Client.Sort].
-	Emulated bool
-	_        struct{}
-}
+// SortData is the result of SORT or UID SORT. It is an alias for
+// [imap.SortData], which both protocol directions share.
+type SortData = imap.SortData
 
 // Sort issues SORT and returns sequence numbers in sort order.
 // SORT, RFC 5256.

@@ -80,33 +80,13 @@ type MultiSearchOptions struct {
 	_ struct{}
 }
 
-// MultiSearchResult is one ESEARCH response from a multimailbox search.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MultiSearchResult struct {
-	// Tag is the command tag correlator.
-	Tag string
+// MultiSearchResult is one ESEARCH response from a multimailbox search. It is
+// an alias for [imap.MultiSearchResult], which both protocol directions share.
+type MultiSearchResult = imap.MultiSearchResult
 
-	// Mailbox is the mailbox this response refers to.
-	Mailbox string
-
-	// UIDValidity is the UIDVALIDITY of Mailbox.
-	UIDValidity uint32
-
-	// Data holds the return items (ALL, MIN, …). UID is always true:
-	// RFC 7377 section 2.1 requires multimailbox responses to use UIDs.
-	Data ESearchData
-
-	_ struct{}
-}
-
-// MultiSearchData collects every per-mailbox ESEARCH response.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MultiSearchData struct {
-	Results []MultiSearchResult
-	_       struct{}
-}
+// MultiSearchData collects every per-mailbox ESEARCH response. It is an alias
+// for [imap.MultiSearchData], which both protocol directions share.
+type MultiSearchData = imap.MultiSearchData
 
 // MultiSearchCommand is an in-flight multimailbox ESEARCH.
 type MultiSearchCommand struct {

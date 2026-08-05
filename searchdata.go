@@ -147,3 +147,150 @@ type ThreadData struct {
 
 	_ struct{}
 }
+
+// ESearchData is the content of an untagged ESEARCH response, or a
+// reconstruction of one. ESEARCH, RFC 4731 section 3.1.
+//
+// Each modelled item has a companion Has field, because RFC 4731 section 3.1
+// distinguishes "absent" from "zero". MIN, MAX and ALL are omitted from the
+// response entirely when nothing matched, while COUNT is always present and is
+// then zero. Reading Min as 0 without checking HasMin therefore cannot tell an
+// empty result from a match at message 0, which does not exist.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ESearchData struct {
+	// Tag is the tag of the command this response correlates with, from the
+	// search-correlator of RFC 4466 section 2.6. It is empty when no
+	// correlator is carried, and when the data was reconstructed rather than
+	// decoded.
+	Tag string
+
+	// UID reports whether every number in this response is a UID rather than
+	// a sequence number. RFC 4731 section 3.1 requires an extended UID SEARCH
+	// to set the UID indicator.
+	UID bool
+
+	// Min is the lowest matching number. Valid only when HasMin is set.
+	Min    uint32
+	HasMin bool
+
+	// Max is the highest matching number. Valid only when HasMax is set.
+	Max    uint32
+	HasMax bool
+
+	// Count is the number of matching messages. Valid only when HasCount is
+	// set; a set HasCount with Count zero is a genuine empty result.
+	Count    uint32
+	HasCount bool
+
+	// All holds every matching sequence number when UID is false. Valid only
+	// when HasAll is set.
+	All SeqSet
+
+	// AllUIDs holds every matching UID when UID is true. Valid only when
+	// HasAll is set. The two address spaces are separate fields for the same
+	// reason sequence numbers and UIDs are separate types: conflating them
+	// silently operates on the wrong messages.
+	AllUIDs UIDSet
+
+	HasAll bool
+
+	// ModSeq is the modification sequence of the MODSEQ return item, which
+	// CONDSTORE adds when the criteria mention MODSEQ. RFC 4731 section 3.2.
+	// Valid only when HasModSeq is set.
+	ModSeq    uint64
+	HasModSeq bool
+
+	// Values preserves every return item verbatim, keyed by the spelling used
+	// on the wire, upper-cased. Items this library does not model are kept
+	// here in raw form rather than dropped, because losing data for an
+	// extension it has never heard of is worse than not understanding it.
+	// Modelled items appear here too, so the unparsed text is always readable.
+	Values map[ESearchReturnKey]string
+
+	// Emulated reports that the value was computed from an ordinary SEARCH
+	// response rather than decoded from an ESEARCH one, because the peer does
+	// not advertise ESEARCH.
+	//
+	// It is a client-side observation: it describes how a decoder obtained the
+	// value, and a producer has nothing to say with it. A server-produced
+	// value leaves it false. It is kept on the shared type rather than split
+	// off, because unlike [MailboxStatus.UIDValidityChanged] it appears in no
+	// server-facing contract, and splitting it would divide the exported
+	// helpers that read this type between two spellings for no gain.
+	Emulated bool
+
+	_ struct{}
+}
+
+// MultiSearchResult is one ESEARCH response of a multimailbox search: the
+// per-mailbox result, tagged with the mailbox it came from. MULTISEARCH,
+// RFC 7377 section 2.1.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MultiSearchResult struct {
+	// Tag is the command tag correlator.
+	Tag string
+
+	// Mailbox is the mailbox this response refers to.
+	Mailbox string
+
+	// UIDValidity is the UIDVALIDITY of Mailbox.
+	UIDValidity uint32
+
+	// Data holds the return items. Data.UID is always true: RFC 7377
+	// section 2.1 requires multimailbox responses to use UIDs.
+	Data ESearchData
+
+	_ struct{}
+}
+
+// MultiSearchData collects every per-mailbox ESEARCH response of a multimailbox
+// search. MULTISEARCH, RFC 7377.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MultiSearchData struct {
+	Results []MultiSearchResult
+	_       struct{}
+}
+
+// SortData is the content of an untagged SORT response: the matching messages
+// in sort order. SORT, RFC 5256 section 4.
+//
+// The order is the payload, so this is a slice rather than a [SeqSet] or
+// [UIDSet], which are unordered sets and would destroy it.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type SortData struct {
+	// SeqNums carries the order for SORT; empty for UID SORT.
+	SeqNums []SeqNum
+	// UIDs carries the order for UID SORT; empty for sequence SORT.
+	UIDs []UID
+
+	// Emulated reports that the order was computed locally rather than by the
+	// peer, because the peer does not advertise SORT. Like
+	// [ESearchData.Emulated] it is a client-side observation, and a
+	// server-produced value leaves it false.
+	Emulated bool
+
+	_ struct{}
+}
+
+// IDData is the peer identification of an untagged ID response. ID, RFC 2971.
+//
+// Fields is nil for ID NIL. A non-nil, possibly empty, slice is a parameter
+// list, and the two are different on the wire.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type IDData struct {
+	// Received reports that an untagged ID response was seen at all, which
+	// RFC 2971 section 3.1 makes optional. It is a client-side observation
+	// about the exchange rather than about the data; a producer decides
+	// whether to send the response instead, and leaves this false.
+	Received bool
+
+	// Fields is the parameter list.
+	Fields []IDField
+
+	_ struct{}
+}
