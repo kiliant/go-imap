@@ -201,13 +201,36 @@ Public structs that callers construct are documented as keyed-literal-only, and
 the API-surface test rejects adding a field to a struct that lacks that doc
 comment. Public structs that only *we* construct are safe.
 
-An unexported `_ struct{}` field enforces mechanically what the doc comment
-asks for. Adding one is itself a breaking change — it invalidates any unkeyed
-literal already written — so it can only be done before v1.0, and after the tag
-the doc comment is all we have. The structs a future RFC will most obviously
-grow therefore carry the guard: T17 added it to `BodyStructureSinglePartExt`,
-`BodyStructureMultiPartExt`, `Envelope`, `FetchDataLiteral`,
-`FetchDataBodySection`, `FetchDataBinarySection` and `FetchDataRaw`.
+An unexported `_ struct{}` field enforces mechanically what the doc comment only
+asks for: it makes an unkeyed literal fail to compile. Adding one is itself a
+breaking change — it invalidates any unkeyed literal already written — so it can
+only be done before v1.0. After the tag, the doc comment is all we have.
+
+**Rule.** Every exported struct in `package imap` carries the `_ struct{}`
+guard. Exceptions are listed here, each with a reason.
+
+Stating it as a rule rather than as a list of structs is deliberate. T17 first
+guarded a hand-picked seven and got the selection backwards on every axis that
+matters: it guarded `FetchDataRaw`, which callers only ever receive, and left
+unguarded the thirteen `Search*` criteria structs — the smallest and most
+caller-constructed types in the library, where `imap.SearchString{imap.SearchKeyFrom, "x"}`
+is the literal someone actually writes — along with the five `FetchItem*`
+request structs, one of which had already grown a field from RFC 8970's `LAZY`
+modifier, and the five `BodyStructure` concrete types that the message-analysis
+generator constructs. A judgement call per struct is a judgement call that will
+be got wrong; the rule is not.
+
+**Exceptions.**
+
+- `NumRange[N]` — a range is exactly a start and a stop. A third field would
+  change what "range" means rather than extend it, so the growth this rule
+  guards against cannot occur, and `NumRange[SeqNum]{1, 5}` stays idiomatic.
+  Its doc comment records the exception at the declaration.
+
+`SectionPartial` was considered as a second exception, on the argument that
+RFC 3501 §6.4.5 fixes its `Offset`/`Size` shape, and rejected: its own doc
+comment already promised that fields may be added, which is incompatible with
+inviting unkeyed literals.
 
 ## 8. Presence is data, not an inference
 
@@ -225,9 +248,12 @@ than encode it in a sentinel.
 
 A derived accessor — `func (d *T) Received() bool { return d.UIDValidity != 0 }`
 — is the worse form of the same defect, because it makes the state readable by
-anyone and settable only by the declaring package. It also cannot survive the
-type being relocated behind an alias, since Go forbids declaring a method on a
-non-local type.
+anyone and settable only by the declaring package. It also constrains where the
+type can live: Go forbids declaring a method on a non-local type, so when a type
+moves to `package imap` and leaves an alias behind, the accessor must move with
+it. It cannot stay in the package the callers are in. That is fine for a
+genuinely shared predicate and wrong for one that hides state, which is why the
+field is the answer and the accessor is not.
 
 Precedents: `imap.AppendData.HasUID` and `imap.CopyData.HasUIDs` (T17, replacing
 a `Received()` accessor), `imap.MultiAppendData.HasUIDs`,
