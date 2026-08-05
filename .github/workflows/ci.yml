@@ -212,3 +212,38 @@ jobs:
         run: |
           [ -s apidiff-out/report.md ] || exit 0
           .github/scripts/comment-apidiff.sh apidiff-out/report.md "$PR_NUMBER"
+
+  ci-required:
+    # Single fan-in gate for branch protection. The alternative is requiring
+    # every matrix leg (test × go × os, fuzz-smoke × shard) by name in the
+    # branch protection UI, which means re-editing that list by hand every
+    # time a Go version, OS, or shard count changes. This job is the only one
+    # branch protection needs to require; it stays in place as the matrices
+    # above grow or shrink.
+    #
+    # Runs only for pull requests: branch protection is the only thing that
+    # needs this gate, and a push to main isn't gated by branch protection at
+    # all, so re-running it there is pure waste.
+    #
+    # `always()` is still required alongside that event check: a `needs:` job
+    # is skipped by default if any dependency failed, which would make this
+    # check vanish instead of reporting red. `apidiff` and `fuzz-smoke` are
+    # also conditionally skipped by their own `if:` on a pull request — that
+    # must count as pass, not failure, hence checking specifically for
+    # 'failure' and 'cancelled' rather than "everything succeeded".
+    #
+    # Keep this job's `needs:` list identical in spirit to the sibling
+    # go-smtp repository's ci.yml (job names differ where the job sets do).
+    name: CI required
+    if: always() && github.event_name == 'pull_request'
+    needs: [test, vet, supply-chain, fuzz-smoke, apidiff]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check all required jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || \
+                "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed:" >&2
+            echo '${{ toJSON(needs) }}' >&2
+            exit 1
+          fi
