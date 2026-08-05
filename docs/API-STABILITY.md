@@ -201,6 +201,91 @@ Public structs that callers construct are documented as keyed-literal-only, and
 the API-surface test rejects adding a field to a struct that lacks that doc
 comment. Public structs that only *we* construct are safe.
 
+An unexported `_ struct{}` field enforces mechanically what the doc comment
+asks for. Adding one is itself a breaking change — it invalidates any unkeyed
+literal already written — so it can only be done before v1.0, and after the tag
+the doc comment is all we have. The structs a future RFC will most obviously
+grow therefore carry the guard: T17 added it to `BodyStructureSinglePartExt`,
+`BodyStructureMultiPartExt`, `Envelope`, `FetchDataLiteral`,
+`FetchDataBodySection`, `FetchDataBinarySection` and `FetchDataRaw`.
+
+## 8. Presence is data, not an inference
+
+**Rule.** When the absence of a value is a legal protocol state, the type
+carries an explicit exported presence field. Presence is not inferred from a
+zero value, and is not exposed only through a derived accessor.
+
+The reason is directional. A *decoder* may soundly infer absence from a zero,
+because it knows what the wire cannot carry: UIDVALIDITY is never zero, a
+message number is an `nz-number`. A *producer* holding a value it did not decode
+has no such knowledge, and cannot distinguish "this item is absent", which is
+frequently a legal and meaningful answer, from "I have not filled this in yet".
+A vocabulary type shared by both directions must therefore state presence rather
+than encode it in a sentinel.
+
+A derived accessor — `func (d *T) Received() bool { return d.UIDValidity != 0 }`
+— is the worse form of the same defect, because it makes the state readable by
+anyone and settable only by the declaring package. It also cannot survive the
+type being relocated behind an alias, since Go forbids declaring a method on a
+non-local type.
+
+Precedents: `imap.AppendData.HasUID` and `imap.CopyData.HasUIDs` (T17, replacing
+a `Received()` accessor), `imap.MultiAppendData.HasUIDs`,
+`imap.FetchDataBodySection.HasOrigin`, `imap.ESearchData.HasMin` /
+`HasMax` / `HasCount` / `HasAll` / `HasModSeq`,
+`imap.MessageLimitPartial.HasLowestUID`, `imap.InProgressData.HasProgress` /
+`HasGoal`.
+
+**Scope, stated precisely.** The rule is about states the protocol distinguishes
+from a present zero, not about every numeric field. Where the wire itself cannot
+carry the zero, a zero *is* the absence marker and no companion field is needed:
+`MailboxStatus.UIDNext`, `MailboxStatus.Unseen`,
+`MailboxStatus.HighestModSeq`, `ListData.Delimiter` and
+`NamespaceDescriptor.Delimiter` are all correct as they stand, and each says so
+in its doc comment. The test is whether a *producer* could ever need to mean
+"present, and zero".
+
+## 9. A field one direction cannot fill belongs to that direction
+
+**Rule.** A field that only the client, or only the server, can meaningfully
+produce does not belong on a type in `package imap`. Put the shared state in the
+`imap` type and let the one-sided observation live on the consumer's own type,
+which embeds it.
+
+`package imap` is the vocabulary both directions speak. A field one of the two
+can never fill is not vocabulary; it is evidence that the type has the wrong
+semantic boundary. Documenting it as "the server always leaves this false" is
+not a fix, because the field is then permanent: after v1.0 the only remedy is a
+second type carried alongside the first for ever.
+
+The shape is an embedded struct, which keeps every field read and method call
+working through promotion and costs only the spelling of a keyed literal:
+
+```go
+// package imap — what both directions can express
+type MailboxStatus struct { Mailbox string; UIDValidity uint32; /* ... */ }
+
+// imapclient — plus what only a decoder can observe
+type MailboxStatus struct {
+    imap.MailboxStatus
+    UIDValidityChanged bool // derived by comparing against this client's cache
+    _                  struct{}
+}
+```
+
+Applied four times by T17: `MailboxStatus.UIDValidityChanged`,
+`SortData.Emulated`, `IDData.Received` and `ESearchData.Emulated`. The last was
+initially argued to be exempt because "no server-facing contract names it"; that
+was wrong on inspection, since `imap.MultiSearchResult.Data` holds an
+`ESearchData` by value. **Reachability is transitive** — check what embeds the
+type, not only what names it directly.
+
+Where such a split would strand an exported helper that takes the type, move the
+helper onto the `imap` type as a **value-receiver method** rather than choosing
+between the two spellings: promotion then reaches it from the wrapper, and a
+value receiver reaches it from a non-addressable field. That is how
+`imapclient.ParsePartialSearchData` became `imap.ESearchData.Partial`.
+
 ## Versioning policy
 
 - **v0.x** until every task in the board's M0–M4 milestones is complete and the
@@ -216,6 +301,16 @@ comment. Public structs that only *we* construct are safe.
   The gate is not wired up yet — it is an exit criterion of M4, tracked by
   [T15](tasks/T15-release-engineering.md) — so until then the review in the next
   section is the only thing enforcing this document.
+
+  **`apidiff` cannot see type-alias identity.** It identifies a named type by
+  its defining package, so relocating a type to another package and leaving
+  `type T = other.T` behind — which is source-compatible, and is the technique
+  the standard library used for `context.Context` — is reported as
+  `T: changed from T to other.T`, with both sides of the line naming the same
+  type. A minimal two-package control reproduces it exactly. When the gate flags
+  a move of that shape, discharge it by compiling a consumer written against the
+  old spelling; do not trust the tool, and do not silently override it. T17 moved
+  ~50 symbols this way and every one of them was reported.
 - Go version floor: the two most recent major Go releases.
 
 ### Proposed exception: `imapserver` outside the v1 promise — NOT APPROVED
