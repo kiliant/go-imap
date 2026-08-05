@@ -68,7 +68,7 @@ func FuzzUIDPlusResponseCode(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, args string) {
 		if data, err := parseCopyUID(args); err == nil {
-			if !data.Received() {
+			if !data.HasUIDs {
 				t.Fatalf("parseCopyUID(%q) succeeded with no UIDVALIDITY", args)
 			}
 			if countUIDs(data.SourceUIDs) != countUIDs(data.DestinationUIDs) {
@@ -76,7 +76,7 @@ func FuzzUIDPlusResponseCode(f *testing.F) {
 			}
 		}
 		if data, err := parseAppendUID(args); err == nil {
-			if !data.Received() || data.DestinationUIDs.IsEmpty() {
+			if !data.HasUIDs || data.DestinationUIDs.IsEmpty() {
 				t.Fatalf("parseAppendUID(%q) succeeded with no destination", args)
 			}
 		}

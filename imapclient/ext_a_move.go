@@ -147,7 +147,7 @@ func (c *Client) move(ctx context.Context, uid bool, set, destination string, op
 	}, moveCollector(data), func(success bool, code, args string) {
 		// Prefer the untagged COPYUID already claimed by moveCollector. Some
 		// servers put COPYUID on the tagged OK instead (RFC 4315 section 3).
-		if !success || data.UIDPlus.Received() || !strings.EqualFold(code, string(imap.CodeCopyUID)) {
+		if !success || data.UIDPlus.HasUIDs || !strings.EqualFold(code, string(imap.CodeCopyUID)) {
 			return
 		}
 		parsed, err := parseCopyUID(args)
@@ -207,7 +207,7 @@ func (c *Client) moveEmulated(ctx context.Context, uid bool, argument, destinati
 	if err != nil {
 		return nil, err
 	}
-	if copied != nil && copied.Received() {
+	if copied != nil && copied.HasUIDs {
 		data.UIDPlus = *copied
 	}
 	storeOptions := &StoreOptions{Op: StoreFlagsAdd, Silent: true}

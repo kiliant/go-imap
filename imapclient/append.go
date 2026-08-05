@@ -19,19 +19,9 @@ type AppendOptions struct {
 	_            struct{}
 }
 
-// AppendData is data returned by APPEND. UIDValidity and UID are filled from
-// a tagged APPENDUID response code when the server sends one (UIDPLUS, RFC
-// 4315 section 3). They stay zero when the server omits the code — for
-// example when the destination is not selectable or has UIDNOTSTICKY status.
-// MULTIAPPEND may return a UID set; this type reports a single UID and leaves
-// UID zero when more than one destination UID is assigned.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type AppendData struct {
-	UIDValidity uint32
-	UID         imap.UID
-	_           struct{}
-}
+// AppendData is data returned by APPEND. It is an alias for
+// [imap.AppendData], which both protocol directions share.
+type AppendData = imap.AppendData
 
 // AppendCommand is an in-flight APPEND command.
 type AppendCommand struct {
@@ -133,6 +123,7 @@ func (c *Client) Append(ctx context.Context, mailbox string, options *AppendOpti
 		if err != nil {
 			return
 		}
+		data.HasUID = true
 		data.UIDValidity = parsed.UIDValidity
 		if countUIDs(parsed.DestinationUIDs) == 1 {
 			for _, r := range parsed.DestinationUIDs {

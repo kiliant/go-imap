@@ -71,18 +71,9 @@ type CatenateText struct {
 	_       struct{}
 }
 
-// MultiAppendData is the result of MULTIAPPEND / CATENATE APPEND.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MultiAppendData struct {
-	// UIDValidity and UIDs come from APPENDUID when the server sends one.
-	// With MULTIAPPEND the UID set may contain several UIDs; UIDs holds them
-	// all. A single-UID APPEND still fills UIDs with one element.
-	UIDValidity uint32
-	UIDs        imap.UIDSet
-
-	_ struct{}
-}
+// MultiAppendData is the result of MULTIAPPEND / CATENATE APPEND. It is an
+// alias for [imap.MultiAppendData], which both protocol directions share.
+type MultiAppendData = imap.MultiAppendData
 
 // MultiAppendCommand is an in-flight MULTIAPPEND / CATENATE APPEND.
 type MultiAppendCommand struct {
@@ -202,6 +193,7 @@ func (c *Client) MultiAppend(ctx context.Context, mailbox string, messages []App
 		if err != nil {
 			return
 		}
+		data.HasUIDs = true
 		data.UIDValidity = parsed.UIDValidity
 		data.UIDs = parsed.DestinationUIDs
 	})

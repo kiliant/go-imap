@@ -31,7 +31,7 @@ func TestMoveUIDCollectsUntaggedCopyUID(t *testing.T) {
 	if data.Emulated || data.ExpungedEveryDeletedMessage {
 		t.Fatalf("native MOVE reported as emulated: %#v", data)
 	}
-	if !data.UIDPlus.Received() || data.UIDPlus.UIDValidity != 432432 {
+	if !data.UIDPlus.HasUIDs || data.UIDPlus.UIDValidity != 432432 {
 		t.Fatalf("COPYUID = %#v", data.UIDPlus)
 	}
 	if !data.UIDPlus.SourceUIDs.Equal(imap.UIDSetRange(42, 69)) ||
@@ -53,7 +53,7 @@ func TestMoveWithoutCopyUIDLeavesUIDDataZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data.UIDPlus.Received() {
+	if data.UIDPlus.HasUIDs {
 		t.Fatalf("UIDPlus reported without a COPYUID response code: %#v", data.UIDPlus)
 	}
 }
@@ -110,7 +110,7 @@ func TestMoveUIDEmulationUsesUIDExpunge(t *testing.T) {
 	if data.ExpungedEveryDeletedMessage {
 		t.Fatal("UID EXPUNGE was used but the wide-expunge warning was set")
 	}
-	if data.UIDPlus.Received() {
+	if data.UIDPlus.HasUIDs {
 		t.Fatal("emulated MOVE reported COPYUID though the scripted COPY OK carried none")
 	}
 }

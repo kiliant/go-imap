@@ -92,8 +92,8 @@ func TestParseCopyUID(t *testing.T) {
 				!got.DestinationUIDs.Equal(tc.want.DestinationUIDs) {
 				t.Fatalf("parseCopyUID(%q) = %#v, want %#v", tc.args, got, tc.want)
 			}
-			if !got.Received() {
-				t.Fatal("Received() = false for a parsed response code")
+			if !got.HasUIDs {
+				t.Fatal("HasUIDs = false for a parsed response code")
 			}
 		})
 	}
@@ -118,7 +118,7 @@ func TestParseAppendUID(t *testing.T) {
 	if _, err := parseAppendUID("38505 3955 3956"); err == nil {
 		t.Fatal("parseAppendUID accepted three fields")
 	}
-	if (*CopyData)(nil).Received() {
-		t.Fatal("Received() = true for nil")
+	if (CopyData{}).HasUIDs {
+		t.Fatal("HasUIDs = true for a zero CopyData")
 	}
 }

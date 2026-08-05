@@ -286,7 +286,7 @@ func TestCopyReturnsTypedData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data == nil || !data.Received() || data.UIDValidity != 38505 ||
+	if data == nil || !data.HasUIDs || data.UIDValidity != 38505 ||
 		!data.SourceUIDs.Equal(imap.UIDSetNum(304)) ||
 		!data.DestinationUIDs.Equal(imap.UIDSetNum(3956)) {
 		t.Fatalf("COPY data = %#v, want COPYUID 38505 304 3956", data)

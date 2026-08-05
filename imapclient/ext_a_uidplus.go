@@ -68,10 +68,6 @@ func (c *Client) uidExpunge(argument string) *Command {
 	}, nil)
 }
 
-// Received reports whether the server supplied a UIDPLUS response code
-// (COPYUID or APPENDUID). See [CopyData].
-func (d *CopyData) Received() bool { return d != nil && d.UIDValidity != 0 }
-
 // parseCopyUID parses the arguments of a COPYUID response code:
 //
 //	resp-code-copy = "COPYUID" SP nz-number SP uid-set SP uid-set
@@ -102,7 +98,7 @@ func parseCopyUID(args string) (*CopyData, error) {
 	if countUIDs(source) != countUIDs(destination) {
 		return nil, fmt.Errorf("COPYUID source and destination sets have different lengths: %q", args)
 	}
-	return &CopyData{UIDValidity: validity, SourceUIDs: source, DestinationUIDs: destination}, nil
+	return &CopyData{HasUIDs: true, UIDValidity: validity, SourceUIDs: source, DestinationUIDs: destination}, nil
 }
 
 // parseAppendUID parses the arguments of an APPENDUID response code:
@@ -124,7 +120,7 @@ func parseAppendUID(args string) (*CopyData, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &CopyData{UIDValidity: validity, DestinationUIDs: destination}, nil
+	return &CopyData{HasUIDs: true, UIDValidity: validity, DestinationUIDs: destination}, nil
 }
 
 func parseUIDValidity(s string) (uint32, error) {
