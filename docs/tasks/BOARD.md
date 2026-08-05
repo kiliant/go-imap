@@ -60,26 +60,28 @@ call, not the originating task's.
 | [T17](T17-bidirectional-vocabulary-audit.md) | Bidirectional vocabulary audit | M4 — **blocks v1.0** | T16 | `*.go` (root pkg) | api-guardian + client-core |
 | [T16](T16-server-framework.md) | Server framework design | M5 | — | `docs/SERVER-DESIGN.md` | — (human-led) |
 | [T18](T18-server-direction-codec.md) | Server-direction codec | M6 | T16, v1.0 | `internal/imapwire/{command,respenc}.go`, `internal/imapcodec/**`, and `imapclient/{fetch,search,structure}.go` for the migration only (lock passes from T06) | wire-protocol |
-| T19 | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18 | `imapserver/{server,conn,session,state,dispatch,capability}.go` | server-core |
-| T20 | Backend contract, `memory`, `backendtest` | M6 | T19 | `imapserver/backend.go`, `imapserver/{memory,backendtest}/**` | server-core |
+| [T19](T19-server-core.md) | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18, §2 approved, v1.0 | `imapserver/{server,conn,session,state,dispatch,capability}.go` | server-core |
+| [T20](T20-backend-contract.md) | Backend contract, `memory`, `backendtest` | M6 | T19 | `imapserver/backend.go`, `imapserver/{memory,backendtest}/**` | server-core |
 | [T21](T21-message-analysis.md) | Message analysis: bodystructure/envelope generation, search evaluation helper | M6 | T18 | `internal/imapmessage/**` | wire-protocol |
-| T22 | Base command set, server side | M6 | T20, T21 | `imapserver/cmd_*.go` | server-core |
-| T23 | Server extensions, groups A–E | M6 | T22 | `imapserver/ext_*.go` | extensions |
-| T24 | Server conformance, interop and fuzzing | M6 | T22 | `imapserver/**/*_fuzz_test.go`, `interop/servers/goimap/**` | fuzz-hardening + interop-harness |
-| T25 | Server API review, docs, release | M6 | T23, T24 | `imapserver` doc comments, `examples/server/**` | docs-release + api-guardian |
+| [T22](T22-base-command-set.md) | Base command set, server side | M6 | T20, T21 | `imapserver/cmd_*.go` | server-core |
+| [T23](T23-server-extensions.md) | Server extensions, groups A–E | M6 | T22 | `imapserver/ext_*.go` | extensions |
+| [T24](T24-server-conformance.md) | Server conformance, interop and fuzzing | M6 | T22 | `imapserver/**/*_fuzz_test.go`, `interop/servers/goimap/**` | fuzz-hardening + interop-harness |
+| [T25](T25-server-release.md) | Server API review, docs, release | M6 | T23, T24 | `imapserver` doc comments, `examples/server/**` | docs-release + api-guardian |
 
 T16 is deliberately out of numeric order: it is the design task, it has no
 dependencies, and T17 depends on it. See "Why T16 moved" below.
 
-**T19, T20 and T22–T25 have no spec files yet, on purpose.** They depend on the
-backend abstraction that `../SERVER-DESIGN.md` §2 recommends and that is still
-awaiting approval; writing them now would encode a guess at the answer. Their
-rows here fix the dependency order and the ownership boundaries, which are
-knowable without it.
+**T19, T20 and T22–T25 now have spec files**, written after `../SERVER-DESIGN.md`
+was approved by the human on 2026-08-05. All of T18–T25 remain blocked on
+implementation until v1.0 is tagged (itself gated on T17, in progress) — the
+specs exist so the M6 agents have a written contract to start from the moment
+that gate opens, not so they can start early.
 
-T18 and T21 are the exceptions and are specced: neither depends on the
-abstraction, and between them they are the bulk of the server project. If M6
-needs to start quickly, it starts with those two in parallel.
+T18 and T21 remain the pair that never depended on the abstraction at all —
+neither's spec changed with approval, and between them they are the bulk of the
+server project. If M6 needs to start quickly once v1.0 lands, it starts with
+those two in parallel; T19 follows as soon as T18 does, since it needs the
+codec's command decoder.
 
 ## Critical path
 
