@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -230,8 +231,15 @@ func FuzzParsePartialReturnValue(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		_, _ = parsePartialReturnValue(s, true)
-		_, _ = parsePartialReturnValue(s, false)
+		// The range token is fuzzed inside the wire form the PARTIAL return
+		// item actually carries, since the parser moved behind
+		// imap.ESearchData.Partial.
+		for _, raw := range []string{s, "(" + s + " 1,3,5)", "(" + s + " NIL)"} {
+			for _, uid := range []bool{true, false} {
+				data := imap.ESearchData{UID: uid, Values: map[imap.ESearchReturnKey]string{imap.ESearchReturnKeyPartial: raw}}
+				_, _ = data.Partial()
+			}
+		}
 	})
 }
 
@@ -351,9 +359,9 @@ func FuzzParseRelevancyScores(f *testing.F) {
 	f.Add("RELEVANCY", "(0 101 255 256)")
 	f.Add("RELEVANCY", "notalist")
 	f.Fuzz(func(t *testing.T, key, value string) {
-		data := &ESearchData{Values: map[ESearchReturnKey]string{ESearchReturnKey(key): value}}
-		_, _ = ParseRelevancyScores(data)
-		_, _ = ParseRelevancyScores(nil)
+		data := imap.ESearchData{Values: map[imap.ESearchReturnKey]string{imap.ESearchReturnKey(key): value}}
+		_, _ = data.RelevancyScores()
+		_, _ = imap.ESearchData{}.RelevancyScores()
 	})
 }
 
@@ -364,8 +372,8 @@ func FuzzParsePartialSearchData(f *testing.F) {
 	f.Add("PARTIAL", "()")
 	f.Add("PARTIAL", "(1:10)")
 	f.Fuzz(func(t *testing.T, key, value string) {
-		data := &ESearchData{Values: map[ESearchReturnKey]string{ESearchReturnKey(key): value}}
-		_, _ = ParsePartialSearchData(data)
-		_, _ = ParsePartialSearchData(nil)
+		data := imap.ESearchData{Values: map[imap.ESearchReturnKey]string{imap.ESearchReturnKey(key): value}}
+		_, _ = data.Partial()
+		_, _ = imap.ESearchData{}.Partial()
 	})
 }

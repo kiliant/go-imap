@@ -3,6 +3,7 @@ package imapclient
 import (
 	"testing"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -25,7 +26,7 @@ func FuzzESearchResponse(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, line string) {
-		cmd := &ESearchCommand{data: &ESearchData{Values: make(map[ESearchReturnKey]string)}}
+		cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{Values: make(map[imap.ESearchReturnKey]string)}}}
 		collector := esearchCollector(cmd)
 		resp := &untaggedResponse{name: "ESEARCH", dec: imapwire.NewDecoderString(line, nil)}
 		_, _ = collector(resp)

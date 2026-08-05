@@ -223,9 +223,9 @@ func TestSearchFuzzyWireForm(t *testing.T) {
 }
 
 func TestParseRelevancyScores(t *testing.T) {
-	scores, err := ParseRelevancyScores(&ESearchData{Values: map[ESearchReturnKey]string{
+	scores, err := (imap.ESearchData{Values: map[imap.ESearchReturnKey]string{
 		ESearchReturnKeyRelevancy: "(4 99 42)",
-	}})
+	}}).RelevancyScores()
 	if err != nil {
 		t.Fatal(err)
 	}

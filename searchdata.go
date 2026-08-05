@@ -1,5 +1,11 @@
 package imap
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // This file holds the vocabulary of the extended search family — ESEARCH
 // (RFC 4731), PARTIAL (RFC 9394), SORT (RFC 5256) and THREAD (RFC 5256) — as
 // opposed to search.go, which holds the search *criteria* tree.
@@ -208,19 +214,120 @@ type ESearchData struct {
 	// Modelled items appear here too, so the unparsed text is always readable.
 	Values map[ESearchReturnKey]string
 
-	// Emulated reports that the value was computed from an ordinary SEARCH
-	// response rather than decoded from an ESEARCH one, because the peer does
-	// not advertise ESEARCH.
-	//
-	// It is a client-side observation: it describes how a decoder obtained the
-	// value, and a producer has nothing to say with it. A server-produced
-	// value leaves it false. It is kept on the shared type rather than split
-	// off, because unlike [MailboxStatus.UIDValidityChanged] it appears in no
-	// server-facing contract, and splitting it would divide the exported
-	// helpers that read this type between two spellings for no gain.
-	Emulated bool
-
 	_ struct{}
+}
+
+// Partial extracts the PARTIAL return item. PARTIAL, RFC 9394 section 3.1.
+// An absent PARTIAL item yields (nil, nil); a malformed one is an error.
+//
+// The receiver is a value so that the method is reachable on a non-addressable
+// value such as a [MultiSearchResult] field.
+func (d ESearchData) Partial() (*PartialSearchData, error) {
+	raw, ok := d.Values[ESearchReturnKeyPartial]
+	if !ok {
+		return nil, nil
+	}
+	return parsePartialReturnValue(raw, d.UID)
+}
+
+// RelevancyScores extracts the RELEVANCY score list. SEARCH=FUZZY, RFC 6203
+// section 4. Scores are in 1..100 and align positionally with the ALL set when
+// both are present. An absent RELEVANCY item yields (nil, nil).
+//
+// The receiver is a value, for the reason given on [ESearchData.Partial].
+func (d ESearchData) RelevancyScores() ([]uint8, error) {
+	raw, ok := d.Values[ESearchReturnKeyRelevancy]
+	if !ok {
+		return nil, nil
+	}
+	inner, err := unwrapParenthesised(raw, "RELEVANCY")
+	if err != nil {
+		return nil, err
+	}
+	if inner == "" {
+		return []uint8{}, nil
+	}
+	parts := strings.Fields(inner)
+	out := make([]uint8, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.ParseUint(p, 10, 8)
+		if err != nil || n < 1 || n > 100 {
+			return nil, fmt.Errorf("invalid ESEARCH RELEVANCY score %q", p)
+		}
+		out = append(out, uint8(n))
+	}
+	return out, nil
+}
+
+// unwrapParenthesised strips the surrounding parentheses of a captured return
+// value, which the decoder preserves verbatim.
+func unwrapParenthesised(raw, item string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if !strings.HasPrefix(s, "(") || !strings.HasSuffix(s, ")") {
+		return "", fmt.Errorf("invalid ESEARCH %s value %q", item, raw)
+	}
+	return strings.TrimSpace(s[1 : len(s)-1]), nil
+}
+
+// parsePartialReturnValue parses the wire form of a PARTIAL return item,
+// "(partial-range partial-results)", where partial-results is a sequence set or
+// NIL. RFC 9394 section 3.1.
+func parsePartialReturnValue(raw string, uid bool) (*PartialSearchData, error) {
+	inner, err := unwrapParenthesised(raw, "PARTIAL")
+	if err != nil {
+		return nil, err
+	}
+	rangeTok, rest, ok := strings.Cut(inner, " ")
+	if !ok {
+		return nil, fmt.Errorf("invalid ESEARCH PARTIAL value %q", raw)
+	}
+	rng, err := parsePartialRangeToken(rangeTok)
+	if err != nil {
+		return nil, err
+	}
+	rest = strings.TrimSpace(rest)
+	out := &PartialSearchData{Range: rng}
+	if strings.EqualFold(rest, "NIL") {
+		return out, nil
+	}
+	out.HasResults = true
+	if uid {
+		set, err := ParseUIDSet(rest)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ESEARCH PARTIAL uid set %q: %w", rest, err)
+		}
+		out.AllUIDs = set
+	} else {
+		set, err := ParseSeqSet(rest)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ESEARCH PARTIAL sequence set %q: %w", rest, err)
+		}
+		out.All = set
+	}
+	return out, nil
+}
+
+// parsePartialRangeToken parses the "N:M" or "-N:-M" range token of a PARTIAL
+// return item.
+func parsePartialRangeToken(tok string) (PartialRange, error) {
+	a, b, ok := strings.Cut(tok, ":")
+	if !ok {
+		return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
+	}
+	if strings.HasPrefix(a, "-") || strings.HasPrefix(b, "-") {
+		start, err1 := strconv.ParseUint(strings.TrimPrefix(a, "-"), 10, 32)
+		end, err2 := strconv.ParseUint(strings.TrimPrefix(b, "-"), 10, 32)
+		if err1 != nil || err2 != nil || start == 0 || end == 0 {
+			return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
+		}
+		return PartialRange{LastStart: uint32(start), LastEnd: uint32(end)}, nil
+	}
+	start, err1 := strconv.ParseUint(a, 10, 32)
+	end, err2 := strconv.ParseUint(b, 10, 32)
+	if err1 != nil || err2 != nil || start == 0 || end == 0 {
+		return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
+	}
+	return PartialRange{FirstStart: uint32(start), FirstEnd: uint32(end)}, nil
 }
 
 // MultiSearchResult is one ESEARCH response of a multimailbox search: the

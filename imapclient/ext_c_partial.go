@@ -3,8 +3,6 @@ package imapclient
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -133,7 +131,7 @@ func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.Sear
 
 	rng := options.Range
 	charset := options.Charset
-	cmd := &ESearchCommand{data: &ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}, uid: uid}
+	cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}}, uid: uid}
 	if save {
 		cmd.saved = c.newSavedSearchResult(uid)
 	}
@@ -154,7 +152,7 @@ func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.Sear
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	partial, err := ParsePartialSearchData(data)
+	partial, err := data.Partial()
 	if err != nil {
 		return data, nil, nil, err
 	}
@@ -182,78 +180,6 @@ func writePartialRange(enc *imapwire.Encoder, rng PartialRange) {
 		return
 	}
 	enc.Number(rng.FirstStart).Special(':').Number(rng.FirstEnd)
-}
-
-// ParsePartialSearchData extracts the PARTIAL return item from ESEARCH data.
-// Unknown or absent PARTIAL yields (nil, nil).
-func ParsePartialSearchData(data *ESearchData) (*PartialSearchData, error) {
-	if data == nil {
-		return nil, nil
-	}
-	raw, ok := data.Values[ESearchReturnKeyPartial]
-	if !ok {
-		return nil, nil
-	}
-	return parsePartialReturnValue(raw, data.UID)
-}
-
-func parsePartialReturnValue(raw string, uid bool) (*PartialSearchData, error) {
-	// Wire form: (partial-range partial-results) where partial-results is a
-	// sequence-set or NIL. CaptureValue keeps the parentheses.
-	s := strings.TrimSpace(raw)
-	if !strings.HasPrefix(s, "(") || !strings.HasSuffix(s, ")") {
-		return nil, fmt.Errorf("invalid ESEARCH PARTIAL value %q", raw)
-	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	rangeTok, rest, ok := strings.Cut(inner, " ")
-	if !ok {
-		return nil, fmt.Errorf("invalid ESEARCH PARTIAL value %q", raw)
-	}
-	rng, err := parsePartialRangeToken(rangeTok)
-	if err != nil {
-		return nil, err
-	}
-	rest = strings.TrimSpace(rest)
-	out := &PartialSearchData{Range: rng}
-	if strings.EqualFold(rest, "NIL") {
-		return out, nil
-	}
-	out.HasResults = true
-	if uid {
-		set, err := imap.ParseUIDSet(rest)
-		if err != nil {
-			return nil, fmt.Errorf("invalid ESEARCH PARTIAL uid set %q: %w", rest, err)
-		}
-		out.AllUIDs = set
-	} else {
-		set, err := imap.ParseSeqSet(rest)
-		if err != nil {
-			return nil, fmt.Errorf("invalid ESEARCH PARTIAL sequence set %q: %w", rest, err)
-		}
-		out.All = set
-	}
-	return out, nil
-}
-
-func parsePartialRangeToken(tok string) (PartialRange, error) {
-	a, b, ok := strings.Cut(tok, ":")
-	if !ok {
-		return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
-	}
-	if strings.HasPrefix(a, "-") || strings.HasPrefix(b, "-") {
-		start, err1 := strconv.ParseUint(strings.TrimPrefix(a, "-"), 10, 32)
-		end, err2 := strconv.ParseUint(strings.TrimPrefix(b, "-"), 10, 32)
-		if err1 != nil || err2 != nil || start == 0 || end == 0 {
-			return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
-		}
-		return PartialRange{LastStart: uint32(start), LastEnd: uint32(end)}, nil
-	}
-	start, err1 := strconv.ParseUint(a, 10, 32)
-	end, err2 := strconv.ParseUint(b, 10, 32)
-	if err1 != nil || err2 != nil || start == 0 || end == 0 {
-		return PartialRange{}, fmt.Errorf("invalid PARTIAL range %q", tok)
-	}
-	return PartialRange{FirstStart: uint32(start), FirstEnd: uint32(end)}, nil
 }
 
 // PartialFetchOptions configures the PARTIAL FETCH modifier. A nil pointer is

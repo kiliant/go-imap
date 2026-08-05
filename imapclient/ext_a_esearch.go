@@ -78,10 +78,33 @@ type ESearchOptions struct {
 	_ struct{}
 }
 
-// ESearchData is the result of an extended SEARCH: one ESEARCH response, or
-// its client-side reconstruction. It is an alias for [imap.ESearchData],
-// which both protocol directions share.
-type ESearchData = imap.ESearchData
+// ESearchData is the result of an extended SEARCH: the shared
+// [imap.ESearchData], plus the one observation only a client can make.
+//
+// The embedded fields and methods are promoted, so data.HasMin, data.AllUIDs,
+// data.Partial() and data.RelevancyScores() are used exactly as before. A keyed
+// literal setting a shared field must name the embedded value:
+//
+//	&ESearchData{ESearchData: imap.ESearchData{UID: true}}
+//
+// Emulated is not part of [imap.ESearchData] because no server produces it: it
+// says these values were computed by this client from an ordinary SEARCH
+// response, because the server does not advertise ESEARCH. It is reachable from
+// [imap.MultiSearchResult.Data], which a server framework constructs, so
+// leaving it on the shared type would put a field there that one of the two
+// directions can never fill.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ESearchData struct {
+	imap.ESearchData
+
+	// Emulated reports that the value was computed from an ordinary SEARCH
+	// response rather than decoded from an ESEARCH one. See
+	// [Client.SearchExtended].
+	Emulated bool
+
+	_ struct{}
+}
 
 // ESearchCommand is an in-flight extended SEARCH.
 type ESearchCommand struct {
@@ -173,7 +196,7 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 	if uid {
 		name = "UID SEARCH"
 	}
-	cmd := &ESearchCommand{data: &ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}, uid: uid}
+	cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}}, uid: uid}
 	if criteria == nil {
 		cmd.Command = rejectedCommand(c, name, "SEARCH requires criteria")
 		return cmd
@@ -361,7 +384,7 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 			return false, nil
 		}
 		dec := resp.dec
-		data := ESearchData{UID: cmd.uid, Values: make(map[ESearchReturnKey]string)}
+		data := imap.ESearchData{UID: cmd.uid, Values: make(map[ESearchReturnKey]string)}
 		tokenPending := false
 		if dec.SP() {
 			if dec.PeekSpecial('(') {
@@ -402,7 +425,7 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 		if data.UID != cmd.uid {
 			return true, fmt.Errorf("ESEARCH response UID indicator %t does not match the command", data.UID)
 		}
-		*cmd.data = data
+		cmd.data.ESearchData = data
 		return true, nil
 	}
 }
@@ -410,7 +433,7 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 // readESearchItems reads the optional UID indicator followed by the
 // search-return-data items. tokenPending reports that the caller has already
 // consumed the space introducing the first token.
-func readESearchItems(dec *imapwire.Decoder, data *ESearchData, tokenPending bool) error {
+func readESearchItems(dec *imapwire.Decoder, data *imap.ESearchData, tokenPending bool) error {
 	for {
 		if !tokenPending && !dec.SP() {
 			return nil
@@ -444,7 +467,7 @@ func readESearchItems(dec *imapwire.Decoder, data *ESearchData, tokenPending boo
 // applyESearchItem fills the typed field for an item this package models. An
 // item it does not model has already been preserved in ESearchData.Values, so
 // falling through here is not data loss.
-func applyESearchItem(data *ESearchData, key ESearchReturnKey, value string) error {
+func applyESearchItem(data *imap.ESearchData, key ESearchReturnKey, value string) error {
 	switch key {
 	case ESearchReturnKeyMin:
 		n, err := responseCodeUint32(value)

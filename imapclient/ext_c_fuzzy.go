@@ -2,8 +2,6 @@ package imapclient
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -15,7 +13,7 @@ import (
 const SearchReturnRelevancy SearchReturnOptionKeyword = "RELEVANCY"
 
 // ESearchReturnKeyRelevancy is the RELEVANCY return-data item. RFC 6203.
-const ESearchReturnKeyRelevancy ESearchReturnKey = "RELEVANCY"
+const ESearchReturnKeyRelevancy = imap.ESearchReturnKeyRelevancy
 
 // SearchFuzzy issues SEARCH with a FUZZY-wrapped criterion, gated on the
 // SEARCH=FUZZY capability. SEARCH=FUZZY, RFC 6203.
@@ -72,7 +70,7 @@ func (c *Client) searchExtendedFuzzy(uid bool, criteria imap.SearchCriteria, opt
 	if uid {
 		name = "UID SEARCH"
 	}
-	cmd := &ESearchCommand{data: &ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}, uid: uid}
+	cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}}, uid: uid}
 	if !c.Supports("SEARCH=FUZZY") {
 		cmd.Command = failedCommand(name, capabilityError("SEARCH FUZZY", "SEARCH=FUZZY"))
 		return cmd
@@ -88,37 +86,6 @@ func (c *Client) searchExtendedFuzzy(uid bool, criteria imap.SearchCriteria, opt
 		return c.SearchExtendedUID(criteria, options)
 	}
 	return c.SearchExtended(criteria, options)
-}
-
-// ParseRelevancyScores extracts the RELEVANCY score list from ESEARCH data.
-// Scores are in 1..100 and align positionally with the ALL set when both are
-// present. RFC 6203 section 4.
-func ParseRelevancyScores(data *ESearchData) ([]uint8, error) {
-	if data == nil {
-		return nil, nil
-	}
-	raw, ok := data.Values[ESearchReturnKeyRelevancy]
-	if !ok {
-		return nil, nil
-	}
-	s := strings.TrimSpace(raw)
-	if !strings.HasPrefix(s, "(") || !strings.HasSuffix(s, ")") {
-		return nil, fmt.Errorf("invalid ESEARCH RELEVANCY value %q", raw)
-	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	if inner == "" {
-		return []uint8{}, nil
-	}
-	parts := strings.Fields(inner)
-	out := make([]uint8, 0, len(parts))
-	for _, p := range parts {
-		n, err := strconv.ParseUint(p, 10, 8)
-		if err != nil || n < 1 || n > 100 {
-			return nil, fmt.Errorf("invalid ESEARCH RELEVANCY score %q", p)
-		}
-		out = append(out, uint8(n))
-	}
-	return out, nil
 }
 
 // SortFuzzy is [Client.Sort] gated so RELEVANCY may appear among the keys.
