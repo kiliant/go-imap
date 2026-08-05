@@ -20,36 +20,9 @@ type StatusOptions struct {
 	_     struct{}
 }
 
-// StatusData is mailbox data returned by STATUS. Values preserves every item
-// received, including extension items not yet given a convenience field by this
-// package. Numeric values are stored as uint64; string-valued extensions
-// (including NIL-shaped items such as APPENDLIMIT) are stored as strings.
-// Prefer [StatusData.Number] over type-asserting Values for numeric items.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type StatusData struct {
-	Mailbox       string
-	NumMessages   uint32
-	UIDNext       imap.UID
-	UIDValidity   uint32
-	NumUnseen     uint32
-	NumRecent     uint32
-	HighestModSeq uint64
-	Values        map[imap.StatusItemKeyword]any
-	_             struct{}
-}
-
-// Number returns the numeric STATUS value for item. The second result reports
-// whether the server sent a uint64 for that item, which is distinct from a
-// present zero. Non-numeric values (for example APPENDLIMIT NIL stored as a
-// string) return false.
-func (data *StatusData) Number(item imap.StatusItemKeyword) (uint64, bool) {
-	if data == nil || data.Values == nil {
-		return 0, false
-	}
-	value, ok := data.Values[item].(uint64)
-	return value, ok
-}
+// StatusData is mailbox data returned by STATUS. It is an alias for
+// [imap.StatusData], which both protocol directions share.
+type StatusData = imap.StatusData
 
 // StatusCommand is an in-flight STATUS command.
 type StatusCommand struct {

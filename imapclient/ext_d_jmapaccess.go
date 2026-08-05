@@ -7,15 +7,9 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// JMAPAccessData is the result of GETJMAPACCESS. JMAPACCESS, RFC 9698.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type JMAPAccessData struct {
-	// SessionURL is the JMAP session resource URL that serves the same
-	// mailstore as this IMAP account.
-	SessionURL string
-	_          struct{}
-}
+// JMAPAccessData is the result of GETJMAPACCESS. It is an alias for
+// [imap.JMAPAccessData], which both protocol directions share.
+type JMAPAccessData = imap.JMAPAccessData
 
 // GetJMAPAccessOptions configures GETJMAPACCESS. A nil pointer selects the
 // defaults.

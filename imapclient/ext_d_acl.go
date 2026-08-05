@@ -10,48 +10,20 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// ACLRights is an ACL rights string. It is deliberately open-ended: RFC 4314
-// defines the base letters and RIGHTS= advertisements name further sets, so a
-// closed enum would break on the next rights extension.
-type ACLRights string
-
-// ACLEntry is one identifier/rights pair from GETACL. RFC 4314.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ACLEntry struct {
-	Identifier string
-	Rights     ACLRights
-	_          struct{}
-}
-
-// ACLData is the result of GETACL.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ACLData struct {
-	Mailbox string
-	Entries []ACLEntry
-	_       struct{}
-}
-
-// ListRightsData is the result of LISTRIGHTS. RFC 4314 section 3.4.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ListRightsData struct {
-	Mailbox    string
-	Identifier string
-	Required   ACLRights
-	Optional   []ACLRights
-	_          struct{}
-}
-
-// MyRightsData is the result of MYRIGHTS. RFC 4314 section 3.5.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MyRightsData struct {
-	Mailbox string
-	Rights  ACLRights
-	_       struct{}
-}
+// Aliases for the ACL vocabulary, which now lives in [package imap] so that
+// both protocol directions share it. RFC 4314.
+type (
+	// ACLRights is an ACL rights string. See [imap.ACLRights].
+	ACLRights = imap.ACLRights
+	// ACLEntry is one identifier/rights pair. See [imap.ACLEntry].
+	ACLEntry = imap.ACLEntry
+	// ACLData is the result of GETACL. See [imap.ACLData].
+	ACLData = imap.ACLData
+	// ListRightsData is the result of LISTRIGHTS. See [imap.ListRightsData].
+	ListRightsData = imap.ListRightsData
+	// MyRightsData is the result of MYRIGHTS. See [imap.MyRightsData].
+	MyRightsData = imap.MyRightsData
+)
 
 // SetACLOptions configures SETACL. A nil pointer selects the defaults.
 //

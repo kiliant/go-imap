@@ -67,3 +67,41 @@ const (
 	// section 3.3.
 	StatusItemDeletedStorage StatusItemKeyword = "DELETED-STORAGE"
 )
+
+// StatusData is the content of an untagged STATUS response. RFC 3501
+// section 7.2.4, RFC 9051 section 7.3.3.
+//
+// Values carries every item, including extension items this library gives no
+// convenience field. Numeric values are held as uint64; string-valued
+// extensions, including NIL-shaped items such as APPENDLIMIT, are held as
+// strings. Prefer [StatusData.Number] over type-asserting Values for numeric
+// items.
+//
+// The convenience fields are a projection of Values, not a replacement for it: a
+// producer that fills only the fields reports no items at all, so a producer
+// must populate Values for every item it means to send.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type StatusData struct {
+	Mailbox       string
+	NumMessages   uint32
+	UIDNext       UID
+	UIDValidity   uint32
+	NumUnseen     uint32
+	NumRecent     uint32
+	HighestModSeq uint64
+	Values        map[StatusItemKeyword]any
+	_             struct{}
+}
+
+// Number returns the numeric STATUS value for item. The second result reports
+// whether a uint64 is present for that item, which is distinct from a present
+// zero. Non-numeric values (for example APPENDLIMIT NIL held as a string)
+// return false.
+func (data *StatusData) Number(item StatusItemKeyword) (uint64, bool) {
+	if data == nil || data.Values == nil {
+		return 0, false
+	}
+	value, ok := data.Values[item].(uint64)
+	return value, ok
+}

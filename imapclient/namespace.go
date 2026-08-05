@@ -6,28 +6,18 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
 // NamespaceDescriptor describes one namespace prefix and its hierarchy
-// delimiter. A zero Delimiter means the server reported NIL.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type NamespaceDescriptor struct {
-	Prefix    string
-	Delimiter rune
-	_         struct{}
-}
+// delimiter. It is an alias for [imap.NamespaceDescriptor], which both protocol
+// directions share.
+type NamespaceDescriptor = imap.NamespaceDescriptor
 
-// NamespaceData is returned by NAMESPACE (RFC 2342).
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type NamespaceData struct {
-	Personal   []NamespaceDescriptor
-	OtherUsers []NamespaceDescriptor
-	Shared     []NamespaceDescriptor
-	_          struct{}
-}
+// NamespaceData is returned by NAMESPACE (RFC 2342). It is an alias for
+// [imap.NamespaceData], which both protocol directions share.
+type NamespaceData = imap.NamespaceData
 
 // NamespaceCommand is an in-flight NAMESPACE command.
 type NamespaceCommand struct {

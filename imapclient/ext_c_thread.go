@@ -9,16 +9,14 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// ThreadAlgorithm names a THREAD algorithm. THREAD, RFC 5256 section 4.
-//
-// It is a string-backed open type: ORDEREDSUBJECT and REFERENCES are constants,
-// and a future algorithm registers as THREAD=<name> without changing this API.
-type ThreadAlgorithm string
+// ThreadAlgorithm names a THREAD algorithm. It is an alias for
+// [imap.ThreadAlgorithm], which both protocol directions share.
+type ThreadAlgorithm = imap.ThreadAlgorithm
 
 // Thread algorithms. RFC 5256 section 4.
 const (
-	ThreadOrderedSubject ThreadAlgorithm = "ORDEREDSUBJECT"
-	ThreadReferences     ThreadAlgorithm = "REFERENCES"
+	ThreadOrderedSubject = imap.ThreadOrderedSubject
+	ThreadReferences     = imap.ThreadReferences
 )
 
 // ThreadOptions configures THREAD / UID THREAD. A nil pointer selects UTF-8.
@@ -38,30 +36,13 @@ func (o *ThreadOptions) charset() string {
 	return o.Charset
 }
 
-// ThreadNode is one node of a THREAD response tree. Children are replies in
-// the algorithm's order. Num is a sequence number for THREAD and a UID for
-// UID THREAD. Num is zero only for the anonymous container used when the
-// server groups sibling roots as ((a)(b)).
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ThreadNode struct {
-	Num      uint32
-	Children []ThreadNode
-	_        struct{}
-}
+// ThreadNode is one node of a THREAD response tree. It is an alias for
+// [imap.ThreadNode], which both protocol directions share.
+type ThreadNode = imap.ThreadNode
 
-// ThreadData is the result of THREAD or UID THREAD.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ThreadData struct {
-	// Roots is the forest of thread trees. Empty when nothing matched.
-	Roots []ThreadNode
-
-	// UID reports whether every Num is a UID rather than a sequence number.
-	UID bool
-
-	_ struct{}
-}
+// ThreadData is the result of THREAD or UID THREAD. It is an alias for
+// [imap.ThreadData], which both protocol directions share.
+type ThreadData = imap.ThreadData
 
 // Thread issues THREAD and returns a forest of sequence-number trees.
 // THREAD, RFC 5256.

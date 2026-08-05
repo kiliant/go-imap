@@ -9,32 +9,16 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// MetadataEntryName is a METADATA entry name such as "/shared/comment".
-// Names are open-ended; RFC 5464 defines the /private and /shared trees and
-// servers may add further entries without an API change.
-type MetadataEntryName string
-
-// MetadataEntry is one entry/value pair from GETMETADATA or SETMETADATA.
-//
-// Value is nil when the server returned NIL (unset). An empty string is a
-// present, empty value — distinct from unset.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MetadataEntry struct {
-	Name  MetadataEntryName
-	Value *string
-	_     struct{}
-}
-
-// MailboxMetadata is METADATA for one mailbox (or the server annotation
-// space when Mailbox is empty and METADATA-SERVER was used).
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MailboxMetadata struct {
-	Mailbox string
-	Entries []MetadataEntry
-	_       struct{}
-}
+// Aliases for the METADATA vocabulary, which now lives in [package imap] so
+// that both protocol directions share it. RFC 5464.
+type (
+	// MetadataEntryName is a METADATA entry name. See [imap.MetadataEntryName].
+	MetadataEntryName = imap.MetadataEntryName
+	// MetadataEntry is one entry/value pair. See [imap.MetadataEntry].
+	MetadataEntry = imap.MetadataEntry
+	// MailboxMetadata is METADATA for one mailbox. See [imap.MailboxMetadata].
+	MailboxMetadata = imap.MailboxMetadata
+)
 
 // GetMetadataOptions configures GETMETADATA. A nil pointer selects the
 // defaults (no MAXSIZE, no DEPTH).

@@ -9,29 +9,9 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// SeqMatchData is the optional fourth QRESYNC argument: a sample of sequence
-// numbers paired with the UIDs the client believes they have. QRESYNC, RFC 7162
-// section 3.2.5.2.
-//
-// The server compares each pair with the mailbox's current state. Where a pair
-// matches, the client demonstrably knows about every expunge up to and
-// including that message, so the server can leave that range out of the
-// VANISHED response even when it no longer remembers when those messages were
-// expunged. On a large mailbox this can turn a VANISHED response listing tens
-// of thousands of UIDs into nothing at all.
-//
-// Both sets must be in ascending order, must contain the same number of
-// elements, and must not contain "*".
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type SeqMatchData struct {
-	// SeqNums is the sample of message sequence numbers, ascending.
-	SeqNums imap.SeqSet
-	// UIDs are the UIDs the client believes correspond to SeqNums, ascending
-	// and of the same length.
-	UIDs imap.UIDSet
-	_    struct{}
-}
+// SeqMatchData is the optional fourth QRESYNC select parameter. It is an
+// alias for [imap.SeqMatchData], which both protocol directions share.
+type SeqMatchData = imap.SeqMatchData
 
 // QResyncOptions is the QRESYNC parameter to SELECT and EXAMINE. QRESYNC, RFC
 // 7162 section 3.2.5.

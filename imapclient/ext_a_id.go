@@ -9,19 +9,9 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// IDField is one name/value pair exchanged by the ID command. ID, RFC 2971.
-//
-// Name is required. Value is nil when the wire value is NIL — distinct from an
-// empty string. Field names are open-ended; RFC 2971 section 3.3 defines
-// conventional names (name, version, os, …) but servers and clients may send
-// others without an API change.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type IDField struct {
-	Name  string
-	Value *string
-	_     struct{}
-}
+// IDField is one name/value pair exchanged by the ID command. It is an alias
+// for [imap.IDField], which both protocol directions share.
+type IDField = imap.IDField
 
 // IDOptions configures ID. A nil pointer selects the defaults (send ID NIL).
 //

@@ -64,19 +64,9 @@ type ListOptions struct {
 	_                struct{}
 }
 
-// ListData describes one mailbox returned by LIST or LSUB.
-//
-// A zero Delimiter means the server reported NIL: this mailbox has no hierarchy
-// delimiter. Callers must use this server-provided value rather than assuming
-// '/', '.', or '\\'.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ListData struct {
-	Attrs     []imap.MailboxAttr
-	Delimiter rune
-	Mailbox   string
-	_         struct{}
-}
+// ListData describes one mailbox returned by LIST or LSUB. It is an alias for
+// [imap.ListData], which both protocol directions share.
+type ListData = imap.ListData
 
 // ListCommand is an in-flight LIST or LSUB command.
 type ListCommand struct {

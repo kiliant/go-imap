@@ -175,44 +175,9 @@ func writeNumSet(enc *imapwire.Encoder, set string) {
 	}
 }
 
-// VanishedData is one VANISHED response: a set of UIDs that are no longer in
-// the mailbox. QRESYNC, RFC 7162 section 3.2.10.
-//
-// A VANISHED response is emphatically not an EXPUNGE response, and the two must
-// not be treated interchangeably. Conflating them corrupts a client's cache:
-//
-//   - VANISHED identifies messages by UID and never renumbers anything.
-//     EXPUNGE identifies one message by sequence number, and every later
-//     message is renumbered by the server as a result.
-//   - VANISHED reports a whole set in one response. EXPUNGE reports exactly one
-//     message, and a client processing several must apply the renumbering
-//     between them.
-//
-// Once ENABLE QRESYNC has succeeded, the server sends VANISHED instead of
-// EXPUNGE for every mailbox that is not NOMODSEQ, for the rest of the
-// connection.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type VanishedData struct {
-	// UIDs are the UIDs that vanished. The set is owned by this value.
-	UIDs imap.UIDSet
-
-	// Earlier reports whether the response carried the (EARLIER) tag.
-	//
-	// Earlier is true for expunges that happened before this session knew of
-	// the messages — typically while the client was disconnected — and is the
-	// whole point of QRESYNC. Such messages were never announced to this
-	// session by an EXISTS, so the client must not decrement its message
-	// count for them.
-	//
-	// Earlier is false for messages expunged during this session. Those were
-	// visible to the client, so each UID listed decrements the message count
-	// by one. RFC 7162 section 3.2.10 requires a server never to name a
-	// previously expunged or never-announced message in this form.
-	Earlier bool
-
-	_ struct{}
-}
+// VanishedData is one VANISHED response. It is an alias for
+// [imap.VanishedData], which both protocol directions share.
+type VanishedData = imap.VanishedData
 
 // readVanished parses an untagged VANISHED response. The decoder is positioned
 // immediately after the "VANISHED" atom.

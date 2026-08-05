@@ -5,34 +5,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// InProgressData is one INPROGRESS progress notification. RFC 9585.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type InProgressData struct {
-	// Tag is the originating command tag, or "" when the server sent NIL
-	// (or omitted the detail list entirely).
-	Tag string
-
-	// Progress is the number of items processed so far. Valid only when
-	// HasProgress is set. RFC 9585 requires a non-negative value.
-	Progress    uint32
-	HasProgress bool
-
-	// Goal is the expected total. Valid only when HasGoal is set. When set it
-	// must be strictly greater than Progress; malformed notifications are
-	// discarded by [ParseInProgressArgs].
-	Goal    uint32
-	HasGoal bool
-
-	// Text is the human-readable text that accompanied the untagged OK, if
-	// known. It is empty when only the response-code arguments were parsed.
-	Text string
-
-	_ struct{}
-}
+// InProgressData is one INPROGRESS progress notification. It is an alias for
+// [imap.InProgressData], which both protocol directions share.
+type InProgressData = imap.InProgressData
 
 // SupportsInProgress reports whether the server advertises INPROGRESS.
 // INPROGRESS, RFC 9585.

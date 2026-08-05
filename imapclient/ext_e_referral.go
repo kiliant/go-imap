@@ -8,18 +8,9 @@ import (
 	"github.com/kiliant/go-imap"
 )
 
-// ReferralData is a parsed REFERRAL response code. LOGIN-REFERRALS (RFC 2221)
-// and MAILBOX-REFERRALS (RFC 2193) both use the same code; the IMAP URL tells
-// the client where to reconnect or which mailbox is elsewhere.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ReferralData struct {
-	// URL is the IMAP URL from the response code, verbatim. Callers parse it
-	// with net/url or an IMAP-URL helper; this library preserves the raw form
-	// so unknown URL parameters survive.
-	URL string
-	_   struct{}
-}
+// ReferralData is a parsed REFERRAL response code. It is an alias for
+// [imap.ReferralData], which both protocol directions share.
+type ReferralData = imap.ReferralData
 
 // ParseReferralArgs extracts the IMAP URL from a REFERRAL response code's
 // arguments. RFC 2221 / RFC 2193.

@@ -11,30 +11,11 @@ import (
 )
 
 // PartialRange selects a slice of SEARCH/FETCH results by 1-based index into
-// the result set (not into mailbox sequence numbers). PARTIAL, RFC 9394.
-//
-// Exactly one of First/Last forms is used. FirstStart:FirstEnd selects from
-// the oldest matching result; LastStart:LastEnd (both negative in the wire
-// form, e.g. -1:-100) selects from the newest. A zero End with a non-zero
-// Start is rejected — both ends are mandatory.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type PartialRange struct {
-	// FirstStart and FirstEnd select results counted from the oldest match
-	// (wire form N:M with both positive). Both must be non-zero together.
-	FirstStart uint32
-	FirstEnd   uint32
+// the result set. It is an alias for [imap.PartialRange], which both protocol
+// directions share.
+type PartialRange = imap.PartialRange
 
-	// LastStart and LastEnd select results counted from the newest match
-	// (wire form -N:-M). Both must be non-zero together. LastStart is the
-	// magnitude of the first index (1 = newest).
-	LastStart uint32
-	LastEnd   uint32
-
-	_ struct{}
-}
-
-func (r PartialRange) validate() error {
+func validatePartialRange(r PartialRange) error {
 	first := r.FirstStart != 0 || r.FirstEnd != 0
 	last := r.LastStart != 0 || r.LastEnd != 0
 	switch {
@@ -65,26 +46,11 @@ type SearchReturnPartial struct {
 func (SearchReturnPartial) searchReturnOption() {}
 
 // ESearchReturnKeyPartial is the PARTIAL return-data item. RFC 9394 section 3.1.
-const ESearchReturnKeyPartial ESearchReturnKey = "PARTIAL"
+const ESearchReturnKeyPartial = imap.ESearchReturnKeyPartial
 
-// PartialSearchData is the PARTIAL item of an ESEARCH response.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type PartialSearchData struct {
-	// Range is the range the client asked for, echoed by the server.
-	Range PartialRange
-
-	// All holds matching sequence numbers when the command was not UID.
-	All imap.SeqSet
-	// AllUIDs holds matching UIDs when the command was UID SEARCH.
-	AllUIDs imap.UIDSet
-
-	// HasResults is false when the server answered NIL for the range
-	// (no results in that window). Distinguishes "empty page" from "no item".
-	HasResults bool
-
-	_ struct{}
-}
+// PartialSearchData is the PARTIAL item of an ESEARCH response. It is an alias
+// for [imap.PartialSearchData], which both protocol directions share.
+type PartialSearchData = imap.PartialSearchData
 
 // PartialSearchOptions configures a PARTIAL SEARCH. A nil pointer is invalid
 // for [Client.SearchPartial] / [Client.SearchPartialUID] — the range is
@@ -139,7 +105,7 @@ func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.Sear
 	if options == nil {
 		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: name + " PARTIAL requires options"}
 	}
-	if err := options.Range.validate(); err != nil {
+	if err := validatePartialRange(options.Range); err != nil {
 		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
 	}
 	if criteria == nil {
@@ -323,7 +289,7 @@ func (c *Client) fetchPartial(name, set string, matches func(imap.SeqNum) bool, 
 	if options == nil {
 		return fail(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "FETCH PARTIAL requires options"})
 	}
-	if err := options.Range.validate(); err != nil {
+	if err := validatePartialRange(options.Range); err != nil {
 		return fail(&imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()})
 	}
 	if set == "" || len(items) == 0 {

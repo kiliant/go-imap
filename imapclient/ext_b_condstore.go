@@ -211,31 +211,9 @@ type SyncStoreOptions struct {
 }
 
 // SyncStoreData reports which messages a conditional STORE did not modify.
-//
-// Exactly one of the two sets is ever populated, matching the address space of
-// the command that produced it: STORE reports sequence numbers and UID STORE
-// reports UIDs. Keeping them apart is deliberate — a UID silently read as a
-// sequence number points at the wrong message.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type SyncStoreData struct {
-	// ModifiedSeqNums are the sequence numbers from a MODIFIED response code
-	// on a STORE. Empty when every message passed the UNCHANGEDSINCE test.
-	ModifiedSeqNums imap.SeqSet
-
-	// ModifiedUIDs are the UIDs from a MODIFIED response code on a UID STORE.
-	ModifiedUIDs imap.UIDSet
-
-	_ struct{}
-}
-
-// HasModified reports whether any message failed the UNCHANGEDSINCE test.
-func (d *SyncStoreData) HasModified() bool {
-	if d == nil {
-		return false
-	}
-	return !d.ModifiedSeqNums.IsEmpty() || !d.ModifiedUIDs.IsEmpty()
-}
+// It is an alias for [imap.SyncStoreData], which both protocol directions
+// share.
+type SyncStoreData = imap.SyncStoreData
 
 // SyncStoreCommand is an in-flight conditional STORE or UID STORE.
 type SyncStoreCommand struct {
@@ -277,10 +255,10 @@ func (cmd *SyncStoreCommand) collectModified(err error) error {
 	if !errors.As(err, &ierr) || ierr.Code != imap.CodeModified {
 		return nil
 	}
-	return cmd.data.parseModified(ierr.CodeArgs, cmd.uid)
+	return parseModified(cmd.data, ierr.CodeArgs, cmd.uid)
 }
 
-func (d *SyncStoreData) parseModified(args string, uid bool) error {
+func parseModified(d *SyncStoreData, args string, uid bool) error {
 	args = strings.TrimSpace(args)
 	if args == "" {
 		return nil
@@ -364,7 +342,7 @@ func (c *Client) storeSync(name, set string, uid bool, flags []imap.Flag, option
 		if success && strings.EqualFold(code, string(imap.CodeModified)) {
 			// RFC 7162 section 3.1.3: a partial conditional STORE completes OK
 			// with [MODIFIED …] naming the messages that failed the test.
-			_ = data.parseModified(args, uid)
+			_ = parseModified(data, args, uid)
 		}
 	})
 	return result

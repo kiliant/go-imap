@@ -85,3 +85,42 @@ func ContainsAttr(attrs []MailboxAttr, a MailboxAttr) bool {
 	}
 	return false
 }
+
+// ListData describes one mailbox, as reported by an untagged LIST or LSUB
+// response. RFC 3501 section 7.2.2, RFC 9051 section 7.3.1.
+//
+// A zero Delimiter means NIL: this mailbox has no hierarchy delimiter. Consumers
+// must use this server-provided value rather than assuming '/', '.', or '\\',
+// and a producer must report the delimiter its namespace actually uses.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ListData struct {
+	Attrs     []MailboxAttr
+	Delimiter rune
+	Mailbox   string
+	_         struct{}
+}
+
+// NamespaceDescriptor describes one namespace prefix and its hierarchy
+// delimiter. A zero Delimiter means NIL. RFC 2342.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type NamespaceDescriptor struct {
+	Prefix    string
+	Delimiter rune
+	_         struct{}
+}
+
+// NamespaceData is the content of a NAMESPACE response: the personal, other
+// users' and shared namespaces. RFC 2342.
+//
+// A nil group is NIL on the wire — the server has no namespace of that class —
+// which is distinct from a present but empty list.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type NamespaceData struct {
+	Personal   []NamespaceDescriptor
+	OtherUsers []NamespaceDescriptor
+	Shared     []NamespaceDescriptor
+	_          struct{}
+}

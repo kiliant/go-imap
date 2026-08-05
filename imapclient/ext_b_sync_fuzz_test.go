@@ -89,7 +89,7 @@ func FuzzParseModifiedSet(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		for _, uid := range []bool{false, true} {
 			data := &SyncStoreData{}
-			if err := data.parseModified(s, uid); err != nil {
+			if err := parseModified(data, s, uid); err != nil {
 				continue
 			}
 			if uid {

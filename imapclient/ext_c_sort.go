@@ -12,33 +12,22 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// SortKey is one sort key of a SORT command. SORT, RFC 5256 section 3;
-// SORT=DISPLAY, RFC 5957.
-//
-// It is a string-backed open type: DISPLAYFROM and DISPLAYTO (RFC 5957) are
-// constants alongside the RFC 5256 keys, and a caller can name a key this
-// library does not model by converting a string.
-type SortKey string
+// SortKey is one sort key of a SORT command. It is an alias for [imap.SortKey],
+// which both protocol directions share.
+type SortKey = imap.SortKey
 
 // Sort keys. RFC 5256 section 3 and RFC 5957.
 const (
-	SortKeyArrival SortKey = "ARRIVAL"
-	SortKeyCc      SortKey = "CC"
-	SortKeyDate    SortKey = "DATE"
-	SortKeyFrom    SortKey = "FROM"
-	SortKeySize    SortKey = "SIZE"
-	SortKeySubject SortKey = "SUBJECT"
-	SortKeyTo      SortKey = "TO"
-
-	// SortKeyDisplayFrom sorts by the displayed From name. SORT=DISPLAY, RFC 5957.
-	SortKeyDisplayFrom SortKey = "DISPLAYFROM"
-	// SortKeyDisplayTo sorts by the displayed To name. SORT=DISPLAY, RFC 5957.
-	SortKeyDisplayTo SortKey = "DISPLAYTO"
-
-	// SortKeyRelevancy sorts by FUZZY search relevancy (highest first).
-	// SEARCH=FUZZY, RFC 6203 section 6. Requires a FUZZY search key in the
-	// same command; this library does not invent a score client-side.
-	SortKeyRelevancy SortKey = "RELEVANCY"
+	SortKeyArrival     = imap.SortKeyArrival
+	SortKeyCc          = imap.SortKeyCc
+	SortKeyDate        = imap.SortKeyDate
+	SortKeyFrom        = imap.SortKeyFrom
+	SortKeySize        = imap.SortKeySize
+	SortKeySubject     = imap.SortKeySubject
+	SortKeyTo          = imap.SortKeyTo
+	SortKeyDisplayFrom = imap.SortKeyDisplayFrom
+	SortKeyDisplayTo   = imap.SortKeyDisplayTo
+	SortKeyRelevancy   = imap.SortKeyRelevancy
 )
 
 // SortOptions configures SORT / UID SORT. A nil pointer selects UTF-8 charset
@@ -65,14 +54,9 @@ func (o *SortOptions) charset() string {
 
 func (o *SortOptions) allowFallback() bool { return o != nil && o.AllowClientFallback }
 
-// SortKeySpec is one entry of the SORT key list, optionally reversed.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type SortKeySpec struct {
-	Key     SortKey
-	Reverse bool
-	_       struct{}
-}
+// SortKeySpec is one entry of the SORT key list, optionally reversed. It is an
+// alias for [imap.SortKeySpec], which both protocol directions share.
+type SortKeySpec = imap.SortKeySpec
 
 // SortData is the result of SORT or UID SORT.
 //

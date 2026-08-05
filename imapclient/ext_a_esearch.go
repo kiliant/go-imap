@@ -48,19 +48,17 @@ const (
 	SearchReturnSave SearchReturnOptionKeyword = "SAVE"
 )
 
-// ESearchReturnKey names one item of ESEARCH return data. It is a string-backed
-// open type, distinct from [SearchReturnOptionKeyword] because the request and
-// response vocabularies are not the same set: MODSEQ (RFC 4731 section 3.2) is
-// returned but never requested.
-type ESearchReturnKey string
+// ESearchReturnKey names one item of ESEARCH return data. It is an alias for
+// [imap.ESearchReturnKey], which both protocol directions share.
+type ESearchReturnKey = imap.ESearchReturnKey
 
 // ESEARCH return data items this package models.
 const (
-	ESearchReturnKeyMin    ESearchReturnKey = "MIN"
-	ESearchReturnKeyMax    ESearchReturnKey = "MAX"
-	ESearchReturnKeyAll    ESearchReturnKey = "ALL"
-	ESearchReturnKeyCount  ESearchReturnKey = "COUNT"
-	ESearchReturnKeyModSeq ESearchReturnKey = "MODSEQ"
+	ESearchReturnKeyMin    = imap.ESearchReturnKeyMin
+	ESearchReturnKeyMax    = imap.ESearchReturnKeyMax
+	ESearchReturnKeyAll    = imap.ESearchReturnKeyAll
+	ESearchReturnKeyCount  = imap.ESearchReturnKeyCount
+	ESearchReturnKeyModSeq = imap.ESearchReturnKeyModSeq
 )
 
 // ESearchOptions configures an extended SEARCH. A nil pointer requests an

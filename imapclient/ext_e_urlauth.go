@@ -41,26 +41,13 @@ type GenURLAuthOptions struct {
 	_ struct{}
 }
 
-// GenURLAuthData is the result of GENURLAUTH.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type GenURLAuthData struct {
-	// URLs are the URLAUTH-authorized URLs in response order.
-	URLs []string
-	_    struct{}
-}
+// GenURLAuthData is the result of GENURLAUTH. It is an alias for
+// [imap.GenURLAuthData], which both protocol directions share.
+type GenURLAuthData = imap.GenURLAuthData
 
-// URLFetchItem is one URL / body pair from a URLFETCH response.
-//
-// Body is nil when the server returned NIL (the URL could not be fetched).
-// An empty string is a present, empty body — distinct from unset.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type URLFetchItem struct {
-	URL  string
-	Body *string
-	_    struct{}
-}
+// URLFetchItem is one URL/body pair of a URLFETCH response. It is an alias
+// for [imap.URLFetchItem], which both protocol directions share.
+type URLFetchItem = imap.URLFetchItem
 
 // URLFetchOptions configures URLFETCH. A nil pointer selects the defaults.
 //

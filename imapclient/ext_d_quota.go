@@ -10,50 +10,26 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// QuotaResourceName is a QUOTA resource type. It is a string-backed named type
-// rather than an enumeration: RFC 9208 registers STORAGE, MESSAGE, MAILBOX and
-// ANNOTATION-STORAGE, and capa-quota-res ("QUOTA=RES-*") lets servers advertise
-// further names without an API change.
-type QuotaResourceName string
+// Aliases for the QUOTA vocabulary, which now lives in [package imap] so that
+// both protocol directions share it. RFC 9208.
+type (
+	// QuotaResourceName is a QUOTA resource type. See [imap.QuotaResourceName].
+	QuotaResourceName = imap.QuotaResourceName
+	// QuotaResource is one usage/limit triple. See [imap.QuotaResource].
+	QuotaResource = imap.QuotaResource
+	// QuotaData is one untagged QUOTA response. See [imap.QuotaData].
+	QuotaData = imap.QuotaData
+	// QuotaRootData is the result of GETQUOTAROOT. See [imap.QuotaRootData].
+	QuotaRootData = imap.QuotaRootData
+)
 
 // Quota resource names from RFC 9208 section 5.
 const (
-	QuotaResourceStorage           QuotaResourceName = "STORAGE"
-	QuotaResourceMessage           QuotaResourceName = "MESSAGE"
-	QuotaResourceMailbox           QuotaResourceName = "MAILBOX"
-	QuotaResourceAnnotationStorage QuotaResourceName = "ANNOTATION-STORAGE"
+	QuotaResourceStorage           = imap.QuotaResourceStorage
+	QuotaResourceMessage           = imap.QuotaResourceMessage
+	QuotaResourceMailbox           = imap.QuotaResourceMailbox
+	QuotaResourceAnnotationStorage = imap.QuotaResourceAnnotationStorage
 )
-
-// QuotaResource is one resource usage/limit pair from a QUOTA response.
-// RFC 9208 section 4.2.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type QuotaResource struct {
-	Name  QuotaResourceName
-	Usage uint64
-	Limit uint64
-	_     struct{}
-}
-
-// QuotaData is one untagged QUOTA response. RFC 9208 section 4.2.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type QuotaData struct {
-	Root      string
-	Resources []QuotaResource
-	_         struct{}
-}
-
-// QuotaRootData is the result of GETQUOTAROOT: the mailbox's quota roots and
-// every QUOTA response the server sent with them. RFC 9208 section 4.1.2.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type QuotaRootData struct {
-	Mailbox string
-	Roots   []string
-	Quotas  []QuotaData
-	_       struct{}
-}
 
 // SetQuotaOptions configures SETQUOTA. A nil pointer selects the defaults.
 //
@@ -62,15 +38,9 @@ type SetQuotaOptions struct {
 	_ struct{}
 }
 
-// QuotaResourceLimit is one SETQUOTA resource limit. Usage is not sent on the
-// wire for SETQUOTA.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type QuotaResourceLimit struct {
-	Name  QuotaResourceName
-	Limit uint64
-	_     struct{}
-}
+// QuotaResourceLimit is one SETQUOTA resource limit. It is an alias for
+// [imap.QuotaResourceLimit], which both protocol directions share.
+type QuotaResourceLimit = imap.QuotaResourceLimit
 
 // GetQuota returns the resource usage and limits for quotaRoot.
 // QUOTA, RFC 9208 section 4.1.1.

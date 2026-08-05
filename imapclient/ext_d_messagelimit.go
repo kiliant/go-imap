@@ -25,21 +25,10 @@ type MessageLimitData struct {
 	_ struct{}
 }
 
-// MessageLimitPartial is the parsed form of a MESSAGELIMIT response code.
-// RFC 9738 section 3.1: "MESSAGELIMIT <limit> [<uid>]".
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type MessageLimitPartial struct {
-	// Limit is the advertised ceiling that was hit.
-	Limit uint32
-
-	// LowestUID is the lowest processed UID when the server supplied one.
-	// HasLowestUID distinguishes "omitted" from UID 0, which is illegal.
-	LowestUID    imap.UID
-	HasLowestUID bool
-
-	_ struct{}
-}
+// MessageLimitPartial is the parsed form of a MESSAGELIMIT response code. It
+// is an alias for [imap.MessageLimitPartial], which both protocol directions
+// share.
+type MessageLimitPartial = imap.MessageLimitPartial
 
 // MessageLimit returns the MESSAGELIMIT=N capability value, or falls back to
 // SAVELIMIT=N when only the narrower form is advertised. RFC 9738.

@@ -18,16 +18,9 @@ type LanguageOptions struct {
 	_    struct{}
 }
 
-// LanguageData is one LANGUAGE response. RFC 5255 section 3.3.
-//
-// When the server selects a language, Tags has a single entry. When it
-// enumerates supported languages, Tags lists them all.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type LanguageData struct {
-	Tags []string
-	_    struct{}
-}
+// LanguageData is one LANGUAGE response. It is an alias for
+// [imap.LanguageData], which both protocol directions share.
+type LanguageData = imap.LanguageData
 
 // ComparatorOptions configures COMPARATOR. A nil pointer with empty Wanted
 // returns the active comparator (RFC 5255 section 4.7).
@@ -40,19 +33,9 @@ type ComparatorOptions struct {
 	_      struct{}
 }
 
-// ComparatorData is one COMPARATOR response. RFC 5255 section 4.8.
-//
-// Construct with keyed fields only; fields may be added in a future release.
-type ComparatorData struct {
-	// Active is the comparator now in use.
-	Active string
-
-	// Matching lists additional comparators that matched the request, when
-	// the server supplies them.
-	Matching []string
-
-	_ struct{}
-}
+// ComparatorData is one COMPARATOR response. It is an alias for
+// [imap.ComparatorData], which both protocol directions share.
+type ComparatorData = imap.ComparatorData
 
 // Language negotiates human-readable response language. LANGUAGE, RFC 5255.
 //
