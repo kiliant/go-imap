@@ -71,6 +71,8 @@ type BodyStructureSinglePart struct {
 	// server was asked for BODYSTRUCTURE rather than BODY, and even then
 	// only as far as the server chose to send them.
 	Extended *BodyStructureSinglePartExt
+
+	_ struct{}
 }
 
 // BodyStructureText carries the field the grammar adds for a text part.
@@ -80,6 +82,8 @@ type BodyStructureSinglePart struct {
 type BodyStructureText struct {
 	// NumLines is the number of lines in the part.
 	NumLines int64
+
+	_ struct{}
 }
 
 // BodyStructureMessageRFC822 carries the fields the grammar adds for a
@@ -93,6 +97,8 @@ type BodyStructureMessageRFC822 struct {
 	BodyStructure BodyStructure
 	// NumLines is the number of lines in the encapsulated message.
 	NumLines int64
+
+	_ struct{}
 }
 
 // BodyStructureSinglePartExt holds the optional extension fields of a
@@ -131,6 +137,8 @@ type BodyStructureMultiPart struct {
 	// Extended holds the optional extension fields; see
 	// [BodyStructureSinglePart.Extended].
 	Extended *BodyStructureMultiPartExt
+
+	_ struct{}
 }
 
 // BodyStructureMultiPartExt holds the optional extension fields of a multipart
@@ -159,6 +167,8 @@ type BodyStructureDisposition struct {
 	// Params are the disposition parameters, with RFC 2231 continuations
 	// already assembled and names lower-cased. See [DecodeParams].
 	Params map[string]string
+
+	_ struct{}
 }
 
 func (*BodyStructureSinglePart) bodyStructure() {}

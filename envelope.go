@@ -30,6 +30,8 @@ type Address struct {
 
 	// Host is the domain part of the address, empty for a group marker.
 	Host string
+
+	_ struct{}
 }
 
 // IsGroupStart reports whether the address is the start-of-group marker of

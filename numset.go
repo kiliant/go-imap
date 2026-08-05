@@ -80,7 +80,12 @@ const wildcard = 0
 // which RFC 3501 defines as identical to "n:*"; [NumSet.Normalized] rewrites it
 // to that form.
 //
-// Construct with keyed fields only; fields may be added in a future release.
+// NumRange is the one exported struct in this package that does NOT carry the
+// `_ struct{}` unkeyed-literal guard, so NumRange[SeqNum]{1, 5} is legal and
+// idiomatic. The exception is deliberate and is recorded in
+// docs/API-STABILITY.md rule 7: a range is exactly a start and a stop, and a
+// third field would change what "range" means rather than extend it, so the
+// growth this package guards against cannot happen here.
 type NumRange[N numType] struct {
 	Start N
 	Stop  N

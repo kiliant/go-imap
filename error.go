@@ -222,6 +222,8 @@ type Error struct {
 
 	// Err is an optional underlying error, exposed through [Error.Unwrap].
 	Err error
+
+	_ struct{}
 }
 
 // Error implements the error interface.

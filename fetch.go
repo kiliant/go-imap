@@ -95,6 +95,8 @@ type FetchItemBodyStructure struct {
 	// [BodyStructureSinglePartExt] and [BodyStructureMultiPartExt], over
 	// BODY, which does not.
 	Extended bool
+
+	_ struct{}
 }
 
 func (*FetchItemBodyStructure) fetchItem() {}
@@ -130,6 +132,8 @@ type SectionPartial struct {
 	// Size is the maximum number of octets wanted. A server may return
 	// fewer, and returns none if Offset is past the end of the section.
 	Size int64
+
+	_ struct{}
 }
 
 // FetchItemBodySection requests a body section: BODY[...] or BODY.PEEK[...],
@@ -171,6 +175,8 @@ type FetchItemBodySection struct {
 	// client that reads a message without intending to mark it read must
 	// set Peek.
 	Peek bool
+
+	_ struct{}
 }
 
 func (*FetchItemBodySection) fetchItem() {}
@@ -195,6 +201,8 @@ type FetchItemBinarySection struct {
 	// Peek selects BINARY.PEEK[...], which does not set \Seen. See
 	// [FetchItemBodySection.Peek].
 	Peek bool
+
+	_ struct{}
 }
 
 func (*FetchItemBinarySection) fetchItem() {}
@@ -207,6 +215,8 @@ func (*FetchItemBinarySection) fetchItem() {}
 type FetchItemBinarySectionSize struct {
 	// Part is the body part number; empty selects the whole message.
 	Part []int
+
+	_ struct{}
 }
 
 func (*FetchItemBinarySectionSize) fetchItem() {}
@@ -220,6 +230,8 @@ type FetchItemPreview struct {
 	// available, rather than generating it. RFC 8970 section 5, the LAZY
 	// modifier.
 	Lazy bool
+
+	_ struct{}
 }
 
 func (*FetchItemPreview) fetchItem() {}
@@ -267,6 +279,8 @@ type FetchMessageData struct {
 	// Items maps the item spelling sent by the server to all values sent for
 	// that item, in order. The map and its slices are owned by this value.
 	Items map[FetchDataKey][]FetchData
+
+	_ struct{}
 }
 
 // FetchDataUID is a message unique identifier returned for the UID item.
@@ -285,6 +299,8 @@ func (FetchDataFlags) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataInternalDate struct {
 	Time time.Time
+
+	_ struct{}
 }
 
 func (*FetchDataInternalDate) fetchData() {}
@@ -299,6 +315,8 @@ func (FetchDataRFC822Size) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataEnvelope struct {
 	Envelope *Envelope
+
+	_ struct{}
 }
 
 func (*FetchDataEnvelope) fetchData() {}
@@ -309,6 +327,8 @@ func (*FetchDataEnvelope) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataBodyStructure struct {
 	BodyStructure BodyStructure
+
+	_ struct{}
 }
 
 func (*FetchDataBodyStructure) fetchData() {}
@@ -406,6 +426,8 @@ func (FetchDataObjectID) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataSaveDate struct {
 	Date *time.Time
+
+	_ struct{}
 }
 
 func (*FetchDataSaveDate) fetchData() {}
@@ -417,6 +439,8 @@ func (*FetchDataSaveDate) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataPreview struct {
 	Text *string
+
+	_ struct{}
 }
 
 func (*FetchDataPreview) fetchData() {}

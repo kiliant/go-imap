@@ -50,6 +50,8 @@ func (SearchAnd) searchCriteria() {}
 type SearchOr struct {
 	Left  SearchCriteria
 	Right SearchCriteria
+
+	_ struct{}
 }
 
 func (SearchOr) searchCriteria() {}
@@ -59,6 +61,8 @@ func (SearchOr) searchCriteria() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type SearchNot struct {
 	Criteria SearchCriteria
+
+	_ struct{}
 }
 
 func (SearchNot) searchCriteria() {}
@@ -120,6 +124,8 @@ type SearchFlagKeyword struct {
 	Flag Flag
 	// Not selects UNKEYWORD, matching messages that do not have the flag.
 	Not bool
+
+	_ struct{}
 }
 
 func (SearchFlagKeyword) searchCriteria() {}
@@ -134,6 +140,8 @@ type SearchHeaderField struct {
 	Field string
 	// Value is the substring to look for.
 	Value string
+
+	_ struct{}
 }
 
 func (SearchHeaderField) searchCriteria() {}
@@ -173,6 +181,8 @@ type SearchString struct {
 	Key SearchStringKey
 	// Value is the substring to look for, matched case-insensitively.
 	Value string
+
+	_ struct{}
 }
 
 func (SearchString) searchCriteria() {}
@@ -221,6 +231,8 @@ type SearchDate struct {
 	// Date is the date to compare against. Only its calendar date in its
 	// own location is significant.
 	Date time.Time
+
+	_ struct{}
 }
 
 func (SearchDate) searchCriteria() {}
@@ -245,6 +257,8 @@ type SearchSize struct {
 	Key SearchSizeKey
 	// Size is the number of octets to compare against.
 	Size int64
+
+	_ struct{}
 }
 
 func (SearchSize) searchCriteria() {}
@@ -259,6 +273,8 @@ func (SearchSize) searchCriteria() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type SearchSeqNum struct {
 	Set SeqSet
+
+	_ struct{}
 }
 
 func (SearchSeqNum) searchCriteria() {}
@@ -269,6 +285,8 @@ func (SearchSeqNum) searchCriteria() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type SearchUID struct {
 	Set UIDSet
+
+	_ struct{}
 }
 
 func (SearchUID) searchCriteria() {}
@@ -307,6 +325,8 @@ type SearchWithin struct {
 	// Seconds is the interval, relative to the moment the server evaluates
 	// the search.
 	Seconds int64
+
+	_ struct{}
 }
 
 func (SearchWithin) searchCriteria() {}
@@ -332,6 +352,8 @@ type SearchObjectID struct {
 	Key SearchObjectIDKey
 	// Value is the identifier, as the server reported it.
 	Value string
+
+	_ struct{}
 }
 
 func (SearchObjectID) searchCriteria() {}
@@ -372,6 +394,8 @@ type SearchModSeq struct {
 
 	// EntryType optionally restricts the match to one kind of metadata.
 	EntryType SearchModSeqMetadata
+
+	_ struct{}
 }
 
 func (SearchModSeq) searchCriteria() {}
@@ -382,6 +406,8 @@ func (SearchModSeq) searchCriteria() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type SearchFuzzy struct {
 	Criteria SearchCriteria
+
+	_ struct{}
 }
 
 func (SearchFuzzy) searchCriteria() {}
