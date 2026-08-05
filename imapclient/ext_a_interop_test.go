@@ -74,7 +74,7 @@ func TestExtAUIDPlus(t *testing.T) {
 			if err != nil {
 				t08Fail(t, server, client, "UID COPY", err)
 			}
-			if copied == nil || !copied.Received() || copied.UIDValidity == 0 ||
+			if copied == nil || !copied.HasUIDs || copied.UIDValidity == 0 ||
 				!copied.SourceUIDs.Equal(one) || copied.DestinationUIDs.IsEmpty() {
 				t08Fail(t, server, client, fmt.Sprintf("COPYUID missing: %#v", copied), nil)
 			}
@@ -147,7 +147,7 @@ func TestExtAMove(t *testing.T) {
 		if data.Emulated {
 			t.Logf("MOVE absent: emulated with COPY + STORE \\Deleted + %s",
 				map[bool]string{true: "UID EXPUNGE", false: "EXPUNGE (every \\Deleted message)"}[!data.ExpungedEveryDeletedMessage])
-		} else if data.UIDPlus.Received() {
+		} else if data.UIDPlus.HasUIDs {
 			t.Logf("MOVE returned COPYUID %d %s -> %s", data.UIDPlus.UIDValidity, data.UIDPlus.SourceUIDs, data.UIDPlus.DestinationUIDs)
 		}
 
