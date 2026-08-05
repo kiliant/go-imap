@@ -140,9 +140,20 @@ type MailboxStatus struct {
 	Unseen uint32
 
 	// HighestModSeq is the highest modification sequence in the mailbox.
-	// CONDSTORE, RFC 7162 section 3.1.2.2. Zero means it was not reported,
-	// which a NOMODSEQ mailbox must signal separately.
+	// CONDSTORE, RFC 7162 section 3.1.2.2. Zero means it was not reported.
 	HighestModSeq uint64
+
+	// NoModSeq reports the NOMODSEQ response code: this mailbox has no
+	// persistent storage of mod-sequences. CONDSTORE, RFC 7162
+	// section 3.1.2.2.
+	//
+	// It is distinct from a HighestModSeq that happens to be zero. While it
+	// is set, FETCH CHANGEDSINCE, FETCH and SEARCH MODSEQ, and STORE
+	// UNCHANGEDSINCE are all rejected for this mailbox, and no incremental
+	// resynchronisation of it is possible — so it is a state a server
+	// answering SELECT must be able to express, not merely one a client can
+	// observe.
+	NoModSeq bool
 
 	// ReadOnly reports that the mailbox was opened read-only: EXAMINE, or
 	// SELECT answered with the READ-ONLY response code.
