@@ -128,6 +128,60 @@ move these entries under its own heading.
 
 ### Changed
 
+- **The shared response vocabulary moved from `imapclient` to `package imap`
+  (T17).** Exported API: about 50 symbols that describe wire data rather than
+  client plumbing now live in `package imap`, with an alias of the same name
+  left in `imapclient`. Type identity is preserved, so every existing caller and
+  every keyed struct literal keeps compiling — the technique the standard
+  library used to relocate `context.Context`.
+
+  Moved: `StatusData` (with `Number`), `ListData`, `NamespaceDescriptor`,
+  `NamespaceData`, `MailboxStatus` (see below), `AppendData`, `CopyData`,
+  `MultiAppendData`, `ACLRights`, `ACLEntry`, `ACLData`, `ListRightsData`,
+  `MyRightsData`, `QuotaResourceName` with its four constants,
+  `QuotaResource`, `QuotaData`, `QuotaRootData`, `QuotaResourceLimit`,
+  `MetadataEntryName`, `MetadataEntry`, `MailboxMetadata`, `VanishedData`,
+  `SeqMatchData`, `SyncStoreData` (with `HasModified`), `ESearchReturnKey` with
+  its seven constants, `ESearchData`, `PartialRange`, `PartialSearchData`,
+  `MultiSearchResult`, `MultiSearchData`, `SortKey` with its ten constants,
+  `SortKeySpec`, `SortData`, `ThreadAlgorithm` with its two constants,
+  `ThreadNode`, `ThreadData`, `IDField`, `IDData`, `InProgressData`,
+  `JMAPAccessData`, `LanguageData`, `ComparatorData`, `MessageLimitPartial`,
+  `ReferralData`, `GenURLAuthData`, `URLFetchItem`.
+
+  The reason is structural: a server backend cannot name a type in `imapclient`
+  without `imapserver` importing `imapclient`, which inverts the dependency
+  graph the layering exists to protect. `apidiff` reports the move as
+  incompatible and that report is a false positive — it models a type by its
+  defining package and cannot see that an alias preserves identity; a minimal
+  control reproduces the same spurious output. Verified instead by compiling an
+  external consumer written against the pre-move spelling.
+
+- **BREAKING — `imap.AppendData`, `imap.CopyData` and `imap.MultiAppendData`
+  carry an explicit presence field (T17).** Exported API: `AppendData` gained
+  `HasUID`; `CopyData` and `MultiAppendData` gained `HasUIDs`; and
+  `imapclient.CopyData.Received()` was **removed** in favour of
+  `CopyData.HasUIDs`, which is what it computed. Presence was previously
+  inferred from a non-zero `UIDValidity`, which is sound only for a decoder that
+  knows the wire cannot carry a zero UIDVALIDITY. A producer holding a value it
+  did not decode cannot distinguish "the response code is absent" — a normal
+  outcome under RFC 4315 section 3 — from "not filled in yet". A derived
+  accessor is also the asymmetry this audit exists to remove: readable by
+  anyone, settable only by the declaring package.
+
+- **BREAKING — `MailboxStatus` split into shared state and client observation
+  (T17).** Exported API: `imap.MailboxStatus` is new and carries the mailbox
+  state both protocol directions can express. `imapclient.MailboxStatus` (and
+  its alias `imapclient.SelectData`) now embeds it and keeps only
+  `UIDValidityChanged`. Field reads are unchanged by promotion; a keyed literal
+  must now name the embedded value,
+  `&MailboxStatus{MailboxStatus: imap.MailboxStatus{...}}`. `UIDValidityChanged`
+  is derived by comparing the reported UIDVALIDITY against the one the client
+  last saw, so no server can produce it. Moving it with a "server always leaves
+  this false" note was rejected: a field one of two users can never fill is
+  evidence of a wrong semantic boundary, and pre-v1.0 is when that is removable
+  rather than permanent for ever.
+
 - **BREAKING — every command entry point takes an options struct.** Exported
   API: 28 `imapclient.Client` methods gained a trailing (or pre-variadic)
   options pointer — `Check`, `CloseMailbox`, `Copy`, `CopyUID`, `Create`,
