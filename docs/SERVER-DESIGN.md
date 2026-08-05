@@ -1,8 +1,10 @@
 # Server framework — design
 
-**Status: PROPOSED, revision 5. Not approved. No `imapserver` code may be
-written against this document until a human approves it** (`CLAUDE.md`, and the
-"Do not start" section of [T16](tasks/T16-server-framework.md)).
+**Status: APPROVED, revision 5, by the human on 2026-08-05.** This unblocks
+T17 (bidirectional vocabulary audit) and the specification of T19–T25.
+`imapserver` implementation code (T18–T25) still may not be written until
+v1.0 is tagged, which itself remains gated on T17 completing — see
+`docs/tasks/BOARD.md`.
 
 Revision 2 (2026-08-03) responded to a review of revision 1: the concurrency
 model in §4 was internally inconsistent and was rewritten; §2 gained a compilable
