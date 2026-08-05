@@ -324,6 +324,8 @@ func (*FetchDataBodyStructure) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataLiteral struct {
 	Literal io.Reader
+
+	_ struct{}
 }
 
 func (*FetchDataLiteral) fetchData() {}
@@ -353,6 +355,8 @@ type FetchDataBodySection struct {
 	// Literal reads exactly the section bytes. It has the same drain/close
 	// requirement as [FetchDataLiteral.Literal].
 	Literal io.Reader
+
+	_ struct{}
 }
 
 func (*FetchDataBodySection) fetchData() {}
@@ -372,6 +376,8 @@ type FetchDataBinarySection struct {
 
 	// Literal reads the decoded section bytes and must be drained or closed.
 	Literal io.Reader
+
+	_ struct{}
 }
 
 func (*FetchDataBinarySection) fetchData() {}
@@ -436,6 +442,8 @@ func (*FetchDataPreview) fetchData() {}
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchDataRaw struct {
 	Reader io.Reader
+
+	_ struct{}
 }
 
 func (*FetchDataRaw) fetchData() {}

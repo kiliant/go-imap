@@ -102,4 +102,6 @@ type Envelope struct {
 	// MessageID is the Message-ID header including its angle brackets, or ""
 	// if absent.
 	MessageID string
+
+	_ struct{}
 }

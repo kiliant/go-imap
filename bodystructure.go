@@ -112,6 +112,8 @@ type BodyStructureSinglePartExt struct {
 	Lang []string
 	// Location is the Content-Location URI. RFC 2557.
 	Location string
+
+	_ struct{}
 }
 
 // BodyStructureMultiPart is a multipart MIME part. RFC 3501 section 9,
@@ -144,6 +146,8 @@ type BodyStructureMultiPartExt struct {
 	Lang []string
 	// Location is the Content-Location URI. RFC 2557.
 	Location string
+
+	_ struct{}
 }
 
 // BodyStructureDisposition is a parsed Content-Disposition header. RFC 2183.
