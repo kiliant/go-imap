@@ -135,19 +135,24 @@ move these entries under its own heading.
   every keyed struct literal keeps compiling — the technique the standard
   library used to relocate `context.Context`.
 
-  Moved: `StatusData` (with `Number`), `ListData`, `NamespaceDescriptor`,
-  `NamespaceData`, `MailboxStatus` (see below), `AppendData`, `CopyData`,
+  Moved, and aliased: `StatusData` (with `Number`), `ListData`,
+  `NamespaceDescriptor`, `NamespaceData`, `AppendData`, `CopyData`,
   `MultiAppendData`, `ACLRights`, `ACLEntry`, `ACLData`, `ListRightsData`,
   `MyRightsData`, `QuotaResourceName` with its four constants,
   `QuotaResource`, `QuotaData`, `QuotaRootData`, `QuotaResourceLimit`,
   `MetadataEntryName`, `MetadataEntry`, `MailboxMetadata`, `VanishedData`,
   `SeqMatchData`, `SyncStoreData` (with `HasModified`), `ESearchReturnKey` with
-  its seven constants, `ESearchData`, `PartialRange`, `PartialSearchData`,
+  its seven constants, `PartialRange`, `PartialSearchData`,
   `MultiSearchResult`, `MultiSearchData`, `SortKey` with its ten constants,
-  `SortKeySpec`, `SortData`, `ThreadAlgorithm` with its two constants,
-  `ThreadNode`, `ThreadData`, `IDField`, `IDData`, `InProgressData`,
-  `JMAPAccessData`, `LanguageData`, `ComparatorData`, `MessageLimitPartial`,
-  `ReferralData`, `GenURLAuthData`, `URLFetchItem`.
+  `SortKeySpec`, `ThreadAlgorithm` with its two constants, `ThreadNode`,
+  `ThreadData`, `IDField`, `InProgressData`, `JMAPAccessData`, `LanguageData`,
+  `ComparatorData`, `MessageLimitPartial`, `ReferralData`, `GenURLAuthData`,
+  `URLFetchItem`.
+
+  Moved but **not** aliased, because each shed a field only a decoder can fill:
+  `MailboxStatus`, `SortData`, `IDData` and `ESearchData`. The `imapclient`
+  types of those names are now wrapper structs embedding their `imap`
+  counterparts — see the four `BREAKING` entries below.
 
   The reason is structural: a server backend cannot name a type in `imapclient`
   without `imapserver` importing `imapclient`, which inverts the dependency
@@ -182,6 +187,34 @@ move these entries under its own heading.
   client-side SORT fallback, and the absence of an untagged ID response — so no
   server can fill either. Field reads are unchanged by promotion; a keyed
   literal setting a shared field must name the embedded value.
+
+- **BREAKING — `ESearchData` split, and its parse helpers became methods
+  (T17).** Exported API: `imap.ESearchData` is new and carries no `Emulated`
+  field; it gains the value-receiver methods `Partial() (*PartialSearchData,
+  error)` and `RelevancyScores() ([]uint8, error)`. `imapclient.ESearchData` now
+  embeds it and keeps only `Emulated`. `imapclient.ParsePartialSearchData` and
+  `imapclient.ParseRelevancyScores` are **removed**, superseded by the methods;
+  `data.Partial()` replaces `ParsePartialSearchData(data)` and works on both
+  spellings through promotion. `imapclient.ESearchReturnKeyRelevancy` now
+  references `imap.ESearchReturnKeyRelevancy` rather than redeclaring the same
+  literal.
+
+  `Emulated` says the value was reconstructed from an ordinary SEARCH response
+  because the server does not advertise ESEARCH, so no server produces it — and
+  `imap.MultiSearchResult.Data` is an `imap.ESearchData` by value, so leaving it
+  on the shared type put a permanently-unfillable field in front of every server
+  answering a MULTISEARCH (RFC 7377). The helpers became methods rather than
+  changing parameter type because a server decoding an upstream ESEARCH must be
+  able to call them without importing `imapclient`. The receivers are values so
+  that `result.Data.Partial()` works on a non-addressable field.
+
+- **BREAKING — seven structs gained unkeyed-literal guards (T17).** Exported
+  API: `BodyStructureSinglePartExt`, `BodyStructureMultiPartExt`, `Envelope`,
+  `FetchDataLiteral`, `FetchDataBodySection`, `FetchDataBinarySection` and
+  `FetchDataRaw` each gained an unexported `_ struct{}` field. Keyed literals
+  are unaffected; unkeyed ones no longer compile. These are the structs future
+  RFCs will add fields to, and adding the guard is itself a breaking change, so
+  it can only be done before the tag.
 
 - **BREAKING — `MailboxStatus` split into shared state and client observation
   (T17).** Exported API: `imap.MailboxStatus` is new and carries the mailbox
