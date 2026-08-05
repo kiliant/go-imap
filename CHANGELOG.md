@@ -169,6 +169,20 @@ move these entries under its own heading.
   accessor is also the asymmetry this audit exists to remove: readable by
   anyone, settable only by the declaring package.
 
+  **Note for callers:** the removed `Received()` was nil-tolerant and the field
+  is not. `CopyCommand.Wait` returns a nil `*CopyData` alongside its error, so
+  `d, _ := cmd.Wait(ctx); if d.Received()` was safe and `d.HasUIDs` panics.
+  Check the error, or check `d != nil`.
+
+- **BREAKING — `SortData` and `IDData` split the same way as `MailboxStatus`
+  (T17).** Exported API: `imap.SortData` (`SeqNums`, `UIDs`) and `imap.IDData`
+  (`Fields`) are new. `imapclient.SortData` now embeds `imap.SortData` and keeps
+  only `Emulated`; `imapclient.IDData` now embeds `imap.IDData` and keeps only
+  `Received`. Both fields describe how a decoder obtained the value — a
+  client-side SORT fallback, and the absence of an untagged ID response — so no
+  server can fill either. Field reads are unchanged by promotion; a keyed
+  literal setting a shared field must name the embedded value.
+
 - **BREAKING — `MailboxStatus` split into shared state and client observation
   (T17).** Exported API: `imap.MailboxStatus` is new and carries the mailbox
   state both protocol directions can express. `imapclient.MailboxStatus` (and

@@ -267,12 +267,6 @@ type SortData struct {
 	// UIDs carries the order for UID SORT; empty for sequence SORT.
 	UIDs []UID
 
-	// Emulated reports that the order was computed locally rather than by the
-	// peer, because the peer does not advertise SORT. Like
-	// [ESearchData.Emulated] it is a client-side observation, and a
-	// server-produced value leaves it false.
-	Emulated bool
-
 	_ struct{}
 }
 
@@ -283,12 +277,6 @@ type SortData struct {
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type IDData struct {
-	// Received reports that an untagged ID response was seen at all, which
-	// RFC 2971 section 3.1 makes optional. It is a client-side observation
-	// about the exchange rather than about the data; a producer decides
-	// whether to send the response instead, and leaves this false.
-	Received bool
-
 	// Fields is the parameter list.
 	Fields []IDField
 

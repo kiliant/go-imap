@@ -58,9 +58,27 @@ func (o *SortOptions) allowFallback() bool { return o != nil && o.AllowClientFal
 // alias for [imap.SortKeySpec], which both protocol directions share.
 type SortKeySpec = imap.SortKeySpec
 
-// SortData is the result of SORT or UID SORT. It is an alias for
-// [imap.SortData], which both protocol directions share.
-type SortData = imap.SortData
+// SortData is the result of SORT or UID SORT: the shared [imap.SortData], plus
+// the one observation only a client can make.
+//
+// The embedded fields are promoted, so data.SeqNums and data.UIDs are read
+// exactly as before. A keyed literal setting a shared field must name the
+// embedded value, SortData{SortData: imap.SortData{SeqNums: ...}}.
+//
+// Emulated is not part of [imap.SortData] because no server produces it: it
+// says the order was computed in this process, by [Client.Sort]'s fallback,
+// because the server does not advertise SORT.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type SortData struct {
+	imap.SortData
+
+	// Emulated reports that the order was computed client-side. See
+	// [Client.Sort].
+	Emulated bool
+
+	_ struct{}
+}
 
 // Sort issues SORT and returns sequence numbers in sort order.
 // SORT, RFC 5256.
