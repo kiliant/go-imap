@@ -162,6 +162,13 @@ move these entries under its own heading.
   control reproduces the same spurious output. Verified instead by compiling an
   external consumer written against the pre-move spelling.
 
+  One real, if cosmetic, cost: `go doc ./imapclient` no longer lists the methods
+  of an aliased type, since Go attributes them to the defining package. Look for
+  `StatusData.Number` and `SyncStoreData.HasModified` (and `ESearchData.Partial`
+  / `RelevancyScores` below) under `go doc github.com/kiliant/go-imap`, not under
+  `imapclient` — they are still callable exactly as before, just documented one
+  package over.
+
 - **BREAKING — `imap.AppendData`, `imap.CopyData` and `imap.MultiAppendData`
   carry an explicit presence field (T17).** Exported API: `AppendData` gained
   `HasUID`; `CopyData` and `MultiAppendData` gained `HasUIDs`; and

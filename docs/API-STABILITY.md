@@ -339,6 +339,11 @@ value receiver reaches it from a non-addressable field. That is how
   a move of that shape, discharge it by compiling a consumer written against the
   old spelling; do not trust the tool, and do not silently override it. T17 moved
   ~50 symbols this way and every one of them was reported.
+
+  The alias is permanent. Deleting `type T = other.T` breaks every caller still
+  holding the old spelling, and the removal policy above applies to an alias
+  exactly as it applies to any other exported symbol — a deprecation notice for
+  at least two minor releases, never before v2.
 - Go version floor: the two most recent major Go releases.
 
 ### Exception: `imapserver` outside the v1 promise — APPROVED
