@@ -141,12 +141,12 @@ type UnilateralDataHandler struct {
 }
 ```
 
-### The hard case: a server backend — proposed, not yet approved
+### The hard case: a server backend — approved by the human, 2026-08-05
 
 The server framework's backend is the worst instance of this rule in the
-library, and `docs/SERVER-DESIGN.md` §2 proposes an answer that is *not* a
-function struct. Summarised here because it is a proposed amendment to this rule
-rather than an application of it:
+library, and `docs/SERVER-DESIGN.md` §2 answers it with something that is *not*
+a function struct. Summarised here because it is an approved amendment to this
+rule rather than a plain application of it:
 
 - **A function struct is the wrong shape** for the primary abstraction. IMAP
   backends are stateful and hierarchical (`Backend` → `Session` → `SelectedMailbox`), so
@@ -166,7 +166,9 @@ rather than an application of it:
   `UnilateralDataHandler`, because that direction has the same growth pressure
   and the rule as written is right for it.
 
-Nothing may be written against this until `SERVER-DESIGN.md` is approved.
+`SERVER-DESIGN.md` was approved by the human on 2026-08-05. `imapserver`
+implementation code (T18–T25) still may not be written until v1.0 is tagged,
+which remains gated on T17 — see `docs/tasks/BOARD.md`.
 
 ## 5. A single error type
 
@@ -339,10 +341,11 @@ value receiver reaches it from a non-addressable field. That is how
   ~50 symbols this way and every one of them was reported.
 - Go version floor: the two most recent major Go releases.
 
-### Proposed exception: `imapserver` outside the v1 promise — NOT APPROVED
+### Exception: `imapserver` outside the v1 promise — APPROVED
 
-**Status: proposed by `docs/SERVER-DESIGN.md` §9. Not approved. Nothing enforces
-it, and no `imapserver` code exists.**
+**Status: approved by the human on 2026-08-05, as part of approving
+`docs/SERVER-DESIGN.md` §9. Execution is T25's; no `imapserver` code exists yet
+and none may until v1.0 is tagged (`docs/tasks/BOARD.md`).**
 
 The policy above says "v1.0 freezes the exported API" without qualifying by
 package. Taken literally, `imapserver` inherits the freeze the moment it lands —
@@ -376,9 +379,9 @@ dependency. Two objections raised against it do not survive contact:
 Fallback, if the nested module proves unworkable in practice: same-module with a
 documented stability exception — needing its own separate approval.
 
-Per `CLAUDE.md`, this needs an explicit written approval from the human before it
-becomes real. Until then it is a recorded open question, and the safe default is
-the literal reading: do not land `imapserver` in a v1 module without deciding.
+Per `CLAUDE.md`, this needed explicit written approval from the human before it
+became real, and it has that approval now. `imapserver/go.mod` and the root
+`go.work` are T25's to create, at v1.0.
 
 ## Reviewing against this document
 
