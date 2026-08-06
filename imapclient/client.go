@@ -82,6 +82,8 @@ type Options struct {
 	// default of 4096. Streaming FETCH responses are delivered directly and are
 	// therefore not counted as retained responses.
 	MaxUntaggedResponses int
+
+	_ struct{}
 }
 
 const defaultReadTimeout = 30 * time.Minute

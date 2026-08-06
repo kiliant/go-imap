@@ -156,6 +156,11 @@ func selectCollector(data *MailboxStatus) commandCollector {
 				data.ReadOnly = true
 			case "READ-WRITE":
 				data.ReadOnly = false
+			case "NOMODSEQ":
+				// RFC 7162 section 3.1.2.2: the mailbox does not support
+				// persistent mod-sequences. Distinct from HighestModSeq simply
+				// being absent from this response.
+				data.NoModSeq = true
 			default:
 				return false, nil
 			}
