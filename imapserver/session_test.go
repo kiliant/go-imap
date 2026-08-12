@@ -208,6 +208,45 @@ func TestFrameworkWriterLifetime(t *testing.T) {
 	}
 }
 
+func TestWriterAndUpdaterAdapterCallbacks(t *testing.T) {
+	ctx := context.Background()
+	listCalled := false
+	listWriter := &ListWriter{WriteFunc: func(got context.Context, data *imap.ListData) error {
+		listCalled = got == ctx && data != nil
+		return nil
+	}}
+	if err := listWriter.WriteList(ctx, &imap.ListData{}); err != nil || !listCalled {
+		t.Fatalf("ListWriter adapter = %v, called %v", err, listCalled)
+	}
+
+	fetchCalled := false
+	fetchWriter := &FetchWriter{WriteFunc: func(got context.Context, data *imap.FetchMessageData) error {
+		fetchCalled = got == ctx && data != nil
+		return nil
+	}}
+	if err := fetchWriter.WriteMessage(ctx, &imap.FetchMessageData{}); err != nil || !fetchCalled {
+		t.Fatalf("FetchWriter adapter = %v, called %v", err, fetchCalled)
+	}
+
+	expungeCalled := false
+	expungeWriter := &ExpungeWriter{WriteFunc: func(got context.Context, uid imap.UID) error {
+		expungeCalled = got == ctx && uid == 7
+		return nil
+	}}
+	if err := expungeWriter.WriteExpunge(ctx, 7); err != nil || !expungeCalled {
+		t.Fatalf("ExpungeWriter adapter = %v, called %v", err, expungeCalled)
+	}
+
+	updateCalled := false
+	updater := &Updater{PushFunc: func(batch *UpdateBatch) error {
+		updateCalled = batch != nil && batch.After == "next"
+		return nil
+	}}
+	if err := updater.Push(&UpdateBatch{After: "next"}); err != nil || !updateCalled {
+		t.Fatalf("Updater adapter = %v, called %v", err, updateCalled)
+	}
+}
+
 func TestCapabilitiesDerivedFromLiveState(t *testing.T) {
 	server := New(nil, nil)
 	state := newSessionState(false)
