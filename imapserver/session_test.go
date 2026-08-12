@@ -346,7 +346,7 @@ func TestFeatureActivationIsRevisionAware(t *testing.T) {
 func TestSelectSnapshotValidation(t *testing.T) {
 	valid := SelectSnapshot{
 		UIDs:      []imap.UID{2, 4},
-		Status:    imap.MailboxStatus{NumMessages: 2, UIDNext: 5},
+		Status:    imap.MailboxStatus{NumMessages: 2, UIDValidity: 1, UIDNext: 5},
 		NumRecent: 1,
 	}
 	if err := validateSelectSnapshot(&valid, 2); err != nil {
@@ -354,6 +354,7 @@ func TestSelectSnapshotValidation(t *testing.T) {
 	}
 	for _, mutate := range []func(*SelectSnapshot){
 		func(s *SelectSnapshot) { s.Status.NumMessages = 1 },
+		func(s *SelectSnapshot) { s.Status.UIDValidity = 0 },
 		func(s *SelectSnapshot) { s.UIDs = []imap.UID{2, 2} },
 		func(s *SelectSnapshot) { s.Status.UIDNext = 0 },
 		func(s *SelectSnapshot) { s.Status.UIDNext = 4 },

@@ -475,6 +475,12 @@ func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 }
 
 // FetchWriter streams FETCH results to the client. Its zero value is invalid.
+//
+// Every message written to a framework-provided writer by Fetch or Store must
+// contain exactly one non-zero [imap.FetchDataUID] under the UID key. The
+// framework ignores FetchMessageData.SeqNum and uses that UID to derive the
+// response sequence number from its atomic selection map. It removes the
+// internally requested UID again when the client did not request it.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
 	// WriteFunc receives streamed results when the writer is constructed by an

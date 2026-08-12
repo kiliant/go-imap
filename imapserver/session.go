@@ -427,6 +427,7 @@ type selectedState struct {
 	uids     []imap.UID
 	revision MailboxRevision
 	readOnly bool
+	maxUIDs  int
 	queue    *updateQueue
 	updater  *Updater
 }
@@ -511,6 +512,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		uids:     slices.Clone(result.Snapshot.UIDs),
 		revision: result.Snapshot.Revision,
 		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
+		maxUIDs:  limits.MaxSelectedMessages,
 		queue:    queue,
 		updater:  updater,
 	}
@@ -526,6 +528,9 @@ func validateSelectSnapshot(snapshot *SelectSnapshot, maxMessages int) error {
 	}
 	if uint32(len(snapshot.UIDs)) != snapshot.Status.NumMessages {
 		return fmt.Errorf("imapserver: SELECT snapshot has %d UIDs but reports %d messages", len(snapshot.UIDs), snapshot.Status.NumMessages)
+	}
+	if snapshot.Status.UIDValidity == 0 {
+		return fmt.Errorf("imapserver: SELECT snapshot has zero UIDVALIDITY")
 	}
 	var previous imap.UID
 	for _, uid := range snapshot.UIDs {
@@ -685,6 +690,9 @@ func (s *selectedState) sequence(uid imap.UID) (imap.SeqNum, bool) {
 }
 
 func (s *selectedState) addUIDs(uids []imap.UID) error {
+	if s.maxUIDs > 0 && len(uids) > s.maxUIDs-len(s.uids) {
+		return fmt.Errorf("%w: selected message limit of %d exceeded", ErrRevisionMismatch, s.maxUIDs)
+	}
 	last := imap.UID(0)
 	if len(s.uids) > 0 {
 		last = s.uids[len(s.uids)-1]
