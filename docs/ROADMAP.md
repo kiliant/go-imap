@@ -144,9 +144,9 @@ campaign; `imapserver` has a documented stability status.
 **Status (2026-08-12):** T18 and T21 are complete. The bidirectional shared
 codec, command-literal interlock, response encoder, message analysis, streaming
 section extraction and metadata-bearing SEARCH evaluator are green under the
-race suite, native interoperability matrix and recorded parser campaigns. T19's
-implementation is complete and in API review; T20 and T22–T25 remain
-dependency-blocked until that review closes.
+race suite, native interoperability matrix and recorded parser campaigns. T19
+completed with independent API approval and green PR CI; T20 is ready. T22–T25
+remain dependency-blocked.
 
 ## Sequencing
 

@@ -1147,8 +1147,8 @@ written honestly today. The rest get specs when §2 is approved.
 | T16 | This document, and its approval | M5 | — | written |
 | T17 | Bidirectional vocabulary audit of `package imap` | **M4 — blocks v1.0** | T16 | written |
 | T18 | Server-direction codec: command parsing, response encoding, `internal/imapcodec` | M6 | T16, v1.0 | **done 2026-08-12** |
-| T19 | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18, §2 approved, v1.0 | **implemented, API review** |
-| T20 | Backend contract + `imapserver/memory` + `backendtest` | M6 | T19 | written, blocked |
+| T19 | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18, §2 approved, v1.0 | **done 2026-08-12** |
+| T20 | Backend contract + `imapserver/memory` + `backendtest` | M6 | T19 | written, ready |
 | T21 | Message analysis: bodystructure/envelope generation, section extraction, search evaluation helper | M6 | T16, v1.0 | **done 2026-08-12** |
 | T22 | Base command set, server side | M6 | T20, T21 | written, blocked |
 | T23 | Server extensions, groups A–E (incl. NOTIFY's out-of-selection lifetime) | M6 | T22 | written, blocked |
