@@ -97,8 +97,8 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.drainUpdates(updateAccounting{origin: origin, effect: effectStore}); err != nil {
+	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
 		return err
 	}
-	return c.writeTagged(command.tag, "OK", command.name+" completed")
+	return c.drainUpdates(updateAccounting{origin: origin, effect: effectStore})
 }

@@ -57,11 +57,6 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if len(result.UIDs) > maxCommandSearchResults {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeLimit, "", "SEARCH result limit exceeded")
 	}
-	// Apply any mailbox changes published while the backend evaluated the
-	// query before translating stable UIDs into sequence numbers.
-	if err := c.drainUpdates(updateAccounting{}); err != nil {
-		return err
-	}
 	uids := slices.Clone(result.UIDs)
 	slices.Sort(uids)
 	uids = slices.Compact(uids)
@@ -88,5 +83,8 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := c.encoder.Flush(); err != nil {
 		return err
 	}
-	return c.writeTagged(command.tag, "OK", command.name+" completed")
+	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
+		return err
+	}
+	return c.drainUpdates(updateAccounting{})
 }
