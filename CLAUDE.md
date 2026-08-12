@@ -65,6 +65,8 @@ Anything that violates these needs an explicit, written exception in
 ```
 github.com/kiliant/go-imap            package imap        core types, errors (no I/O)
         ├── internal/imapwire         lexer, decoder, encoder — NEVER exported
+        ├── internal/imapcodec        bidirectional semantic codec
+        ├── internal/imapmessage      message analysis and SEARCH evaluation
         ├── internal/imapsasl         SASL mechanisms
         ├── internal/saslprep         SASLprep (RFC 4013) credential preparation
         ├── internal/unicodenorm      NFC/NFKC normalisation, generated tables
@@ -75,12 +77,12 @@ Dependencies point downward only. `package imap` must not import `imapclient`,
 and must not perform I/O — it is the shared vocabulary, which is what lets the
 future server framework reuse it without an API break.
 
-The server framework is **scoped but not approved**: `docs/SERVER-DESIGN.md`
-(milestone M5 design, M6 implementation) adds `imapserver`, `internal/imapcodec`
-and `internal/imapmessage` to the tree above. **No `imapserver` code may be
-written until that document is approved by the human and v1.0 is tagged.** One
-consequence lands before then: T17, a bidirectional audit of `package imap`, is a
-v1.0 exit criterion, because reshaping a type after the freeze is not additive.
+The server framework design is **approved**: `docs/SERVER-DESIGN.md` (milestone
+M5 design, M6 implementation). v1.0 was tagged on 2026-08-06 after T17's
+bidirectional audit; T18/T21 added the internal foundation on 2026-08-12, and
+the `imapserver` core remains next. The root `imap` and `imapclient` APIs are
+frozen, while `imapserver` will use the approved nested-module v0.x versioning
+model.
 
 ## Zero external dependencies
 

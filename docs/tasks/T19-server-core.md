@@ -3,7 +3,7 @@
 **Agent:** `server-core` · **Milestone:** M6 · **Depends on:** T18, `docs/SERVER-DESIGN.md`
 §2 approved, v1.0 tagged
 
-**Owns:** `imapserver/{server,conn,session,state,dispatch,capability}.go`
+**Owns:** `imapserver/{backend,server,conn,session,state,dispatch,capability}.go`
 
 ## Why this waits for §2 and v1.0
 
@@ -24,6 +24,21 @@ too (`internal/imapsasl`, mirroring T04), but the credential exchange with the
 backend and the base command set proper are T22's.
 
 ## Deliverables
+
+### 0. The approved backend contract — `backend.go`
+
+Land the three mandatory interfaces and the framework-owned collaborating types
+from `SERVER-DESIGN.md` §2 before the connection core that consumes them. T20
+then puts this surface under pressure with `memory` and `backendtest` and may
+make focused corrections before its API review. This ordering avoids the stale
+circular boundary where T19 required the interfaces but T20, which depends on
+T19, was assigned their first declaration.
+
+The contract remains exactly the approved shape: `Backend`, `Session`, and
+`SelectedMailbox`; UID-only backend operations; atomic `Select` snapshot plus
+updater attachment; writer-style unbounded results; optional interfaces for new
+capabilities; sentinel-guarded options structs. The method-set golden gate in
+this task records these declarations from their first commit.
 
 ### 1. Connection lifecycle — `server.go`, `conn.go`
 
@@ -128,10 +143,11 @@ this is the mechanism, not merely documented policy.
 - A test failing on any extension-owned options field with no `FeatureID`
   binding — the gate that makes "capability and options field ship together" an
   executed rule instead of a remembered one (§3).
-- `MOVE` / `IMAP4REV2` advertisement gated specifically on the backend
-  implementing `MoveMailbox` (§2) — the framework must not synthesise MOVE from
-  Copy+Store+Expunge, ever, and the capability table is where that refusal is
-  enforced rather than merely documented.
+- `MOVE` / `IMAP4REV2` advertisement gated specifically on a backend/session
+  `MoveSupport` witness plus `MoveMailbox` on an existing selected handle (§2)
+  — the framework must not synthesise MOVE from Copy+Store+Expunge, ever, and
+  the capability table is where that refusal is enforced rather than merely
+  documented.
 
 ## Non-negotiables
 
@@ -148,9 +164,12 @@ this is the mechanism, not merely documented policy.
 
 ## Done when
 
-- A loopback client (ours) can complete the connection lifecycle through
-  authenticated state against a stub/minimal backend: greeting, CAPABILITY,
-  STARTTLS, AUTHENTICATE, LOGOUT — with correct capability sets at each stage.
+- A loopback client (ours) can complete the framework-owned connection lifecycle:
+  greeting, CAPABILITY, STARTTLS, NOOP and LOGOUT, with correct capability sets
+  before and after TLS. Authenticated/selected state transitions are covered at
+  the state-machine layer here; end-to-end AUTHENTICATE calls the backend and is
+  therefore completed with `cmd_authenticate.go` in T22, as that task's ownership
+  already specifies.
 - The golden interface-method-set test and the feature-binding gate both exist
   and are wired into CI.
 - Stateful security tests for STARTTLS plaintext injection and update-queue

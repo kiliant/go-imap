@@ -42,9 +42,9 @@ const (
 // at zero means "use the default"; a negative value means "no limit" and is only
 // appropriate in tests.
 type Options struct {
-	// MaxLiteralSize is the largest literal, in octets, that may be announced
-	// by a server. Bigger announcements are rejected without reading or
-	// allocating anything.
+	// MaxLiteralSize is the largest literal, in octets, accepted in either
+	// direction. Bigger announcements are rejected without allocating anything;
+	// an already-in-flight non-synchronising command literal is fatal.
 	MaxLiteralSize int64
 
 	// MaxBufferedLiteralSize is the largest literal that may be decoded into a

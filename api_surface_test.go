@@ -43,6 +43,7 @@ func TestAPISurfaceNoInternalLeak(t *testing.T) {
 		{"github.com/kiliant/go-imap/internal/imapsasl", "internal/imapsasl"},
 		{"github.com/kiliant/go-imap/internal/saslprep", "internal/saslprep"},
 		{"github.com/kiliant/go-imap", "."},
+		{"github.com/kiliant/go-imap/internal/imapcodec", "internal/imapcodec"},
 		{"github.com/kiliant/go-imap/imapclient", "imapclient"},
 	} {
 		typeCheckDir(t, fset, pkg.path, pkg.dir, imp)

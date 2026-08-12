@@ -23,6 +23,16 @@ type LiteralReader struct {
 	binary    bool
 }
 
+// LiteralInfo is a client literal announcement. A server-facing command
+// decoder first reads the announcement, then either opens the payload with
+// [Decoder.OpenLiteral] or rejects a synchronising literal without reading a
+// payload that the client has not sent yet.
+type LiteralInfo struct {
+	Size             int64
+	Binary           bool
+	NonSynchronising bool
+}
+
 // Size returns the announced payload length in octets.
 func (lr *LiteralReader) Size() int64 { return lr.size }
 
@@ -103,35 +113,57 @@ func (lr *LiteralReader) release() {
 // sends it — it is a client-to-server marker — but it is accepted so that a
 // captured command line decodes with the same code path.
 //
-// The announced size is validated against Options.MaxLiteralSize *before* any
-// buffer is sized or any payload octet is read, which is what makes {4294967295}
-// a cheap rejection rather than an out-of-memory condition. Because the payload
-// is then neither consumed nor consumable, that rejection is fatal to the
-// connection.
+// The announced size is validated against Options.MaxLiteralSize before any
+// buffer is sized or payload octet is read. An oversized server response, or an
+// oversized non-synchronising command literal already in flight, is fatal. A
+// synchronising command announcement remains rejectable without losing stream
+// alignment; see [Decoder.LiteralAnnouncement].
 func (d *Decoder) Literal() (*LiteralReader, bool) {
-	if !d.ready("literal") {
-		return nil, false
+	if d.literalDecision != nil {
+		return d.commandLiteral(d.opts.MaxLiteralSize)
 	}
-	b, ok := d.peek()
+	info, ok := d.literalAnnouncement(false)
 	if !ok {
 		return nil, false
 	}
-	binary := false
+	return d.OpenLiteral(info), true
+}
+
+// LiteralAnnouncement matches a literal announcement and stops before its
+// payload. It is the server-direction counterpart of [Decoder.Literal]: a
+// server can send a continuation before calling [Decoder.OpenLiteral], reject a
+// synchronising literal by not opening it, or immediately open and drain a
+// non-synchronising literal whose payload is already in flight. A synchronising
+// announcement is returned even when its size exceeds MaxLiteralSize, so the
+// server can reject it cleanly; OpenLiteral still refuses to open it.
+func (d *Decoder) LiteralAnnouncement() (LiteralInfo, bool) {
+	return d.literalAnnouncement(true)
+}
+
+func (d *Decoder) literalAnnouncement(serverDirection bool) (LiteralInfo, bool) {
+	var info LiteralInfo
+	if !d.ready("literal") {
+		return info, false
+	}
+	b, ok := d.peek()
+	if !ok {
+		return info, false
+	}
 	if b == '~' {
 		// "~" is only meaningful as the start of "~{"; anything else must be
 		// left for another production to interpret.
 		if p := d.peekN(2); len(p) < 2 || p[1] != '{' {
-			return nil, false
+			return info, false
 		}
 		if !d.consume() {
-			return nil, false
+			return info, false
 		}
-		binary = true
+		info.Binary = true
 	} else if b != '{' {
-		return nil, false
+		return info, false
 	}
 	if !d.ExpectSpecial('{') {
-		return nil, false
+		return info, false
 	}
 
 	// From here on the input is committed to being a literal, and every failure
@@ -140,27 +172,103 @@ func (d *Decoder) Literal() (*LiteralReader, bool) {
 	size, ok := d.readNumber("literal", 1<<63-1)
 	if !ok {
 		d.failFatal("literal", ErrSyntax, "malformed literal length")
-		return nil, false
+		return info, false
 	}
-	if max := d.opts.MaxLiteralSize; max >= 0 && int64(size) > max {
-		d.failFatal("literal", ErrLimitExceeded,
-			"literal of %d octets exceeds the limit of %d", size, max)
-		return nil, false
-	}
-	d.Special('+') // RFC 7888 non-synchronising marker, ignored on decode
+	info.Size = int64(size)
+	info.NonSynchronising = d.Special('+')
 	if !d.ExpectSpecial('}') {
 		d.failFatal("literal", ErrSyntax, "expected } after literal length")
-		return nil, false
+		return info, false
 	}
 	if !d.ExpectCRLF() {
 		d.failFatal("literal", ErrSyntax, "expected CRLF after literal announcement")
+		return info, false
+	}
+	if max := d.opts.MaxLiteralSize; max >= 0 && info.Size > max {
+		// A synchronising command literal has no payload on the wire yet, so
+		// its caller can reject it and continue at the next command. Every
+		// other oversized literal leaves payload in flight or comes from a
+		// server response, where recovery is impossible.
+		if !serverDirection || info.NonSynchronising {
+			d.failFatal("literal", ErrLimitExceeded,
+				"literal of %d octets exceeds the limit of %d", info.Size, max)
+			return info, false
+		}
+	}
+	d.announced = &info
+	return info, true
+}
+
+// commandLiteral applies the server's size policy and continuation decision.
+// limit may be lower than MaxLiteralSize for a production which materialises
+// its value, such as String.
+func (d *Decoder) commandLiteral(limit int64) (*LiteralReader, bool) {
+	info, ok := d.literalAnnouncement(true)
+	if !ok {
 		return nil, false
 	}
+	if max := d.opts.MaxLiteralSize; max >= 0 && info.Size > max {
+		d.rejectAnnouncedLiteral(info, ErrLimitExceeded,
+			"literal of %d octets exceeds the limit of %d", info.Size, max)
+		return nil, false
+	}
+	if limit >= 0 && info.Size > limit {
+		d.rejectAnnouncedLiteral(info, ErrLimitExceeded,
+			"literal of %d octets exceeds the in-memory limit of %d", info.Size, limit)
+		return nil, false
+	}
+	if err := d.literalDecision(info); err != nil {
+		d.rejectAnnouncedLiteral(info, err, "literal rejected")
+		return nil, false
+	}
+	return d.OpenLiteral(info), true
+}
 
-	lr := &LiteralReader{d: d, size: int64(size), remaining: int64(size), binary: binary}
+func (d *Decoder) rejectAnnouncedLiteral(info LiteralInfo, cause error, format string, args ...any) {
+	if info.NonSynchronising {
+		lr := d.OpenLiteral(info)
+		if err := lr.Discard(); err != nil {
+			return
+		}
+	} else {
+		_ = d.RejectLiteral(info)
+		d.commandBoundary = true
+	}
+	d.failCause("literal", cause, format, args...)
+}
+
+// OpenLiteral returns a reader for a previously parsed announcement. It must be
+// called at most once and before any other decoder operation.
+func (d *Decoder) OpenLiteral(info LiteralInfo) *LiteralReader {
+	if d.announced == nil || *d.announced != info {
+		d.failFatal("literal", ErrLiteralPending, "literal announcement does not match")
+		return &LiteralReader{d: d}
+	}
+	if max := d.opts.MaxLiteralSize; max >= 0 && info.Size > max {
+		d.announced = nil
+		d.failFatal("literal", ErrLimitExceeded,
+			"literal of %d octets exceeds the limit of %d", info.Size, max)
+		return &LiteralReader{d: d}
+	}
+	d.announced = nil
+	lr := &LiteralReader{d: d, size: info.Size, remaining: info.Size, binary: info.Binary}
 	if lr.remaining > 0 {
 		// A zero-length literal needs no interlock: there is nothing to drain.
 		d.lit = lr
 	}
-	return lr, true
+	return lr
+}
+
+// RejectLiteral rejects a synchronising command literal after its announcement
+// has been read. A non-synchronising literal cannot be rejected because its
+// payload is already in flight; it must be opened and drained instead.
+func (d *Decoder) RejectLiteral(info LiteralInfo) error {
+	if d.announced == nil || *d.announced != info {
+		return newError("literal", "literal announcement does not match")
+	}
+	if info.NonSynchronising {
+		return newError("literal", "non-synchronising literal must be drained")
+	}
+	d.announced = nil
+	return nil
 }

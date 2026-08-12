@@ -1,15 +1,13 @@
 package imapclient
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -28,16 +26,13 @@ type FetchCommand struct {
 	// stop is closed once the command has completed, and is never sent on.
 	// The response channel itself must never be closed: closing it would race
 	// with the reader goroutine's send whenever a caller stops consuming a
-	// command that the connection then completes — an abandoned FETCH, or a
-	// cancelled Wait — and a send on a closed channel panics on a goroutine
-	// the caller cannot recover.
+	// command that the connection then completes.
 	stop chan struct{}
 }
 
 // fetchLiteralReader couples the decoder's literal interlock to the FETCH
 // collector. The collector must not parse the rest of the response until the
-// caller consumed this reader; otherwise Decoder correctly reports an
-// undrained literal before the caller gets a chance to read it.
+// caller consumed this reader.
 type fetchLiteralReader struct {
 	literal   *imapwire.LiteralReader
 	remaining int64
@@ -81,10 +76,6 @@ func (cmd *FetchCommand) Next(ctx context.Context) (*imap.FetchMessageData, erro
 	case data := <-cmd.responses:
 		return data, nil
 	case <-cmd.stop:
-		// Responses are sent before the tagged completion is processed, and
-		// both happen on the reader goroutine, so nothing is left in flight
-		// once the command is done. Prefer a pending response anyway, in case
-		// this select saw both cases ready at once.
 		select {
 		case data := <-cmd.responses:
 			return data, nil
@@ -154,9 +145,6 @@ func (c *Client) fetch(name, set string, matches func(imap.SeqNum) bool, items [
 	return fc
 }
 
-// deliver hands one response to the caller's Next. It gives up once the command
-// has completed, which is what stops the reader goroutine from blocking forever
-// on a FETCH nobody is consuming.
 func (fc *FetchCommand) deliver(data *imap.FetchMessageData) {
 	select {
 	case fc.responses <- data:
@@ -225,366 +213,20 @@ func rejectedCommand(c *Client, name, text string) *Command {
 }
 
 func writeFetchItem(enc *imapwire.Encoder, item imap.FetchItem) {
-	switch item := item.(type) {
-	case imap.FetchItemKeyword:
-		enc.Atom(string(item))
-	case *imap.FetchItemBodyStructure:
-		if item == nil {
-			enc.Atom("")
-		} else if item.Extended {
-			enc.Atom("BODYSTRUCTURE")
-		} else {
-			enc.Atom("BODY")
-		}
-	case *imap.FetchItemBodySection:
-		writeBodySection(enc, "BODY", item.Part, item.Specifier, item.HeaderFields, item.HeaderFieldsNot, item.Partial, item.Peek)
-	case *imap.FetchItemBinarySection:
-		if item == nil {
-			enc.Atom("")
-			return
-		}
-		partial := toWirePartial(item.Partial)
-		name := "BINARY"
-		if item.Peek {
-			name += ".PEEK"
-		}
-		enc.Atom(name).BodySection(&imapwire.BodySection{Part: toWirePart(item.Part), Partial: partial})
-	case *imap.FetchItemBinarySectionSize:
-		if item == nil {
-			enc.Atom("")
-		} else {
-			enc.Atom("BINARY.SIZE").BodySection(&imapwire.BodySection{Part: toWirePart(item.Part)})
-		}
-	case *imap.FetchItemPreview:
-		enc.Atom("PREVIEW")
-		if item != nil && item.Lazy {
-			// RFC 8970 section 6: "PREVIEW" [SP "(" preview-mod *(SP preview-mod) ")"]
-			enc.SP().List(1, func(int) { enc.Atom("LAZY") })
-		}
-	default:
-		enc.Atom("")
-	}
-}
-
-func writeBodySection(enc *imapwire.Encoder, base string, part []int, spec imap.PartSpecifier, fields, fieldsNot []string, partial *imap.SectionPartial, peek bool) {
-	name := base
-	if peek {
-		name += ".PEEK"
-	}
-	ws := &imapwire.BodySection{Part: toWirePart(part), Partial: toWirePartial(partial)}
-	if len(fields) > 0 {
-		ws.Specifier, ws.Fields = imapwire.SpecifierHeaderFields, fields
-	} else if len(fieldsNot) > 0 {
-		ws.Specifier, ws.Fields = imapwire.SpecifierHeaderFieldsNot, fieldsNot
-	} else {
-		ws.Specifier = string(spec)
-	}
-	enc.Atom(name).BodySection(ws)
-}
-
-func toWirePart(part []int) []uint32 {
-	result := make([]uint32, len(part))
-	for i, n := range part {
-		result[i] = uint32(n)
-	}
-	return result
-}
-
-func toWirePartial(p *imap.SectionPartial) *imapwire.SectionPartial {
-	if p == nil {
-		return nil
-	}
-	return &imapwire.SectionPartial{Offset: uint32(p.Offset), Count: uint32(p.Size)}
+	imapcodec.WriteFetchItem(enc, item)
 }
 
 func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)) error {
-	dec := resp.dec
-	if !dec.ExpectSP() {
-		return dec.Err()
-	}
-	data := &imap.FetchMessageData{SeqNum: imap.SeqNum(resp.number), Items: make(map[imap.FetchDataKey][]imap.FetchData)}
-	emitted := false
-	emitNow := func() {
-		if !emitted {
-			emitted = true
-			emit(data)
-		}
-	}
-	err := dec.ExpectList(func() error {
-		var key string
-		if !dec.ExpectFetchItemName(&key) {
-			return dec.Err()
-		}
-		upper := strings.ToUpper(key)
-		if upper == "BINARY.SIZE" {
-			var section imapwire.BodySection
-			if !dec.ExpectBodySection(&section) || !dec.ExpectSP() {
-				return dec.Err()
-			}
-			var n int64
-			if !dec.ExpectNumber64(&n) {
-				return dec.Err()
-			}
-			key = formatSectionKey(key, &section)
-			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], imap.FetchDataBinarySectionSize(n))
-			return nil
-		}
-		if (upper == "BODY" || upper == "BINARY") && dec.PeekSpecial('[') {
-			var section imapwire.BodySection
-			if !dec.ExpectBodySection(&section) {
-				return dec.Err()
-			}
-			key = formatSectionKey(key, &section)
-			if !dec.ExpectSP() {
-				return dec.Err()
-			}
-			var literal io.Reader
-			var drained <-chan struct{}
-			lr, ok := dec.Literal()
-			if ok {
-				stream := newFetchLiteralReader(lr)
-				literal, drained = stream, stream.done
-			} else {
-				var token string
-				if !dec.ExpectAtom(&token) {
-					return dec.Err()
-				}
-				if !strings.EqualFold(token, "NIL") {
-					return fmt.Errorf("FETCH %s value is neither literal nor NIL", key)
-				}
-				literal = strings.NewReader("")
-			}
-			var value imap.FetchData
-			if upper == "BODY" {
-				value = bodySectionData(&section, literal)
-			} else {
-				value = binarySectionData(&section, literal)
-			}
-			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
-			emitNow()
-			if drained != nil {
-				<-drained
-			}
-			return nil
-		}
-		if !dec.ExpectSP() {
-			return dec.Err()
-		}
-		var value imap.FetchData
-		switch upper {
-		case "UID":
-			var n uint32
-			if !dec.ExpectUniqueID(&n) {
-				return dec.Err()
-			}
-			value = imap.FetchDataUID(n)
-		case "FLAGS":
-			var flags []string
-			if err := dec.ExpectFlagList(&flags); err != nil {
-				return err
-			}
-			v := make(imap.FetchDataFlags, len(flags))
-			for i := range flags {
-				v[i] = imap.Flag(flags[i])
-			}
-			value = v
-		case "INTERNALDATE":
-			var t time.Time
-			if !dec.ExpectDateTime(&t) {
-				return dec.Err()
-			}
-			value = &imap.FetchDataInternalDate{Time: t}
-		case "RFC822.SIZE":
-			var n int64
-			if !dec.ExpectNumber64(&n) {
-				return dec.Err()
-			}
-			value = imap.FetchDataRFC822Size(n)
-		case "RFC822", "RFC822.HEADER", "RFC822.TEXT":
-			lr, ok := dec.Literal()
-			if !ok {
-				return dec.Err()
-			}
-			stream := newFetchLiteralReader(lr)
-			value = &imap.FetchDataLiteral{Literal: stream}
-			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
-			emitNow()
-			<-stream.done
-			return nil
-		case "MODSEQ":
-			var n int64
-			if err := dec.ExpectList(func() error {
-				if !dec.ExpectNumber64(&n) {
-					return dec.Err()
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			value = imap.FetchDataModSeq(n)
-		case "EMAILID":
-			id, err := readFetchObjectID(dec)
-			if err != nil {
-				return err
-			}
-			value = imap.FetchDataObjectID(id)
-		case "THREADID":
-			if dec.PeekSpecial('(') {
-				id, err := readFetchObjectID(dec)
-				if err != nil {
-					return err
-				}
-				value = imap.FetchDataObjectID(id)
-			} else {
-				var unused string
-				var isNil bool
-				if !dec.ExpectNString(&unused, &isNil) || !isNil {
-					return fmt.Errorf("THREADID value is neither (objectid) nor NIL")
-				}
-				value = imap.FetchDataObjectID("")
-			}
-		case "SAVEDATE":
-			// RFC 8514 section 5: SAVEDATE SP (date-time / nil)
-			if dec.PeekSpecial('"') {
-				var t time.Time
-				if !dec.ExpectDateTime(&t) {
-					return dec.Err()
-				}
-				value = &imap.FetchDataSaveDate{Date: &t}
-			} else {
-				var unused string
-				var isNil bool
-				if !dec.ExpectNString(&unused, &isNil) || !isNil {
-					return fmt.Errorf("SAVEDATE value is neither date-time nor NIL")
-				}
-				value = &imap.FetchDataSaveDate{}
-			}
-		case "PREVIEW":
-			// RFC 8970 section 6: PREVIEW SP nstring
-			var s string
-			var isNil bool
-			if !dec.ExpectNString(&s, &isNil) {
-				return dec.Err()
-			}
-			if isNil {
-				value = &imap.FetchDataPreview{}
-			} else {
-				value = &imap.FetchDataPreview{Text: &s}
-			}
-		case "ENVELOPE":
-			env, err := readEnvelope(dec)
-			if err != nil {
-				return err
-			}
-			value = &imap.FetchDataEnvelope{Envelope: env}
-		case "BODY", "BODYSTRUCTURE":
-			// Reached only when no section followed the keyword, so this is the
-			// body structure form. BODY omits the extension fields that
-			// BODYSTRUCTURE carries; the grammar is otherwise identical.
-			bs, err := readBodyStructure(dec, 0)
-			if err != nil {
-				return err
-			}
-			value = &imap.FetchDataBodyStructure{BodyStructure: bs}
-		default:
-			// An item from an extension this client does not model is kept
-			// verbatim rather than skipped: dropping it silently is data loss,
-			// and the caller may well understand what we do not. A value too
-			// large to hold in memory is the one case where it is skipped, and
-			// the empty reader then says so.
-			var raw []byte
-			if err := dec.CaptureValue(&raw); err != nil {
-				if dec.Err() != nil {
-					return err
-				}
-				raw = nil
-			}
-			value = &imap.FetchDataRaw{Reader: bytes.NewReader(raw)}
-		}
-		data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if !dec.ExpectCRLF() {
-		return dec.Err()
-	}
-	emitNow()
-	return nil
+	return imapcodec.ReadFetchResponse(resp.dec, imap.SeqNum(resp.number), func(lr *imapwire.LiteralReader) (io.Reader, func()) {
+		stream := newFetchLiteralReader(lr)
+		return stream, func() { <-stream.done }
+	}, emit)
 }
 
-// readFetchObjectID reads the parenthesised objectid used by EMAILID and
-// THREADID. RFC 8474 section 7: fetch-emailid-resp = "EMAILID" SP "(" objectid ")"
 func readFetchObjectID(dec *imapwire.Decoder) (string, error) {
-	var id string
-	if err := dec.ExpectList(func() error {
-		if !dec.ExpectAtom(&id) {
-			return dec.Err()
-		}
-		return nil
-	}); err != nil {
-		return "", err
-	}
-	if _, err := parseObjectID(id); err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
-func bodySectionData(section *imapwire.BodySection, literal io.Reader) imap.FetchData {
-	v := &imap.FetchDataBodySection{Part: make([]int, len(section.Part)), Specifier: imap.PartSpecifier(section.Specifier), Literal: literal}
-	for i, n := range section.Part {
-		v.Part[i] = int(n)
-	}
-	if section.Specifier == imapwire.SpecifierHeaderFields {
-		v.HeaderFields = append([]string(nil), section.Fields...)
-	}
-	if section.Specifier == imapwire.SpecifierHeaderFieldsNot {
-		v.HeaderFieldsNot = append([]string(nil), section.Fields...)
-	}
-	if section.Partial != nil {
-		v.Origin, v.HasOrigin = int64(section.Partial.Offset), true
-	}
-	return v
-}
-
-func binarySectionData(section *imapwire.BodySection, literal io.Reader) imap.FetchData {
-	v := &imap.FetchDataBinarySection{Part: make([]int, len(section.Part)), Literal: literal}
-	for i, n := range section.Part {
-		v.Part[i] = int(n)
-	}
-	if section.Partial != nil {
-		v.Origin, v.HasOrigin = int64(section.Partial.Offset), true
-	}
-	return v
+	return imapcodec.ReadFetchObjectID(dec)
 }
 
 func formatSectionKey(prefix string, section *imapwire.BodySection) string {
-	var b strings.Builder
-	b.WriteString(prefix)
-	b.WriteByte('[')
-	for i, n := range section.Part {
-		if i > 0 {
-			b.WriteByte('.')
-		}
-		fmt.Fprint(&b, n)
-	}
-	if section.Specifier != "" {
-		if len(section.Part) > 0 {
-			b.WriteByte('.')
-		}
-		b.WriteString(section.Specifier)
-	}
-	if len(section.Fields) > 0 {
-		b.WriteByte(' ')
-		b.WriteByte('(')
-		b.WriteString(strings.Join(section.Fields, " "))
-		b.WriteByte(')')
-	}
-	b.WriteByte(']')
-	if section.Partial != nil {
-		fmt.Fprintf(&b, "<%d>", section.Partial.Offset)
-	}
-	return b.String()
+	return imapcodec.FormatSectionKey(prefix, section)
 }

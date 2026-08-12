@@ -14,9 +14,9 @@ var (
 	ErrSyntax = errors.New("imapwire: syntax error")
 
 	// ErrLimitExceeded reports input that exceeds a configured limit: literal
-	// size, line length or list nesting depth. It is always fatal, because the
-	// offending bytes are by definition not consumed and the stream position is
-	// therefore unknown.
+	// size, line length or list nesting depth. It is fatal unless the input is a
+	// synchronising command literal, whose payload has not been sent and can be
+	// rejected at a known command boundary.
 	ErrLimitExceeded = errors.New("imapwire: limit exceeded")
 
 	// ErrLiteralPending reports an attempt to keep decoding while a literal

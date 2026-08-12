@@ -2,6 +2,7 @@ package imapwire
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"strconv"
 	"strings"
@@ -13,10 +14,20 @@ import (
 // the server advertises LITERAL- rather than LITERAL+ (RFC 7888).
 const literalMinusMaxSize = 4096
 
-// EncoderOptions configures command serialisation. The zero value is valid: it
-// selects synchronising literals and modified UTF-7 mailbox names, which every
-// RFC 3501 server understands.
+// responseQuotedLineBudget leaves room for the surrounding response grammar.
+// Once a response line reaches this size, String starts a literal instead of
+// extending the quoted portion. Literal payloads do not count towards the
+// protocol line-length limit and the announcement's CRLF resets the budget.
+const responseQuotedLineBudget = DefaultMaxLineLength / 2
+
+// EncoderOptions configures wire serialisation. The zero value is valid: it
+// selects command-direction synchronising literals and modified UTF-7 mailbox
+// names, which every RFC 3501 server understands.
 type EncoderOptions struct {
+	// ServerResponse selects server-to-client literal framing. Response
+	// literals never carry a "+" marker and never wait for a continuation.
+	ServerResponse bool
+
 	// LiteralPlus enables the non-synchronising literal of RFC 7888 for
 	// literals of any size. Set it when the server advertises LITERAL+.
 	LiteralPlus bool
@@ -102,10 +113,11 @@ func (t *timeoutWriter) Write(p []byte) (int, error) {
 //
 // An Encoder is not safe for concurrent use.
 type Encoder struct {
-	w    *bufio.Writer
-	opts EncoderOptions
-	err  error
-	lw   *LiteralWriter
+	w       *bufio.Writer
+	opts    EncoderOptions
+	err     error
+	lw      *LiteralWriter
+	lineLen int
 }
 
 // NewEncoder returns an Encoder writing to w. A nil opts selects the defaults.
@@ -177,10 +189,62 @@ func (e *Encoder) write(s string) *Encoder {
 	if e.lw != nil {
 		return e.fail("literal", "%d octets of the pending literal are unwritten", e.lw.remaining)
 	}
-	if _, err := e.w.WriteString(s); err != nil {
+	n, err := e.w.WriteString(s)
+	if n > 0 {
+		e.trackLine(s[:n])
+	}
+	if err != nil {
 		e.err = newFatalError("write", err, "writing output")
 	}
 	return e
+}
+
+func (e *Encoder) trackLine(s string) {
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		e.lineLen = len(s) - i - 1
+	} else {
+		e.lineLen += len(s)
+	}
+}
+
+// rawString writes grammar text whose validation has already been performed by
+// another primitive in this package.
+func (e *Encoder) rawString(s string) *Encoder { return e.write(s) }
+
+// RawValue writes one already-encoded semantic value verbatim. It exists for
+// forward-compatible passthrough of values captured with [Decoder.CaptureValue].
+// Callers must not use it for command or response framing.
+func (e *Encoder) RawValue(p []byte) *Encoder {
+	if e.err != nil {
+		return e
+	}
+	if e.lw != nil {
+		return e.fail("literal", "%d octets of the pending literal are unwritten", e.lw.remaining)
+	}
+	if _, err := e.w.Write(p); err != nil {
+		e.err = newFatalError("write", err, "writing raw value")
+	}
+	return e
+}
+
+// RawReader streams one already-encoded semantic value. It is the streaming
+// counterpart of [Encoder.RawValue].
+func (e *Encoder) RawReader(r io.Reader) error {
+	if e.err != nil {
+		return e.err
+	}
+	if e.lw != nil {
+		e.fail("literal", "%d octets of the pending literal are unwritten", e.lw.remaining)
+		return e.err
+	}
+	if r == nil {
+		e.fail("raw-value", "nil reader")
+		return e.err
+	}
+	if _, err := io.Copy(e.w, r); err != nil {
+		e.err = newFatalError("write", err, "writing raw value")
+	}
+	return e.err
 }
 
 // Special writes a single syntactic octet such as "(" or "]".
@@ -270,10 +334,20 @@ func (e *Encoder) NIL() *Encoder { return e.write("NIL") }
 // String writes the string production: a quoted string when the content allows
 // it, a literal otherwise.
 func (e *Encoder) String(s string) *Encoder {
-	if canBeQuoted(s) {
+	if canBeQuoted(s) && (!e.opts.ServerResponse || e.lineLen+quotedWireLength(s) <= responseQuotedLineBudget) {
 		return e.Quoted(s)
 	}
 	return e.literalString(s, false)
+}
+
+func quotedWireLength(s string) int {
+	n := len(s) + 2
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' || s[i] == '\\' {
+			n++
+		}
+	}
+	return n
 }
 
 // Astring writes the astring production, choosing the shortest legal form: an
@@ -446,6 +520,7 @@ type LiteralWriter struct {
 	e         *Encoder
 	size      int64
 	remaining int64
+	binary    bool
 }
 
 // Size returns the announced payload length.
@@ -460,6 +535,10 @@ func (w *LiteralWriter) Write(p []byte) (int, error) {
 	}
 	if int64(len(p)) > w.remaining {
 		w.e.fail("literal", "%d octets written past the announced size", int64(len(p))-w.remaining)
+		return 0, w.e.err
+	}
+	if !w.binary && bytes.IndexByte(p, 0) >= 0 {
+		w.e.fail("literal", "NUL requires literal8")
 		return 0, w.e.err
 	}
 	n, err := w.e.w.Write(p)
@@ -545,7 +624,7 @@ func (e *Encoder) Literal(size int64, binary bool) (*LiteralWriter, error) {
 		}
 	}
 
-	lw := &LiteralWriter{e: e, size: size, remaining: size}
+	lw := &LiteralWriter{e: e, size: size, remaining: size, binary: binary}
 	if size > 0 {
 		e.lw = lw
 	}
@@ -568,7 +647,15 @@ func (e *Encoder) literalString(s string, binary bool) *Encoder {
 	if !binary && strings.IndexByte(s, 0) >= 0 {
 		return e.fail("literal", "NUL requires literal8")
 	}
-	lw, err := e.Literal(int64(len(s)), binary)
+	var (
+		lw  *LiteralWriter
+		err error
+	)
+	if e.opts.ServerResponse {
+		lw, err = e.ResponseLiteral(int64(len(s)), binary)
+	} else {
+		lw, err = e.Literal(int64(len(s)), binary)
+	}
 	if err != nil {
 		return e
 	}

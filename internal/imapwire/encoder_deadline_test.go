@@ -102,7 +102,7 @@ func TestEncoderWriteTimeoutSurfacesError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Literal() = %v", err)
 	}
-	_, werr := lw.Write(make([]byte, 1<<20))
+	_, werr := lw.Write([]byte(strings.Repeat("x", 1<<20)))
 	if werr == nil {
 		if err := e.Flush(); err == nil {
 			t.Fatal("a stalled connection produced no error")
@@ -133,7 +133,7 @@ func TestEncoderWriteTimeoutRefreshesAcrossStreamingLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Literal() = %v", err)
 	}
-	buf := make([]byte, chunk)
+	buf := []byte(strings.Repeat("x", chunk))
 	for written := 0; written < size; written += chunk {
 		if _, err := lw.Write(buf); err != nil {
 			t.Fatalf("Write at %d = %v", written, err)

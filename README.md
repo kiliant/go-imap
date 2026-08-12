@@ -7,18 +7,13 @@ stable v1.0 are compatible goals rather than competing ones.
 import "github.com/kiliant/go-imap/imapclient"
 ```
 
-> **Status: pre-v1.0.** The wire codec, core vocabulary, connection/session,
-> authentication, mailbox and message commands, capability negotiation, ENABLE,
-> IDLE, extension groups A–E, the interoperability harness and examples are on
-> `main`, as are the fixes from the 2026-08-01 freeze audit — the rule-3
-> options-struct gate over the `Client` surface is mechanical and green, and the
-> extension groups C–E that shipped without fuzz targets now have them. A full
-> 10-minute campaign over all 61 fuzz targets and a native interop re-run
-> against the changed signatures both completed green 2026-08-03. Release
-> engineering (T15 — CI workflows, the `apidiff` gate, `CHANGELOG.md`) is built
-> and locally verified but not yet pushed to `origin`, pending a deliberate
-> human go-ahead; a few coverage rows are still short of `verified`. See
-> `docs/ROADMAP.md` and `.state/status.md`.
+> **Status: v1.0 released.** The exported API of `package imap` and
+> `package imapclient` is frozen under the compatibility policy in
+> `docs/API-STABILITY.md`. CI, the `apidiff` gate, the full parser-fuzz campaign,
+> and the native interoperability matrix were green for the release tagged on
+> 2026-08-06. Work now proceeds on the separately versioned server framework
+> described in `docs/SERVER-DESIGN.md`; see `docs/ROADMAP.md` and
+> `docs/tasks/BOARD.md`.
 
 ## The design constraint
 
@@ -71,22 +66,23 @@ same reason.
   framework (below) defines a backend interface; it does not implement one for
   production.
 
-## Not yet, but scoped
+## Server framework
 
-A server framework, milestone M6, after v1.0 of the client. The core types were
+A server framework is the current milestone, M6. The core types were
 split into a shared I/O-free package from the first commit precisely so this can
 be added without an API break, and that has held up.
 
-Its design is scoped now rather than after the tag, for one reason: adding types
+Its design was scoped before the tag for one reason: adding types
 to the shared package after v1.0 is additive and always allowed, but *reshaping*
 one is not — and a vocabulary that has only ever been exercised in the client
 direction can contain a type a server can consume but cannot naturally produce.
-No client-side review finds that. So the design runs before the freeze, the
-implementation after it, and a bidirectional review of the shared vocabulary is a
-v1.0 exit criterion.
+No client-side review finds that. The design therefore ran before the freeze,
+and a bidirectional review of the shared vocabulary became a v1.0 exit
+criterion. That review completed before the tag.
 
-See `docs/SERVER-DESIGN.md` — **proposed, not yet approved**. No server code
-exists.
+See `docs/SERVER-DESIGN.md` — **approved on 2026-08-05**. The shared
+server-direction codec and message-analysis foundation (T18/T21) completed on
+2026-08-12; the server core (T19) is next.
 
 ## Documentation
 
@@ -98,7 +94,7 @@ exists.
 | `docs/RFC-COVERAGE.md` | Capability → RFC → status, from the IANA registry |
 | `docs/INTEROP.md` | Server matrix and how to run it |
 | `docs/ROADMAP.md` | Milestones and exit criteria |
-| `docs/SERVER-DESIGN.md` | Server framework design — proposed, not approved |
+| `docs/SERVER-DESIGN.md` | Approved server framework design |
 | `CLAUDE.md` | Working rules for AI agents contributing here |
 
 ## Testing

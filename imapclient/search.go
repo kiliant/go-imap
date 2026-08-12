@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -122,96 +123,7 @@ func (c *Client) search(name string, criteria imap.SearchCriteria, options *Sear
 // writeSearchCriteria writes criterion in the top-level position of the SEARCH
 // command, where the grammar accepts a bare sequence of space-separated keys.
 func writeSearchCriteria(enc *imapwire.Encoder, criterion imap.SearchCriteria) {
-	if and, ok := criterion.(imap.SearchAnd); ok {
-		if len(and) == 0 {
-			// Documented as matching every message, which is what ALL says.
-			// An empty key sequence is not in the grammar at all.
-			enc.Atom("ALL")
-			return
-		}
-		for i, x := range and {
-			if i > 0 {
-				enc.SP()
-			}
-			writeSearchKey(enc, x)
-		}
-		return
-	}
-	writeSearchKey(enc, criterion)
-}
-
-// writeSearchKey writes exactly one search-key. A conjunction of several keys
-// is only a single key when it is parenthesised: without the parentheses the
-// server would attach the remaining keys to the enclosing OR or NOT instead,
-// silently answering a different question. RFC 3501 section 9, search-key.
-func writeSearchKey(enc *imapwire.Encoder, criterion imap.SearchCriteria) {
-	if and, ok := criterion.(imap.SearchAnd); ok && len(and) != 1 {
-		if len(and) == 0 {
-			enc.Atom("ALL")
-			return
-		}
-		enc.Special('(')
-		for i, x := range and {
-			if i > 0 {
-				enc.SP()
-			}
-			writeSearchKey(enc, x)
-		}
-		enc.Special(')')
-		return
-	}
-	switch c := criterion.(type) {
-	case imap.SearchAnd:
-		writeSearchKey(enc, c[0])
-	case imap.SearchOr:
-		enc.Atom("OR").SP()
-		writeSearchKey(enc, c.Left)
-		enc.SP()
-		writeSearchKey(enc, c.Right)
-	case imap.SearchNot:
-		enc.Atom("NOT").SP()
-		writeSearchKey(enc, c.Criteria)
-	case imap.SearchKeyword:
-		enc.Atom(string(c))
-	case imap.SearchFlagKeyword:
-		if c.Not {
-			enc.Atom("UNKEYWORD")
-		} else {
-			enc.Atom("KEYWORD")
-		}
-		enc.SP().Flag(string(c.Flag))
-	case imap.SearchHeaderField:
-		enc.Atom("HEADER").SP().Astring(c.Field).SP().String(c.Value)
-	case imap.SearchString:
-		enc.Atom(string(c.Key)).SP().String(c.Value)
-	case imap.SearchDate:
-		enc.Atom(string(c.Key)).SP().Date(c.Date)
-	case imap.SearchSize:
-		enc.Atom(string(c.Key)).SP().Number64(c.Size)
-	case imap.SearchSeqNum:
-		writeNumSet(enc, c.Set.String())
-	case imap.SearchUID:
-		enc.Atom("UID").SP()
-		writeNumSet(enc, c.Set.String())
-	case imap.SearchSavedResult:
-		enc.Atom("$")
-	case imap.SearchWithin:
-		enc.Atom(string(c.Key)).SP().Number64(c.Seconds)
-	case imap.SearchObjectID:
-		enc.Atom(string(c.Key)).SP().Astring(c.Value)
-	case imap.SearchModSeq:
-		enc.Atom("MODSEQ")
-		if c.EntryName != "" {
-			// RFC 7162 section 3.1.5: the entry name and entry type are a pair;
-			// neither is legal on its own. validateSearchCriteria rejects a
-			// half-specified one before anything reaches the wire.
-			enc.SP().Astring(c.EntryName).SP().Atom(string(c.EntryType))
-		}
-		enc.SP().Number64(int64(c.ModSeq))
-	case imap.SearchFuzzy:
-		enc.Atom("FUZZY").SP()
-		writeSearchKey(enc, c.Criteria)
-	}
+	imapcodec.WriteSearchCriteria(enc, criterion)
 }
 
 // validateSearchCriteria rejects criteria the encoder cannot render, before a
@@ -219,42 +131,7 @@ func writeSearchKey(enc *imapwire.Encoder, criterion imap.SearchCriteria) {
 // this package does not know about has to be reported rather than silently
 // dropped or turned into a malformed command line.
 func validateSearchCriteria(criterion imap.SearchCriteria) error {
-	switch c := criterion.(type) {
-	case imap.SearchAnd:
-		for _, x := range c {
-			if err := validateSearchCriteria(x); err != nil {
-				return err
-			}
-		}
-	case imap.SearchOr:
-		if c.Left == nil || c.Right == nil {
-			return fmt.Errorf("SEARCH OR requires both operands")
-		}
-		if err := validateSearchCriteria(c.Left); err != nil {
-			return err
-		}
-		return validateSearchCriteria(c.Right)
-	case imap.SearchNot:
-		if c.Criteria == nil {
-			return fmt.Errorf("SEARCH NOT requires an operand")
-		}
-		return validateSearchCriteria(c.Criteria)
-	case imap.SearchFuzzy:
-		if c.Criteria == nil {
-			return fmt.Errorf("SEARCH FUZZY requires an operand")
-		}
-		return validateSearchCriteria(c.Criteria)
-	case imap.SearchModSeq:
-		if (c.EntryName == "") != (c.EntryType == "") {
-			return fmt.Errorf("SEARCH MODSEQ requires an entry name and entry type together")
-		}
-	case imap.SearchKeyword, imap.SearchFlagKeyword, imap.SearchHeaderField,
-		imap.SearchString, imap.SearchDate, imap.SearchSize, imap.SearchSeqNum,
-		imap.SearchUID, imap.SearchSavedResult, imap.SearchWithin, imap.SearchObjectID:
-	default:
-		return fmt.Errorf("unsupported SEARCH criteria type %T", criterion)
-	}
-	return nil
+	return imapcodec.ValidateSearchCriteria(criterion)
 }
 
 // utf8AcceptEnabled reports whether UTF-8 may appear unencoded in command
