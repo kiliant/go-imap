@@ -1,10 +1,9 @@
 # Server framework — design
 
 **Status: APPROVED, revision 5, by the human on 2026-08-05.** This unblocks
-T17 (bidirectional vocabulary audit) and the specification of T19–T25.
-`imapserver` implementation code (T18–T25) still may not be written until
-v1.0 is tagged, which itself remains gated on T17 completing — see
-`docs/tasks/BOARD.md`.
+T17 (bidirectional vocabulary audit) and the specification of T19–T25. T17
+completed and v1.0 was tagged on 2026-08-06, so implementation tasks T18–T25 may
+now proceed — see `docs/tasks/BOARD.md`.
 
 Revision 2 (2026-08-03) responded to a review of revision 1: the concurrency
 model in §4 was internally inconsistent and was rewritten; §2 gained a compilable
@@ -64,6 +63,12 @@ supporting them.
 ---
 
 ## 0. What already exists, and which direction it faces
+
+**Implementation update (2026-08-12):** this section records the gaps that
+motivated the design. T18 and T21 have now closed them: command framing and
+response encoding live in `internal/imapwire`, shared semantic encoding and
+decoding in `internal/imapcodec`, and generation/extraction/evaluation in
+`internal/imapmessage`. The table below is retained as the design-time finding.
 
 The architecture was built to make this addition cheap, and partly it did.
 `package imap` holds vocabulary and does no I/O, so the server reuses it without
@@ -289,7 +294,7 @@ is either a new optional interface or a new options field.
 
 ### MOVE is optional to the interface but required for rev2
 
-`MoveMailbox` is an optional interface, and the framework **must not synthesise
+`MoveMailbox` is an optional operation interface, and the framework **must not synthesise
 MOVE from `Copy` + `Store` + `Expunge`**. RFC 6851 is explicit that the sequence
 exposes intermediate states and that an interruption can leave the messages
 duplicated or the source inconsistent; MOVE carries stronger per-message outcome
@@ -298,10 +303,21 @@ requirements than the parts it superficially decomposes into.
 So the framework refuses rather than approximates, and two advertisements depend
 on it:
 
-- `MOVE` is advertised to a rev1 client only when the backend implements
-  `MoveMailbox`.
-- `IMAP4REV2` is advertised only when the backend implements `MoveMailbox`,
+- `MOVE` is advertised to a rev1 client only when the backend or authenticated
+  session supplies a `MoveSupport` capability witness, and the selected handle
+  implements `MoveMailbox` when one exists.
+- `IMAP4REV2` is advertised under the same witness and selected-handle check,
   because rev2 incorporates MOVE.
+
+The separate witness is necessary before a selection exists: rev2 must be
+advertisable before authentication and enable-able in authenticated state,
+while the actual MOVE operation belongs to the per-selection handle. A Backend
+may implement `MoveSupport` for server-wide support; a Session may implement it
+when support varies by authenticated user. Claiming support and then returning
+a selected handle without `MoveMailbox` is a backend contract violation. A rev1
+session stops advertising MOVE for that selection; a session that has enabled
+rev2 rejects the selection because it cannot withdraw a mandatory behaviour
+after enabling the revision.
 
 This keeps the mandatory interfaces at the rev1 baseline while keeping the rev2
 promise truthful — the same pattern as every other incorporated behaviour in §1.
@@ -1116,7 +1132,8 @@ documented stability exception — but only as a fallback, and it needs its own
 written approval.
 
 Either way this is an exception to API-STABILITY's versioning policy and **needs
-explicit human approval**. It is recorded there as proposed and unapproved.
+explicit human approval**. That approval was given on 2026-08-05 and is recorded
+in `docs/API-STABILITY.md`; T25 executes the nested-module layout.
 
 ---
 
@@ -1129,14 +1146,14 @@ written honestly today. The rest get specs when §2 is approved.
 |---|---|---|---|---|
 | T16 | This document, and its approval | M5 | — | written |
 | T17 | Bidirectional vocabulary audit of `package imap` | **M4 — blocks v1.0** | T16 | written |
-| T18 | Server-direction codec: command parsing, response encoding, `internal/imapcodec` | M6 | T16 | written |
-| T19 | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18, §2 approved | after approval |
-| T20 | Backend contract + `imapserver/memory` + `backendtest` | M6 | T19 | after approval |
-| T21 | Message analysis: bodystructure/envelope generation, section extraction, search evaluation helper | M6 | T18 | **written early — abstraction-independent** |
-| T22 | Base command set, server side | M6 | T20, T21 | after approval |
-| T23 | Server extensions, groups A–E (incl. NOTIFY's out-of-selection lifetime) | M6 | T22 | after approval |
-| T24 | Conformance, interop, server-side fuzzing, stateful security tests | M6 | T22 | after approval |
-| T25 | API review, docs, examples, `imapserver` release | M6 | T23, T24 | after approval |
+| T18 | Server-direction codec: command parsing, response encoding, `internal/imapcodec` | M6 | T16, v1.0 | **done 2026-08-12** |
+| T19 | Server core: reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18, §2 approved, v1.0 | **implemented, API review** |
+| T20 | Backend contract + `imapserver/memory` + `backendtest` | M6 | T19 | written, blocked |
+| T21 | Message analysis: bodystructure/envelope generation, section extraction, search evaluation helper | M6 | T16, v1.0 | **done 2026-08-12** |
+| T22 | Base command set, server side | M6 | T20, T21 | written, blocked |
+| T23 | Server extensions, groups A–E (incl. NOTIFY's out-of-selection lifetime) | M6 | T22 | written, blocked |
+| T24 | Conformance, interop, server-side fuzzing, stateful security tests | M6 | T22 | written, blocked |
+| T25 | API review, docs, examples, `imapserver` release | M6 | T23, T24 | written, blocked |
 
 T18 and T21 are the parallel pair, together the bulk of the work, and neither waits
 on §2. Revision 1 called T21 abstraction-independent and then scheduled its spec

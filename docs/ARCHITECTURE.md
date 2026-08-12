@@ -9,14 +9,14 @@ github.com/kiliant/go-imap          package imap
     NO I/O. NO imports of sibling packages.
 
     ├── internal/imapwire    lexer/decoder/encoder for the IMAP wire grammar
+    ├── internal/imapcodec   semantic codec for the imap types, BOTH directions
+    ├── internal/imapmessage envelope/bodystructure generation, SEARCH evaluation
     ├── internal/imapsasl    SASL mechanisms
     ├── internal/saslprep    SASLprep (RFC 4013) credential preparation
     ├── internal/unicodenorm NFC/NFKC normalisation, generated tables
     └── imapclient           package imapclient — the client
 
-    planned, milestone M6 — see docs/SERVER-DESIGN.md:
-    ├── internal/imapcodec   semantic codec for the imap types, BOTH directions
-    ├── internal/imapmessage envelope/bodystructure generation, SEARCH evaluation
+    planned, remaining milestone M6 — see docs/SERVER-DESIGN.md:
     └── imapserver           package imapserver — the server framework
         └── memory           in-memory reference backend (supported)
 ```
@@ -34,32 +34,33 @@ later is a breaking change. The split costs nothing now and buys the option.
 
 ## Decision: the codec must become bidirectional; the vocabulary already is
 
-**Status: proposed, pending approval of `docs/SERVER-DESIGN.md`.**
+**Status: settled by approval of `docs/SERVER-DESIGN.md` on 2026-08-05.**
 
 The layering above delivered what it promised for *types*: `package imap` is
 usable from a server unchanged. It did not deliver it for *codecs*, and the
 distinction was invisible until the server was scoped.
 
-Three tiers, and only the middle one is work:
+Three tiers were identified; T18 and T21 completed the middle and final tiers
+on 2026-08-12:
 
 - **Direction-agnostic, reusable as-is.** `package imap` itself; the
   `internal/imapwire` grammar primitives (`Atom`, `Astring`, `Number`, `List`,
   `Literal`, `Mailbox`, `Flag`, UTF-7, limits, deadlines); `internal/imapsasl`,
   `internal/saslprep`, `internal/unicodenorm`.
-- **One-directional, needs a mirror.** Response decoding exists
-  (`BeginResponse`, `ExpectRespCond`, `ExpectRespText`); command decoding does
-  not. SEARCH criteria encoding exists; decoding does not. Fetch data, envelope
-  and body structure decoding exist; encoding does not. That is ~1 400 lines
-  across `imapclient/{fetch,search,structure}.go`.
-- **Absent entirely.** Generating ENVELOPE and BODYSTRUCTURE *from stored
-  message bytes*, and evaluating `imap.SearchCriteria` as a predicate. A client
-  never needed either.
+- **Previously one-directional; now mirrored by `internal/imapcodec`.** Command
+  framing and response encoding now complement response decoding. SEARCH,
+  FETCH, STATUS, ENVELOPE and BODYSTRUCTURE have both directions, and
+  `imapclient/{fetch,search,structure}.go` delegates to the shared codec.
+- **Previously absent; now implemented by `internal/imapmessage`.** Stored RFC
+  5322 bytes can generate ENVELOPE/BODYSTRUCTURE and streaming body sections;
+  `imap.SearchCriteria` can be evaluated against a message plus mailbox
+  metadata.
 
-The mirrors cannot live in `imapclient` — `imapserver` importing the client would
-invert this graph — and cannot live in `package imap`, which performs no I/O. So
-they go in new internal packages, `imapcodec` and `imapmessage`, and `imapclient`
-migrates onto `imapcodec` rather than keeping a private copy. Two BODYSTRUCTURE
-implementations that must agree byte-for-byte is a bug generator.
+The mirrors could not live in `imapclient` — `imapserver` importing the client
+would invert this graph — and could not live in `package imap`, which performs
+no I/O. They therefore live in `imapcodec` and `imapmessage`, and `imapclient`
+uses `imapcodec` rather than keeping a private copy. Two BODYSTRUCTURE
+implementations that must agree byte-for-byte would be a bug generator.
 
 Full analysis in `docs/SERVER-DESIGN.md` §0 and §5; work in T18 and T21.
 

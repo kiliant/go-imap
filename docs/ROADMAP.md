@@ -48,9 +48,9 @@ Extension groups C, D and E. Tier-2 servers (Cyrus, Courier) join the matrix.
 **Exit:** `docs/RFC-COVERAGE.md` has no `planned` rows outside the explicitly
 `deferred` set.
 
-**Status (2026-08-01):** T10 and T11 are merged; Groups C–E rows are `done`.
-The orphan `ID` (RFC 2971) capability is implemented (`Client.ID`); M3 exit is
-met once coverage has no `planned` rows outside the deferred set.
+**Status (2026-08-01): complete.** T10 and T11 are merged; Groups C–E rows are
+`done`. The orphan `ID` (RFC 2971) capability is implemented (`Client.ID`), and
+coverage has no `planned` rows outside the deferred set.
 
 ## M4 — Hardening and the freeze (T13, T14, T15, T17)
 
@@ -70,9 +70,9 @@ A client-side review cannot find that, because the client is the direction that
 works. See `docs/tasks/T17-bidirectional-vocabulary-audit.md` and
 `docs/SERVER-DESIGN.md` §9.
 
-A verdict of "nothing needs to change" is the likely outcome and is a perfectly
-good result — the architecture was built for this. It is worth something only if
-it is written down per type rather than assumed.
+A verdict of "nothing needs to change" would have been legitimate, but the audit
+found and fixed several one-directional shapes before the freeze. The full
+per-symbol record lives in `.state/progress/T17.md`.
 
 **Status (2026-08-01, after audit):** T13 and T14 were marked done and both were
 reopened. An audit of that claim found seven issues, all since fixed:
@@ -95,21 +95,11 @@ crasher — three `context deadline exceeded` hits at the fuzztime boundary
 confirmed as a `FUZZ_PARALLEL=4` scheduling artifact, not a real failure), and
 the native interop matrix re-ran green against the changed signatures.
 
-**Status (2026-08-03):** T15's engineering is done and committed to local
-`main` — `.github/**` (test/vet/interop/interop-emulated/fuzz-smoke/fuzz-long/
-apidiff/supply-chain workflows) and `CHANGELOG.md`, plus the two follow-ups it
-surfaced (a `staticcheck` suppression in a T08-owned test, and a podman/docker
-engine-discovery fix in `interop/harness`). All local verification is green:
-full race suite, `go vet`/`staticcheck`/`gofmt` clean untagged and under both
-interop tag sets, examples compile, Go 1.24/1.25 floor both build, and a
-scratch consumer module imports the library cleanly.
-
-Exit is still not met, and the reason is no longer engineering: T15's own
-"done when" requires CI jobs green on `main`, the `apidiff` gate having run on
-a real PR, and a release-candidate tag cut and verified end to end — none of
-which can happen without pushing these commits to `origin`. The user was asked
-and chose not to push yet, so this is a deliberate hold pending a human
-go-ahead, not an open task. See `.state/status.md`'s T15 row.
+**Status (2026-08-06): complete.** T15 and T17 were pushed and merged through PR
+#2. GitHub CI was green, including the platform/version test matrix,
+vet/staticcheck/gofmt, `apidiff`, the zero-dependency gate and all four
+fuzz-smoke shards. The annotated `v1.0` tag was cut at `47a6958` and pushed to
+both remotes. M4's exit criteria are met.
 
 ## M5 — Server design (T16) — runs *before* v1.0
 
@@ -124,27 +114,20 @@ nothing on the critical path.
 recommendation on the `imapserver` versioning carve-out (§8); T19–T25 specs
 written against the approved abstraction.
 
-**Status (2026-08-03):** design drafted, awaiting approval. T17 and T18 are
-specced; T19–T25 are scoped on the board without specs, deliberately — they
-depend on the abstraction the approval decides.
+**Status (2026-08-05): complete.** The human approved revision 5, including the
+backend abstraction, supported in-memory backend, resource-limit model and the
+nested-module versioning decision. T19–T25 are fully specified.
 
 ## v1.0 — API freeze
 
 After this tag, additive changes only. Removals require two minor releases of
 deprecation and do not land before v2.
 
-Open question for the tag, raised by `SERVER-DESIGN.md` §9 and **not yet
-decided**: whether `imapserver/**` sits inside or outside this promise. Landing
-it inside a v1 module freezes the backend abstraction on its first commit,
-before any third-party backend has ever been written against it — which is the
-trap this project exists to avoid, one layer up.
-
-The recommendation is a **nested module** for `imapserver`, versioned v0.x
-independently of the v1.x root. An earlier revision recommended a same-module
-carve-out enforced by the `apidiff` gate; that was reversed, because an
-`apidiff` scope constrains us and not the user's expectation, and a module
-tagged v1 sets that expectation regardless of what CI does. It needs a written
-exception in `docs/API-STABILITY.md`.
+**Status (2026-08-06): released.** The annotated `v1.0` tag freezes the exported
+API of `package imap` and `package imapclient`. The approved exception places
+`imapserver` in a nested module versioned v0.x independently; execution of that
+release structure is T25's responsibility and is recorded in
+`docs/API-STABILITY.md`.
 
 ## M6 — Server implementation (T18–T25) — after v1.0
 
@@ -158,6 +141,13 @@ interop matrix as a first-class entry with a capability table comparable to
 Dovecot's and Stalwart's; server-side fuzz targets are green over a recorded
 campaign; `imapserver` has a documented stability status.
 
+**Status (2026-08-12):** T18 and T21 are complete. The bidirectional shared
+codec, command-literal interlock, response encoder, message analysis, streaming
+section extraction and metadata-bearing SEARCH evaluator are green under the
+race suite, native interoperability matrix and recorded parser campaigns. T19's
+implementation is complete and in API review; T20 and T22–T25 remain
+dependency-blocked until that review closes.
+
 ## Sequencing
 
 ```
@@ -168,11 +158,10 @@ T02 ──┘         └── T06 ──┘         └── T09 ──┴─
                     T12 ──────────────────────── T13 ───┘                │
                                                                          │
                     T16 ── T17 ──────────────────────────────────────────┘
-                     │
-                     └── T18 ──┬── T19 ── T20 ──┬── T22 ──┬── T23 ──┐
-                               │                │         │         ├── T25
-                               └── T21 ─────────┘         └── T24 ──┘
-                                        (M6 — after v1.0)
+
+                    v1.0 ──┬── T18 ── T19 ── T20 ──┬── T22 ──┬── T23 ──┐
+                           └── T21 ─────────────────┘         │         ├── T25
+                                                             └── T24 ──┘
 ```
 
 T12 (interop harness) has no dependency on the client beyond T03 and should start

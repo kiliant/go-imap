@@ -1,24 +1,26 @@
-# T20 — Backend contract, `imapserver/memory`, `backendtest`
+# T20 — Contract validation, `imapserver/memory`, `backendtest`
 
 **Agent:** `server-core` · **Milestone:** M6 · **Depends on:** T19
 
-**Owns:** `imapserver/backend.go`, `imapserver/{memory,backendtest}/**`
+**Owns:** `imapserver/{memory,backendtest}/**`, plus focused corrections to
+T19's `imapserver/backend.go` that the two independent implementations expose.
 
 ## What this task is
 
-The exported backend abstraction itself (`SERVER-DESIGN.md` §2), plus the two
-things that put real pressure on it before it freezes: a working reference
-implementation and a conformance suite a third party can run against their
-own. Per §6, an abstraction validated only by its designer's mock is validated
-by nothing — this task exists to make that not true here.
+The exported backend abstraction introduced by T19 (`SERVER-DESIGN.md` §2), plus
+the two things that put real pressure on it before it freezes: a working
+reference implementation and a conformance suite a third party can run against
+their own. Per §6, an abstraction validated only by its designer's mock is
+validated by nothing — this task exists to make that not true here. Focused
+contract corrections discovered here are expected; wholesale redesign is not.
 
 ## Deliverables
 
-### 1. `backend.go` — the mandatory interfaces
+### 1. Validate `backend.go` — the mandatory interfaces
 
-Exactly the three from §2's sketch (reviewed and build-clean, but non-binding
-on naming details — implement the *shape*, correct any name that reads wrong
-in real use and record why):
+Verify the three landed by T19 against §2's sketch (reviewed and build-clean,
+but non-binding on naming details — correct any name that reads wrong in real
+use and record why):
 
 ```go
 type Backend interface {

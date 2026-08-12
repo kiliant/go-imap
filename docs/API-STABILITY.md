@@ -166,9 +166,9 @@ rule rather than a plain application of it:
   `UnilateralDataHandler`, because that direction has the same growth pressure
   and the rule as written is right for it.
 
-`SERVER-DESIGN.md` was approved by the human on 2026-08-05. `imapserver`
-implementation code (T18–T25) still may not be written until v1.0 is tagged,
-which remains gated on T17 — see `docs/tasks/BOARD.md`.
+`SERVER-DESIGN.md` was approved by the human on 2026-08-05. v1.0 was tagged on
+2026-08-06 after T17 completed, so `imapserver` implementation tasks T18–T25
+may proceed — see `docs/tasks/BOARD.md`.
 
 ## 5. A single error type
 
@@ -349,8 +349,8 @@ value receiver reaches it from a non-addressable field. That is how
 ### Exception: `imapserver` outside the v1 promise — APPROVED
 
 **Status: approved by the human on 2026-08-05, as part of approving
-`docs/SERVER-DESIGN.md` §9. Execution is T25's; no `imapserver` code exists yet
-and none may until v1.0 is tagged (`docs/tasks/BOARD.md`).**
+`docs/SERVER-DESIGN.md` §9. The v1.0 prerequisite was satisfied on 2026-08-06;
+execution of the nested-module release model remains T25's.**
 
 The policy above says "v1.0 freezes the exported API" without qualifying by
 package. Taken literally, `imapserver` inherits the freeze the moment it lands —

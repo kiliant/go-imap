@@ -18,9 +18,22 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
-No release has been tagged yet. Everything below is the work leading to the
-first one, grouped by area rather than by date; the release that cuts it will
-move these entries under its own heading.
+### Added
+
+- `imap.Envelope.RawDate`, allowing servers to reproduce malformed or unusually
+  spelled message Date headers when encoding ENVELOPE data.
+- Server-framework foundations: command-direction literal handling and response
+  encoding in `internal/imapwire`, bidirectional semantic codecs in
+  `internal/imapcodec`, and streaming message analysis/SEARCH evaluation in
+  `internal/imapmessage`.
+
+### Changed
+
+- `imapclient` now uses the shared semantic codec for FETCH, SEARCH, ENVELOPE
+  and BODYSTRUCTURE without changing its exported API or interoperability
+  behaviour.
+
+## [1.0.0] - 2026-08-06
 
 ### Added
 
@@ -321,4 +334,5 @@ move these entries under its own heading.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/commits/main
+[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.0...HEAD
+[1.0.0]: https://github.com/kiliant/go-imap/releases/tag/v1.0
