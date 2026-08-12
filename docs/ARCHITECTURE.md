@@ -14,11 +14,10 @@ github.com/kiliant/go-imap          package imap
     ├── internal/imapsasl    SASL mechanisms
     ├── internal/saslprep    SASLprep (RFC 4013) credential preparation
     ├── internal/unicodenorm NFC/NFKC normalisation, generated tables
-    └── imapclient           package imapclient — the client
-
-    planned, remaining milestone M6 — see docs/SERVER-DESIGN.md:
+    ├── imapclient           package imapclient — the client
     └── imapserver           package imapserver — the server framework
-        └── memory           in-memory reference backend (supported)
+        ├── memory           supported in-memory reference backend
+        └── backendtest      reusable backend conformance suite
 ```
 
 `internal/unicodenorm` sits below `internal/saslprep` and imports nothing outside

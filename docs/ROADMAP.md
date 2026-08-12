@@ -145,8 +145,10 @@ campaign; `imapserver` has a documented stability status.
 codec, command-literal interlock, response encoder, message analysis, streaming
 section extraction and metadata-bearing SEARCH evaluator are green under the
 race suite, native interoperability matrix and recorded parser campaigns. T19
-completed with independent API approval and green PR CI; T20 is ready. T22–T25
-remain dependency-blocked.
+completed with independent API approval and green PR CI. T20 completed with the
+supported memory backend, reusable backend conformance suite, atomic selection
+race gate, UID-normalised SEARCH boundary and independent API approval. T22 is
+ready; T23–T25 remain dependency-blocked.
 
 ## Sequencing
 
@@ -159,8 +161,9 @@ T02 ──┘         └── T06 ──┘         └── T09 ──┴─
                                                                          │
                     T16 ── T17 ──────────────────────────────────────────┘
 
-                    v1.0 ──┬── T18 ── T19 ── T20 ──┬── T22 ──┬── T23 ──┐
-                           └── T21 ─────────────────┘         │         ├── T25
+                    v1.0 ──┬── T18 ── T19 ──┐
+                           └── T21 ──────────┴── T20 ── T22 ──┬── T23 ──┐
+                                                             │         ├── T25
                                                              └── T24 ──┘
 ```
 

@@ -1,6 +1,6 @@
 # T20 — Contract validation, `imapserver/memory`, `backendtest`
 
-**Agent:** `server-core` · **Milestone:** M6 · **Depends on:** T19
+**Agent:** `server-core` · **Milestone:** M6 · **Depends on:** T19, T21
 
 **Owns:** `imapserver/{memory,backendtest}/**`, plus focused corrections to
 T19's `imapserver/backend.go` that the two independent implementations expose.
@@ -84,13 +84,13 @@ spec.
 
 ### 3. Optional capability interfaces
 
-Stubs/interfaces only in this task for the ones later tasks implement against
-(`MoveMailbox`, `CondStoreMailbox`, the SCRAM credential interface, etc.) — do
-not implement their backend logic here (that is T22/T23), but the interface
-*declarations* belong in this file since they are part of the same abstraction
-freeze. Coordinate with T22/T23 owners before adding an interface not already
-named in §2/§3 — new interfaces are cheap to add later (additive), but a wrong
-one shipped in `backend.go` is not free to remove.
+Land only an optional interface whose operation is already exact enough to
+freeze here. T20 validates `MoveMailbox` and its pre-selection `MoveSupport`
+witness because §2 settles both signatures and T22 consumes them directly.
+CONDSTORE/QRESYNC, SCRAM, NOTIFY and NAMESPACE are named design requirements but
+their method signatures are deliberately left to T23, which owns both their
+shape and first implementation. New interfaces are additive and cheap to add
+there; a speculative declaration shipped here would not be free to remove.
 
 ### 4. `SearchQuery` — the UID-normalisation wrapper
 
@@ -152,10 +152,16 @@ minimalism.
 
 - `memory` passes `backendtest` end to end, including every required
   self-consistency check.
-- A loopback client (ours) can SELECT, FETCH, STORE, APPEND, EXPUNGE and see
-  updates delivered correctly against `memory`, including a concurrent second
-  connection observing the first connection's changes via IDLE (exercises T19's
-  update-delivery path against a real backend, not a stub).
+- Two independently authenticated sessions can select and mutate the same
+  `memory` mailbox through the backend contract, with the observing selection
+  receiving a gap-free revision chain. The permanent race gate proves a change
+  concurrent with `Select` appears exactly once: in the snapshot or its first
+  update.
+- T22's loopback suite exercises SELECT, FETCH, STORE, APPEND, EXPUNGE and IDLE
+  against `memory`, including a concurrent second connection. Those wire
+  commands do not exist until T22, so making their test a T20 prerequisite would
+  create a T20→T22→T20 dependency cycle; T20 validates the same boundary
+  directly and T22 owns the end-to-end wire gate.
 - `api-guardian` signs off on `backend.go`'s exported surface specifically —
   this is the interface every third-party backend implements, and it is the
   single most consequential freeze in the server project.
