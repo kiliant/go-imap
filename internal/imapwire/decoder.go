@@ -458,8 +458,19 @@ func (d *Decoder) ExpectFetchItemName(dst *string) bool {
 		return false
 	}
 	for _, name := range []string{"BINARY.SIZE", "BINARY.PEEK", "BODY.PEEK", "BINARY", "BODY"} {
+		matched := true
+		for i := range len(name) {
+			p := d.peekN(i + 1)
+			if len(p) <= i || toUpper(p[i]) != name[i] {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
 		p := d.peekN(len(name) + 1)
-		if len(p) != len(name)+1 || p[len(name)] != '[' || !equalFold(string(p[:len(name)]), name) {
+		if len(p) != len(name)+1 || p[len(name)] != '[' {
 			continue
 		}
 		for range name {

@@ -77,3 +77,23 @@ func (d *Decoder) SPListAhead() bool {
 	p := d.peekN(2)
 	return len(p) == 2 && p[0] == ' ' && p[1] == '('
 }
+
+// PeekAtomEqual reports whether the next value is exactly atom followed by an
+// atom delimiter, comparing case-insensitively and without consuming input.
+// It lets a command production choose an optional leading clause before
+// delegating the remainder to a shared semantic decoder.
+func (d *Decoder) PeekAtomEqual(atom string) bool {
+	if atom == "" || !d.ready("peek-atom") {
+		return false
+	}
+	// Compare incrementally. Peeking len(atom)+1 up front can wait for bytes
+	// beyond a shorter, already complete atom on a live connection.
+	for i := range len(atom) {
+		p := d.peekN(i + 1)
+		if len(p) <= i || !strings.EqualFold(string(p[i]), atom[i:i+1]) {
+			return false
+		}
+	}
+	p := d.peekN(len(atom) + 1)
+	return len(p) == len(atom) || !isAtomChar(p[len(atom)])
+}

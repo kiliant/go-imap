@@ -47,7 +47,8 @@ var capabilityDescriptors = []capabilityDescriptor{
 		Available: func(_ *sessionState, server *Server) bool { return server != nil && server.options.TLSConfig != nil }},
 	{Name: "LOGINDISABLED", RequiresFramework: []frameworkComponent{frameworkCore}, States: stateMaskNotAuthenticated,
 		Available: func(state *sessionState, server *Server) bool {
-			return server != nil && (server.backend == nil || server.options.RequireTLS && state != nil && !state.tls)
+			return server != nil && (server.backend == nil || state != nil && !state.tls &&
+				(server.options.RequireTLS || !server.options.AllowInsecureAuth))
 		}},
 	{Name: "ENABLE", RequiresFramework: []frameworkComponent{frameworkEnable}, States: stateMaskAny},
 	{Name: "ID", RequiresFramework: []frameworkComponent{frameworkCore}, States: stateMaskAny},
@@ -103,14 +104,20 @@ func supportsAtomicMove(state *sessionState, backend Backend) bool {
 }
 
 func compiledFrameworkSupport() map[frameworkComponent]bool {
-	// T19 implements only the connection/core commands. Later command tasks
-	// activate their components in this one registry when their handlers land.
+	// This registry is deliberately tied to compiled command handlers. A
+	// capability is never advertised merely because a backend happens to expose
+	// a similarly named operation.
 	return map[frameworkComponent]bool{
-		frameworkCore:     true,
-		frameworkStartTLS: true,
-		frameworkEnable:   true,
-		frameworkUTF8:     true,
-		frameworkCompress: true,
+		frameworkCore:       true,
+		frameworkStartTLS:   true,
+		frameworkAuth:       true,
+		frameworkEnable:     true,
+		frameworkUTF8:       true,
+		frameworkIdle:       true,
+		frameworkCompress:   true,
+		frameworkMove:       true,
+		frameworkRev2:       false,
+		frameworkListExtend: false,
 	}
 }
 
