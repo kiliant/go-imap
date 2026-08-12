@@ -2,6 +2,7 @@ package imapwire
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -57,6 +58,19 @@ type Decoder struct {
 	// While it is set, every other operation fails: reading past it would
 	// attribute payload octets to the next response.
 	lit *LiteralReader
+
+	// announced is a command-direction literal whose framing was consumed but
+	// whose payload has not yet been accepted or rejected.
+	announced *LiteralInfo
+
+	// literalDecision is installed by a server connection. It is invoked after
+	// a command literal announcement and before a synchronising payload is read.
+	literalDecision func(LiteralInfo) error
+
+	// commandBoundary records that a synchronising literal was rejected. Its
+	// announcement CRLF ends the aborted command, so recovery must not consume a
+	// following pipelined command.
+	commandBoundary bool
 
 	// discardRaw is set when a quoted string has consumed its opening quote but
 	// then proved malformed. Recovery must scan to the physical line ending in
@@ -154,6 +168,13 @@ func (d *Decoder) failFatal(op string, cause error, format string, args ...any) 
 	return false
 }
 
+func (d *Decoder) failCause(op string, cause error, format string, args ...any) bool {
+	if d.err == nil {
+		d.err = &Error{Op: op, Message: fmt.Sprintf(format, args...), Err: cause}
+	}
+	return false
+}
+
 // failEOF converts an exhausted stream into an error. A truncated response is
 // always fatal: there is no position left to resynchronise to.
 func (d *Decoder) failEOF(op string) bool {
@@ -166,6 +187,10 @@ func (d *Decoder) failEOF(op string) bool {
 // ready reports whether an operation may proceed: no sticky error, and no
 // undrained literal outstanding.
 func (d *Decoder) ready(op string) bool {
+	if d.announced != nil {
+		return d.failFatal(op, ErrLiteralPending,
+			"literal announcement has not been accepted or rejected")
+	}
 	if d.lit != nil {
 		if d.lit.remaining > 0 {
 			return d.failFatal(op, ErrLiteralPending,
@@ -432,7 +457,7 @@ func (d *Decoder) ExpectFetchItemName(dst *string) bool {
 	if !d.ready("fetch-item") {
 		return false
 	}
-	for _, name := range []string{"BINARY.SIZE", "BINARY", "BODY"} {
+	for _, name := range []string{"BINARY.SIZE", "BINARY.PEEK", "BODY.PEEK", "BINARY", "BODY"} {
 		p := d.peekN(len(name) + 1)
 		if len(p) != len(name)+1 || p[len(name)] != '[' || !equalFold(string(p[:len(name)]), name) {
 			continue
@@ -525,7 +550,13 @@ func (d *Decoder) String(dst *string) bool {
 	if b, ok := d.peek(); ok && b == '"' {
 		return d.Quoted(dst)
 	}
-	lr, ok := d.Literal()
+	var lr *LiteralReader
+	var ok bool
+	if d.literalDecision != nil {
+		lr, ok = d.commandLiteral(d.opts.MaxBufferedLiteralSize)
+	} else {
+		lr, ok = d.Literal()
+	}
 	if !ok {
 		return false
 	}
@@ -882,6 +913,10 @@ func (d *Decoder) DiscardLine() error {
 			return d.err
 		}
 		d.err = nil
+	}
+	if d.commandBoundary {
+		d.commandBoundary = false
+		return nil
 	}
 	if d.discardRaw {
 		d.discardRaw = false

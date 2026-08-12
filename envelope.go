@@ -85,6 +85,12 @@ type Envelope struct {
 	// absent or unparseable.
 	Date time.Time
 
+	// RawDate is the Date header text as it appeared in the ENVELOPE. When
+	// producing an ENVELOPE it takes precedence over Date, allowing malformed
+	// or unusually spelled real-world dates to be reproduced. A decoder fills
+	// both RawDate and Date when the text is parseable.
+	RawDate string
+
 	// Subject is the Subject header, decoded.
 	Subject string
 

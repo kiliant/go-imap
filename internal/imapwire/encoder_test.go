@@ -70,6 +70,29 @@ func TestEncoderNeverQuotesEightBitOrNUL(t *testing.T) {
 	}
 }
 
+func TestEncoderResponseStringKeepsLineBounded(t *testing.T) {
+	value := strings.Repeat("a", DefaultMaxLineLength)
+	got, err := encodeWith(t, &EncoderOptions{ServerResponse: true}, func(e *Encoder) {
+		e.Special('(').String(value).Special(')')
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := "({8192}\r\n"
+	if !strings.HasPrefix(got, wantPrefix) || !strings.HasSuffix(got, ")") {
+		t.Fatalf("long response string was not literalised: prefix %q", got[:min(len(got), len(wantPrefix))])
+	}
+
+	dec := NewDecoderString(got, nil)
+	if !dec.ExpectSpecial('(') {
+		t.Fatal(dec.Err())
+	}
+	var decoded string
+	if !dec.ExpectString(&decoded) || decoded != value || !dec.ExpectSpecial(')') || !dec.AtEOF() {
+		t.Fatalf("round trip failed: %v", dec.Err())
+	}
+}
+
 func TestEncoderAtomAndTagValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
