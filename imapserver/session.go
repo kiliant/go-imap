@@ -426,6 +426,7 @@ type selectedState struct {
 	mailbox  SelectedMailbox
 	uids     []imap.UID
 	revision MailboxRevision
+	readOnly bool
 	queue    *updateQueue
 	updater  *Updater
 }
@@ -509,6 +510,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		mailbox:  result.Mailbox,
 		uids:     slices.Clone(result.Snapshot.UIDs),
 		revision: result.Snapshot.Revision,
+		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
 		queue:    queue,
 		updater:  updater,
 	}
