@@ -62,9 +62,9 @@ same reason.
 ## Non-goals
 
 - SMTP, POP3, JMAP, MIME composition. Use dedicated libraries.
-- Mail *storage* — maildir, SQL, delivery, a user database. The planned server
-  framework (below) defines a backend interface; it does not implement one for
-  production.
+- Mail *storage* — maildir, SQL, delivery, a user database. The server framework
+  defines a backend interface and ships an in-memory reference backend for
+  tests, examples and ephemeral servers, not production storage.
 
 ## Server framework
 
@@ -81,8 +81,9 @@ and a bidirectional review of the shared vocabulary became a v1.0 exit
 criterion. That review completed before the tag.
 
 See `docs/SERVER-DESIGN.md` — **approved on 2026-08-05**. The shared
-server-direction codec and message-analysis foundation (T18/T21) completed on
-2026-08-12; the server core (T19) is next.
+server-direction codec, message-analysis foundation, server core, supported
+memory backend and reusable backend conformance suite (T18–T21) completed on
+2026-08-12; the base server command set (T22) is next.
 
 ## Documentation
 

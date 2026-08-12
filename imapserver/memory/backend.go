@@ -1,0 +1,139 @@
+// Package memory provides a supported in-memory implementation of
+// [imapserver.Backend]. It is intended for tests, examples, and ephemeral
+// servers. It is not durable and must not be used for production mail storage.
+//
+// The package implements the mandatory rev1 backend contract with configured
+// PLAIN/LOGIN credentials, plus atomic MOVE. New optional server interfaces are
+// adopted deliberately rather than implied by this package being a reference
+// implementation.
+package memory
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/imapserver"
+)
+
+// Options configures a memory backend. A nil pointer selects an empty backend.
+// Construct with keyed fields only; fields may be added in a future release.
+type Options struct {
+	// Users maps authentication usernames to plaintext test passwords. Values
+	// are copied by New. The memory backend is not a credential store.
+	Users map[string]string
+	_     struct{}
+}
+
+// Backend is an in-memory implementation of [imapserver.Backend].
+type Backend struct {
+	mu       sync.RWMutex
+	accounts map[string]*account
+}
+
+type account struct {
+	mu              sync.Mutex
+	password        string
+	mailboxes       map[string]*mailbox
+	nextUIDValidity uint32
+	selectFailure   map[string]bool
+}
+
+type mailbox struct {
+	name        string
+	uidValidity uint32
+	uidNext     imap.UID
+	revision    uint64
+	subscribed  bool
+	messages    []*message
+	watchers    map[*selected]*imapserver.Updater
+}
+
+// New returns an in-memory backend configured by options.
+func New(options *Options) *Backend {
+	b := &Backend{accounts: make(map[string]*account)}
+	if options == nil {
+		return b
+	}
+	for username, password := range options.Users {
+		account := newAccount(password)
+		b.accounts[username] = account
+	}
+	return b
+}
+
+func newAccount(password string) *account {
+	a := &account{
+		password:        password,
+		mailboxes:       make(map[string]*mailbox),
+		nextUIDValidity: 1,
+		selectFailure:   make(map[string]bool),
+	}
+	a.createMailboxLocked("INBOX")
+	return a
+}
+
+func (a *account) createMailboxLocked(name string) *mailbox {
+	m := &mailbox{
+		name:        name,
+		uidValidity: a.nextUIDValidity,
+		uidNext:     1,
+		revision:    1,
+		watchers:    make(map[*selected]*imapserver.Updater),
+	}
+	a.nextUIDValidity++
+	a.mailboxes[mailboxKey(name)] = m
+	return m
+}
+
+func mailboxKey(name string) string {
+	if strings.EqualFold(name, "INBOX") {
+		return "INBOX"
+	}
+	return name
+}
+
+// Authenticate authenticates a configured PLAIN or LOGIN username and returns
+// one session.
+func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, credentials *imapserver.Credentials, _ *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if credentials == nil || credentials.Username == "" || (credentials.AuthzID != "" && credentials.AuthzID != credentials.Username) {
+		return nil, authenticationError()
+	}
+	switch strings.ToUpper(credentials.Mechanism) {
+	case "PLAIN", "LOGIN":
+	default:
+		return nil, authenticationError()
+	}
+	b.mu.RLock()
+	a := b.accounts[credentials.Username]
+	b.mu.RUnlock()
+	if a == nil || credentials.Password != a.password {
+		return nil, authenticationError()
+	}
+	return &session{account: a, selections: make(map[*selected]struct{})}, nil
+}
+
+// SupportsMove reports that the memory backend implements atomic MOVE.
+func (*Backend) SupportsMove() bool { return true }
+
+func authenticationError() error {
+	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeAuthenticationFailed, Text: "authentication failed"}
+}
+
+func noError(code imap.ResponseCode, text string) error {
+	return &imap.Error{Type: imap.ErrorTypeNo, Code: code, Text: text}
+}
+
+func nonexistentMailbox(name string) error {
+	return noError(imap.CodeNonExistent, fmt.Sprintf("mailbox %q does not exist", name))
+}
+
+var (
+	_ imapserver.Backend     = (*Backend)(nil)
+	_ imapserver.MoveSupport = (*Backend)(nil)
+)

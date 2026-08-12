@@ -61,7 +61,7 @@ call, not the originating task's.
 | [T16](T16-server-framework.md) | Server framework design | M5 | — | `docs/SERVER-DESIGN.md` | — (human-led) |
 | [T18](T18-server-direction-codec.md) | Server-direction codec | M6 | T16, v1.0 | `internal/imapwire/{command,respenc}.go`, `internal/imapcodec/**`, and `imapclient/{fetch,search,structure}.go` for the migration only (lock passes from T06) | wire-protocol |
 | [T19](T19-server-core.md) | Server core: backend contract, reader/event-loop, state machine, dispatch, capability descriptors | M6 | T18, §2 approved, v1.0 | `imapserver/{backend,server,conn,session,state,dispatch,capability}.go` | server-core |
-| [T20](T20-backend-contract.md) | Contract validation, `memory`, `backendtest` | M6 | T19 | `imapserver/{memory,backendtest}/**` and focused corrections to T19's `backend.go` exposed by those implementations | server-core |
+| [T20](T20-backend-contract.md) | Contract validation, `memory`, `backendtest` | M6 | T19, T21 | `imapserver/{memory,backendtest}/**` and focused corrections to T19's `backend.go` exposed by those implementations | server-core |
 | [T21](T21-message-analysis.md) | Message analysis: bodystructure/envelope generation, search evaluation helper | M6 | T16, v1.0 | `internal/imapmessage/**` | wire-protocol |
 | [T22](T22-base-command-set.md) | Base command set, server side | M6 | T20, T21 | `imapserver/cmd_*.go` | server-core |
 | [T23](T23-server-extensions.md) | Server extensions, groups A–E | M6 | T22 | `imapserver/ext_*.go` | extensions |
@@ -73,8 +73,8 @@ dependencies, and T17 depends on it. See "Why T16 moved" below.
 
 **T19, T20 and T22–T25 have spec files**, written after `../SERVER-DESIGN.md`
 was approved by the human on 2026-08-05. T17 completed and v1.0 was tagged on
-2026-08-06, opening the M6 implementation gate. T18, T19 and T21 completed on
-2026-08-12; T20 is ready, while later tasks remain ordered by the dependencies
+2026-08-06, opening the M6 implementation gate. T18–T21 completed on
+2026-08-12; T22 is ready, while later tasks remain ordered by the dependencies
 above.
 
 T18 and T21 are the pair that never depended on the abstraction at all —
@@ -93,8 +93,9 @@ T02 ──┘         └── T06 ──┘         └── T09 ──┴─
                                                                          │
                     T16 ── T17 ──────────────────────────────────────────┘
 
-                    v1.0 ──┬── T18 ── T19 ── T20 ──┬── T22 ──┬── T23 ──┐
-                           └── T21 ─────────────────┘         │         ├── T25
+                    v1.0 ──┬── T18 ── T19 ──┐
+                           └── T21 ──────────┴── T20 ── T22 ──┬── T23 ──┐
+                                                             │         ├── T25
                                                              └── T24 ──┘
 ```
 

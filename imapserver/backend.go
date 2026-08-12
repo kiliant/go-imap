@@ -41,6 +41,8 @@ type Session interface {
 	Subscribe(ctx context.Context, mailbox string, options *SubscribeOptions) error
 	Unsubscribe(ctx context.Context, mailbox string, options *UnsubscribeOptions) error
 	Append(ctx context.Context, mailbox string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error)
+	// Select captures Snapshot and attaches updater to that exact state atomically.
+	// If it attaches updater and then fails, it must detach before returning.
 	Select(ctx context.Context, mailbox string, updater *Updater, options *SelectOptions) (*SelectResult, error)
 	Close(ctx context.Context) error
 }
@@ -380,6 +382,64 @@ type SearchResult struct {
 // the framework, so a backend can rely on Criteria containing no SearchSeqNum.
 type SearchQuery struct{ criteria imap.SearchCriteria }
 
+// newSearchQuery constructs the only SEARCH tree that may cross the backend
+// boundary. uids is the selected mailbox's sequence-order snapshot.
+func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID) *SearchQuery {
+	return &SearchQuery{criteria: normalizeSearchCriteria(criteria, uids)}
+}
+
+func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {
+	switch criteria := criteria.(type) {
+	case imap.SearchAnd:
+		normalized := make(imap.SearchAnd, len(criteria))
+		for i, child := range criteria {
+			normalized[i] = normalizeSearchCriteria(child, uids)
+		}
+		return normalized
+	case imap.SearchOr:
+		return imap.SearchOr{
+			Left:  normalizeSearchCriteria(criteria.Left, uids),
+			Right: normalizeSearchCriteria(criteria.Right, uids),
+		}
+	case imap.SearchNot:
+		return imap.SearchNot{Criteria: normalizeSearchCriteria(criteria.Criteria, uids)}
+	case imap.SearchFuzzy:
+		return imap.SearchFuzzy{Criteria: normalizeSearchCriteria(criteria.Criteria, uids)}
+	case imap.SearchSeqNum:
+		var set imap.UIDSet
+		for i, uid := range uids {
+			if searchSeqSetContains(criteria.Set, imap.SeqNum(i+1), imap.SeqNum(len(uids))) {
+				set.AddNum(uid)
+			}
+		}
+		return imap.SearchUID{Set: set.Normalized()}
+	default:
+		return criteria
+	}
+}
+
+func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
+	if seqNum == 0 || maximum == 0 {
+		return false
+	}
+	for _, r := range set {
+		start, stop := r.Start, r.Stop
+		if start == 0 {
+			start = maximum
+		}
+		if stop == 0 {
+			stop = maximum
+		}
+		if start > stop {
+			start, stop = stop, start
+		}
+		if start <= seqNum && seqNum <= stop {
+			return true
+		}
+	}
+	return false
+}
+
 // Criteria returns the UID-normalised criteria. Callers must treat the returned
 // tree as immutable for the duration of Search.
 func (q *SearchQuery) Criteria() imap.SearchCriteria {
@@ -390,58 +450,104 @@ func (q *SearchQuery) Criteria() imap.SearchCriteria {
 }
 
 // ListWriter streams LIST results to the client. Its zero value is invalid.
+// Construct with keyed fields only; fields may be added in a future release.
 type ListWriter struct {
-	core *writerCore[*imap.ListData]
+	// WriteFunc receives streamed results when the writer is constructed by an
+	// adapter such as backendtest. Ordinary backends call WriteList and leave
+	// this field unset on framework-provided writers.
+	WriteFunc func(context.Context, *imap.ListData) error
+	core      *writerCore[*imap.ListData]
 }
 
 // WriteList writes one LIST result. ctx is normally the context passed to the
 // enclosing Session.List call.
 func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
-	if w == nil || w.core == nil {
+	if w == nil {
 		return ErrWriterClosed
 	}
-	return w.core.writeValue(ctx, data)
+	if w.core != nil {
+		return w.core.writeValue(ctx, data)
+	}
+	if w.WriteFunc != nil {
+		return w.WriteFunc(ctx, data)
+	}
+	return ErrWriterClosed
 }
 
 // FetchWriter streams FETCH results to the client. Its zero value is invalid.
+// Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
-	core *writerCore[*imap.FetchMessageData]
+	// WriteFunc receives streamed results when the writer is constructed by an
+	// adapter such as backendtest. Ordinary backends call WriteMessage and leave
+	// this field unset on framework-provided writers.
+	WriteFunc func(context.Context, *imap.FetchMessageData) error
+	core      *writerCore[*imap.FetchMessageData]
 }
 
 // WriteMessage writes one FETCH result. ctx is normally the context passed to
 // the enclosing SelectedMailbox method.
 func (w *FetchWriter) WriteMessage(ctx context.Context, data *imap.FetchMessageData) error {
-	if w == nil || w.core == nil {
+	if w == nil {
 		return ErrWriterClosed
 	}
-	return w.core.writeValue(ctx, data)
+	if w.core != nil {
+		return w.core.writeValue(ctx, data)
+	}
+	if w.WriteFunc != nil {
+		return w.WriteFunc(ctx, data)
+	}
+	return ErrWriterClosed
 }
 
 // ExpungeWriter streams UID-keyed removals to the framework. Its zero value is
-// invalid.
+// invalid. Construct with keyed fields only; fields may be added in a future
+// release.
 type ExpungeWriter struct {
-	core *writerCore[imap.UID]
+	// WriteFunc receives streamed removals when the writer is constructed by an
+	// adapter such as backendtest. Ordinary backends call WriteExpunge and leave
+	// this field unset on framework-provided writers.
+	WriteFunc func(context.Context, imap.UID) error
+	core      *writerCore[imap.UID]
 }
 
 // WriteExpunge writes one removed UID. The framework converts it to the
 // sequence number current at this exact point in the response.
 func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID) error {
-	if w == nil || w.core == nil {
+	if w == nil {
 		return ErrWriterClosed
 	}
-	return w.core.writeValue(ctx, uid)
+	if w.core != nil {
+		return w.core.writeValue(ctx, uid)
+	}
+	if w.WriteFunc != nil {
+		return w.WriteFunc(ctx, uid)
+	}
+	return ErrWriterClosed
 }
 
 // Updater publishes selected-mailbox updates. Push never calls into the
 // backend and never blocks waiting for the connection's event loop.
-type Updater struct{ core *updaterCore }
+// Construct with keyed fields only; fields may be added in a future release.
+type Updater struct {
+	// PushFunc receives update batches when the updater is constructed by an
+	// adapter such as backendtest. Ordinary backends call Push and leave this
+	// field unset on framework-provided updaters.
+	PushFunc func(*UpdateBatch) error
+	core     *updaterCore
+}
 
 // Push publishes one atomic batch. It returns ErrUpdaterClosed after the
 // selection ends and ErrUpdateOverflow when bounded update accounting forces
 // the connection to terminate.
 func (u *Updater) Push(batch *UpdateBatch) error {
-	if u == nil || u.core == nil {
+	if u == nil {
 		return ErrUpdaterClosed
 	}
-	return u.core.push(batch)
+	if u.core != nil {
+		return u.core.push(batch)
+	}
+	if u.PushFunc != nil {
+		return u.PushFunc(batch)
+	}
+	return ErrUpdaterClosed
 }
