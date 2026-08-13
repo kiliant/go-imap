@@ -473,6 +473,280 @@ func runExtensions(t *testing.T, harness *Harness) {
 			t.Errorf("no personal namespace reported: %#v", data)
 		}
 	})
+
+	t.Run("quota-set-is-readable-afterwards", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		setter, ok := session.(imapserver.QuotaSetSession)
+		if !ok {
+			t.Skip("backend does not implement QuotaSetSession")
+		}
+		reader, ok := session.(imapserver.QuotaSession)
+		if !ok {
+			t.Skip("backend implements QuotaSetSession without QuotaSession")
+		}
+		mailbox := populate(t, session, "quotaset")
+		roots, err := reader.QuotaRoots(context.Background(), mailbox, nil)
+		if err != nil || len(roots) == 0 {
+			t.Skipf("no quota root to write to: %v", err)
+		}
+		root := roots[0]
+		before, err := reader.GetQuota(context.Background(), root, nil)
+		if err != nil || before == nil {
+			t.Fatalf("GetQuota(%q): %v", root, err)
+		}
+		if len(before.Resources) == 0 {
+			t.Skip("quota root reports no resources to set")
+		}
+		// SETQUOTA's whole contract is that the limit it accepted is the limit
+		// GETQUOTA subsequently reports. A backend that accepts the write and
+		// keeps the old value leaves the client believing it changed something.
+		resource := before.Resources[0]
+		want := resource.Limit + 512
+		limits := []imap.QuotaResourceLimit{{Name: resource.Name, Limit: want}}
+		if err := setter.SetQuota(context.Background(), root, limits, nil); err != nil {
+			t.Skipf("backend declined SetQuota, which is a valid policy: %v", err)
+		}
+		after, err := reader.GetQuota(context.Background(), root, nil)
+		if err != nil || after == nil {
+			t.Fatalf("GetQuota after SetQuota: %v", err)
+		}
+		for _, got := range after.Resources {
+			if got.Name != resource.Name {
+				continue
+			}
+			if got.Limit != want {
+				t.Errorf("SetQuota(%q, %d) succeeded but GetQuota reports %d",
+					resource.Name, want, got.Limit)
+			}
+			return
+		}
+		t.Errorf("resource %q disappeared from the quota root after SetQuota", resource.Name)
+	})
+
+	t.Run("message-limits-are-constant-within-a-session", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		limited, ok := session.(imapserver.MessageLimitSession)
+		if !ok {
+			t.Skip("backend does not implement MessageLimitSession")
+		}
+		// The framework resolves these once, against the authentication context,
+		// and reuses the answer for every later capability derivation — because
+		// deriving capabilities happens inside command handling, where a fresh
+		// backend round trip would be an uncancellable hidden I/O. A backend that
+		// varied its answer would see only the first one honoured.
+		first, err := limited.MessageLimits(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("MessageLimits: %v", err)
+		}
+		if first == nil {
+			t.Fatal("a backend implementing MessageLimitSession must report limits")
+		}
+		second, err := limited.MessageLimits(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("MessageLimits (second call): %v", err)
+		}
+		if second == nil || *first != *second {
+			t.Errorf("MessageLimits is not stable within a session: %#v then %#v", first, second)
+		}
+		// A zero limit would be advertised as MESSAGELIMIT=0, which tells a
+		// client it may never append.
+		if first.MessageLimit == 0 && first.SaveLimit == 0 {
+			t.Error("both limits are zero, which advertises a server nothing can be stored on")
+		}
+	})
+
+	t.Run("unauthenticate-returns-to-a-usable-state", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		unauth, ok := session.(imapserver.UnauthenticateSession)
+		if !ok {
+			t.Skip("backend does not implement UnauthenticateSession")
+		}
+		populate(t, session, "unauth")
+		if err := unauth.Unauthenticate(context.Background(), nil); err != nil {
+			t.Fatalf("Unauthenticate: %v", err)
+		}
+		// The framework abandons any selection, calls Unauthenticate, then closes
+		// the session and drops it — see handleUnauthenticate. So a backend does
+		// not have to scrub the previous identity's data itself: the object never
+		// serves another command, and re-authenticating builds a fresh session.
+		//
+		// What it must not do is leave the session unclosable. Unauthenticate
+		// releasing something Close still needs would turn every UNAUTHENTICATE
+		// into a failed command *after* the point of no return, where the
+		// framework has already abandoned the selection.
+		if err := session.Close(context.Background()); err != nil {
+			t.Errorf("Close after Unauthenticate failed, which strands the connection: %v", err)
+		}
+		// Idempotent within the framework's sequence: it is called exactly once,
+		// but a second call must not panic.
+		_ = unauth.Unauthenticate(context.Background(), nil)
+	})
+
+	t.Run("catenate-url-resolves-or-is-refused", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		catenate, ok := session.(imapserver.CatenateSession)
+		if !ok {
+			t.Skip("backend does not implement CatenateSession")
+		}
+		mailbox := populate(t, session, "catenate")
+		result := selectMailbox(t, session, mailbox, discardUpdater())
+		if len(result.Snapshot.UIDs) == 0 {
+			t.Skip("no message to build a URL for")
+		}
+		url := fmt.Sprintf("imap://localhost/%s/;UID=%d", mailbox, result.Snapshot.UIDs[0])
+		reader, err := catenate.ResolveCatenateURL(context.Background(), url, nil)
+		if err != nil {
+			// Refusing a URL is valid — the backend decides what it can resolve.
+			// What it must not do is succeed with nothing, which APPEND would
+			// then store as an empty message part.
+			t.Skipf("backend refused its own message URL: %v", err)
+		}
+		if reader == nil {
+			t.Fatal("ResolveCatenateURL returned no error and no reader")
+		}
+		defer reader.Close()
+		content, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("reading resolved CATENATE URL: %v", err)
+		}
+		if len(content) == 0 {
+			t.Error("a resolved CATENATE URL yielded no bytes, which would append an empty part")
+		}
+		// A URL naming a message that does not exist must fail rather than
+		// resolve to nothing.
+		bogus := fmt.Sprintf("imap://localhost/%s/;UID=4294967295", mailbox)
+		if bogusReader, err := catenate.ResolveCatenateURL(context.Background(), bogus, nil); err == nil {
+			if bogusReader != nil {
+				defer bogusReader.Close()
+				if data, _ := io.ReadAll(bogusReader); len(data) == 0 {
+					t.Error("a URL for a nonexistent message resolved to an empty part instead of failing")
+				}
+			}
+		}
+	})
+
+	t.Run("filter-lookup-distinguishes-unknown-from-empty", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		filters, ok := session.(imapserver.FilterSession)
+		if !ok {
+			t.Skip("backend does not implement FilterSession")
+		}
+		// The framework turns a nil result into UNDEFINED-FILTER, and criteria
+		// into a substituted tree. Those are the only two outcomes it can tell
+		// apart, so a backend must not signal "no such filter" any other way —
+		// in particular not by returning criteria that match nothing, which the
+		// client would read as a successful search.
+		criteria, err := filters.Filter(context.Background(), "no-such-filter-9999", nil)
+		if err != nil {
+			// An explicit error is also unambiguous, so it conforms.
+			return
+		}
+		if criteria != nil {
+			t.Errorf("an undefined filter name returned criteria %#v; return nil so the framework can report UNDEFINED-FILTER", criteria)
+		}
+	})
+
+	t.Run("comparator-reports-an-active-comparator", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		comparators, ok := session.(imapserver.ComparatorSession)
+		if !ok {
+			t.Skip("backend does not implement ComparatorSession")
+		}
+		data, err := comparators.Comparators(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("Comparators: %v", err)
+		}
+		// The COMPARATOR response always names the comparator in force, so there
+		// has to be one even before anything is selected.
+		if data == nil || data.Active == "" {
+			t.Fatalf("no active comparator reported: %#v", data)
+		}
+		// Every offered name must be selectable, and selecting one must make it
+		// active — otherwise the client cannot tell which comparator its
+		// subsequent SEARCH ran under.
+		for _, name := range data.Available {
+			adopted, err := comparators.SetComparator(context.Background(), []string{name}, nil)
+			if err != nil {
+				t.Errorf("advertised comparator %q cannot be selected: %v", name, err)
+				continue
+			}
+			if adopted == nil || adopted.Active == "" {
+				t.Errorf("SetComparator(%q) adopted nothing", name)
+				continue
+			}
+			now, err := comparators.Comparators(context.Background(), nil)
+			if err != nil || now == nil {
+				t.Errorf("Comparators after SetComparator(%q): %v", name, err)
+				continue
+			}
+			if now.Active != adopted.Active {
+				t.Errorf("SetComparator(%q) reported %q but Comparators reports %q",
+					name, adopted.Active, now.Active)
+			}
+		}
+		// A request naming nothing servable is nil, which the framework turns
+		// into BADCOMPARATOR. Adopting an unrelated comparator instead would run
+		// the client's searches under rules it did not ask for.
+		if adopted, _ := comparators.SetComparator(context.Background(), []string{"i;no-such-comparator"}, nil); adopted != nil && adopted.Active != "" {
+			t.Errorf("an unavailable comparator was adopted as %q", adopted.Active)
+		}
+	})
+
+	t.Run("notify-refuses-what-it-cannot-deliver", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		notifier, ok := session.(imapserver.NotifySession)
+		if !ok {
+			t.Skip("backend does not implement NotifySession")
+		}
+		mailbox := populate(t, session, "notify")
+		updater := &imapserver.SessionUpdater{
+			PushFunc: func(*imapserver.SessionUpdate) error { return nil },
+		}
+		// A registration the backend can serve must be accepted.
+		supported := &imapserver.NotifyConfig{
+			Watches: []imapserver.NotifyWatch{{
+				Specifier: imap.NotifyMailboxes,
+				Names:     []string{mailbox},
+				Events:    []imap.NotifyEventName{imap.NotifyEventMessageNew},
+			}},
+		}
+		if err := notifier.Notify(context.Background(), updater, supported, nil); err != nil {
+			t.Fatalf("Notify with MessageNew on an explicit mailbox: %v", err)
+		}
+		// An unrecognised specifier or event must be refused. Accepting one and
+		// then never delivering is indistinguishable to the client from a mailbox
+		// where nothing happens, so silence is not an available answer.
+		unknown := &imapserver.NotifyConfig{
+			Watches: []imapserver.NotifyWatch{{
+				Specifier: imap.NotifyMailboxSpecifier("NO-SUCH-SPECIFIER"),
+				Events:    []imap.NotifyEventName{imap.NotifyEventMessageNew},
+			}},
+		}
+		if err := notifier.Notify(context.Background(), updater, unknown, nil); err == nil {
+			t.Error("an unrecognised NOTIFY specifier was accepted; refuse it so the client is not left watching nothing")
+		}
+		unknownEvent := &imapserver.NotifyConfig{
+			Watches: []imapserver.NotifyWatch{{
+				Specifier: imap.NotifyMailboxes,
+				Names:     []string{mailbox},
+				Events:    []imap.NotifyEventName{"NoSuchEvent9999"},
+			}},
+		}
+		if err := notifier.Notify(context.Background(), updater, unknownEvent, nil); err == nil {
+			t.Error("an unrecognised NOTIFY event was accepted; refuse it rather than never delivering it")
+		}
+		// NOTIFY NONE must always be accepted: it is how a client stops delivery.
+		if err := notifier.Notify(context.Background(), updater, nil, nil); err != nil {
+			t.Errorf("NOTIFY NONE was refused: %v", err)
+		}
+	})
 }
 
 func backendWitness(instance *Instance, session imapserver.Session) (imapserver.CapabilitySupport, bool) {
