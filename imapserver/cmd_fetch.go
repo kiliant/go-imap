@@ -69,6 +69,9 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil {
 		return c.writeBad(command.tag, "invalid FETCH arguments")
 	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	uidMode := commandUsesUIDs(command)
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)
 	if err != nil {
@@ -99,7 +102,7 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 			return commandLimitError("FETCH response byte limit exceeded")
 		}
 		responseBytes += wireBytes
-		if err := imapcodec.WriteFetchResponse(c.encoder, mapped, fetchLiteralSize); err != nil {
+		if err := writeFetchLikeResponse(c, mapped); err != nil {
 			return err
 		}
 		return c.encoder.Flush()

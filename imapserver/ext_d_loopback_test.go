@@ -215,3 +215,67 @@ func TestLoopbackMessageLimitsCarryTheirValue(t *testing.T) {
 		}
 	}
 }
+
+// UIDONLY is all-or-nothing: once enabled, no sequence number may reach the
+// client in any response, and no command may name one. RFC 9586.
+func TestLoopbackUIDOnly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSessionIn(t, ctx, true)
+
+	writeRawCommand(t, clientSide, "D1 ENABLE UIDONLY\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "D1 ")
+	if !strings.HasPrefix(tagged, "D1 OK") {
+		t.Fatalf("ENABLE UIDONLY failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* ENABLED"); !strings.Contains(line, "UIDONLY") {
+		t.Errorf("ENABLED = %q, want UIDONLY", line)
+	}
+	writeRawCommand(t, clientSide, "D2 SELECT INBOX\r\n")
+	collectUntilTag(t, reader, "D2 ")
+
+	// A sequence-number command is refused rather than reinterpreted as UIDs,
+	// which would act on different messages.
+	writeRawCommand(t, clientSide, "D3 FETCH 1 (FLAGS)\r\n")
+	if _, tagged := collectUntilTag(t, reader, "D3 "); !strings.HasPrefix(tagged, "D3 BAD") {
+		t.Errorf("sequence-number FETCH accepted under UIDONLY: %q", tagged)
+	}
+
+	// The UID form answers with UIDFETCH, and the UID is the response's
+	// subject rather than a repeated item.
+	writeRawCommand(t, clientSide, "D4 UID FETCH 1 (FLAGS)\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "D4 ")
+	if !strings.HasPrefix(tagged, "D4 OK") {
+		t.Fatalf("UID FETCH failed: %q", tagged)
+	}
+	line := findResponse(t, untagged, "* UIDFETCH")
+	if !strings.HasPrefix(line, "* UIDFETCH 1 (") {
+		t.Errorf("UIDFETCH = %q, want the UID as the subject", line)
+	}
+	if strings.Contains(line, "UID ") {
+		t.Errorf("UIDFETCH repeated the UID as an item: %q", line)
+	}
+	for _, l := range untagged {
+		if strings.Contains(l, " FETCH (") && !strings.HasPrefix(l, "* UIDFETCH") {
+			t.Errorf("a sequence-numbered FETCH reached a UIDONLY client: %q", l)
+		}
+	}
+
+	// Removals become VANISHED, since an untagged EXPUNGE carries a sequence
+	// number and cannot be sent at all.
+	writeRawCommand(t, clientSide, "D5 UID STORE 1 +FLAGS (\\Deleted)\r\n")
+	collectUntilTag(t, reader, "D5 ")
+	writeRawCommand(t, clientSide, "D6 EXPUNGE\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "D6 ")
+	if !strings.HasPrefix(tagged, "D6 OK") {
+		t.Fatalf("EXPUNGE failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* VANISHED"); !strings.HasSuffix(strings.TrimSpace(line), "1") {
+		t.Errorf("VANISHED = %q, want the removed UID", line)
+	}
+	for _, l := range untagged {
+		if strings.HasSuffix(strings.TrimSpace(l), "EXPUNGE") {
+			t.Errorf("an untagged EXPUNGE reached a UIDONLY client: %q", l)
+		}
+	}
+}

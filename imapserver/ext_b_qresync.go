@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/kiliant/go-imap"
-	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -206,7 +205,7 @@ func writeQResyncChanged(ctx context.Context, c *conn, changed imap.UIDSet) erro
 		if err != nil {
 			return err
 		}
-		if err := imapcodec.WriteFetchResponse(c.encoder, mapped, fetchLiteralSize); err != nil {
+		if err := writeFetchLikeResponse(c, mapped); err != nil {
 			return err
 		}
 		return c.encoder.Flush()

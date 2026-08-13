@@ -681,8 +681,23 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		if update.modSeq != 0 {
 			data.Items[imap.FetchDataKey("MODSEQ")] = []imap.FetchData{imap.FetchDataModSeq(update.modSeq)}
 		}
+		// UIDONLY reshapes unilateral responses too: a client that enabled it
+		// has discarded the machinery for interpreting a sequence number, so
+		// one arriving unsolicited is worse than none at all.
+		// See ext_d_uidonly.go.
+		if uidOnlyEnabled(c) {
+			return imapcodec.WriteUIDFetchResponse(c.encoder, update.uid, data, nil)
+		}
 		return imapcodec.WriteFetchResponse(c.encoder, data, nil)
 	case updateMessageExpunge:
+		// An untagged EXPUNGE carries a sequence number and therefore cannot be
+		// sent under UIDONLY at all; VANISHED is the only removal report left.
+		// RFC 9586 section 3.3.
+		if uidOnlyEnabled(c) {
+			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
+				RawValue([]byte(imap.UIDSetNum(update.uid).String())).CRLF()
+			break
+		}
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(update.seqNum)).SP().Atom("EXPUNGE").CRLF()
 	case updateMessageVanished:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED")

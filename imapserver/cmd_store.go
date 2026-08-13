@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/kiliant/go-imap"
-	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -67,6 +66,9 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if c.state.selected.readOnly {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	uidMode := commandUsesUIDs(command)
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)
 	if err != nil {
@@ -99,7 +101,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 			return commandLimitError("STORE response byte limit exceeded")
 		}
 		responseBytes += wireBytes
-		if err := imapcodec.WriteFetchResponse(c.encoder, mapped, fetchLiteralSize); err != nil {
+		if err := writeFetchLikeResponse(c, mapped); err != nil {
 			return err
 		}
 		return c.encoder.Flush()

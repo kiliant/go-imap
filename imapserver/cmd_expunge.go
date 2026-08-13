@@ -53,7 +53,14 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 			return fmt.Errorf("imapserver: backend EXPUNGE returned unknown UID %d", uid)
 		}
 		if !silent {
-			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(at + 1)).SP().Atom("EXPUNGE").CRLF()
+			// UIDONLY forbids the sequence-numbered EXPUNGE form.
+			// See ext_d_uidonly.go.
+			if uidOnlyRequiresUIDResponses(c) {
+				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
+					RawValue([]byte(imap.UIDSetNum(uid).String())).CRLF()
+			} else {
+				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(at + 1)).SP().Atom("EXPUNGE").CRLF()
+			}
 			if err := c.encoder.Flush(); err != nil {
 				return err
 			}
