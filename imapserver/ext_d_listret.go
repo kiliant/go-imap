@@ -187,19 +187,38 @@ func capabilityValueOverrides(state *sessionState, names []string) []string {
 	return rewritten
 }
 
+// resolveMessageLimits asks the backend for its RFC 9738 limits once, at
+// authentication.
+//
+// It deliberately does not happen during capability derivation. Every extension
+// command now calls requireCapability, which derives capabilities, so a backend
+// call from there would put an uncancellable round trip behind LIST, GETQUOTA
+// and everything else — with context.Background(), since derivation has no
+// context to pass. Resolving once against the authentication context keeps the
+// "context first on every blocking call" rule intact.
+func resolveMessageLimits(ctx context.Context, state *sessionState) {
+	if state == nil || state.session == nil {
+		return
+	}
+	session, ok := state.session.(MessageLimitSession)
+	if !ok {
+		return
+	}
+	messageLimit, saveLimit, err := session.MessageLimits(ctx, nil)
+	if err != nil {
+		return
+	}
+	state.messageLimit, state.saveLimit = messageLimit, saveLimit
+}
+
 func sessionMessageLimits(state *sessionState) (uint32, uint32, bool) {
 	if state == nil || state.session == nil {
 		return 0, 0, false
 	}
-	session, ok := state.session.(MessageLimitSession)
-	if !ok {
+	if _, ok := state.session.(MessageLimitSession); !ok {
 		return 0, 0, false
 	}
-	messageLimit, saveLimit, err := session.MessageLimits(context.Background(), nil)
-	if err != nil {
-		return 0, 0, false
-	}
-	return messageLimit, saveLimit, true
+	return state.messageLimit, state.saveLimit, true
 }
 
 // validateListExtensionReturnOptions accepts the two return options this file

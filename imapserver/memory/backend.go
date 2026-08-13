@@ -31,6 +31,10 @@ type Options struct {
 type Backend struct {
 	mu       sync.RWMutex
 	accounts map[string]*account
+	// scramCache holds this backend's SCRAM derivations. See ext_e_scram.go
+	// for why it must not be package-level.
+	scramMu    sync.Mutex
+	scramCache map[string]*scramDerivation
 }
 
 type account struct {

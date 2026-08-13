@@ -65,6 +65,13 @@ type sessionState struct {
 	compressed bool
 	session    Session
 	selected   *selectedState
+	// messageLimit and saveLimit are RFC 9738's advertised values, resolved
+	// once at authentication rather than per capability derivation: deriving
+	// capabilities happens on every extension command, and a backend call from
+	// there would be an uncancellable round trip the caller never asked for.
+	// See ext_d_listret.go.
+	messageLimit uint32
+	saveLimit    uint32
 }
 
 func newSessionState(tlsActive bool) sessionState {
@@ -113,14 +120,6 @@ func (s *sessionState) unselect() *selectedState {
 	return selected
 }
 
-// enable records a capability as enabled for this session and applies any
-// side effect the capability has on connection state.
-//
-// It does not decide which capabilities may be enabled. That is the capability
-// descriptor table's job: enableCapabilities only reaches this for a token that
-// is currently advertised and whose descriptor declares an Enable function, so
-// a whitelist here would be a second, silently diverging source of truth. An
-// extension registering a descriptor therefore needs no change to this file.
 // unauthenticate returns the connection to the not-authenticated state for
 // UNAUTHENTICATE (RFC 8437). It lives here with the other transitions rather
 // than in the extension file, so the state machine stays readable in one place.
@@ -139,8 +138,17 @@ func (s *sessionState) unauthenticate() {
 	s.state = stateNotAuthenticated
 	s.revision = revisionIMAP4rev1
 	s.enabled = make(map[string]bool)
+	s.messageLimit, s.saveLimit = 0, 0
 }
 
+// enable records a capability as enabled for this session and applies any
+// side effect the capability has on connection state.
+//
+// It does not decide which capabilities may be enabled. That is the capability
+// descriptor table's job: enableCapabilities only reaches this for a token that
+// is currently advertised and whose descriptor declares an Enable function, so
+// a whitelist here would be a second, silently diverging source of truth. An
+// extension registering a descriptor therefore needs no change to this file.
 func (s *sessionState) enable(capability string) bool {
 	capability = strings.ToUpper(capability)
 	if capability == "IMAP4REV2" {

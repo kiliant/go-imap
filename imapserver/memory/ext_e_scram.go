@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"hash"
 	"strings"
-	"sync"
 
 	"github.com/kiliant/go-imap/imapserver"
 )
@@ -30,11 +29,6 @@ type scramDerivation struct {
 	serverKey  []byte
 }
 
-var (
-	scramMu    sync.Mutex
-	scramCache = map[string]*scramDerivation{}
-)
-
 // SCRAMCredentials implements [imapserver.SCRAMCredentials].
 func (b *Backend) SCRAMCredentials(ctx context.Context, mechanism, username string) (*imapserver.SCRAMStoredCredentials, error) {
 	if err := ctx.Err(); err != nil {
@@ -51,17 +45,26 @@ func (b *Backend) SCRAMCredentials(ctx context.Context, mechanism, username stri
 		return nil, authenticationError()
 	}
 
+	// The cache hangs off this Backend, not off the package. A package-level
+	// cache keyed by username would let two backends configured with the same
+	// username and different passwords share one derivation, so the second
+	// would authenticate against the first one's password — and it would leak
+	// state across the isolated instances backendtest's harness exists to
+	// provide.
 	key := mechanism + "\x00" + username
-	scramMu.Lock()
-	defer scramMu.Unlock()
-	derivation, ok := scramCache[key]
+	b.scramMu.Lock()
+	defer b.scramMu.Unlock()
+	if b.scramCache == nil {
+		b.scramCache = make(map[string]*scramDerivation)
+	}
+	derivation, ok := b.scramCache[key]
 	if !ok {
 		salt := make([]byte, 16)
 		if _, err := rand.Read(salt); err != nil {
 			return nil, err
 		}
 		derivation = deriveSCRAM(newHash, account.password, salt, scramIterations)
-		scramCache[key] = derivation
+		b.scramCache[key] = derivation
 	}
 	return &imapserver.SCRAMStoredCredentials{
 		Salt:       append([]byte(nil), derivation.salt...),

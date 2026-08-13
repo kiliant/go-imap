@@ -182,6 +182,9 @@ func authenticateBackend(ctx context.Context, c *conn, tag string, credentials *
 		_ = session.Close(ctx)
 		return writeTaggedCondition(c, tag, "NO", imap.CodeServerBug, "", "authentication state transition failed")
 	}
+	// RFC 9738's advertised limits are resolved once, here, rather than during
+	// every capability derivation. See ext_d_listret.go.
+	resolveMessageLimits(ctx, &c.state)
 	return c.writeTagged(tag, "OK", "authentication completed")
 }
 

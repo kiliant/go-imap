@@ -190,3 +190,33 @@ func TestLoopbackSCRAMRejectsBadPassword(t *testing.T) {
 		t.Error("an unknown user was accepted")
 	}
 }
+
+// Two backends configured with the same username and different passwords must
+// not share SCRAM state. A cache keyed only by username would let the second
+// backend authenticate against the first one's password.
+func TestLoopbackSCRAMDerivationsAreNotShared(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	first := imapserver.New(memory.New(&memory.Options{
+		Users: map[string]string{"alice": "secret"},
+	}), &imapserver.Options{AllowInsecureAuth: true})
+	second := imapserver.New(memory.New(&memory.Options{
+		Users: map[string]string{"alice": "different"},
+	}), &imapserver.Options{AllowInsecureAuth: true})
+
+	// Prime the first backend's derivation.
+	client, _ := openLoopbackClient(t, ctx, first, &imapclient.Options{AllowInsecureAuth: true})
+	if err := client.Authenticate(ctx, "alice", "secret", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err != nil {
+		t.Fatalf("first backend: %v", err)
+	}
+
+	// The second backend must reject the first's password and accept its own.
+	wrong, _ := openLoopbackClient(t, ctx, second, &imapclient.Options{AllowInsecureAuth: true})
+	if err := wrong.Authenticate(ctx, "alice", "secret", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err == nil {
+		t.Error("the second backend accepted the first backend's password")
+	}
+	right, _ := openLoopbackClient(t, ctx, second, &imapclient.Options{AllowInsecureAuth: true})
+	if err := right.Authenticate(ctx, "alice", "different", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err != nil {
+		t.Errorf("the second backend rejected its own password: %v", err)
+	}
+}
