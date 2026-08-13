@@ -349,6 +349,28 @@ func statusDataLocked(m *mailbox, options *imapserver.StatusOptions) *imap.Statu
 			data.Values[keyword] = uint64(data.NumUnseen)
 		case imap.StatusItemRecent:
 			data.Values[keyword] = uint64(data.NumRecent)
+		case imap.StatusItemSize:
+			// STATUS=SIZE is the total octet size of the mailbox.
+			// RFC 8438 section 3.
+			var size uint64
+			for _, msg := range m.messages {
+				size += uint64(len(msg.raw))
+			}
+			data.Values[keyword] = size
+		case imap.StatusItemMailboxID:
+			data.Values[keyword] = mailboxID(m)
+		case imap.StatusItemAppendLimit:
+			data.Values[keyword] = uint64(appendLimit)
+		case imap.StatusItemHighestModSeq:
+			data.Values[keyword] = m.highestModSeq
+		case imap.StatusItemDeleted:
+			var deleted uint64
+			for _, msg := range m.messages {
+				if imap.ContainsFlag(msg.flags, imap.FlagDeleted) {
+					deleted++
+				}
+			}
+			data.Values[keyword] = deleted
 		}
 	}
 	return data

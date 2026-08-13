@@ -30,6 +30,13 @@ var supportedCapabilities = map[string]bool{
 	// survive in an in-memory backend.
 	"CONDSTORE": true,
 	"QRESYNC":   true,
+	// Group B attribute extensions. Each is a FETCH or STATUS item this
+	// backend genuinely produces; see ext_b.go.
+	"OBJECTID":    true,
+	"SAVEDATE":    true,
+	"STATUS=SIZE": true,
+	"APPENDLIMIT": true,
+	"PREVIEW":     true,
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared

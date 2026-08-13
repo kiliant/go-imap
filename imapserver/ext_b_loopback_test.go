@@ -323,3 +323,54 @@ func newUnwitnessedRawSession(t *testing.T, ctx context.Context) (net.Conn, *buf
 	t.Cleanup(func() { _ = clientSide.Close() })
 	return clientSide, reader
 }
+
+// The attribute-shaped extensions of group B — OBJECTID, SAVEDATE, PREVIEW,
+// STATUS=SIZE and APPENDLIMIT — need no framework machinery, because FETCH and
+// STATUS items are open types. This asserts they reach the wire.
+func TestLoopbackGroupBAttributeItems(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "B1 FETCH 1 (SAVEDATE EMAILID PREVIEW)\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "B1 ")
+	if !strings.HasPrefix(tagged, "B1 OK") {
+		t.Fatalf("FETCH failed: %q", tagged)
+	}
+	line := findResponse(t, untagged, "* 1 FETCH")
+	for _, want := range []string{"SAVEDATE", "EMAILID", "PREVIEW"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("FETCH response has no %s: %q", want, line)
+		}
+	}
+
+	writeRawCommand(t, clientSide, "B2 STATUS INBOX (SIZE MAILBOXID APPENDLIMIT)\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "B2 ")
+	if !strings.HasPrefix(tagged, "B2 OK") {
+		t.Fatalf("STATUS failed: %q", tagged)
+	}
+	status := findResponse(t, untagged, "* STATUS")
+	for _, want := range []string{"SIZE", "MAILBOXID", "APPENDLIMIT"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("STATUS response has no %s: %q", want, status)
+		}
+	}
+}
+
+// Every group B capability is advertised only when the backend witnesses it.
+func TestGroupBCapabilitiesRequireBackendWitness(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	clientSide, reader := newUnwitnessedRawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "B1 CAPABILITY\r\n")
+	untagged, _ := collectUntilTag(t, reader, "B1 ")
+	line := findResponse(t, untagged, "* CAPABILITY")
+	for _, witnessed := range []string{
+		"CONDSTORE", "QRESYNC", "OBJECTID", "SAVEDATE", "STATUS=SIZE", "APPENDLIMIT", "PREVIEW",
+	} {
+		if strings.Contains(line, " "+witnessed) {
+			t.Errorf("%s advertised without a backend witness: %q", witnessed, line)
+		}
+	}
+}

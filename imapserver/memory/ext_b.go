@@ -1,8 +1,14 @@
 package memory
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
@@ -158,3 +164,55 @@ var (
 	_ imapserver.CondStoreMailbox = (*selected)(nil)
 	_ imapserver.QResyncMailbox   = (*selected)(nil)
 )
+
+// appendLimit is the largest message this backend accepts, reported through the
+// APPENDLIMIT status item. RFC 7889 section 4.
+const appendLimit = 32 << 20
+
+// saveDateOf reports when a message was placed in its mailbox.
+//
+// RFC 8514 section 3 permits NIL for a message whose arrival time is unknown,
+// which is why FetchDataSaveDate carries a pointer: a zero time.Time would be
+// indistinguishable from a genuine date the backend does happen to know.
+func saveDateOf(msg *message) *time.Time {
+	if msg.saveDate.IsZero() {
+		return nil
+	}
+	saved := msg.saveDate
+	return &saved
+}
+
+// emailID is the OBJECTID identifier for a message.
+//
+// RFC 8474 section 3 requires it to be immutable and unique within the account,
+// and to survive a COPY — the same message body copied elsewhere keeps its
+// identifier. Deriving it from the message bytes gives all of that without a
+// counter to persist, which suits a backend that persists nothing.
+func emailID(msg *message) string {
+	sum := sha256.Sum256(msg.raw)
+	return "M" + hex.EncodeToString(sum[:12])
+}
+
+// mailboxID is the OBJECTID identifier for a mailbox. It is derived from the
+// UIDVALIDITY, which this backend already never reuses.
+func mailboxID(m *mailbox) string {
+	return "B" + strconv.FormatUint(uint64(m.uidValidity), 16)
+}
+
+// previewOf returns a short textual preview of a message.
+//
+// RFC 8970 section 4 leaves the algorithm to the server and only requires that
+// the result be short and derived from the text the user would read. This takes
+// the leading run of the body, which is what a mail client shows in a list.
+func previewOf(msg *message) string {
+	const previewLimit = 200
+	body := msg.raw
+	if at := bytes.Index(body, []byte("\r\n\r\n")); at >= 0 {
+		body = body[at+4:]
+	}
+	preview := strings.Join(strings.Fields(string(body)), " ")
+	if len(preview) > previewLimit {
+		preview = preview[:previewLimit]
+	}
+	return preview
+}

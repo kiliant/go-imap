@@ -393,6 +393,9 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 	marksSeen := false
 	for _, item := range items {
 		switch item := item.(type) {
+		case *imap.FetchItemPreview:
+			preview := previewOf(msg)
+			data.Items["PREVIEW"] = append(data.Items["PREVIEW"], &imap.FetchDataPreview{Text: &preview})
 		case imap.FetchItemKeyword:
 			key := imap.FetchDataKey(strings.ToUpper(string(item)))
 			switch item {
@@ -402,6 +405,17 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 				data.Items[key] = append(data.Items[key], imap.FetchDataFlags(cloneFlags(msg.flags)))
 			case imap.FetchItemModSeq:
 				data.Items[key] = append(data.Items[key], imap.FetchDataModSeq(msg.modSeq))
+			case imap.FetchItemSaveDate:
+				// RFC 8514 section 3 permits a nil save date for a message
+				// whose arrival time is not known, so the typed value carries
+				// presence separately rather than leaning on the zero time.
+				data.Items[key] = append(data.Items[key], &imap.FetchDataSaveDate{Date: saveDateOf(msg)})
+			case imap.FetchItemEmailID:
+				data.Items[key] = append(data.Items[key], imap.FetchDataObjectID(emailID(msg)))
+			case imap.FetchItemThreadID:
+				// This backend does no threading, and RFC 8474 section 5.4
+				// allows a server to return NIL rather than invent a thread.
+				data.Items[key] = append(data.Items[key], imap.FetchDataObjectID(""))
 			case imap.FetchItemInternalDate:
 				data.Items[key] = append(data.Items[key], &imap.FetchDataInternalDate{Time: msg.internalDate})
 			case imap.FetchItemRFC822Size:
