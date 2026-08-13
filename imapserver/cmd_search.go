@@ -58,7 +58,13 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := validateSearchReturnOptions(c, args); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	query := newSearchQuery(args.criteria, c.state.selected.uids)
+	// FILTERS substitutes stored criteria before the backend sees the tree.
+	// See ext_e_comparator.go.
+	criteria, err := applySearchFilters(ctx, c, args.criteria)
+	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	query := newSearchQuery(criteria, c.state.selected.uids)
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)

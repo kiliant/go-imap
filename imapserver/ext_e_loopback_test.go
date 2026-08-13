@@ -126,9 +126,10 @@ func TestLoopbackESort(t *testing.T) {
 	}
 }
 
-// What remains unadvertised, and why. FILTERS needs a criteria type the frozen
-// root package does not have; UTF8=ALL and UTF8=USER are deprecated by RFC 9755.
-// Advertising any of them would be a claim the server cannot honour.
+// What remains unadvertised, and why: UTF8=ALL and UTF8=USER are deprecated by
+// RFC 9755, and UTF8=ONLY asserts the server refuses ASCII-only clients, which
+// this framework does not do. Advertising any of them would be a claim the
+// server cannot honour.
 func TestGroupEUnadvertisedCapabilities(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -137,12 +138,12 @@ func TestGroupEUnadvertisedCapabilities(t *testing.T) {
 	writeRawCommand(t, clientSide, "E1 CAPABILITY\r\n")
 	untagged, _ := collectUntilTag(t, reader, "E1 ")
 	line := findResponse(t, untagged, "* CAPABILITY")
-	for _, absent := range []string{"FILTERS", "UTF8=ALL", "UTF8=USER"} {
+	for _, absent := range []string{"UTF8=ALL", "UTF8=USER", "UTF8=ONLY"} {
 		if strings.Contains(line, absent) {
 			t.Errorf("%s is advertised but not implemented: %q", absent, line)
 		}
 	}
-	for _, present := range []string{"LANGUAGE", "URLAUTH", "ESORT", "I18NLEVEL=1", "I18NLEVEL=2"} {
+	for _, present := range []string{"LANGUAGE", "URLAUTH", "ESORT", "I18NLEVEL=1", "I18NLEVEL=2", "FILTERS", "CONTEXT=SEARCH", "CONTEXT=SORT"} {
 		if !strings.Contains(line, present) {
 			t.Errorf("%s is implemented but not advertised: %q", present, line)
 		}
@@ -306,5 +307,42 @@ func TestLoopbackSearchContextUpdate(t *testing.T) {
 		if strings.Contains(line, "REMOVEFROM") {
 			t.Errorf("CANCELUPDATE did not stop context updates: %q", line)
 		}
+	}
+}
+
+// FILTERS lets a client name a saved search instead of restating it. RFC 5466.
+func TestLoopbackSearchFilters(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	// All three seeded messages are unseen, so the saved "unseen" filter
+	// matches them all.
+	writeRawCommand(t, clientSide, "E1 SEARCH FILTER \"unseen\"\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "E1 ")
+	if !strings.HasPrefix(tagged, "E1 OK") {
+		t.Fatalf("SEARCH FILTER failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* SEARCH"); strings.TrimSpace(line) != "* SEARCH 1 2 3" {
+		t.Errorf("SEARCH FILTER unseen = %q, want all three", line)
+	}
+
+	// The filter composes with ordinary criteria rather than replacing them.
+	writeRawCommand(t, clientSide, "E2 STORE 1 +FLAGS (\\Flagged)\r\n")
+	collectUntilTag(t, reader, "E2 ")
+	writeRawCommand(t, clientSide, "E3 SEARCH FILTER \"flagged\" FILTER \"unseen\"\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "E3 ")
+	if !strings.HasPrefix(tagged, "E3 OK") {
+		t.Fatalf("composed SEARCH FILTER failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* SEARCH"); strings.TrimSpace(line) != "* SEARCH 1" {
+		t.Errorf("composed filters = %q, want only message 1", line)
+	}
+
+	// An undefined name is UNDEFINED-FILTER, not an empty result — the client
+	// must be able to tell "no such filter" from "nothing matched".
+	writeRawCommand(t, clientSide, "E4 SEARCH FILTER \"nosuchfilter\"\r\n")
+	if _, tagged := collectUntilTag(t, reader, "E4 "); !strings.Contains(tagged, "UNDEFINED-FILTER") {
+		t.Errorf("unknown filter = %q, want UNDEFINED-FILTER", tagged)
 	}
 }

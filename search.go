@@ -411,3 +411,15 @@ type SearchFuzzy struct {
 }
 
 func (SearchFuzzy) searchCriteria() {}
+
+// SearchFilter names a server-side saved search filter, which stands in for the
+// criteria the server stores under that name. FILTERS, RFC 5466 section 3.
+//
+// It is a named string type rather than a struct because a filter reference is
+// exactly a name: the criteria it expands to live on the server, and a client
+// never sees them. A server that does not know the name answers with the
+// UNDEFINED-FILTER response code rather than an empty result, so a client can
+// tell "no such filter" from "nothing matched".
+type SearchFilter string
+
+func (SearchFilter) searchCriteria() {}

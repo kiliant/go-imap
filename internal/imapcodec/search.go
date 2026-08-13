@@ -92,6 +92,8 @@ func writeSearchKey(enc *imapwire.Encoder, criterion imap.SearchCriteria) {
 	case imap.SearchFuzzy:
 		enc.Atom("FUZZY").SP()
 		writeSearchKey(enc, c.Criteria)
+	case imap.SearchFilter:
+		enc.Atom("FILTER").SP().Astring(string(c))
 	default:
 		enc.Atom("")
 	}
@@ -132,6 +134,11 @@ func ValidateSearchCriteria(criterion imap.SearchCriteria) error {
 			return fmt.Errorf("SEARCH FUZZY requires an operand")
 		}
 		return ValidateSearchCriteria(c.Criteria)
+	case imap.SearchFilter:
+		if c == "" {
+			return fmt.Errorf("SEARCH FILTER requires a filter name")
+		}
+		return nil
 	case imap.SearchModSeq:
 		if (c.EntryName == "") != (c.EntryType == "") {
 			return fmt.Errorf("SEARCH MODSEQ requires an entry name and entry type together")
@@ -221,6 +228,17 @@ func readSearchKey(dec *imapwire.Decoder) (imap.SearchCriteria, error) {
 	case "FUZZY":
 		item, err := readRequiredSearchKey(dec)
 		return imap.SearchFuzzy{Criteria: item}, err
+	case "FILTER":
+		// FILTERS, RFC 5466 section 3: the key is a saved filter's name, and
+		// the server substitutes the criteria it stands for.
+		if !dec.ExpectSP() {
+			return nil, dec.Err()
+		}
+		var name string
+		if !dec.ExpectAstring(&name) {
+			return nil, dec.Err()
+		}
+		return imap.SearchFilter(name), nil
 	case "KEYWORD", "UNKEYWORD":
 		if !dec.ExpectSP() {
 			return nil, dec.Err()

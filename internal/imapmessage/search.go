@@ -85,6 +85,12 @@ func match(message *Message, metadata Metadata, criterion imap.SearchCriteria, o
 		// The portable helper has no corpus-specific fuzzy policy. Exact matches
 		// are valid fuzzy matches and make the fallback deterministic.
 		return match(message, metadata, c.Criteria, opts)
+	case imap.SearchFilter:
+		// A FILTER key names criteria the server stores; whoever evaluates a
+		// search is expected to have substituted it already. Reaching here means
+		// it was not substituted, and matching nothing would hide that behind a
+		// plausible empty result. RFC 5466 section 3.
+		return false, fmt.Errorf("imapmessage: unsubstituted SEARCH FILTER %q", string(c))
 	case imap.SearchKeyword:
 		return matchKeyword(metadata, c)
 	case imap.SearchFlagKeyword:

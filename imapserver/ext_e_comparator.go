@@ -7,15 +7,13 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// I18NLEVEL=2 and the COMPARATOR command (RFC 5255 section 4).
+// I18NLEVEL=2 and the COMPARATOR command (RFC 5255 section 4), and FILTERS
+// (RFC 5466).
 //
-// FILTERS (RFC 5466) is *not* here, and the reason is a boundary rather than a
-// preference. A saved filter is referenced by a FILTER search key, and
-// package imap has no criteria type for one — the client's FILTERS work
-// recorded that gap and escalated it. Adding `imap.SearchFilter` is additive and
-// therefore permitted after v1.0, but it is a change to the frozen root package
-// and to the shared codec, which is a decision to take deliberately rather than
-// as a side effect of an extension task. docs/RFC-COVERAGE.md records it.
+// FILTERS needed `imap.SearchFilter` in the root package, which the client's own
+// FILTERS work had recorded as missing and escalated. Adding a type there after
+// v1.0 is additive and permitted; reshaping one is not, and nothing was
+// reshaped.
 //
 // A comparator decides how string SEARCH keys are compared: whether "STRASSE"
 // matches "straße", whether case and accents are folded. Only the backend knows,
@@ -45,8 +43,29 @@ type ComparatorSession interface {
 // Construct with keyed fields only; fields may be added in a future release.
 type ComparatorOptions struct{ _ struct{} }
 
+// FilterSession is the optional FILTERS support of RFC 5466: named, server-side
+// search filters a client references instead of restating the criteria.
+//
+// A filter is stored criteria, so only a backend that stores them can serve it.
+// The framework substitutes the named filter into the search tree before the
+// backend evaluates it, so a backend implements the lookup and nothing else.
+type FilterSession interface {
+	// Filter returns the criteria a named filter stands for. A nil result with
+	// no error means the name is not defined.
+	Filter(ctx context.Context, name string, options *FilterOptions) (imap.SearchCriteria, error)
+}
+
+// FilterOptions configures a filter lookup. A nil pointer selects the defaults.
+// Construct with keyed fields only; fields may be added in a future release.
+type FilterOptions struct{ _ struct{} }
+
 func init() {
 	registerCapabilities(
+		capabilityDescriptor{
+			Name:            "FILTERS",
+			States:          stateMaskAuthenticated | stateMaskSelected,
+			RequiresBackend: sessionImplements[FilterSession](),
+		},
 		capabilityDescriptor{
 			Name:            "I18NLEVEL=2",
 			States:          stateMaskAuthenticated | stateMaskSelected,
@@ -109,4 +128,105 @@ func handleComparator(ctx context.Context, c *conn, command *queuedCommand) erro
 		return err
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
+}
+
+// applySearchFilters substitutes every FILTER key in a search tree with the
+// criteria the backend stores under that name.
+//
+// An undefined name fails the command with UNDEFINED-FILTER rather than matching
+// nothing: a filter the server does not know is a client error, and a silent
+// empty result is indistinguishable from a correct search that matched nothing.
+// RFC 5466 section 3.
+func applySearchFilters(ctx context.Context, c *conn, criteria imap.SearchCriteria) (imap.SearchCriteria, error) {
+	if !searchMentionsFilter(criteria) {
+		return criteria, nil
+	}
+	if err := requireCapability(c, "FILTERS"); err != nil {
+		return nil, err
+	}
+	return resolveSearchFilters(ctx, c, criteria, 0)
+}
+
+// maxFilterDepth bounds filter expansion. A filter whose criteria name further
+// filters is legal, but a cycle between two of them is not detectable by
+// inspection, so the depth is capped rather than trusted.
+const maxFilterDepth = 8
+
+func resolveSearchFilters(ctx context.Context, c *conn, criteria imap.SearchCriteria, depth int) (imap.SearchCriteria, error) {
+	if depth > maxFilterDepth {
+		return nil, &imap.Error{
+			Type: imap.ErrorTypeNo,
+			Code: imap.CodeUndefinedFilter,
+			Text: "filter expansion is too deeply nested",
+		}
+	}
+	switch node := criteria.(type) {
+	case imap.SearchFilter:
+		session, ok := c.state.session.(FilterSession)
+		if !ok {
+			return nil, &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeUndefinedFilter, Text: "filters are not available"}
+		}
+		resolved, err := session.Filter(ctx, string(node), nil)
+		if err != nil {
+			return nil, err
+		}
+		if resolved == nil {
+			return nil, &imap.Error{
+				Type: imap.ErrorTypeNo,
+				Code: imap.CodeUndefinedFilter,
+				Text: "no such filter " + string(node),
+			}
+		}
+		return resolveSearchFilters(ctx, c, resolved, depth+1)
+	case imap.SearchAnd:
+		resolved := make(imap.SearchAnd, len(node))
+		for i, child := range node {
+			child, err := resolveSearchFilters(ctx, c, child, depth)
+			if err != nil {
+				return nil, err
+			}
+			resolved[i] = child
+		}
+		return resolved, nil
+	case imap.SearchOr:
+		left, err := resolveSearchFilters(ctx, c, node.Left, depth)
+		if err != nil {
+			return nil, err
+		}
+		right, err := resolveSearchFilters(ctx, c, node.Right, depth)
+		if err != nil {
+			return nil, err
+		}
+		return imap.SearchOr{Left: left, Right: right}, nil
+	case imap.SearchNot:
+		inner, err := resolveSearchFilters(ctx, c, node.Criteria, depth)
+		if err != nil {
+			return nil, err
+		}
+		return imap.SearchNot{Criteria: inner}, nil
+	default:
+		return criteria, nil
+	}
+}
+
+// searchMentionsFilter skips the substitution walk for the overwhelmingly common
+// tree that names no filter.
+func searchMentionsFilter(criteria imap.SearchCriteria) bool {
+	switch node := criteria.(type) {
+	case imap.SearchFilter:
+		return true
+	case imap.SearchAnd:
+		for _, child := range node {
+			if searchMentionsFilter(child) {
+				return true
+			}
+		}
+		return false
+	case imap.SearchOr:
+		return searchMentionsFilter(node.Left) || searchMentionsFilter(node.Right)
+	case imap.SearchNot:
+		return searchMentionsFilter(node.Criteria)
+	default:
+		return false
+	}
 }

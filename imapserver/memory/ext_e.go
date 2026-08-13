@@ -228,7 +228,29 @@ func (s *session) SetComparator(ctx context.Context, order []string, _ *imapserv
 	return "", nil
 }
 
+// filters are the saved searches this backend serves. A real server would store
+// them per account; a fixed set is enough to exercise the substitution, which is
+// the part the framework owns.
+var filters = map[string]imap.SearchCriteria{
+	"unseen":  imap.SearchNot{Criteria: imap.SearchFlagKeyword{Flag: imap.FlagSeen}},
+	"flagged": imap.SearchFlagKeyword{Flag: imap.FlagFlagged},
+}
+
+// Filter implements [imapserver.FilterSession]. A name it does not know returns
+// nil, which the framework turns into UNDEFINED-FILTER.
+func (s *session) Filter(ctx context.Context, name string, _ *imapserver.FilterOptions) (imap.SearchCriteria, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	criteria, ok := filters[strings.ToLower(name)]
+	if !ok {
+		return nil, nil
+	}
+	return criteria, nil
+}
+
 var (
+	_ imapserver.FilterSession     = (*session)(nil)
 	_ imapserver.ComparatorSession = (*session)(nil)
 	_ imapserver.LanguageSession   = (*session)(nil)
 	_ imapserver.URLAuthSession    = (*session)(nil)

@@ -190,9 +190,12 @@ CONDSTORE `MODIFIED` on tagged OK.
     literal's length is only knowable once the previous is off the wire; that
     buffering is the grammar's price, not a design choice.
 
-[^srvutf8]: RFC 9755 deprecates UTF8=ALL and UTF8=USER. UTF8=ONLY is a statement
-    that the server *refuses* ASCII-only clients, which this framework cannot
-    honour, and advertising it while still serving them would be a false claim.
+[^srvutf8]: **The only capabilities left unimplemented, and both by decision.**
+    RFC 9755 deprecates UTF8=ALL and UTF8=USER outright — implementing a
+    deprecated capability would be a mistake, not an omission. UTF8=ONLY asserts
+    the server *refuses* ASCII-only clients, which is a deployment policy this
+    framework does not enforce; advertising it while still serving them would be
+    a false claim. Everything else in T23's scope is implemented.
 
 [^srvmultisearch]: The ESEARCH command, searching mailboxes the connection has
     not selected. Each result carries its mailbox and UIDVALIDITY, without which
@@ -282,7 +285,7 @@ break the client; full command support is best-effort.
 | CONTEXT=SEARCH | 5267 | done | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
 | CONTEXT=SORT | 5267 | done | done [^srvcontext] | as above |
 | ESORT | 5267 | done | done [^srvesort] | capability + RETURN keywords |
-| FILTERS | 5466 | done | — [^srvfilters] | UNDEFINED-FILTER parse |
+| FILTERS | 5466 | done | done [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
 | IMAPSIEVE= | 6785 | deferred | deferred | server-side; parse only |
 | ANNOTATE-EXPERIMENT-1 | 5257 | deferred | deferred | superseded by METADATA |
@@ -318,14 +321,15 @@ break the client; full command support is best-effort.
     preserves that order rather than collapsing it into ranges, which would
     re-sort it.
 
-[^srvfilters]: **The one capability still out, and the reason is a boundary.** A
-    saved filter is referenced by a FILTER search key, and `package imap` has no
-    criteria type for one — the client's FILTERS work recorded that gap and
-    escalated it to T02. Adding `imap.SearchFilter` is additive and therefore
-    permitted after v1.0, but it changes the frozen root package *and* the shared
-    codec, which is a decision to take deliberately rather than as a side effect
-    of an extension task. The server-side work is small once the type exists:
-    one optional interface and a substitution walk over the criteria tree.
+[^srvfilters]: Closed the gap the client's FILTERS work escalated to T02:
+    `imap.SearchFilter` now exists, which is an *additive* root-package change
+    and therefore permitted after v1.0 — nothing was reshaped. The framework
+    substitutes a named filter into the criteria tree before the backend
+    evaluates it, so a backend implements a lookup and nothing else. An
+    undefined name returns UNDEFINED-FILTER rather than an empty result, since
+    a client cannot otherwise tell "no such filter" from "nothing matched".
+    `imapmessage.Match` errors on an unsubstituted FILTER rather than matching
+    nothing, so a substitution bug surfaces instead of hiding.
 
 ## Not in the registry but required
 

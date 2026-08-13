@@ -19,6 +19,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"CapabilitySupport":     {"SupportsCapability"},
 		"CatenateSession":       {"ResolveCatenateURL"},
 		"ComparatorSession":     {"Comparators", "SetComparator"},
+		"FilterSession":         {"Filter"},
 		"CondStoreMailbox":      {"StoreCondStore"},
 		"LanguageSession":       {"Languages", "SetLanguage"},
 		"MessageLimitSession":   {"MessageLimits"},
