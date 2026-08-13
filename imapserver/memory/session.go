@@ -14,7 +14,10 @@ import (
 )
 
 type session struct {
-	account    *account
+	account *account
+	// username is the authenticated identity, which ACL entries are keyed by.
+	// See ext_d.go.
+	username   string
 	selections map[*selected]struct{}
 	closed     bool
 }

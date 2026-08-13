@@ -13,16 +13,23 @@ import (
 
 func TestBackendInterfaceMethodSets(t *testing.T) {
 	want := map[string][]string{
-		"Backend":           {"Authenticate"},
-		"CapabilitySupport": {"SupportsCapability"},
-		"CondStoreMailbox":  {"StoreCondStore"},
-		"MoveMailbox":       {"Move"},
-		"MoveSupport":       {"SupportsMove"},
-		"QResyncMailbox":    {"Resync"},
-		"ReplaceMailbox":    {"Replace"},
-		"SelectedMailbox":   {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
-		"Session":           {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
-		"Update":            {"update"},
+		"ACLSession":            {"GetACL", "ListRights", "MyRights"},
+		"ACLSetSession":         {"DeleteACL", "SetACL"},
+		"Backend":               {"Authenticate"},
+		"CapabilitySupport":     {"SupportsCapability"},
+		"CondStoreMailbox":      {"StoreCondStore"},
+		"MetadataSession":       {"GetMetadata", "SetMetadata"},
+		"MoveMailbox":           {"Move"},
+		"MoveSupport":           {"SupportsMove"},
+		"NamespaceSession":      {"Namespace"},
+		"QResyncMailbox":        {"Resync"},
+		"QuotaSession":          {"GetQuota", "QuotaRoots"},
+		"QuotaSetSession":       {"SetQuota"},
+		"ReplaceMailbox":        {"Replace"},
+		"SelectedMailbox":       {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
+		"Session":               {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
+		"UnauthenticateSession": {"Unauthenticate"},
+		"Update":                {"update"},
 	}
 
 	fset := token.NewFileSet()
@@ -149,6 +156,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		AppendOptions{}, SelectOptions{}, FetchOptions{}, SearchOptions{}, StoreFlags{}, StoreOptions{}, CopyOptions{},
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
 		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
+		QuotaOptions{}, ACLOptions{}, ACLSetOptions{}, MetadataOptions{}, NamespaceOptions{}, UnauthenticateOptions{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")

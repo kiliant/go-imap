@@ -39,6 +39,11 @@ type account struct {
 	mailboxes       map[string]*mailbox
 	nextUIDValidity uint32
 	selectFailure   map[string]bool
+	// Group D per-account state. Zero limits mean unlimited, which is how
+	// RFC 9208 reports a resource with no configured bound. See ext_d.go.
+	quotaStorage  uint64
+	quotaMessages uint64
+	metadata      map[imap.MetadataEntryName]string
 }
 
 type mailbox struct {
@@ -55,8 +60,11 @@ type mailbox struct {
 	// themselves are gone. See ext_b.go.
 	highestModSeq uint64
 	expunged      []expungedRecord
-	messages      []*message
-	watchers      map[*selected]*imapserver.Updater
+	// acl and metadata are the group D per-mailbox state. See ext_d.go.
+	acl      map[string]imap.ACLRights
+	metadata map[imap.MetadataEntryName]string
+	messages []*message
+	watchers map[*selected]*imapserver.Updater
 }
 
 // expungedRecord remembers one removal for QRESYNC, so a client that was
@@ -133,7 +141,7 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if a == nil || credentials.Password != a.password {
 		return nil, authenticationError()
 	}
-	return &session{account: a, selections: make(map[*selected]struct{})}, nil
+	return &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}, nil
 }
 
 // SupportsMove reports that the memory backend implements atomic MOVE.

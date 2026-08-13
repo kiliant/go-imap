@@ -166,24 +166,51 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 ## Group D — administrative & server-side (task T11)
 
-| Capability | RFC | Status |
-|---|---|---|
-| QUOTA | 9208 | done |
-| QUOTA= | 9208 | done |
-| QUOTASET | 9208 | done |
-| ACL | 4314 | done |
-| RIGHTS= | 4314 | done |
-| LIST-MYRIGHTS | 8440 | done |
-| METADATA | 5464 | done |
-| METADATA-SERVER | 5464 | done |
-| LIST-METADATA | 9590 | done |
-| NOTIFY | 5465 | done |
-| UNAUTHENTICATE | 8437 | done |
-| UIDONLY | 9586 | done |
-| INPROGRESS | 9585 | done |
-| MESSAGELIMIT= | 9738 | done |
-| SAVELIMIT= | 9738 | done |
-| JMAPACCESS | 9698 | done |
+| Capability | RFC | Client | Server |
+|---|---|---|---|
+| QUOTA | 9208 | done | done |
+| QUOTA= | 9208 | done | done [^srvquotares] |
+| QUOTASET | 9208 | done | done |
+| ACL | 4314 | done | done |
+| RIGHTS= | 4314 | done | done [^srvrights] |
+| LIST-MYRIGHTS | 8440 | done | partial [^srvlistret] |
+| METADATA | 5464 | done | done |
+| METADATA-SERVER | 5464 | done | done |
+| LIST-METADATA | 9590 | done | — [^srvlistret] |
+| NOTIFY | 5465 | done | — [^srvnotify] |
+| UNAUTHENTICATE | 8437 | done | done |
+| UIDONLY | 9586 | done | — [^srvpending] |
+| INPROGRESS | 9585 | done | done [^srvinprogress] |
+| MESSAGELIMIT= | 9738 | done | — [^srvpending] |
+| SAVELIMIT= | 9738 | done | — [^srvpending] |
+| JMAPACCESS | 9698 | done | done [^srvjmap] |
+
+[^srvquotares]: Resource names cross the backend boundary as open
+    `imap.QuotaResourceName` strings, so a server serving a resource this
+    library has not heard of needs no change. The `QUOTA=RES-*` advertisement
+    tokens themselves are a backend concern.
+
+[^srvrights]: Rights are open `imap.ACLRights` strings in both directions; a
+    letter this library does not know passes through verbatim.
+
+[^srvlistret]: The standalone MYRIGHTS command is implemented; the LIST *return
+    option* forms of RFC 8440 and RFC 9590 need group A's LIST return-option
+    plumbing to grow an entry, which is a small follow-up rather than new
+    backend surface.
+
+[^srvnotify]: **Escalated, not deferred by choice.** NOTIFY needs a
+    session-scoped update channel in `imapserver/session.go`, which T23 does not
+    own, and T23's spec names widening the selection-scoped `Updater` as the
+    trap to avoid. Needs a `server-core` change first.
+
+[^srvpending]: Not yet implemented server-side.
+
+[^srvinprogress]: The untagged OK progress response shape is framework-owned and
+    advertised; no backend surface is required to emit one.
+
+[^srvjmap]: Advertisement and response code only, witnessed by name through
+    `CapabilitySupport`. The reference backend serves no JMAP endpoint and so
+    does not witness it.
 
 ## Group E — legacy & niche (task T11, lower priority)
 

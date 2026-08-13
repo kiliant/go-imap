@@ -121,6 +121,26 @@ func (s *sessionState) unselect() *selectedState {
 // is currently advertised and whose descriptor declares an Enable function, so
 // a whitelist here would be a second, silently diverging source of truth. An
 // extension registering a descriptor therefore needs no change to this file.
+// unauthenticate returns the connection to the not-authenticated state for
+// UNAUTHENTICATE (RFC 8437). It lives here with the other transitions rather
+// than in the extension file, so the state machine stays readable in one place.
+//
+// Every trace of the previous user is dropped, including enabled extensions and
+// the negotiated revision. RFC 8437 section 3 requires that: the connection is
+// about to be reused by a different identity, and leaving CONDSTORE or IMAP4rev2
+// enabled would have the server speak to the next client in a dialect it never
+// negotiated.
+func (s *sessionState) unauthenticate() {
+	if s == nil {
+		return
+	}
+	s.session = nil
+	s.selected = nil
+	s.state = stateNotAuthenticated
+	s.revision = revisionIMAP4rev1
+	s.enabled = make(map[string]bool)
+}
+
 func (s *sessionState) enable(capability string) bool {
 	capability = strings.ToUpper(capability)
 	if capability == "IMAP4REV2" {

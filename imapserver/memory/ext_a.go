@@ -38,6 +38,10 @@ var supportedCapabilities = map[string]bool{
 	"APPENDLIMIT": true,
 	"PREVIEW":     true,
 	"REPLACE":     true,
+	// Group D. QUOTA, ACL, METADATA, NAMESPACE and UNAUTHENTICATE witness
+	// themselves by implementing their optional interfaces; only JMAPACCESS
+	// is a spoken claim, and this backend serves no JMAP endpoint.
+
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared
