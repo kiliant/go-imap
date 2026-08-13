@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"net"
+
+	"github.com/kiliant/go-imap/imapclient"
 	"regexp"
 	"strconv"
 	"strings"
@@ -310,6 +312,19 @@ func parseCodeNumber(t *testing.T, lines []string, code string) uint64 {
 func newUnwitnessedRawSession(t *testing.T, ctx context.Context) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	server := newUnwitnessedServer(t)
+
+	// Seed over a separate connection. Without messages the selected-state
+	// commands fail on the message set before they ever reach the capability
+	// check, which would make these tests pass for the wrong reason.
+	setup, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
+	if err := setup.Login(ctx, "alice", "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	seedMessages(t, ctx, setup, 3)
+	if err := setup.Logout(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
 	serverSide, clientSide := net.Pipe()
 	go func() { _ = server.ServeConn(ctx, serverSide) }()
 	reader := bufio.NewReader(clientSide)
@@ -434,5 +449,23 @@ func TestLoopbackReplaceRefusesMultipleMessages(t *testing.T) {
 	writeRawCommand(t, clientSide, "B2 NOOP\r\n")
 	if _, tagged := collectUntilTag(t, reader, "B2 "); !strings.HasPrefix(tagged, "B2 OK") {
 		t.Errorf("connection desynchronised after a refused REPLACE: %q", tagged)
+	}
+}
+
+// Holding an optional interface is not consent to advertise the capability. A
+// backend that implements ReplaceMailbox but does not witness REPLACE must not
+// be sent the command.
+func TestLoopbackReplaceRequiresAdvertisedCapability(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	clientSide, reader := newUnwitnessedRawSession(t, ctx)
+
+	body := "Subject: x\r\n\r\nx\r\n"
+	writeRawCommand(t, clientSide, "B1 REPLACE 1 INBOX {"+strconv.Itoa(len(body))+"}\r\n")
+	if line, err := reader.ReadString('\n'); err == nil && strings.HasPrefix(line, "+") {
+		writeRawCommand(t, clientSide, body+"\r\n")
+	}
+	if _, tagged := collectUntilTag(t, reader, "B1 "); !strings.HasPrefix(tagged, "B1 BAD") {
+		t.Errorf("REPLACE accepted without an advertised capability: %q", tagged)
 	}
 }

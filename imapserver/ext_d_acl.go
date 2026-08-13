@@ -138,6 +138,9 @@ func parseSetACL(decoder *imapwire.Decoder) (any, int64, error) {
 
 func handleGetACL(ctx context.Context, c *conn, command *queuedCommand) error {
 	mailbox, _ := command.args.(string)
+	if err := requireCapability(c, "ACL"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	session, ok := c.state.session.(ACLSession)
 	if !ok {
 		return c.writeBad(command.tag, "ACL is not available")
@@ -161,6 +164,9 @@ func handleGetACL(ctx context.Context, c *conn, command *queuedCommand) error {
 
 func handleMyRights(ctx context.Context, c *conn, command *queuedCommand) error {
 	mailbox, _ := command.args.(string)
+	if err := requireCapability(c, "ACL"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	session, ok := c.state.session.(ACLSession)
 	if !ok {
 		return c.writeBad(command.tag, "ACL is not available")
@@ -181,6 +187,9 @@ func handleListRights(ctx context.Context, c *conn, command *queuedCommand) erro
 	args, _ := command.args.(*twoAstringArgs)
 	if args == nil {
 		return c.writeBad(command.tag, "invalid LISTRIGHTS arguments")
+	}
+	if err := requireCapability(c, "ACL"); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(ACLSession)
 	if !ok {
@@ -211,6 +220,9 @@ func handleDeleteACL(ctx context.Context, c *conn, command *queuedCommand) error
 	if args == nil {
 		return c.writeBad(command.tag, "invalid DELETEACL arguments")
 	}
+	if err := requireCapability(c, "ACL"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	session, ok := c.state.session.(ACLSetSession)
 	if !ok {
 		return c.writeBad(command.tag, "ACL modification is not available")
@@ -225,6 +237,9 @@ func handleSetACL(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*setACLArgs)
 	if args == nil {
 		return c.writeBad(command.tag, "invalid SETACL arguments")
+	}
+	if err := requireCapability(c, "ACL"); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(ACLSetSession)
 	if !ok {

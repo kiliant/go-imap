@@ -129,6 +129,12 @@ func handleReplace(ctx context.Context, c *conn, command *queuedCommand) error {
 		literal.remaining = 0
 		return args.literal.Discard()
 	}
+	if err := requireCapability(c, "REPLACE"); err != nil {
+		if drainErr := drain(); drainErr != nil {
+			return drainErr
+		}
+		return c.writeBad(command.tag, err.Error())
+	}
 	if c.state.selected.readOnly {
 		if err := drain(); err != nil {
 			return err

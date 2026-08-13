@@ -179,10 +179,23 @@ func parseSetMetadata(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, size, nil
 }
 
+// requireMetadataCapability accepts either METADATA token, since a backend may
+// advertise only the server-scope form.
+func requireMetadataCapability(c *conn) error {
+	advertised := advertisedCapabilities(c)
+	if advertised["METADATA"] || advertised["METADATA-SERVER"] {
+		return nil
+	}
+	return fmt.Errorf("METADATA is not available")
+}
+
 func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*getMetadataArgs)
 	if args == nil {
 		return c.writeBad(command.tag, "invalid GETMETADATA arguments")
+	}
+	if err := requireMetadataCapability(c); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(MetadataSession)
 	if !ok {
@@ -215,6 +228,9 @@ func handleSetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	args, _ := command.args.(*setMetadataArgs)
 	if args == nil {
 		return c.writeBad(command.tag, "invalid SETMETADATA arguments")
+	}
+	if err := requireMetadataCapability(c); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(MetadataSession)
 	if !ok {

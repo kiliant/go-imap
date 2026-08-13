@@ -111,6 +111,9 @@ func handleNamespace(ctx context.Context, c *conn, command *queuedCommand) error
 }
 
 func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) error {
+	if err := requireCapability(c, "UNAUTHENTICATE"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	session, ok := c.state.session.(UnauthenticateSession)
 	if !ok {
 		return c.writeBad(command.tag, "UNAUTHENTICATE is not available")

@@ -111,6 +111,9 @@ func parseSetQuota(decoder *imapwire.Decoder) (any, int64, error) {
 
 func handleGetQuota(ctx context.Context, c *conn, command *queuedCommand) error {
 	root, _ := command.args.(string)
+	if err := requireCapability(c, "QUOTA"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	session, ok := c.state.session.(QuotaSession)
 	if !ok {
 		return c.writeBad(command.tag, "QUOTA is not available")
@@ -129,6 +132,9 @@ func handleGetQuota(ctx context.Context, c *conn, command *queuedCommand) error 
 
 func handleGetQuotaRoot(ctx context.Context, c *conn, command *queuedCommand) error {
 	mailbox, _ := command.args.(string)
+	if err := requireCapability(c, "QUOTA"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	session, ok := c.state.session.(QuotaSession)
 	if !ok {
 		return c.writeBad(command.tag, "QUOTA is not available")
@@ -167,6 +173,9 @@ func handleSetQuota(ctx context.Context, c *conn, command *queuedCommand) error 
 	args, _ := command.args.(*setQuotaArgs)
 	if args == nil {
 		return c.writeBad(command.tag, "invalid SETQUOTA arguments")
+	}
+	if err := requireCapability(c, "QUOTASET"); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(QuotaSetSession)
 	if !ok {
