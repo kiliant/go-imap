@@ -453,6 +453,33 @@ the decision is deliberate, per CLAUDE.md's requirement that a deviation carry a
 written exception. T25 should either collapse it or promote this paragraph to a
 permanent entry.
 
+### Additive root-package growth after v1.0 — exercised 2026-08-13
+
+`imap.SearchFilter` was added to the frozen root package by T23, and it is worth
+recording as the first exercise of the rule rather than leaving the next person
+to wonder whether it was allowed.
+
+The rule is the one CLAUDE.md states: **adding a type to `package imap` after
+v1.0 is additive and always permitted; reshaping an existing type is not.** A new
+`SearchCriteria` implementation adds a case that consumers may ignore — the
+interface is closed by an unexported method, so no external type asserts
+exhaustively over it — while changing `SearchString`'s fields would break every
+caller that constructs one.
+
+What made this one safe to take mid-task rather than escalate:
+
+- it is a new type, not a change to one;
+- it satisfies an existing closed interface, so no signature moved;
+- the gap was already recorded — the client's FILTERS work escalated the missing
+  type to T02 and it was never added, so this closed a known hole rather than
+  inventing surface;
+- `internal/imapmessage`'s criterion-coverage gate caught the omission
+  immediately and was extended to express "this criterion must fail to
+  evaluate", rather than exempted.
+
+A future extension needing a root-package *reshape* is a different question and
+still needs the human's approval.
+
 ## Reviewing against this document
 
 The `api-guardian` agent (`.claude/agents/api-guardian.md`) reviews every diff
