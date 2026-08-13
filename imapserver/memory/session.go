@@ -20,6 +20,10 @@ type session struct {
 	username   string
 	selections map[*selected]struct{}
 	closed     bool
+	// notify and notifyConfig are the session's NOTIFY registration.
+	// See ext_d.go.
+	notify       *imapserver.SessionUpdater
+	notifyConfig *imapserver.NotifyConfig
 }
 
 func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, reference string, patterns []string, options *imapserver.ListOptions) error {
@@ -258,6 +262,8 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	})
 	batch := advanceLocked(m, origin, []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}})
 	publishLocked(m, batch)
+	// NOTIFY watchers hear about a mailbox they have not selected.
+	notifyMailboxLocked(s.account, m)
 	uidValidity := m.uidValidity
 	s.account.mu.Unlock()
 	return &imap.AppendData{HasUID: true, UIDValidity: uidValidity, UID: uid}, nil
@@ -308,6 +314,8 @@ func (s *session) Close(ctx context.Context) error {
 		delete(s.selections, selected)
 	}
 	s.closed = true
+	s.notify, s.notifyConfig = nil, nil
+	delete(s.account.sessions, s)
 	return nil
 }
 

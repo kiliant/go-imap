@@ -222,7 +222,7 @@ CONDSTORE `MODIFIED` on tagged OK.
 | METADATA | 5464 | done | done |
 | METADATA-SERVER | 5464 | done | done |
 | LIST-METADATA | 9590 | done | done |
-| NOTIFY | 5465 | done | — [^srvnotify] |
+| NOTIFY | 5465 | done | done [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
 | INPROGRESS | 9585 | done | done [^srvinprogress] |
@@ -245,10 +245,17 @@ CONDSTORE `MODIFIED` on tagged OK.
     to `internal/imapcodec`, sharing the item grammar with `WriteFetchResponse`
     rather than duplicating it.
 
-[^srvnotify]: **Escalated, not deferred by choice.** NOTIFY needs a
-    session-scoped update channel in `imapserver/session.go`, which T23 does not
-    own, and T23's spec names widening the selection-scoped `Updater` as the
-    trap to avoid. Needs a `server-core` change first.
+[^srvnotify]: Delivered through `SessionUpdater`, a session-scoped channel added
+    alongside the selection-scoped `Updater` rather than by widening it — which
+    SERVER-DESIGN.md §3 names as the trap, since it would let any
+    selection-scoped push outlive its selection. Events name a mailbox and carry
+    no sequence numbers, because the client has not selected the mailbox and has
+    no sequence-number view of it; RFC 5465 §6 reports them as STATUS for that
+    reason. The queue coalesces per mailbox and drops oldest on overflow rather
+    than killing the connection — the opposite of the selection queue's rule,
+    because a dropped notification costs a refresh while a dropped selection
+    update desynchronises a view in active use. Overflow is reported rather than
+    hidden.
 
 [^srvinprogress]: The untagged OK progress response shape is framework-owned and
     advertised; no backend surface is required to emit one.

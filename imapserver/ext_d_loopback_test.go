@@ -1,10 +1,16 @@
 package imapserver_test
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiliant/go-imap/imapclient"
+	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/imapserver/memory"
 )
 
 // Group D is administrative surface: quota roots, access control lists,
@@ -278,4 +284,84 @@ func TestLoopbackUIDOnly(t *testing.T) {
 			t.Errorf("an untagged EXPUNGE reached a UIDONLY client: %q", l)
 		}
 	}
+}
+
+// NOTIFY's whole point: a client learns about a mailbox it has not selected,
+// from a change made by a different connection. RFC 5465.
+func TestLoopbackNotifyReportsUnselectedMailbox(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+
+	watcher, clientSide, reader := newRawSessionOn(t, ctx, server)
+	writeRawCommand(t, clientSide, "N1 CREATE Watched\r\n")
+	collectUntilTag(t, reader, "N1 ")
+
+	// The watcher selects INBOX and registers interest in a *different*
+	// mailbox, which is what the selection-scoped Updater could never report.
+	writeRawCommand(t, clientSide, "N2 SELECT INBOX\r\n")
+	collectUntilTag(t, reader, "N2 ")
+	writeRawCommand(t, clientSide, "N3 NOTIFY SET (MAILBOXES Watched (MessageNew))\r\n")
+	if _, tagged := collectUntilTag(t, reader, "N3 "); !strings.HasPrefix(tagged, "N3 OK") {
+		t.Fatalf("NOTIFY SET failed: %q", tagged)
+	}
+	_ = watcher
+
+	// A second connection appends to the watched mailbox.
+	other, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
+	if err := other.Login(ctx, "alice", "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	body := "Subject: notified\r\n\r\nhi\r\n"
+	if _, err := other.Append(ctx, "Watched", nil, int64(len(body)), strings.NewReader(body)).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The watcher hears about it on its next command.
+	writeRawCommand(t, clientSide, "N4 NOOP\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "N4 ")
+	if !strings.HasPrefix(tagged, "N4 OK") {
+		t.Fatalf("NOOP failed: %q", tagged)
+	}
+	var reported bool
+	for _, line := range untagged {
+		if strings.HasPrefix(line, "* STATUS") && strings.Contains(line, "Watched") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Errorf("no NOTIFY report for the unselected mailbox: %v", untagged)
+	}
+
+	// NOTIFY NONE stops delivery.
+	writeRawCommand(t, clientSide, "N5 NOTIFY NONE\r\n")
+	if _, tagged := collectUntilTag(t, reader, "N5 "); !strings.HasPrefix(tagged, "N5 OK") {
+		t.Fatalf("NOTIFY NONE failed: %q", tagged)
+	}
+	if _, err := other.Append(ctx, "Watched", nil, int64(len(body)), strings.NewReader(body)).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writeRawCommand(t, clientSide, "N6 NOOP\r\n")
+	untagged, _ = collectUntilTag(t, reader, "N6 ")
+	for _, line := range untagged {
+		if strings.HasPrefix(line, "* STATUS") && strings.Contains(line, "Watched") {
+			t.Errorf("NOTIFY NONE did not stop delivery: %q", line)
+		}
+	}
+}
+
+// newRawSessionOn opens a logged-in raw connection to an existing server.
+func newRawSessionOn(t *testing.T, ctx context.Context, server *imapserver.Server) (*imapserver.Server, net.Conn, *bufio.Reader) {
+	t.Helper()
+	serverSide, clientSide := net.Pipe()
+	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	writeRawCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	collectUntilTag(t, reader, "A1 ")
+	t.Cleanup(func() { _ = clientSide.Close() })
+	return server, clientSide, reader
 }

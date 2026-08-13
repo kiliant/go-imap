@@ -50,6 +50,9 @@ type account struct {
 	metadata      map[imap.MetadataEntryName]string
 	// urlAuthKeys holds the per-mailbox URLAUTH secrets. See ext_e.go.
 	urlAuthKeys map[string][]byte
+	// sessions are the live sessions on this account, so a change in one can
+	// be reported to a NOTIFY registration in another. See ext_d.go.
+	sessions map[*session]struct{}
 }
 
 type mailbox struct {
@@ -150,7 +153,14 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if a == nil || (!verified && credentials.Password != a.password) {
 		return nil, authenticationError()
 	}
-	return &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}, nil
+	s := &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
+	a.mu.Lock()
+	if a.sessions == nil {
+		a.sessions = make(map[*session]struct{})
+	}
+	a.sessions[s] = struct{}{}
+	a.mu.Unlock()
+	return s, nil
 }
 
 // SupportsMove reports that the memory backend implements atomic MOVE.

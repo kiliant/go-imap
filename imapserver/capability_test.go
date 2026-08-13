@@ -26,6 +26,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"MoveSupport":           {"SupportsMove"},
 		"MultiSearchSession":    {"MultiSearch"},
 		"NamespaceSession":      {"Namespace"},
+		"NotifySession":         {"Notify"},
 		"QResyncMailbox":        {"Resync"},
 		"QuotaSession":          {"GetQuota", "QuotaRoots"},
 		"QuotaSetSession":       {"SetQuota"},

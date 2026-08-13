@@ -386,7 +386,89 @@ const (
 	memorySaveLimit    = 1_000
 )
 
+// Notify implements [imapserver.NotifySession].
+//
+// The registration is recorded on the session and every mutating path publishes
+// through it. A nil config is NOTIFY NONE, which drops the registration — the
+// framework has already closed the previous updater by then, so nothing else is
+// needed to stop delivery.
+func (s *session) Notify(ctx context.Context, updater *imapserver.SessionUpdater, config *imapserver.NotifyConfig, _ *imapserver.NotifyOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.account.mu.Lock()
+	defer s.account.mu.Unlock()
+	s.notify, s.notifyConfig = updater, config
+	if config == nil {
+		return nil
+	}
+	// STATUS on SET reports every watched mailbox immediately, so a client that
+	// has just registered does not have to poll once to learn where it stands.
+	// RFC 5465 section 6.
+	if config.StatusOnSet {
+		for _, m := range s.account.mailboxes {
+			if !s.notifyWatchesLocked(m.name) {
+				continue
+			}
+			_ = updater.Push(&imapserver.SessionUpdate{
+				Mailbox: m.name,
+				Status:  statusDataLocked(m, nil),
+			})
+		}
+	}
+	return nil
+}
+
+// notifyWatchesLocked reports whether the current registration covers a mailbox.
+//
+// The caller must hold the account lock.
+func (s *session) notifyWatchesLocked(name string) bool {
+	if s.notifyConfig == nil {
+		return false
+	}
+	for _, group := range s.notifyConfig.Mailboxes {
+		switch group.Specifier {
+		case imapserver.NotifyPersonal, imapserver.NotifySubscribed:
+			return true
+		case imapserver.NotifyInboxes:
+			if mailboxKey(name) == "INBOX" {
+				return true
+			}
+		case imapserver.NotifyMailboxSet:
+			for _, watched := range group.Names {
+				if mailboxKey(watched) == mailboxKey(name) {
+					return true
+				}
+			}
+		case imapserver.NotifySubtree:
+			for _, watched := range group.Names {
+				if name == watched || strings.HasPrefix(name, watched+"/") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// notifyMailboxLocked publishes a mailbox's new state to every session watching
+// it. It is called from the paths that change a mailbox.
+//
+// The caller must hold the account lock.
+func notifyMailboxLocked(a *account, m *mailbox) {
+	for s := range a.sessions {
+		if s.notify == nil || !s.notifyWatchesLocked(m.name) {
+			continue
+		}
+		_ = s.notify.Push(&imapserver.SessionUpdate{
+			Mailbox: m.name,
+			Status:  statusDataLocked(m, nil),
+		})
+	}
+}
+
 var (
+	_ imapserver.NotifySession         = (*session)(nil)
 	_ imapserver.MessageLimitSession   = (*session)(nil)
 	_ imapserver.QuotaSession          = (*session)(nil)
 	_ imapserver.QuotaSetSession       = (*session)(nil)

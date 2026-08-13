@@ -90,6 +90,11 @@ type conn struct {
 	resetDecoder    atomic.Bool
 	ready           chan struct{}
 
+	// notifyQueue and notifyUpdater are the session-scoped NOTIFY channel,
+	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
+	notifyQueue   *sessionUpdateQueue
+	notifyUpdater *SessionUpdater
+
 	state  sessionState // event-loop owned
 	logout bool
 
@@ -408,6 +413,12 @@ func (c *conn) idleUntilDone(ctx context.Context) error {
 			if err := c.drainUpdates(updateAccounting{}); err != nil {
 				return err
 			}
+		case <-c.notifySignal():
+			// NOTIFY events about unselected mailboxes reach the client during
+			// IDLE too — that is the point of the extension.
+			if err := c.drainNotify(); err != nil {
+				return err
+			}
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		case <-c.ctx.Done():
@@ -488,6 +499,11 @@ func (c *conn) eventLoop() (retErr error) {
 		select {
 		case request := <-c.literalRequests:
 			c.handleLiteralRequest(request)
+		case <-c.notifySignal():
+			if err := c.drainNotify(); err != nil {
+				c.failFatal(err)
+				return
+			}
 		case command := <-c.commands:
 			c.releaseCommandBytes(command.bytes)
 			wasPreAuth := c.state.state == stateNotAuthenticated
@@ -510,6 +526,12 @@ func (c *conn) eventLoop() (retErr error) {
 			}
 		case <-c.updateSignal():
 			if err := c.drainUpdates(updateAccounting{}); err != nil {
+				return err
+			}
+		case <-c.notifySignal():
+			// NOTIFY events about unselected mailboxes reach the client during
+			// IDLE too — that is the point of the extension.
+			if err := c.drainNotify(); err != nil {
 				return err
 			}
 		case <-c.ctx.Done():
