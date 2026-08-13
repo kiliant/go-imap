@@ -84,6 +84,31 @@ func registerCapabilities(descriptors ...capabilityDescriptor) {
 	}
 }
 
+// How a capability becomes advertised, and what a handler may assume
+//
+// There are three witnesses, and the choice between them is not stylistic:
+//
+//   - backendSupportsCapability(name) — the *spoken* witness, via
+//     [CapabilitySupport]. Use it when support is spread across data the backend
+//     returns rather than a method it has: CHILDREN, SAVEDATE, WITHIN, CONDSTORE.
+//     Nothing in the type system can tell whether a backend really populates
+//     those, so it has to say so.
+//   - sessionImplements[T]() — the *structural* witness. Use it when the
+//     capability is entirely "can you answer this command": QUOTA, ACL,
+//     METADATA. The interface is the whole of the support, so the type system
+//     can decide and a backend cannot advertise what it has not implemented.
+//   - selectedImplements[T](name) — both, for a capability whose work happens on
+//     a selected mailbox: SORT, THREAD, and MOVE before them. The spoken witness
+//     gates advertisement before selection, when there is no mailbox to inspect;
+//     the interface must then actually be present once one is selected.
+//
+// **Every extension command handler calls requireCapability before doing any
+// work, whichever witness its descriptor uses.** Holding an optional interface
+// is not consent to advertise: a backend may implement [SortMailbox] and decline
+// to witness SORT, and executing the command anyway would let a client use a
+// capability the server never offered. That is the drift the descriptor table
+// exists to prevent, and the type assertion alone does not prevent it.
+//
 // backendSupportsCapability reports whether the backend witnesses the named
 // capability through [CapabilitySupport]. The session's witness wins when it
 // has one, so support can vary by authenticated user.
