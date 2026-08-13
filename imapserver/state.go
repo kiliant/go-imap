@@ -113,14 +113,18 @@ func (s *sessionState) unselect() *selectedState {
 	return selected
 }
 
+// enable records a capability as enabled for this session and applies any
+// side effect the capability has on connection state.
+//
+// It does not decide which capabilities may be enabled. That is the capability
+// descriptor table's job: enableCapabilities only reaches this for a token that
+// is currently advertised and whose descriptor declares an Enable function, so
+// a whitelist here would be a second, silently diverging source of truth. An
+// extension registering a descriptor therefore needs no change to this file.
 func (s *sessionState) enable(capability string) bool {
 	capability = strings.ToUpper(capability)
-	switch capability {
-	case "IMAP4REV2":
+	if capability == "IMAP4REV2" {
 		s.revision = revisionIMAP4rev2
-	case "UTF8=ACCEPT":
-	default:
-		return false
 	}
 	s.enabled[capability] = true
 	return true

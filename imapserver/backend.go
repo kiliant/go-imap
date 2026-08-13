@@ -81,6 +81,27 @@ type MoveSupport interface {
 	SupportsMove() bool
 }
 
+// CapabilitySupport is the open witness by which a Backend or Session declares
+// that it implements the behaviour behind an optional capability. A Backend may
+// implement it to describe support before authentication; a Session may
+// implement it when support varies by authenticated user, and is consulted
+// first when it does.
+//
+// name is an upper-case capability token exactly as it appears on the wire,
+// such as "CONDSTORE" or "SPECIAL-USE". The framework never advertises a
+// capability whose behaviour the backend must implement unless this returns
+// true for it, so a backend that does not recognise a name must return false.
+//
+// This witness is deliberately keyed by an open string rather than by one
+// interface per capability: a future RFC is then a new token, which is a data
+// change, not a type change. Atomic MOVE predates it and keeps its own
+// [MoveSupport] witness.
+//
+// Backend implementations must make SupportsCapability safe for concurrent use.
+type CapabilitySupport interface {
+	SupportsCapability(name string) bool
+}
+
 // ConnInfo describes the transport presented to Backend.Authenticate.
 // Construct with keyed fields only; fields may be added in a future release.
 type ConnInfo struct {
@@ -130,11 +151,36 @@ type MutationOptions struct {
 
 // ListOptions configures a LIST or LSUB operation. A nil pointer selects the
 // defaults.
+//
+// Selection options restrict which mailboxes are returned; return options ask
+// for extra attributes on the mailboxes that are returned. LIST-STATUS is not
+// represented here: RFC 5819 delivers it as a separate untagged STATUS response
+// per mailbox, which the framework issues through [Session.Status] once List has
+// returned, so a backend needs no field for it.
 // Construct with keyed fields only; fields may be added in a future release.
 type ListOptions struct {
 	// Subscribed requests subscribed-mailbox selection.
 	Subscribed bool `imapfeature:"list-subscribed"`
-	_          struct{}
+	// SelectRemote requests that remote mailboxes be included. RFC 5258
+	// section 3.
+	SelectRemote bool `imapfeature:"list-extended"`
+	// SelectRecursiveMatch requests that a mailbox be returned when a child
+	// matches the selection criteria, carrying a CHILDINFO extended item.
+	// It is meaningless without another selection option. RFC 5258 section 3.5.
+	SelectRecursiveMatch bool `imapfeature:"list-extended"`
+	// SelectSpecialUse restricts the result to special-use mailboxes.
+	// RFC 6154 section 5.1.
+	SelectSpecialUse bool `imapfeature:"list-special-use"`
+	// ReturnSubscribed asks for the \Subscribed attribute on returned
+	// mailboxes. RFC 5258 section 3.
+	ReturnSubscribed bool `imapfeature:"list-extended"`
+	// ReturnChildren asks for the \HasChildren and \HasNoChildren attributes.
+	// RFC 3348, incorporated into IMAP4rev2.
+	ReturnChildren bool `imapfeature:"list-children"`
+	// ReturnSpecialUse asks for special-use attributes such as \Archive.
+	// RFC 6154 section 5.2.
+	ReturnSpecialUse bool `imapfeature:"list-special-use"`
+	_                struct{}
 }
 
 // StatusOptions configures STATUS. A nil pointer selects the defaults.
@@ -147,7 +193,15 @@ type StatusOptions struct {
 
 // CreateOptions configures CREATE. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
-type CreateOptions struct{ _ struct{} }
+type CreateOptions struct {
+	// SpecialUse are the use attributes requested for the new mailbox, such as
+	// [imap.MailboxAttrArchive]. It is populated only when the backend
+	// witnesses CREATE-SPECIAL-USE through [CapabilitySupport]; a backend that
+	// cannot honour an attribute must fail the command rather than create a
+	// mailbox without it. RFC 6154 section 3.
+	SpecialUse []imap.MailboxAttr `imapfeature:"create-special-use"`
+	_          struct{}
+}
 
 // DeleteOptions configures DELETE. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
@@ -183,7 +237,40 @@ type AppendOptions struct {
 type SelectOptions struct {
 	// ReadOnly distinguishes EXAMINE from SELECT.
 	ReadOnly bool
-	_        struct{}
+	// CondStore asks the backend to report per-message modification sequences
+	// for this selection. RFC 7162 section 3.1.
+	CondStore bool `imapfeature:"condstore-select"`
+	// QResync carries the client's synchronisation state, or nil when the
+	// selection is not a QRESYNC resynchronisation. Implies CondStore.
+	// RFC 7162 section 3.2.5.
+	QResync *QResyncSelect `imapfeature:"qresync"`
+	_       struct{}
+}
+
+// QResyncSelect is the client's claimed synchronisation state, supplied with
+// SELECT or EXAMINE under QRESYNC. A backend answers it by reporting the
+// messages that changed or vanished since ModSeq.
+//
+// UIDValidity is the value the client last saw. When it does not match the
+// mailbox's current UIDVALIDITY the client's state is stale and the backend
+// must ignore the remaining fields.
+// Construct with keyed fields only; fields may be added in a future release.
+type QResyncSelect struct {
+	// UIDValidity is the UIDVALIDITY the client last observed.
+	UIDValidity uint32
+	// ModSeq is the modification sequence the client last observed.
+	ModSeq uint64
+	// KnownUIDs optionally restricts the report to these UIDs. An empty set
+	// means the client did not restrict it.
+	KnownUIDs imap.UIDSet
+	// SeqMatchSeqNums and SeqMatchUIDs are the optional sequence match data of
+	// RFC 7162 section 3.2.5.2, letting a backend detect a stale client view
+	// without reporting every UID. Both are empty when absent, and have equal
+	// length when present.
+	SeqMatchSeqNums imap.SeqSet
+	// SeqMatchUIDs pairs positionally with SeqMatchSeqNums.
+	SeqMatchUIDs imap.UIDSet
+	_            struct{}
 }
 
 // FetchOptions configures FETCH. A nil pointer selects the defaults.
@@ -191,7 +278,11 @@ type SelectOptions struct {
 type FetchOptions struct {
 	// Items are the data items requested for each matching message.
 	Items []imap.FetchItem
-	_     struct{}
+	// ChangedSince restricts the result to messages whose modification
+	// sequence is greater than this value. Zero means unrestricted.
+	// RFC 7162 section 3.1.4.
+	ChangedSince uint64 `imapfeature:"condstore-fetch"`
+	_            struct{}
 }
 
 // SearchOptions configures SEARCH. A nil pointer selects the defaults.
@@ -231,7 +322,13 @@ type StoreOptions struct {
 	MutationOptions
 	// Silent suppresses the command's FETCH responses, but not state updates.
 	Silent bool
-	_      struct{}
+	// UnchangedSince makes the store conditional: a message whose modification
+	// sequence exceeds this value must be left unmodified. Zero means
+	// unconditional. Backends report the rejected messages through the
+	// CONDSTORE optional interface rather than an error, since a partial
+	// failure is a successful command. RFC 7162 section 3.1.3.
+	UnchangedSince uint64 `imapfeature:"condstore-store"`
+	_              struct{}
 }
 
 // CopyOptions configures COPY. A nil pointer selects the defaults.
@@ -375,7 +472,12 @@ func (*UpdateVanished) update() {}
 type SearchResult struct {
 	// UIDs are the matching message identifiers.
 	UIDs []imap.UID
-	_    struct{}
+	// ModSeq is the highest modification sequence among the matching messages,
+	// or zero when the backend does not track them. The framework reports it
+	// only when the client asked for it and CONDSTORE is active.
+	// RFC 7162 section 3.1.5.
+	ModSeq uint64
+	_      struct{}
 }
 
 // SearchQuery is a UID-normalised SEARCH tree. Values are constructed only by
