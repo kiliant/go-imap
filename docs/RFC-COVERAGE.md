@@ -278,9 +278,9 @@ break the client; full command support is best-effort.
 | URL-PARTIAL | 5550 | done | done | `;PARTIAL=` in IMAP URLs |
 | LANGUAGE | 5255 | done | done | |
 | I18NLEVEL=1 | 5255 | done | done | capability probe |
-| I18NLEVEL=2 | 5255 | done | — [^srvi18n2] | COMPARATOR command |
-| CONTEXT=SEARCH | 5267 | done | — [^srvcontext] | CANCELUPDATE + RETURN keywords |
-| CONTEXT=SORT | 5267 | done | — [^srvcontext] | as above |
+| I18NLEVEL=2 | 5255 | done | done [^srvi18n2] | COMPARATOR command |
+| CONTEXT=SEARCH | 5267 | done | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | done | done [^srvcontext] | as above |
 | ESORT | 5267 | done | done [^srvesort] | capability + RETURN keywords |
 | FILTERS | 5466 | done | — [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
@@ -298,26 +298,34 @@ break the client; full command support is best-effort.
     that a forged token is refused — the one property here that is a security
     question rather than a formatting one.
 
-[^srvi18n2]: I18NLEVEL=2 requires the COMPARATOR command, which is not
-    implemented. Advertising level 2 without it would fail the first client that
-    used it, so only I18NLEVEL=1 is advertised.
+[^srvi18n2]: The COMPARATOR command, through the optional `ComparatorSession`.
+    Comparator names are an open RFC 4790 registry and cross the boundary as
+    strings. A request naming nothing servable returns BADCOMPARATOR rather than
+    a generic NO, so a client can tell it apart and fall back.
 
-[^srvcontext]: **Not advertised, deliberately.** CONTEXT asks the server to hold
-    a search result open and push incremental updates as the mailbox changes —
-    a notification lifetime that outlives the command, like NOTIFY's. Claiming
-    it and then never sending an update is worse than not offering it: a client
-    using CONTEXT reads silence as "nothing changed" rather than "not
-    implemented".
+[^srvcontext]: `RETURN (UPDATE)` registers a search result and `CANCELUPDATE`
+    drops it; removals are reported as `REMOVEFROM` on further untagged ESEARCH
+    responses. The registration is framework state — it already sees every
+    change to the selected mailbox — so no backend learns that CONTEXT exists.
+    **Removals only.** Recognising a message that newly *matches* a stored search
+    would mean re-running the criteria from the update path, which is the
+    backend re-entrancy the design forbids; RFC 5267 §4.3 permits REMOVEFROM
+    without ADDTO, and a guessed ADDTO would put a message in the client's
+    result set that never matched.
 
 [^srvesort]: The ESEARCH-shaped response for SORT. MIN and MAX are the ends of
     the *sorted* order rather than the numerically smallest and largest, and ALL
     preserves that order rather than collapsing it into ranges, which would
     re-sort it.
 
-[^srvfilters]: Server-side saved search filters, which only a backend that
-    stores them can serve. No optional interface is defined: the extension's
-    value is in the filters existing, and inventing surface no backend asked for
-    would be cost without a caller.
+[^srvfilters]: **The one capability still out, and the reason is a boundary.** A
+    saved filter is referenced by a FILTER search key, and `package imap` has no
+    criteria type for one — the client's FILTERS work recorded that gap and
+    escalated it to T02. Adding `imap.SearchFilter` is additive and therefore
+    permitted after v1.0, but it changes the frozen root package *and* the shared
+    codec, which is a decision to take deliberately rather than as a side effect
+    of an extension task. The server-side work is small once the type exists:
+    one optional interface and a substitution walk over the criteria tree.
 
 ## Not in the registry but required
 
@@ -349,7 +357,9 @@ would force a post-v1.0 break. Re-check at each milestone.
     cleartext without the `AllowInsecureAuth` opt-in PLAIN needs, because no
     password crosses the wire.
 
-[^srvscramplus]: The `-PLUS` variants are deliberately not advertised
-    server-side. Advertising them commits the server to rejecting a client that
-    downgrades to the non-PLUS form, and getting that wrong converts a downgrade
-    defence into a downgrade vector. Absent is better than approximate.
+[^srvscramplus]: Implemented, binding to RFC 9266's tls-exporter. Both
+    directions of RFC 5802 §6's downgrade defence are enforced: a `y` GS2 header
+    is refused whenever `-PLUS` is advertised, since that belief can only come
+    from tampering, and a `-PLUS` mechanism must present binding data matching
+    the connection. The stored derivation is shared with the unbound form —
+    `-PLUS` changes the exchange, not the credential.

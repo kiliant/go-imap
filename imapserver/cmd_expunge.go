@@ -47,6 +47,9 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	}
 	origin := nextCommandOrigin()
 	shadow := slices.Clone(selected.uids)
+	// Collected for the CONTEXT registrations, which the command's own
+	// responses bypass. See ext_e_context.go.
+	var removed []imap.UID
 	writer := newExpungeWriter(func(_ context.Context, uid imap.UID) error {
 		at, ok := slices.BinarySearch(shadow, uid)
 		if !ok {
@@ -66,6 +69,7 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 			}
 		}
 		shadow = slices.Delete(shadow, at, at+1)
+		removed = append(removed, uid)
 		return nil
 	})
 	err := selected.mailbox.Expunge(ctx, writer, nil, &ExpungeOptions{MutationOptions: MutationOptions{Origin: origin}})
@@ -74,6 +78,9 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 		return false, writeBackendError(c, command.tag, command.name, err)
 	}
 	if err := c.drainUpdates(updateAccounting{origin: origin, effect: effectExpunge}); err != nil {
+		return false, err
+	}
+	if err := notifySearchContexts(c, removed); err != nil {
 		return false, err
 	}
 	if silent {

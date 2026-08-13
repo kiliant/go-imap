@@ -253,3 +253,58 @@ func TestLoopbackComparator(t *testing.T) {
 		t.Errorf("unservable comparator = %q, want BADCOMPARATOR", tagged)
 	}
 }
+
+// CONTEXT=SEARCH keeps reporting changes to a search result after the command
+// finished — the notification lifetime that made this the last capability to
+// land. RFC 5267.
+func TestLoopbackSearchContextUpdate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "E1 SEARCH RETURN (ALL UPDATE) ALL\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "E1 ")
+	if !strings.HasPrefix(tagged, "E1 OK") {
+		t.Fatalf("SEARCH RETURN (UPDATE) failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* ESEARCH"); !strings.Contains(line, "ALL") {
+		t.Fatalf("ESEARCH = %q", line)
+	}
+
+	// Removing a matching message must produce a REMOVEFROM tagged with the
+	// registering command's tag, so the client knows which result changed.
+	writeRawCommand(t, clientSide, "E2 STORE 2 +FLAGS (\\Deleted)\r\n")
+	collectUntilTag(t, reader, "E2 ")
+	writeRawCommand(t, clientSide, "E3 EXPUNGE\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "E3 ")
+	if !strings.HasPrefix(tagged, "E3 OK") {
+		t.Fatalf("EXPUNGE failed: %q", tagged)
+	}
+	var removeFrom string
+	for _, line := range untagged {
+		if strings.Contains(line, "REMOVEFROM") {
+			removeFrom = line
+		}
+	}
+	if removeFrom == "" {
+		t.Fatalf("no REMOVEFROM for the registered context: %v", untagged)
+	}
+	if !strings.Contains(removeFrom, `"E1"`) {
+		t.Errorf("REMOVEFROM is not tagged with the registering command: %q", removeFrom)
+	}
+
+	// CANCELUPDATE stops it.
+	writeRawCommand(t, clientSide, "E4 CANCELUPDATE \"E1\"\r\n")
+	if _, tagged := collectUntilTag(t, reader, "E4 "); !strings.HasPrefix(tagged, "E4 OK") {
+		t.Fatalf("CANCELUPDATE failed: %q", tagged)
+	}
+	writeRawCommand(t, clientSide, "E5 STORE 1 +FLAGS (\\Deleted)\r\n")
+	collectUntilTag(t, reader, "E5 ")
+	writeRawCommand(t, clientSide, "E6 EXPUNGE\r\n")
+	untagged, _ = collectUntilTag(t, reader, "E6 ")
+	for _, line := range untagged {
+		if strings.Contains(line, "REMOVEFROM") {
+			t.Errorf("CANCELUPDATE did not stop context updates: %q", line)
+		}
+	}
+}

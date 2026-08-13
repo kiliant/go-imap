@@ -101,7 +101,10 @@ func validateSearchReturnOptions(c *conn, args *searchArgs) error {
 				return fmt.Errorf("SEARCH return option PARTIAL requires PARTIAL")
 			}
 		default:
-			return fmt.Errorf("unsupported SEARCH return option %q", option)
+			// The remaining options belong to CONTEXT. See ext_e_context.go.
+			if err := validateContextReturnOptions(c, option); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -117,6 +120,10 @@ func validateSearchReturnOptions(c *conn, args *searchArgs) error {
 func writeSearchResponse(c *conn, command *queuedCommand, args *searchArgs, uids []imap.UID, numbers []uint32) error {
 	if args.extended {
 		saveSearchResult(c, args, uids)
+		// CONTEXT registers the result so later changes to it are reported.
+		if tag, ok := searchContextTag(command, args.returnOptions); ok {
+			registerSearchContext(c, tag, uids, commandUsesUIDs(command))
+		}
 		return writeESearchResponse(c, command, args, numbers)
 	}
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("SEARCH")
@@ -167,7 +174,7 @@ func searchReturnSet(args *searchArgs) map[string]bool {
 	}
 	if !requested[searchReturnMin] && !requested[searchReturnMax] &&
 		!requested[searchReturnAll] && !requested[searchReturnCount] &&
-		!requested[searchReturnPartial] {
+		!requested[searchReturnPartial] && !requested[searchReturnUpd] {
 		requested[searchReturnAll] = true
 	}
 	return requested

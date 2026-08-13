@@ -683,6 +683,9 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 	if selected == nil || selected.queue == nil {
 		return nil
 	}
+	// removed collects the expunged UIDs so CONTEXT registrations can be told
+	// which of their matches went away. See ext_e_context.go.
+	var removed []imap.UID
 	var pending []deliveredUpdate
 	for _, batch := range selected.queue.popAll() {
 		updates, err := selected.applyBatch(batch, accounting)
@@ -696,11 +699,20 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 		pending = append(pending, updates...)
 	}
 	for _, update := range coalesceWireUpdates(pending) {
+		if update.kind == updateMessageExpunge || update.kind == updateMessageVanished {
+			removed = append(removed, update.uid)
+		}
 		if err := c.writeUpdate(update); err != nil {
 			return err
 		}
 	}
-	return c.encoder.Flush()
+	if err := c.encoder.Flush(); err != nil {
+		return err
+	}
+	// CONTEXT registrations hear which of their matches were removed. This runs
+	// after the ordinary updates so the client sees the expunge before the
+	// REMOVEFROM that explains it.
+	return notifySearchContexts(c, removed)
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {

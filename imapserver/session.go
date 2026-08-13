@@ -437,6 +437,9 @@ type selectedState struct {
 	// state, not backend state, per the contract on SelectedMailbox: it is
 	// scoped to this selection and discarded with it. RFC 5182.
 	savedSearch imap.UIDSet
+	// contexts are the CONTEXT=SEARCH registrations, also scoped to this
+	// selection. See ext_e_context.go.
+	contexts []*searchContext
 }
 
 //lint:ignore U1000 T22's SELECT handler is the first production caller; T19 owns the atomic attachment primitive.
