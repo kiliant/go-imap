@@ -95,6 +95,9 @@ func parseListReturnOptions(decoder *imapwire.Decoder, args *listArgs) error {
 		}
 		option = strings.ToUpper(option)
 		args.returnOptions = append(args.returnOptions, option)
+		if option == listReturnMetadata {
+			return parseListMetadataEntries(decoder, args)
+		}
 		if option != listReturnStatus {
 			return nil
 		}
@@ -174,7 +177,10 @@ func applyListOptions(c *conn, args *listArgs, options *ListOptions) error {
 				return fmt.Errorf("LIST return option STATUS requires LIST-STATUS")
 			}
 		default:
-			return fmt.Errorf("unsupported LIST return option %q", option)
+			// The remaining options belong to other extension groups.
+			if err := validateListExtensionReturnOptions(c, option); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -184,6 +190,15 @@ func applyListOptions(c *conn, args *listArgs, options *ListOptions) error {
 // responses.
 func wantsListStatus(args *listArgs) bool {
 	return len(args.statusItems) > 0 && slices.Contains(args.returnOptions, listReturnStatus)
+}
+
+// wantsPerMailboxResponses reports whether any return option needs the framework
+// to remember which mailboxes LIST returned, so it can query each one after
+// Session.List has finished streaming.
+func wantsPerMailboxResponses(args *listArgs) bool {
+	return wantsListStatus(args) ||
+		slices.Contains(args.returnOptions, listReturnMyRights) ||
+		slices.Contains(args.returnOptions, listReturnMetadata)
 }
 
 // writeListStatus answers LIST-STATUS, issuing one untagged STATUS response per

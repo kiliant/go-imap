@@ -18,6 +18,8 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"Backend":               {"Authenticate"},
 		"CapabilitySupport":     {"SupportsCapability"},
 		"CondStoreMailbox":      {"StoreCondStore"},
+		"LanguageSession":       {"Languages", "SetLanguage"},
+		"MessageLimitSession":   {"MessageLimits"},
 		"MetadataSession":       {"GetMetadata", "SetMetadata"},
 		"MoveMailbox":           {"Move"},
 		"MoveSupport":           {"SupportsMove"},
@@ -31,6 +33,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"Session":               {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
 		"SortMailbox":           {"Sort"},
 		"ThreadMailbox":         {"Thread"},
+		"URLAuthSession":        {"FetchURLAuth", "GenerateURLAuth", "ResetURLAuthKey"},
 		"UnauthenticateSession": {"Unauthenticate"},
 		"Update":                {"update"},
 	}
@@ -160,7 +163,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
 		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
 		QuotaOptions{}, ACLOptions{}, ACLSetOptions{}, MetadataOptions{}, NamespaceOptions{}, UnauthenticateOptions{},
-		SortOptions{}, ThreadOptions{}, MultiSearchOptions{}, MultiSearchMailboxResult{},
+		SortOptions{}, ThreadOptions{}, MultiSearchOptions{}, MultiSearchMailboxResult{}, MessageLimitOptions{}, LanguageOptions{}, URLAuthOptions{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")

@@ -51,6 +51,10 @@ var supportedCapabilities = map[string]bool{
 	"BINARY":       true,
 	"MULTISEARCH":  true,
 	"UTF8=APPEND":  true,
+	// Group E. LANGUAGE and URLAUTH witness themselves through their optional
+	// interfaces; these are the tokens that need a spoken claim.
+	"I18NLEVEL=1": true,
+	"URL-PARTIAL": true,
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared

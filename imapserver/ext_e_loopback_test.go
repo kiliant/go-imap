@@ -1,0 +1,146 @@
+package imapserver_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+// LANGUAGE reports what is available, then adopts one. RFC 5255 section 3.2.
+func TestLoopbackLanguage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "E1 LANGUAGE\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "E1 ")
+	if !strings.HasPrefix(tagged, "E1 OK") {
+		t.Fatalf("LANGUAGE failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* LANGUAGE"); !strings.Contains(line, "en") {
+		t.Errorf("LANGUAGE = %q, want the available tags", line)
+	}
+
+	// RFC 4647 matches by prefix, so en-GB selects en — and the response says
+	// which tag was actually adopted, not which was asked for.
+	writeRawCommand(t, clientSide, "E2 LANGUAGE \"en-GB\"\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "E2 ")
+	if !strings.HasPrefix(tagged, "E2 OK") {
+		t.Fatalf("LANGUAGE en-GB failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* LANGUAGE"); !strings.Contains(line, `"en"`) {
+		t.Errorf("adopted language = %q, want en", line)
+	}
+
+	writeRawCommand(t, clientSide, "E3 LANGUAGE \"xx\"\r\n")
+	if _, tagged := collectUntilTag(t, reader, "E3 "); !strings.HasPrefix(tagged, "E3 NO") {
+		t.Errorf("an unavailable language was accepted: %q", tagged)
+	}
+}
+
+// The URLAUTH round trip, and the property that actually matters: a forged
+// token must not grant access.
+func TestLoopbackURLAuth(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	url := "imap://alice@example.com/INBOX/;UID=1"
+	writeRawCommand(t, clientSide, "E1 GENURLAUTH \""+url+"\" INTERNAL\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "E1 ")
+	if !strings.HasPrefix(tagged, "E1 OK") {
+		t.Fatalf("GENURLAUTH failed: %q", tagged)
+	}
+	line := findResponse(t, untagged, "* GENURLAUTH")
+	authorized := strings.Trim(strings.TrimPrefix(line, "* GENURLAUTH "), `"`)
+	if !strings.Contains(authorized, ":internal:") {
+		t.Fatalf("GENURLAUTH did not return an authorized URL: %q", line)
+	}
+
+	writeRawCommand(t, clientSide, "E2 URLFETCH \""+authorized+"\"\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "E2 ")
+	if !strings.HasPrefix(tagged, "E2 OK") {
+		t.Fatalf("URLFETCH failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* URLFETCH"); strings.Contains(line, "NIL") {
+		t.Errorf("a valid URL was not resolved: %q", line)
+	}
+
+	// A tampered token resolves to NIL. This is the security property, not a
+	// formatting detail: if it passed, anyone could mint access to any message.
+	forged := authorized[:len(authorized)-4] + "AAAA"
+	writeRawCommand(t, clientSide, "E3 URLFETCH \""+forged+"\"\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "E3 ")
+	if !strings.HasPrefix(tagged, "E3 OK") {
+		t.Fatalf("URLFETCH of a forged URL should still succeed as a command: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* URLFETCH"); !strings.Contains(line, "NIL") {
+		t.Errorf("a forged token was honoured: %q", line)
+	}
+
+	// RESETKEY revokes every token minted so far.
+	writeRawCommand(t, clientSide, "E4 RESETKEY\r\n")
+	if _, tagged := collectUntilTag(t, reader, "E4 "); !strings.HasPrefix(tagged, "E4 OK") {
+		t.Fatalf("RESETKEY failed: %q", tagged)
+	}
+	writeRawCommand(t, clientSide, "E5 URLFETCH \""+authorized+"\"\r\n")
+	untagged, _ = collectUntilTag(t, reader, "E5 ")
+	if line := findResponse(t, untagged, "* URLFETCH"); !strings.Contains(line, "NIL") {
+		t.Errorf("RESETKEY did not revoke the existing URL: %q", line)
+	}
+}
+
+// ESORT returns the SORT result in ESEARCH's shape. MIN and MAX are the first
+// and last of the *sorted* order, which is what makes them different from
+// SEARCH's. RFC 5267 section 4.
+func TestLoopbackESort(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "E1 SORT RETURN (MIN MAX COUNT) (REVERSE SUBJECT) UTF-8 ALL\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "E1 ")
+	if !strings.HasPrefix(tagged, "E1 OK") {
+		t.Fatalf("ESORT failed: %q", tagged)
+	}
+	line := findResponse(t, untagged, "* ESEARCH")
+	// Reversed by subject, so the first of the order is message 3.
+	if !strings.Contains(line, "MIN 3") || !strings.Contains(line, "MAX 1") {
+		t.Errorf("ESORT MIN/MAX = %q, want the ends of the sorted order", line)
+	}
+	if !strings.Contains(line, "COUNT 3") {
+		t.Errorf("ESORT COUNT = %q", line)
+	}
+
+	// ALL preserves the sorted order rather than collapsing it into ranges,
+	// which would re-sort it.
+	writeRawCommand(t, clientSide, "E2 SORT RETURN (ALL) (REVERSE SUBJECT) UTF-8 ALL\r\n")
+	untagged, _ = collectUntilTag(t, reader, "E2 ")
+	if line := findResponse(t, untagged, "* ESEARCH"); !strings.Contains(line, "ALL 3,2,1") {
+		t.Errorf("ESORT ALL = %q, want the order preserved", line)
+	}
+}
+
+// CONTEXT=SEARCH, CONTEXT=SORT and FILTERS are deliberately not advertised.
+// Claiming CONTEXT without sending the incremental updates it promises would be
+// worse than not offering it: silence would read as "nothing changed".
+func TestGroupEUnadvertisedCapabilities(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "E1 CAPABILITY\r\n")
+	untagged, _ := collectUntilTag(t, reader, "E1 ")
+	line := findResponse(t, untagged, "* CAPABILITY")
+	for _, absent := range []string{"CONTEXT=SEARCH", "CONTEXT=SORT", "FILTERS", "I18NLEVEL=2"} {
+		if strings.Contains(line, absent) {
+			t.Errorf("%s is advertised but not implemented: %q", absent, line)
+		}
+	}
+	for _, present := range []string{"LANGUAGE", "URLAUTH", "ESORT", "I18NLEVEL=1"} {
+		if !strings.Contains(line, present) {
+			t.Errorf("%s is implemented but not advertised: %q", present, line)
+		}
+	}
+}

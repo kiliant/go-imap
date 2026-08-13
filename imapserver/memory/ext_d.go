@@ -361,7 +361,27 @@ func (s *session) Unauthenticate(ctx context.Context, _ *imapserver.Unauthentica
 	return ctx.Err()
 }
 
+// MessageLimits implements [imapserver.MessageLimitSession].
+//
+// RFC 9738 puts the value inside the advertised capability token, so a zero
+// here means "advertise nothing" rather than "advertise a limit of zero".
+func (s *session) MessageLimits(ctx context.Context, _ *imapserver.MessageLimitOptions) (uint32, uint32, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
+	return memoryMessageLimit, memorySaveLimit, nil
+}
+
+// The reference backend keeps everything in memory, so these are modest on
+// purpose: a limit a test can actually reach is worth more than a large one
+// that never fires.
+const (
+	memoryMessageLimit = 10_000
+	memorySaveLimit    = 1_000
+)
+
 var (
+	_ imapserver.MessageLimitSession   = (*session)(nil)
 	_ imapserver.QuotaSession          = (*session)(nil)
 	_ imapserver.QuotaSetSession       = (*session)(nil)
 	_ imapserver.ACLSession            = (*session)(nil)

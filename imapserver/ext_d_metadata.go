@@ -58,6 +58,13 @@ func init() {
 		// METADATA-SERVER is the weaker claim: server-scope annotations only.
 		// A backend implementing the interface can serve both, so METADATA
 		// implies it rather than the two being alternatives.
+		// RFC 9590's LIST return option. See ext_d_listret.go.
+		capabilityDescriptor{
+			Name:            "LIST-METADATA",
+			States:          stateMaskAuthenticated | stateMaskSelected,
+			Depends:         []string{"METADATA"},
+			RequiresBackend: sessionImplements[MetadataSession](),
+		},
 		capabilityDescriptor{
 			Name:            "METADATA-SERVER",
 			States:          stateMaskAuthenticated | stateMaskSelected,

@@ -165,6 +165,9 @@ func deriveCapabilities(state *sessionState, server *Server) []string {
 			capabilities = append(capabilities, descriptor.Name)
 		}
 	}
+	// Capabilities whose advertised token embeds a backend-supplied value are
+	// rewritten here. See ext_d_listret.go.
+	capabilities = capabilityValueOverrides(state, capabilities)
 	slices.Sort(capabilities)
 	if at := slices.Index(capabilities, "IMAP4REV1"); at > 0 {
 		capabilities[0], capabilities[at] = capabilities[at], capabilities[0]

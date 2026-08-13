@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -144,9 +145,12 @@ func selectedImplements[T any](name string) func(*sessionState, Backend) bool {
 }
 
 type sortArgs struct {
-	keys     []imap.SortKeySpec
-	charset  string
-	criteria imap.SearchCriteria
+	keys []imap.SortKeySpec
+	// returnOptions carries ESORT's RETURN clause. See ext_e_context.go.
+	returnOptions []string
+	extended      bool
+	charset       string
+	criteria      imap.SearchCriteria
 }
 
 func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
@@ -154,6 +158,27 @@ func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
 		return nil, 0, decoder.Err()
 	}
 	args := &sortArgs{}
+	// ESORT puts a RETURN clause before the sort keys. RFC 5267 section 4.
+	if decoder.PeekAtomEqual("RETURN") {
+		var keyword string
+		if !decoder.ExpectAtom(&keyword) || !decoder.ExpectSP() {
+			return nil, 0, decoder.Err()
+		}
+		args.extended = true
+		if err := decoder.ExpectList(func() error {
+			var option string
+			if !decoder.ExpectAtom(&option) {
+				return decoder.Err()
+			}
+			args.returnOptions = append(args.returnOptions, strings.ToUpper(option))
+			return nil
+		}); err != nil {
+			return nil, 0, err
+		}
+		if !decoder.ExpectSP() {
+			return nil, 0, decoder.Err()
+		}
+	}
 	// RFC 5256 section 3: the sort key list comes first, then the charset,
 	// which is mandatory here unlike in SEARCH.
 	if err := decoder.ExpectList(func() error {
@@ -227,6 +252,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCapability(c, "SORT"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	if err := validateSortReturnOptions(c, args.returnOptions); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	mailbox, ok := c.state.selected.mailbox.(SortMailbox)
 	if !ok {
 		return c.writeBad(command.tag, "SORT is not available")
@@ -242,20 +270,19 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	// The backend's order is the answer, so the result is mapped in place
 	// rather than sorted. A message that vanished between the search and the
 	// response is dropped rather than reported at a stale sequence number.
-	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("SORT")
+	numbers := make([]uint32, 0, len(uids))
 	for _, uid := range uids {
 		seqNum, present := c.state.selected.sequence(uid)
 		if !present {
 			continue
 		}
 		if commandUsesUIDs(command) {
-			c.encoder.SP().Number(uint32(uid))
+			numbers = append(numbers, uint32(uid))
 		} else {
-			c.encoder.SP().Number(uint32(seqNum))
+			numbers = append(numbers, uint32(seqNum))
 		}
 	}
-	c.encoder.CRLF()
-	if err := c.encoder.Flush(); err != nil {
+	if err := writeSortResponse(c, command, args, numbers); err != nil {
 		return err
 	}
 	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
@@ -294,6 +321,62 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 		return err
 	}
 	return c.drainUpdates(updateAccounting{})
+}
+
+// writeSortResponse renders a SORT result in whichever of the two shapes the
+// command asked for: the RFC 5256 number list, or ESORT's ESEARCH-shaped
+// response when a RETURN clause was present.
+//
+// The ordered result is what makes MIN and MAX meaningful here: they are the
+// first and last of the *sorted* order, not the numerically smallest and
+// largest, which is exactly why RFC 5267 defines them separately for SORT.
+func writeSortResponse(c *conn, command *queuedCommand, args *sortArgs, numbers []uint32) error {
+	if !args.extended {
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("SORT")
+		for _, number := range numbers {
+			c.encoder.SP().Number(number)
+		}
+		c.encoder.CRLF()
+		return c.encoder.Flush()
+	}
+	requested := sortReturnSet(args.returnOptions)
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().
+		Special('(').Atom("TAG").SP().Quoted(command.tag).Special(')')
+	if commandUsesUIDs(command) {
+		c.encoder.SP().Atom("UID")
+	}
+	if len(numbers) > 0 {
+		if requested[sortReturnMin] {
+			c.encoder.SP().Atom(sortReturnMin).SP().Number(numbers[0])
+		}
+		if requested[sortReturnMax] {
+			c.encoder.SP().Atom(sortReturnMax).SP().Number(numbers[len(numbers)-1])
+		}
+		if requested[sortReturnAll] {
+			// ALL keeps the sorted order, so it is written as a plain list
+			// rather than collapsed into ranges: collapsing would re-sort it.
+			c.encoder.SP().Atom(sortReturnAll).SP().Atom(numberListString(numbers))
+		}
+	}
+	if requested[sortReturnCount] {
+		c.encoder.SP().Atom(sortReturnCount).SP().Number(uint32(len(numbers)))
+	}
+	c.encoder.CRLF()
+	return c.encoder.Flush()
+}
+
+// numberListString renders numbers in the order given, without collapsing runs
+// into ranges. A sorted result's order is data, and range notation would lose
+// it.
+func numberListString(numbers []uint32) string {
+	var builder strings.Builder
+	for i, number := range numbers {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString(strconv.FormatUint(uint64(number), 10))
+	}
+	return builder.String()
 }
 
 // writeThreadNode writes one thread tree.

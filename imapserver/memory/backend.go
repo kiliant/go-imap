@@ -44,6 +44,8 @@ type account struct {
 	quotaStorage  uint64
 	quotaMessages uint64
 	metadata      map[imap.MetadataEntryName]string
+	// urlAuthKeys holds the per-mailbox URLAUTH secrets. See ext_e.go.
+	urlAuthKeys map[string][]byte
 }
 
 type mailbox struct {

@@ -18,6 +18,8 @@ type listArgs struct {
 	// See ext_a_list.go.
 	returnOptions []string
 	statusItems   []imap.StatusItem
+	// metadataEntries carries RETURN (METADATA ...). See ext_d_listret.go.
+	metadataEntries []imap.MetadataEntryName
 }
 
 func parseList(decoder *imapwire.Decoder) (any, int64, error) {
@@ -124,7 +126,7 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if count > maxCommandListResults {
 			return commandLimitError("LIST result limit exceeded")
 		}
-		if wantsListStatus(args) {
+		if wantsPerMailboxResponses(args) {
 			statusMailboxes = append(statusMailboxes, data.Mailbox)
 		}
 		attrs := listResultAttrs(args, options, data.Attrs)
@@ -145,6 +147,12 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeBackendError(c, command.tag, writtenName, err)
 	}
 	if err := writeListStatus(ctx, c, args, statusMailboxes); err != nil {
+		return writeBackendError(c, command.tag, writtenName, err)
+	}
+	if err := writeListMyRights(ctx, c, args, statusMailboxes); err != nil {
+		return writeBackendError(c, command.tag, writtenName, err)
+	}
+	if err := writeListMetadata(ctx, c, args, statusMailboxes); err != nil {
 		return writeBackendError(c, command.tag, writtenName, err)
 	}
 	return c.writeTagged(command.tag, "OK", writtenName+" completed")

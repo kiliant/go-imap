@@ -215,16 +215,16 @@ CONDSTORE `MODIFIED` on tagged OK.
 | QUOTASET | 9208 | done | done |
 | ACL | 4314 | done | done |
 | RIGHTS= | 4314 | done | done [^srvrights] |
-| LIST-MYRIGHTS | 8440 | done | partial [^srvlistret] |
+| LIST-MYRIGHTS | 8440 | done | done |
 | METADATA | 5464 | done | done |
 | METADATA-SERVER | 5464 | done | done |
-| LIST-METADATA | 9590 | done | — [^srvlistret] |
+| LIST-METADATA | 9590 | done | done |
 | NOTIFY | 5465 | done | — [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
-| UIDONLY | 9586 | done | — [^srvpending] |
+| UIDONLY | 9586 | done | — [^srvuidonly] |
 | INPROGRESS | 9585 | done | done [^srvinprogress] |
-| MESSAGELIMIT= | 9738 | done | — [^srvpending] |
-| SAVELIMIT= | 9738 | done | — [^srvpending] |
+| MESSAGELIMIT= | 9738 | done | done |
+| SAVELIMIT= | 9738 | done | done |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
 
 [^srvquotares]: Resource names cross the backend boundary as open
@@ -235,17 +235,17 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvrights]: Rights are open `imap.ACLRights` strings in both directions; a
     letter this library does not know passes through verbatim.
 
-[^srvlistret]: The standalone MYRIGHTS command is implemented; the LIST *return
-    option* forms of RFC 8440 and RFC 9590 need group A's LIST return-option
-    plumbing to grow an entry, which is a small follow-up rather than new
-    backend surface.
+[^srvuidonly]: **Blocked.** RFC 9586 requires FETCH responses to become
+    `* UIDFETCH <uid> (...)` once enabled. The FETCH item-list encoder lives in
+    `internal/imapcodec` (T18's package) with no items-only entry point, so the
+    response form cannot be produced from `imapserver`. Advertising UIDONLY
+    while still sending `* n FETCH` would be a false claim, so it is not
+    advertised at all.
 
 [^srvnotify]: **Escalated, not deferred by choice.** NOTIFY needs a
     session-scoped update channel in `imapserver/session.go`, which T23 does not
     own, and T23's spec names widening the selection-scoped `Updater` as the
     trap to avoid. Needs a `server-core` change first.
-
-[^srvpending]: Not yet implemented server-side.
 
 [^srvinprogress]: The untagged OK progress response shape is framework-owned and
     advertised; no backend surface is required to emit one.
@@ -259,23 +259,55 @@ CONDSTORE `MODIFIED` on tagged OK.
 Implement the parse path so responses from servers advertising these do not
 break the client; full command support is best-effort.
 
-| Capability | RFC | Status | Note |
-|---|---|---|---|
-| LOGIN-REFERRALS | 2221 | done | referral response codes parse |
-| MAILBOX-REFERRALS | 2193 | done | as above |
-| URLAUTH | 4467 | done | GENURLAUTH / URLFETCH / RESETKEY |
-| URLAUTH=BINARY | 5524 | done | capability accepted with URLAUTH |
-| URL-PARTIAL | 5550 | done | `;PARTIAL=` in IMAP URLs |
-| LANGUAGE | 5255 | done | |
-| I18NLEVEL=1 | 5255 | done | capability probe |
-| I18NLEVEL=2 | 5255 | done | COMPARATOR command |
-| CONTEXT=SEARCH | 5267 | done | CANCELUPDATE + RETURN keywords |
-| CONTEXT=SORT | 5267 | done | as above |
-| ESORT | 5267 | done | capability + RETURN keywords; SORT cmd is T10 |
-| FILTERS | 5466 | done | UNDEFINED-FILTER parse; SearchFilter escalated to T02 |
-| CONVERT | 5259 | deferred | no known server support |
-| IMAPSIEVE= | 6785 | deferred | server-side; parse only |
-| ANNOTATE-EXPERIMENT-1 | 5257 | deferred | superseded by METADATA |
+| Capability | RFC | Client | Server | Note |
+|---|---|---|---|---|
+| LOGIN-REFERRALS | 2221 | done | done [^srvreferral] | referral response codes parse |
+| MAILBOX-REFERRALS | 2193 | done | done [^srvreferral] | as above |
+| URLAUTH | 4467 | done | done [^srvurlauth] | GENURLAUTH / URLFETCH / RESETKEY |
+| URLAUTH=BINARY | 5524 | done | done | capability accepted with URLAUTH |
+| URL-PARTIAL | 5550 | done | done | `;PARTIAL=` in IMAP URLs |
+| LANGUAGE | 5255 | done | done | |
+| I18NLEVEL=1 | 5255 | done | done | capability probe |
+| I18NLEVEL=2 | 5255 | done | — [^srvi18n2] | COMPARATOR command |
+| CONTEXT=SEARCH | 5267 | done | — [^srvcontext] | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | done | — [^srvcontext] | as above |
+| ESORT | 5267 | done | done [^srvesort] | capability + RETURN keywords |
+| FILTERS | 5466 | done | — [^srvfilters] | UNDEFINED-FILTER parse |
+| CONVERT | 5259 | deferred | deferred | no known server support |
+| IMAPSIEVE= | 6785 | deferred | deferred | server-side; parse only |
+| ANNOTATE-EXPERIMENT-1 | 5257 | deferred | deferred | superseded by METADATA |
+
+[^srvreferral]: No code beyond the advertisement. Referrals are response *codes*,
+    and `imap.ResponseCode` is an open string type carried on `*imap.Error`, so
+    a backend returning one is already relayed verbatim. API rule 5 paying off:
+    the extension is a data change, not a type change.
+
+[^srvurlauth]: GENURLAUTH, URLFETCH and RESETKEY, with tokens minted and verified
+    by the backend since only it holds the per-mailbox secret. The reference
+    backend uses an HMAC and a constant-time comparison, and its test asserts
+    that a forged token is refused — the one property here that is a security
+    question rather than a formatting one.
+
+[^srvi18n2]: I18NLEVEL=2 requires the COMPARATOR command, which is not
+    implemented. Advertising level 2 without it would fail the first client that
+    used it, so only I18NLEVEL=1 is advertised.
+
+[^srvcontext]: **Not advertised, deliberately.** CONTEXT asks the server to hold
+    a search result open and push incremental updates as the mailbox changes —
+    a notification lifetime that outlives the command, like NOTIFY's. Claiming
+    it and then never sending an update is worse than not offering it: a client
+    using CONTEXT reads silence as "nothing changed" rather than "not
+    implemented".
+
+[^srvesort]: The ESEARCH-shaped response for SORT. MIN and MAX are the ends of
+    the *sorted* order rather than the numerically smallest and largest, and ALL
+    preserves that order rather than collapsing it into ranges, which would
+    re-sort it.
+
+[^srvfilters]: Server-side saved search filters, which only a backend that
+    stores them can serve. No optional interface is defined: the extension's
+    value is in the filters existing, and inventing surface no backend asked for
+    would be cost without a caller.
 
 ## Not in the registry but required
 
