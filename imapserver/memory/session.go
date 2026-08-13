@@ -249,7 +249,10 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	}
 	uid := m.uidNext
 	m.uidNext++
-	m.messages = append(m.messages, &message{uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis})
+	m.messages = append(m.messages, &message{
+		uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
+		modSeq: bumpModSeqLocked(m), saveDate: time.Now(),
+	})
 	batch := advanceLocked(m, origin, []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}})
 	publishLocked(m, batch)
 	uidValidity := m.uidValidity
@@ -371,13 +374,13 @@ func snapshotLocked(m *mailbox, readOnly bool) imapserver.SelectSnapshot {
 			UIDNext:        m.uidNext,
 			UIDValidity:    m.uidValidity,
 			Unseen:         unseen,
-			NoModSeq:       true,
+			HighestModSeq:  m.highestModSeq,
 			ReadOnly:       readOnly,
 		},
 		Flags:          cloneFlags(flags),
 		PermanentFlags: append(cloneFlags(flags), imap.FlagWildcard),
 		ReadOnly:       readOnly,
-		NoModSeq:       true,
+		HighestModSeq:  m.highestModSeq,
 		Revision:       revision(m.revision),
 	}
 }

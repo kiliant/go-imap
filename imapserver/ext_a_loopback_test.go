@@ -301,9 +301,7 @@ func TestLoopbackCreateSpecialUse(t *testing.T) {
 func TestGroupACapabilitiesRequireBackendWitness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	server := imapserver.New(&unwitnessedBackend{backend: memory.New(&memory.Options{
-		Users: map[string]string{"alice": "secret"},
-	})}, &imapserver.Options{AllowInsecureAuth: true})
+	server := newUnwitnessedServer(t)
 	client, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
 	if err := client.Login(ctx, "alice", "secret", nil); err != nil {
 		t.Fatal(err)
@@ -332,6 +330,14 @@ type unwitnessedBackend struct{ backend imapserver.Backend }
 
 func (b *unwitnessedBackend) Authenticate(ctx context.Context, conn *imapserver.ConnInfo, credentials *imapserver.Credentials, options *imapserver.AuthenticateOptions) (imapserver.Session, error) {
 	return b.backend.Authenticate(ctx, conn, credentials, options)
+}
+
+// newUnwitnessedServer serves a backend that witnesses no optional capability.
+func newUnwitnessedServer(t *testing.T) *imapserver.Server {
+	t.Helper()
+	return imapserver.New(&unwitnessedBackend{backend: memory.New(&memory.Options{
+		Users: map[string]string{"alice": "secret"},
+	})}, &imapserver.Options{AllowInsecureAuth: true})
 }
 
 func newGroupAClient(t *testing.T, ctx context.Context) (*imapclient.Client, <-chan error) {
@@ -366,6 +372,13 @@ func seedMessages(t *testing.T, ctx context.Context, client *imapclient.Client, 
 // the same backend, so the raw connection's response stream holds only what the
 // test asks for.
 func newGroupARawSession(t *testing.T, ctx context.Context) (*imapserver.Server, net.Conn, *bufio.Reader) {
+	return newGroupARawSessionIn(t, ctx, false)
+}
+
+// newGroupARawSessionIn optionally stops in the authenticated state. ENABLE is
+// valid only before a mailbox is selected (RFC 5161), so a test that enables an
+// extension has to get there first.
+func newGroupARawSessionIn(t *testing.T, ctx context.Context, authenticatedOnly bool) (*imapserver.Server, net.Conn, *bufio.Reader) {
 	t.Helper()
 	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
 	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
@@ -387,8 +400,10 @@ func newGroupARawSession(t *testing.T, ctx context.Context) (*imapserver.Server,
 	}
 	writeRawCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
 	collectUntilTag(t, reader, "A1 ")
-	writeRawCommand(t, clientSide, "A2 SELECT INBOX\r\n")
-	collectUntilTag(t, reader, "A2 ")
+	if !authenticatedOnly {
+		writeRawCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+		collectUntilTag(t, reader, "A2 ")
+	}
 	t.Cleanup(func() { _ = clientSide.Close() })
 	return server, clientSide, reader
 }

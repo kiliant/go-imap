@@ -13,6 +13,10 @@ import (
 type fetchArgs struct {
 	set   string
 	items []imap.FetchItem
+	// changedSince is CONDSTORE's CHANGEDSINCE modifier, and vanished QRESYNC's
+	// VANISHED modifier. See ext_b_condstore.go.
+	changedSince uint64
+	vanished     bool
 }
 
 func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
@@ -45,11 +49,17 @@ func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
 			return nil, 0, fmt.Errorf("unknown FETCH macro %q", macro)
 		}
 	}
-	if len(args.items) == 0 || !decoder.ExpectCRLF() {
+	if len(args.items) == 0 {
 		if decoder.Err() != nil {
 			return nil, 0, decoder.Err()
 		}
 		return nil, 0, fmt.Errorf("FETCH requires at least one item")
+	}
+	if err := parseFetchModifiers(decoder, args); err != nil {
+		return nil, 0, err
+	}
+	if !decoder.ExpectCRLF() {
+		return nil, 0, decoder.Err()
 	}
 	return args, int64(len(args.set) + len(args.items)*24), nil
 }
@@ -64,7 +74,11 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return c.writeBad(command.tag, "invalid FETCH message set")
 	}
+	if err := validateCondStoreUse(c, args.changedSince != 0, "FETCH CHANGEDSINCE"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	items, requestedUID := withFetchUID(args.items)
+	items = applyCondStoreFetchItems(c, items)
 	includeUID := uidMode || requestedUID
 	var responseBytes int64
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
@@ -90,7 +104,7 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 		}
 		return c.encoder.Flush()
 	})
-	err = c.state.selected.mailbox.Fetch(ctx, writer, uids, &FetchOptions{Items: items})
+	err = c.state.selected.mailbox.Fetch(ctx, writer, uids, &FetchOptions{Items: items, ChangedSince: args.changedSince})
 	writer.core.close()
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)

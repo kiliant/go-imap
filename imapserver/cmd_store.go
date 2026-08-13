@@ -15,6 +15,9 @@ type storeArgs struct {
 	op     StoreFlagsOp
 	silent bool
 	flags  []imap.Flag
+	// unchangedSince is CONDSTORE's UNCHANGEDSINCE modifier.
+	// See ext_b_condstore.go.
+	unchangedSince uint64
 }
 
 func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
@@ -23,7 +26,13 @@ func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
 	}
 	args := &storeArgs{}
 	var operation string
-	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() || !decoder.ExpectAtom(&operation) || !decoder.ExpectSP() {
+	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() {
+		return nil, 0, decoder.Err()
+	}
+	if err := parseStoreModifiers(decoder, args); err != nil {
+		return nil, 0, err
+	}
+	if !decoder.ExpectAtom(&operation) || !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
 	operation = strings.ToUpper(operation)
@@ -61,6 +70,9 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return c.writeBad(command.tag, "invalid STORE message set")
 	}
+	if err := validateCondStoreUse(c, args.unchangedSince != 0, "STORE UNCHANGEDSINCE"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	origin := nextCommandOrigin()
 	var responseBytes int64
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
@@ -71,6 +83,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		if err != nil {
 			return err
 		}
+		mapped = stripModSeqUnlessEnabled(c, mapped)
 		_, cleanup, err := prepareFetchResponseLiterals(mapped, maxCommandFetchBytes)
 		if err != nil {
 			return err
@@ -89,15 +102,31 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		}
 		return c.encoder.Flush()
 	})
-	err = c.state.selected.mailbox.Store(ctx, writer, uids, &StoreFlags{Op: args.op, Flags: args.flags}, &StoreOptions{
+	options := &StoreOptions{
 		MutationOptions: MutationOptions{Origin: origin},
 		Silent:          args.silent,
-	})
+		UnchangedSince:  args.unchangedSince,
+	}
+	flags := &StoreFlags{Op: args.op, Flags: args.flags}
+	// A conditional store takes the CONDSTORE path so the backend can report
+	// which messages it refused; an unconditional one stays on the base method.
+	var condStore *CondStoreResult
+	if args.unchangedSince != 0 {
+		condStore, err = storeCondStore(ctx, c, writer, uids, flags, options)
+	} else {
+		err = c.state.selected.mailbox.Store(ctx, writer, uids, flags, options)
+	}
 	writer.core.close()
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
+	// RFC 7162 section 3.1.3: rejected messages are reported on a successful
+	// tagged OK through MODIFIED, not as a command failure.
+	if modified, ok := condStoreModifiedArgs(condStore); ok {
+		if err := writeTaggedCondition(c, command.tag, "OK", imap.CodeModified, modified, command.name+" completed"); err != nil {
+			return err
+		}
+	} else if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
 		return err
 	}
 	return c.drainUpdates(updateAccounting{origin: origin, effect: effectStore})

@@ -26,6 +26,10 @@ var supportedCapabilities = map[string]bool{
 	"SPECIAL-USE":        true,
 	"CREATE-SPECIAL-USE": true,
 	"WITHIN":             true,
+	// Group B. See ext_b.go, and the note there about what QRESYNC cannot
+	// survive in an in-memory backend.
+	"CONDSTORE": true,
+	"QRESYNC":   true,
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared

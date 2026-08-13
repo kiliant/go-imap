@@ -50,8 +50,20 @@ type mailbox struct {
 	// specialUse holds the RFC 6154 use attributes assigned at CREATE time.
 	// See ext_a.go.
 	specialUse []imap.MailboxAttr
-	messages   []*message
-	watchers   map[*selected]*imapserver.Updater
+	// highestModSeq is the CONDSTORE modification sequence of this mailbox, and
+	// expunged the QRESYNC record of removals retained after the messages
+	// themselves are gone. See ext_b.go.
+	highestModSeq uint64
+	expunged      []expungedRecord
+	messages      []*message
+	watchers      map[*selected]*imapserver.Updater
+}
+
+// expungedRecord remembers one removal for QRESYNC, so a client that was
+// offline can be told what vanished while it was away.
+type expungedRecord struct {
+	uid    imap.UID
+	modSeq uint64
 }
 
 // New returns an in-memory backend configured by options.
@@ -78,6 +90,9 @@ func newAccount(password string) *account {
 	return a
 }
 
+// createMailboxLocked starts a mailbox at modification sequence 1. Zero is not
+// a usable starting value: RFC 7162 reserves it to mean "this mailbox does not
+// support modification sequences", which is what NOMODSEQ reports.
 func (a *account) createMailboxLocked(name string) *mailbox {
 	m := &mailbox{
 		name:        name,

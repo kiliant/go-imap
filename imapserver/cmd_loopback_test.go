@@ -81,7 +81,11 @@ func TestLoopbackBaseCommandSet(t *testing.T) {
 		t.Fatalf("APPEND = %#v, %v", appended, err)
 	}
 	selected, err := client.Select("INBOX", nil).Wait(ctx)
-	if err != nil || selected.NumMessages != 1 || selected.UIDValidity == 0 || !selected.NoModSeq {
+	// The reference backend tracked no modification sequences when this test
+	// was written and reported NOMODSEQ. It tracks them as of T23's CONDSTORE
+	// support, so the correct assertion is now the opposite one.
+	if err != nil || selected.NumMessages != 1 || selected.UIDValidity == 0 ||
+		selected.NoModSeq || selected.HighestModSeq == 0 {
 		t.Fatalf("SELECT = %#v, %v", selected, err)
 	}
 

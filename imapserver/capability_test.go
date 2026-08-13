@@ -15,8 +15,10 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 	want := map[string][]string{
 		"Backend":           {"Authenticate"},
 		"CapabilitySupport": {"SupportsCapability"},
+		"CondStoreMailbox":  {"StoreCondStore"},
 		"MoveMailbox":       {"Move"},
 		"MoveSupport":       {"SupportsMove"},
+		"QResyncMailbox":    {"Resync"},
 		"SelectedMailbox":   {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
 		"Session":           {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
 		"Update":            {"update"},
@@ -136,7 +138,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		CreateOptions{}, DeleteOptions{}, RenameOptions{}, SubscribeOptions{}, UnsubscribeOptions{},
 		AppendOptions{}, SelectOptions{}, FetchOptions{}, SearchOptions{}, StoreFlags{}, StoreOptions{}, CopyOptions{},
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
-		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{},
+		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")
