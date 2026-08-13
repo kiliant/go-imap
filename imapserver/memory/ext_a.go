@@ -41,7 +41,13 @@ var supportedCapabilities = map[string]bool{
 	// Group D. QUOTA, ACL, METADATA, NAMESPACE and UNAUTHENTICATE witness
 	// themselves by implementing their optional interfaces; only JMAPACCESS
 	// is a spoken claim, and this backend serves no JMAP endpoint.
-
+	// Group C. SORT and THREAD also need the spoken witness because the
+	// interface alone does not say which keys and algorithms are real.
+	// SORT=DISPLAY is included: the display keys are genuinely evaluated
+	// against the envelope, not silently treated as their non-display forms.
+	"SORT":         true,
+	"SORT=DISPLAY": true,
+	"THREAD":       true,
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared

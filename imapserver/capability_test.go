@@ -28,6 +28,8 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"ReplaceMailbox":        {"Replace"},
 		"SelectedMailbox":       {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
 		"Session":               {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
+		"SortMailbox":           {"Sort"},
+		"ThreadMailbox":         {"Thread"},
 		"UnauthenticateSession": {"Unauthenticate"},
 		"Update":                {"update"},
 	}
@@ -157,6 +159,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
 		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
 		QuotaOptions{}, ACLOptions{}, ACLSetOptions{}, MetadataOptions{}, NamespaceOptions{}, UnauthenticateOptions{},
+		SortOptions{}, ThreadOptions{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")

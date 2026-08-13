@@ -146,23 +146,35 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 ## Group C — content & structure (task T10)
 
-| Capability | RFC | Status |
-|---|---|---|
-| BINARY | 3516 | done |
-| CATENATE | 4469 | done |
-| MULTIAPPEND | 3502 | done |
-| COMPRESS=DEFLATE | 4978 | done |
-| UTF8=ACCEPT | 9755 | done |
-| UTF8=ALL | 5738, 9755 | done |
-| UTF8=APPEND | 5738, 9755 | done |
-| UTF8=ONLY | 9755 | done |
-| UTF8=USER | 5738, 9755 | done |
-| SORT | 5256 | done |
-| SORT=DISPLAY | 5957 | done |
-| THREAD | 5256 | done |
-| MULTISEARCH | 7377 | done |
-| PARTIAL | 9394 | done |
-| SEARCH=FUZZY | 6203 | done |
+| Capability | RFC | Client | Server |
+|---|---|---|---|
+| BINARY | 3516 | done | — [^srvpending] |
+| CATENATE | 4469 | done | — [^srvpending] |
+| MULTIAPPEND | 3502 | done | — [^srvpending] |
+| COMPRESS=DEFLATE | 4978 | done | done [^srvcompress] |
+| UTF8=ACCEPT | 9755 | done | done [^srvcompress] |
+| UTF8=ALL | 5738, 9755 | done | — [^srvpending] |
+| UTF8=APPEND | 5738, 9755 | done | — [^srvpending] |
+| UTF8=ONLY | 9755 | done | — [^srvpending] |
+| UTF8=USER | 5738, 9755 | done | — [^srvpending] |
+| SORT | 5256 | done | done |
+| SORT=DISPLAY | 5957 | done | done |
+| THREAD | 5256 | done | done [^srvthread] |
+| MULTISEARCH | 7377 | done | — [^srvpending] |
+| PARTIAL | 9394 | done | — [^srvpending] |
+| SEARCH=FUZZY | 6203 | done | done [^srvfuzzy] |
+
+[^srvcompress]: Framework-owned and already delivered by T19/T22, not by T23.
+
+[^srvthread]: The command, the response tree encoding and the number-space
+    translation are complete. The reference backend implements ORDEREDSUBJECT
+    and refuses REFERENCES rather than answering it with ORDEREDSUBJECT
+    results, which would silently mis-thread a client's view; REFERENCES needs
+    a Message-ID graph the backend does not retain.
+
+[^srvfuzzy]: The FUZZY modifier reaches the backend through the open search
+    criteria tree with no framework translation, so the capability is purely a
+    claim about the backend and is gated on its witness.
 
 ## Group D — administrative & server-side (task T11)
 
