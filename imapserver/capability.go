@@ -108,16 +108,18 @@ func compiledFrameworkSupport() map[frameworkComponent]bool {
 	// capability is never advertised merely because a backend happens to expose
 	// a similarly named operation.
 	return map[frameworkComponent]bool{
-		frameworkCore:       true,
-		frameworkStartTLS:   true,
-		frameworkAuth:       true,
-		frameworkEnable:     true,
-		frameworkUTF8:       true,
-		frameworkIdle:       true,
-		frameworkCompress:   true,
-		frameworkMove:       true,
-		frameworkRev2:       false,
-		frameworkListExtend: false,
+		frameworkCore:     true,
+		frameworkStartTLS: true,
+		frameworkAuth:     true,
+		frameworkEnable:   true,
+		frameworkUTF8:     true,
+		frameworkIdle:     true,
+		frameworkCompress: true,
+		frameworkMove:     true,
+		frameworkRev2:     false,
+		// LIST-EXTENDED's selection, return and multi-pattern handling is
+		// compiled in as of T23's group A. See ext_a_list.go.
+		frameworkListExtend: true,
 	}
 }
 

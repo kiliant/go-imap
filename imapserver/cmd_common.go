@@ -43,7 +43,7 @@ func init() {
 	registerCommand("LIST", stateMaskAuthenticated|stateMaskSelected, false, parseList, handleList)
 	registerCommand("LSUB", stateMaskAuthenticated|stateMaskSelected, false, parseLsub, handleList)
 	registerCommand("STATUS", stateMaskAuthenticated|stateMaskSelected, false, parseStatus, handleStatus)
-	registerCommand("CREATE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleCreate)
+	registerCommand("CREATE", stateMaskAuthenticated|stateMaskSelected, false, parseCreate, handleCreate)
 	registerCommand("DELETE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleDelete)
 	registerCommand("RENAME", stateMaskAuthenticated|stateMaskSelected, false, parseRename, handleRename)
 	registerCommand("SUBSCRIBE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleSubscribe)

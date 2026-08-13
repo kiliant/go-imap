@@ -47,8 +47,11 @@ type mailbox struct {
 	uidNext     imap.UID
 	revision    uint64
 	subscribed  bool
-	messages    []*message
-	watchers    map[*selected]*imapserver.Updater
+	// specialUse holds the RFC 6154 use attributes assigned at CREATE time.
+	// See ext_a.go.
+	specialUse []imap.MailboxAttr
+	messages   []*message
+	watchers   map[*selected]*imapserver.Updater
 }
 
 // New returns an in-memory backend configured by options.

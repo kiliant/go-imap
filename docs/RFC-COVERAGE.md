@@ -10,6 +10,12 @@ Source of truth: the **IANA IMAP Capabilities registry**
 Status: `planned` → `in progress` → `done` → `verified` (exercised against at
 least two independent servers in the interop matrix).
 
+Rows carry a status per protocol direction. **Client** is the status of
+`imapclient`; **Server** is the status of `imapserver` and is `—` where the
+server framework has not reached that capability yet. A server row cannot be
+`verified` until T24 exercises it against an external implementation, so
+everything landed by T23 stops at `done`.
+
 ## Base
 
 | Capability | RFC | Task | Status |
@@ -39,18 +45,33 @@ least two independent servers in the interop matrix).
 
 ## Group A — core modern (task T08)
 
-| Capability | RFC | Status |
-|---|---|---|
-| UIDPLUS | 4315 | verified [^uidplus] |
-| MOVE | 6851 | verified |
-| ESEARCH | 4731 | verified |
-| SEARCHRES | 5182 | verified |
-| LIST-EXTENDED | 5258 | verified |
-| LIST-STATUS | 5819 | verified |
-| SPECIAL-USE | 6154 | verified [^specialuse] |
-| CREATE-SPECIAL-USE | 6154 | verified |
-| CHILDREN | 3348 | verified |
-| WITHIN | 5032 | verified |
+| Capability | RFC | Client | Server |
+|---|---|---|---|
+| UIDPLUS | 4315 | verified [^uidplus] | done [^srvuidplus] |
+| MOVE | 6851 | verified | done |
+| ESEARCH | 4731 | verified | done [^srvesearch] |
+| SEARCHRES | 5182 | verified | done [^srvesearch] |
+| LIST-EXTENDED | 5258 | verified | done |
+| LIST-STATUS | 5819 | verified | done [^srvliststatus] |
+| SPECIAL-USE | 6154 | verified [^specialuse] | done |
+| CREATE-SPECIAL-USE | 6154 | verified | done |
+| CHILDREN | 3348 | verified | done |
+| WITHIN | 5032 | verified | done [^srvwithin] |
+
+[^srvuidplus]: Server side delivered by T22 with the base command set, through
+    `imap.AppendData` and `imap.CopyData`, not by T23.
+
+[^srvesearch]: Framework-owned: derived from the SEARCH result the backend
+    already returns, so no backend interface and no witness. The saved result
+    for `$` is framework state scoped to the selection.
+
+[^srvliststatus]: Framework-owned through the mandatory `Session.Status`, issued
+    after `Session.List` returns rather than during it, so the backend is not
+    re-entered mid-stream.
+
+[^srvwithin]: `OLDER` and `YOUNGER` reach the backend through the open search
+    criteria tree with no framework translation, so advertisement is gated on the
+    backend witnessing `WITHIN`.
 
 Verified against the servers that advertise each capability — Dovecot 2.4.3,
 Stalwart 0.11.8 and Cyrus 3.x for most, plus Courier for CHILDREN — with the

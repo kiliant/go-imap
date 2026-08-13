@@ -36,7 +36,7 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 		if !matchesAnyMailbox(m.name, reference, patterns) {
 			continue
 		}
-		results = append(results, &imap.ListData{Delimiter: '/', Mailbox: m.name})
+		results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
 	}
 	s.account.mu.Unlock()
 	slices.SortFunc(results, func(a, b *imap.ListData) int { return strings.Compare(a.Mailbox, b.Mailbox) })
@@ -112,7 +112,7 @@ func (s *session) Status(ctx context.Context, name string, options *imapserver.S
 	return data, nil
 }
 
-func (s *session) Create(ctx context.Context, name string, _ *imapserver.CreateOptions) error {
+func (s *session) Create(ctx context.Context, name string, options *imapserver.CreateOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -129,6 +129,13 @@ func (s *session) Create(ctx context.Context, name string, _ *imapserver.CreateO
 		return noError(imap.CodeAlreadyExists, "mailbox already exists")
 	}
 	s.account.createMailboxLocked(name)
+	// The USE parameter of CREATE-SPECIAL-USE. A rejected attribute must not
+	// leave a mailbox behind, since the client asked for a mailbox with that
+	// use and would otherwise be told no while one exists. See ext_a.go.
+	if err := s.applyCreateSpecialUseLocked(s.account.mailboxes[key], options); err != nil {
+		delete(s.account.mailboxes, key)
+		return err
+	}
 	return nil
 }
 

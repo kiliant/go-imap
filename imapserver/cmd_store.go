@@ -23,7 +23,7 @@ func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
 	}
 	args := &storeArgs{}
 	var operation string
-	if !decoder.ExpectSequenceSet(&args.set) || !decoder.ExpectSP() || !decoder.ExpectAtom(&operation) || !decoder.ExpectSP() {
+	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() || !decoder.ExpectAtom(&operation) || !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
 	operation = strings.ToUpper(operation)

@@ -183,6 +183,20 @@ func saveSearchResult(c *conn, args *searchArgs, uids []imap.UID) {
 	c.state.selected.savedSearch = imap.UIDSetNum(saved...)
 }
 
+// expectMessageSet matches a sequence set or the SEARCHRES "$" marker.
+//
+// "$" is not part of the sequence-set grammar the wire decoder implements, and
+// extending that grammar would let "$" through in contexts RFC 5182 does not
+// define it for. Recognising it here instead keeps it to the commands that
+// accept a message set.
+func expectMessageSet(decoder *imapwire.Decoder, dst *string) bool {
+	if decoder.Special('$') {
+		*dst = searchResultMarker
+		return true
+	}
+	return decoder.ExpectSequenceSet(dst)
+}
+
 // resolveSavedSearch answers the "$" message-set reference of RFC 5182.
 //
 // An unset saved result is an empty set, not an error: RFC 5182 section 2.1

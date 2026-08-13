@@ -20,7 +20,7 @@ func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
 		return nil, 0, decoder.Err()
 	}
 	args := &fetchArgs{}
-	if !decoder.ExpectSequenceSet(&args.set) || !decoder.ExpectSP() {
+	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
 	if decoder.PeekSpecial('(') {
