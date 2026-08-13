@@ -27,6 +27,12 @@ import (
 // Results are keyed by mailbox because RFC 7377 requires each ESEARCH response
 // to name the mailbox and its UIDVALIDITY: a UID means nothing without them, and
 // a flat UID list across mailboxes would be unusable.
+//
+// The criteria carry the same guarantee as [SearchQuery.Criteria]: no
+// [imap.SearchFilter] reaches the backend, because the framework substitutes it
+// for the criteria it names first. Sequence numbers are not normalised here —
+// unlike SEARCH there is no single selected mailbox to normalise against, and
+// RFC 7377 section 2.2 does not define them across an IN clause.
 type MultiSearchSession interface {
 	MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)
 }
@@ -182,7 +188,11 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 		}
 		mailboxes = []string{c.state.selected.name}
 	}
-	results, err := session.MultiSearch(ctx, mailboxes, args.criteria, &MultiSearchOptions{Charset: args.charset})
+	criteria, err := applySearchFilters(ctx, c, args.criteria)
+	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	results, err := session.MultiSearch(ctx, mailboxes, criteria, &MultiSearchOptions{Charset: args.charset})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}

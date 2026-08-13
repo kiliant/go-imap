@@ -259,7 +259,13 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if !ok {
 		return c.writeBad(command.tag, "SORT is not available")
 	}
-	query := newSearchQuery(args.criteria, c.state.selected.uids)
+	// FILTER is a search key, so it is legal wherever one is. The tree is
+	// substituted before the backend sees it, exactly as in SEARCH.
+	criteria, err := applySearchFilters(ctx, c, args.criteria)
+	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	query := newSearchQuery(criteria, c.state.selected.uids)
 	uids, err := mailbox.Sort(ctx, query, args.keys, &SortOptions{Charset: args.charset})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
@@ -303,7 +309,11 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	if !ok {
 		return c.writeBad(command.tag, "THREAD is not available")
 	}
-	query := newSearchQuery(args.criteria, c.state.selected.uids)
+	criteria, err := applySearchFilters(ctx, c, args.criteria)
+	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	query := newSearchQuery(criteria, c.state.selected.uids)
 	roots, err := mailbox.Thread(ctx, query, args.algorithm, &ThreadOptions{Charset: args.charset})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)

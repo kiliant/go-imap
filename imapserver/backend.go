@@ -560,6 +560,17 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 
 // Criteria returns the UID-normalised criteria. Callers must treat the returned
 // tree as immutable for the duration of Search.
+//
+// The framework guarantees the tree contains no [imap.SearchSeqNum] — sequence
+// numbers are resolved to UIDs before the backend sees them — and no
+// [imap.SearchFilter], which is substituted for the criteria it names. A backend
+// therefore never has to handle either, which is what allows the root package to
+// grow new [imap.SearchCriteria] implementations without breaking backends
+// compiled against an earlier version. See docs/API-STABILITY.md section 10.
+//
+// A criterion outside that guarantee reaching a backend is a framework bug, not
+// a case for the backend to interpret; TestSearchQueryNormalisationGuarantee
+// enforces it for every command that builds a query.
 func (q *SearchQuery) Criteria() imap.SearchCriteria {
 	if q == nil {
 		return nil

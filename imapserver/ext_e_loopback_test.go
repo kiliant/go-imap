@@ -346,3 +346,57 @@ func TestLoopbackSearchFilters(t *testing.T) {
 		t.Errorf("unknown filter = %q, want UNDEFINED-FILTER", tagged)
 	}
 }
+
+// TestSearchQueryNormalisationGuarantee enforces the promise [SearchQuery.Criteria]
+// makes to backends: no imap.SearchFilter reaches them, on any command that
+// accepts a search key.
+//
+// This is the test docs/API-STABILITY.md section 10 requires before a new
+// imap.SearchCriteria implementation may be added to the frozen root package.
+// The rule is only sound while the substitution is exhaustive, and it was not:
+// FILTER is a search key, so RFC 5256 and RFC 7377 make it legal in SORT, THREAD
+// and ESEARCH, but substitution was wired into SEARCH alone. A backend compiled
+// before RFC 5466 then received a criteria type it could not know, and its type
+// switch fell to default — a silently empty result, indistinguishable from a
+// correct search that matched nothing.
+//
+// Each command below therefore asserts the *substituted* answer rather than mere
+// success. The memory backend's evaluator rejects an unsubstituted FILTER, so a
+// regression fails the command outright; asserting the answer also catches a
+// backend that swallows it.
+func TestSearchQueryNormalisationGuarantee(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	// Flag message 1 so the saved "flagged" filter has exactly one answer. An
+	// all-three answer would coincide with "matched everything", which is what a
+	// broken substitution can also look like.
+	writeRawCommand(t, clientSide, "N1 STORE 1 +FLAGS (\\Flagged)\r\n")
+	collectUntilTag(t, reader, "N1 ")
+
+	for _, testCase := range []struct {
+		name     string
+		command  string
+		response string
+		want     string
+	}{
+		{"SEARCH", "SEARCH FILTER \"flagged\"", "* SEARCH", "* SEARCH 1"},
+		{"SORT", "SORT (REVERSE DATE) UTF-8 FILTER \"flagged\"", "* SORT", "* SORT 1"},
+		{"THREAD", "THREAD ORDEREDSUBJECT UTF-8 FILTER \"flagged\"", "* THREAD", "* THREAD (1)"},
+		{"MULTISEARCH", "ESEARCH IN (\"INBOX\") FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			tag := "N" + testCase.name
+			writeRawCommand(t, clientSide, tag+" "+testCase.command+"\r\n")
+			untagged, tagged := collectUntilTag(t, reader, tag+" ")
+			if !strings.HasPrefix(tagged, tag+" OK") {
+				t.Fatalf("%s with FILTER failed: %q\nan unsubstituted imap.SearchFilter reached the backend", testCase.command, tagged)
+			}
+			line := findResponse(t, untagged, testCase.response)
+			if !strings.Contains(line, testCase.want) {
+				t.Errorf("%s = %q, want it to contain %q", testCase.command, strings.TrimSpace(line), testCase.want)
+			}
+		})
+	}
+}
