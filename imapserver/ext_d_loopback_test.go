@@ -351,6 +351,56 @@ func TestLoopbackNotifyReportsUnselectedMailbox(t *testing.T) {
 	}
 }
 
+// TestLoopbackNotifyVocabulary covers the two halves of the shared NOTIFY
+// vocabulary: that the wire's case-insensitive atoms reach a backend in the one
+// canonical spelling, and that a name the backend cannot serve is refused.
+//
+// Both matter because the failure they prevent is silent. Event names are atoms,
+// so "MESSAGENEW" and "MessageNew" are the same event; a backend comparing
+// against [imap.NotifyEventMessageNew] would have matched only one of them and
+// simply never delivered for the other. Likewise an unknown event: the client is
+// told SET succeeded and reads the ensuing silence as "nothing changed".
+func TestLoopbackNotifyVocabulary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+	_, clientSide, reader := newRawSessionOn(t, ctx, server)
+
+	writeRawCommand(t, clientSide, "V1 CREATE Watched\r\n")
+	collectUntilTag(t, reader, "V1 ")
+	writeRawCommand(t, clientSide, "V2 SELECT INBOX\r\n")
+	collectUntilTag(t, reader, "V2 ")
+
+	// Upper-case on the wire, canonical inside: the backend only accepts the
+	// registration because the framework folded the name before it arrived.
+	writeRawCommand(t, clientSide, "V3 NOTIFY SET (MAILBOXES Watched (MESSAGENEW FLAGCHANGE))\r\n")
+	if _, tagged := collectUntilTag(t, reader, "V3 "); !strings.HasPrefix(tagged, "V3 OK") {
+		t.Fatalf("upper-case event names were not folded to the canonical spelling: %q", tagged)
+	}
+
+	// Mixed case is the registered spelling and must work identically.
+	writeRawCommand(t, clientSide, "V4 NOTIFY SET (MAILBOXES Watched (MessageNew))\r\n")
+	if _, tagged := collectUntilTag(t, reader, "V4 "); !strings.HasPrefix(tagged, "V4 OK") {
+		t.Fatalf("canonical event name rejected: %q", tagged)
+	}
+
+	// An event the backend does not publish is BADEVENT, not a silent accept.
+	writeRawCommand(t, clientSide, "V5 NOTIFY SET (MAILBOXES Watched (AnnotationChange))\r\n")
+	_, tagged := collectUntilTag(t, reader, "V5 ")
+	if !strings.Contains(tagged, "BADEVENT") {
+		t.Errorf("unsupported event = %q, want BADEVENT — a silent accept leaves the client watching for nothing", tagged)
+	}
+
+	// The same for a specifier, which is the half a switch with no default
+	// silently swallows.
+	writeRawCommand(t, clientSide, "V6 NOTIFY SET (NOSUCHSPECIFIER (MessageNew))\r\n")
+	_, tagged = collectUntilTag(t, reader, "V6 ")
+	if !strings.Contains(tagged, "BADEVENT") {
+		t.Errorf("unsupported specifier = %q, want BADEVENT", tagged)
+	}
+}
+
 // newRawSessionOn opens a logged-in raw connection to an existing server.
 func newRawSessionOn(t *testing.T, ctx context.Context, server *imapserver.Server) (*imapserver.Server, net.Conn, *bufio.Reader) {
 	t.Helper()

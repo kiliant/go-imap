@@ -396,6 +396,9 @@ func (s *session) Notify(ctx context.Context, updater *imapserver.SessionUpdater
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := validateNotifyWatches(config); err != nil {
+		return err
+	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
 	s.notify, s.notifyConfig = updater, config
@@ -419,6 +422,53 @@ func (s *session) Notify(ctx context.Context, updater *imapserver.SessionUpdater
 	return nil
 }
 
+// notifySupportedEvents are the events this backend actually publishes. The
+// metadata events of RFC 5464 are absent because nothing here changes metadata
+// in a way that would raise them.
+var notifySupportedEvents = []imap.NotifyEventName{
+	imap.NotifyEventMessageNew,
+	imap.NotifyEventMessageExpunge,
+	imap.NotifyEventFlagChange,
+	imap.NotifyEventMailboxName,
+	imap.NotifyEventSubscriptionChange,
+}
+
+// validateNotifyWatches refuses a registration this backend cannot honour.
+//
+// Accepting an unknown specifier or event and then never delivering it is the
+// failure mode NOTIFY makes easy: the client is told SET succeeded and reads the
+// resulting silence as "nothing has changed", so a watch that never matches is
+// indistinguishable from a quiet mailbox. RFC 5465 section 6 defines BADEVENT
+// for this, and a backend has to raise it — the framework cannot, because only
+// the backend knows what it can publish.
+func validateNotifyWatches(config *imapserver.NotifyConfig) error {
+	if config == nil {
+		return nil
+	}
+	for _, watch := range config.Watches {
+		switch watch.Specifier {
+		case imap.NotifySelected, imap.NotifySelectedDelayed, imap.NotifyPersonal,
+			imap.NotifySubscribed, imap.NotifyInboxes, imap.NotifySubtree, imap.NotifyMailboxes:
+		default:
+			return &imap.Error{
+				Type: imap.ErrorTypeNo,
+				Code: imap.ResponseCode("BADEVENT"),
+				Text: "unsupported NOTIFY mailbox specifier " + string(watch.Specifier),
+			}
+		}
+		for _, event := range watch.Events {
+			if !slices.Contains(notifySupportedEvents, event) {
+				return &imap.Error{
+					Type: imap.ErrorTypeNo,
+					Code: imap.ResponseCode("BADEVENT"),
+					Text: "unsupported NOTIFY event " + string(event),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // notifyWatchesLocked reports whether the current registration covers a mailbox.
 //
 // The caller must hold the account lock.
@@ -426,21 +476,21 @@ func (s *session) notifyWatchesLocked(name string) bool {
 	if s.notifyConfig == nil {
 		return false
 	}
-	for _, group := range s.notifyConfig.Mailboxes {
+	for _, group := range s.notifyConfig.Watches {
 		switch group.Specifier {
-		case imapserver.NotifyPersonal, imapserver.NotifySubscribed:
+		case imap.NotifyPersonal, imap.NotifySubscribed:
 			return true
-		case imapserver.NotifyInboxes:
+		case imap.NotifyInboxes:
 			if mailboxKey(name) == "INBOX" {
 				return true
 			}
-		case imapserver.NotifyMailboxSet:
+		case imap.NotifyMailboxes:
 			for _, watched := range group.Names {
 				if mailboxKey(watched) == mailboxKey(name) {
 					return true
 				}
 			}
-		case imapserver.NotifySubtree:
+		case imap.NotifySubtree:
 			for _, watched := range group.Names {
 				if name == watched || strings.HasPrefix(name, watched+"/") {
 					return true

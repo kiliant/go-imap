@@ -95,57 +95,67 @@ type NotifyOptions struct{ _ struct{} }
 // NotifyConfig is what the client asked to be told about.
 // Construct with keyed fields only; fields may be added in a future release.
 type NotifyConfig struct {
-	// Mailboxes are the watch groups, in the order the client listed them.
-	Mailboxes []NotifyMailboxes
+	// Watches are the watch groups, in the order the client listed them.
+	Watches []NotifyWatch
 	// StatusOnSet asks for an immediate STATUS of every watched mailbox, from
 	// the STATUS parameter of RFC 5465 section 6.
 	StatusOnSet bool
 	_           struct{}
 }
 
-// NotifyMailboxes is one watch group: a set of mailboxes and the events wanted
-// for them.
+// NotifyWatch is one watch group: a set of mailboxes and the events wanted for
+// them.
+//
+// The specifier and event vocabularies live in the root package as
+// [imap.NotifyMailboxSpecifier] and [imap.NotifyEventName], shared with the
+// client so the two cannot disagree about a spelling. The framework folds what
+// it reads from the wire to the canonical form, so a backend may compare against
+// the constants directly.
 // Construct with keyed fields only; fields may be added in a future release.
-type NotifyMailboxes struct {
-	// Specifier names the group: SELECTED, INBOXES, PERSONAL, SUBSCRIBED,
-	// SUBTREE or MAILBOXES. It is an open string because RFC 5465 registers
-	// further specifiers and a closed set would break on the next one.
-	Specifier NotifyMailboxSpecifier
+type NotifyWatch struct {
+	// Specifier names the group: SELECTED, SELECTED-DELAYED, INBOXES, PERSONAL,
+	// SUBSCRIBED, SUBTREE or MAILBOXES. It is an open string because RFC 5465
+	// registers further specifiers and a closed set would break on the next one.
+	//
+	// A specifier the backend does not recognise must be refused, not ignored.
+	Specifier imap.NotifyMailboxSpecifier
 	// Names lists the mailboxes for SUBTREE and MAILBOXES, and is empty
 	// otherwise.
 	Names []string
 	// Events are the event names wanted for this group. An empty list means
 	// the client asked for none, which RFC 5465 section 6 allows as a way to
 	// silence a group without removing it.
-	Events []NotifyEvent
+	//
+	// An event the backend cannot serve must be refused, not ignored.
+	Events []imap.NotifyEventName
 	_      struct{}
 }
 
-// NotifyMailboxSpecifier names a NOTIFY watch group. Open by design.
-type NotifyMailboxSpecifier string
-
-// Watch groups from RFC 5465 section 6.
-const (
-	NotifySelected   NotifyMailboxSpecifier = "SELECTED"
-	NotifyInboxes    NotifyMailboxSpecifier = "INBOXES"
-	NotifyPersonal   NotifyMailboxSpecifier = "PERSONAL"
-	NotifySubscribed NotifyMailboxSpecifier = "SUBSCRIBED"
-	NotifySubtree    NotifyMailboxSpecifier = "SUBTREE"
-	NotifyMailboxSet NotifyMailboxSpecifier = "MAILBOXES"
-)
-
-// NotifyEvent names an event a client asked to be told about. Open by design:
-// RFC 5465 registers further events and IMAP extensions add more.
-type NotifyEvent string
-
-// Events from RFC 5465 section 5.
-const (
-	NotifyMessageNew     NotifyEvent = "MESSAGENEW"
-	NotifyMessageExpunge NotifyEvent = "MESSAGEEXPUNGE"
-	NotifyFlagChange     NotifyEvent = "FLAGCHANGE"
-	NotifyMailboxName    NotifyEvent = "MAILBOXNAME"
-	NotifySubscription   NotifyEvent = "SUBSCRIPTIONCHANGE"
-)
+// canonicalNotifyEvent folds a wire event name to the spelling RFC 5465
+// section 5 registers, which is what [imap.NotifyEventName]'s constants carry.
+//
+// Event names are atoms and therefore case-insensitive on the wire, so a client
+// writing "MESSAGENEW" and one writing "MessageNew" mean the same thing and a
+// backend must not have to test for both. An unregistered name is passed through
+// unchanged rather than dropped: the backend decides whether it can serve it, and
+// silently discarding it would leave the client watching for an event that will
+// never arrive.
+func canonicalNotifyEvent(name string) imap.NotifyEventName {
+	for _, known := range []imap.NotifyEventName{
+		imap.NotifyEventMessageNew,
+		imap.NotifyEventMessageExpunge,
+		imap.NotifyEventFlagChange,
+		imap.NotifyEventMailboxName,
+		imap.NotifyEventSubscriptionChange,
+		imap.NotifyEventMailboxMetadataChange,
+		imap.NotifyEventServerMetadataChange,
+	} {
+		if strings.EqualFold(name, string(known)) {
+			return known
+		}
+	}
+	return imap.NotifyEventName(name)
+}
 
 type sessionUpdaterCore struct {
 	mu     sync.RWMutex
@@ -295,19 +305,19 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 		if err != nil {
 			return nil, 0, err
 		}
-		config.Mailboxes = append(config.Mailboxes, *group)
+		config.Watches = append(config.Watches, *group)
 	}
-	if len(config.Mailboxes) == 0 {
+	if len(config.Watches) == 0 {
 		return nil, 0, fmt.Errorf("NOTIFY SET requires at least one mailbox group")
 	}
 	if !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
 	}
-	return config, int64(len(config.Mailboxes) * 64), nil
+	return config, int64(len(config.Watches) * 64), nil
 }
 
-func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyMailboxes, error) {
-	group := &NotifyMailboxes{}
+func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, error) {
+	group := &NotifyWatch{}
 	if !decoder.ExpectSpecial('(') {
 		return nil, decoder.Err()
 	}
@@ -315,9 +325,11 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyMailboxes, error) {
 	if !decoder.ExpectAtom(&specifier) {
 		return nil, decoder.Err()
 	}
-	group.Specifier = NotifyMailboxSpecifier(strings.ToUpper(specifier))
+	// Specifiers are registered upper-case, so folding to upper is already the
+	// canonical form; events are mixed-case and need the table.
+	group.Specifier = imap.NotifyMailboxSpecifier(strings.ToUpper(specifier))
 	switch group.Specifier {
-	case NotifySubtree, NotifyMailboxSet:
+	case imap.NotifySubtree, imap.NotifyMailboxes:
 		if !decoder.ExpectSP() {
 			return nil, decoder.Err()
 		}
@@ -353,7 +365,7 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyMailboxes, error) {
 		if !decoder.ExpectAtom(&event) {
 			return decoder.Err()
 		}
-		group.Events = append(group.Events, NotifyEvent(strings.ToUpper(event)))
+		group.Events = append(group.Events, canonicalNotifyEvent(event))
 		return nil
 	}); err != nil {
 		return nil, err
