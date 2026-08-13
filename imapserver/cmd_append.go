@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -59,7 +60,16 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 	for {
 		payload, err := c.collectAppendPayload(ctx, &message)
 		if err != nil {
-			// The wire is out of step; there is nothing left to drain against.
+			// A semantic refusal the backend or this layer raised — an
+			// unresolvable CATENATE URL, a payload the backend rejects — carries
+			// its own response code and left the wire at a part boundary, so it
+			// is reported as itself.
+			var protocolErr *imap.Error
+			if errors.As(err, &protocolErr) {
+				return writeBackendError(c, command.tag, "APPEND", err)
+			}
+			// Anything else means the wire is out of step, and there is nothing
+			// left to drain against.
 			return c.writeBad(command.tag, "invalid APPEND payload")
 		}
 		if failure == nil {
@@ -135,7 +145,22 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 			}
 			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)
 			if err != nil || resolved == nil {
-				return nil, fmt.Errorf("imapserver: CATENATE URL did not resolve")
+				// RFC 4469 section 3 answers an unresolvable URL with
+				// NO [BADURL <url>], naming the offending URL so a client
+				// catenating several parts learns which one failed. Flattening
+				// this to a generic error discarded both the code and the URL,
+				// and response codes are the sanctioned extension point — see
+				// API-STABILITY rule 5.
+				//
+				// A URL part consumes no literal, so failing here leaves the wire
+				// at a part boundary and the connection stays usable; that is
+				// verified by TestLoopbackCatenateBadURL.
+				return nil, &imap.Error{
+					Type:     imap.ErrorTypeNo,
+					Code:     imap.CodeBadURL,
+					CodeArgs: part.url,
+					Text:     "CATENATE URL did not resolve",
+				}
 			}
 			staged, err := io.ReadAll(resolved)
 			_ = resolved.Close()

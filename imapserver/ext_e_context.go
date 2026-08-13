@@ -160,7 +160,11 @@ func parseCancelUpdate(decoder *imapwire.Decoder) (any, int64, error) {
 // reselected, and failing would make that race visible as a spurious error.
 func handleCancelUpdate(_ context.Context, c *conn, command *queuedCommand) error {
 	tags, _ := command.args.([]string)
-	if err := requireCapability(c, "CONTEXT=SEARCH"); err != nil {
+	// RFC 5267 section 4.4 defines CANCELUPDATE for contexts created by either
+	// extension. Requiring CONTEXT=SEARCH alone left a backend advertising only
+	// CONTEXT=SORT able to create an updating context through SORT and unable to
+	// cancel it — the client's only remaining exit being to drop the selection.
+	if err := requireAnyCapability(c, "CONTEXT=SEARCH", "CONTEXT=SORT"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	if c.state.selected != nil {

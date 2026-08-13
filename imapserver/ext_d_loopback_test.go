@@ -392,12 +392,18 @@ func TestLoopbackNotifyVocabulary(t *testing.T) {
 		t.Errorf("unsupported event = %q, want BADEVENT — a silent accept leaves the client watching for nothing", tagged)
 	}
 
-	// The same for a specifier, which is the half a switch with no default
-	// silently swallows.
+	// An unknown specifier is refused too, but as BAD rather than NO [BADEVENT].
+	// RFC 5465 section 6 enumerates the specifiers in the grammar while events
+	// are an extensible registry, so an unknown specifier is malformed syntax and
+	// an unknown event is a request the server declines. The client acts on the
+	// difference: retry a smaller event list, or stop sending that syntax.
 	writeRawCommand(t, clientSide, "V6 NOTIFY SET (NOSUCHSPECIFIER (MessageNew))\r\n")
 	_, tagged = collectUntilTag(t, reader, "V6 ")
-	if !strings.Contains(tagged, "BADEVENT") {
-		t.Errorf("unsupported specifier = %q, want BADEVENT", tagged)
+	if !strings.HasPrefix(tagged, "V6 BAD") {
+		t.Errorf("unsupported specifier = %q, want BAD", tagged)
+	}
+	if strings.Contains(tagged, "BADEVENT") {
+		t.Errorf("unsupported specifier reported BADEVENT = %q; that code is for the event list", tagged)
 	}
 }
 

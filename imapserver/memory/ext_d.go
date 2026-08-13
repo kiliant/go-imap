@@ -450,10 +450,15 @@ func validateNotifyWatches(config *imapserver.NotifyConfig) error {
 		case imap.NotifySelected, imap.NotifySelectedDelayed, imap.NotifyPersonal,
 			imap.NotifySubscribed, imap.NotifyInboxes, imap.NotifySubtree, imap.NotifyMailboxes:
 		default:
+			// BAD, not NO [BADEVENT]. RFC 5465 section 6 enumerates the mailbox
+			// specifiers in the grammar, so an unrecognised one is a malformed
+			// command rather than a request for something the server declines to
+			// do. BADEVENT is defined for the event list, which is an extensible
+			// registry — the distinction tells a client whether to retry with a
+			// smaller request or to stop sending that syntax at all.
 			return &imap.Error{
-				Type: imap.ErrorTypeNo,
-				Code: imap.ResponseCode("BADEVENT"),
-				Text: "unsupported NOTIFY mailbox specifier " + string(watch.Specifier),
+				Type: imap.ErrorTypeBad,
+				Text: "unknown NOTIFY mailbox specifier " + string(watch.Specifier),
 			}
 		}
 		for _, event := range watch.Events {

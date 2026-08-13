@@ -269,3 +269,38 @@ func expectContinuation(t *testing.T, reader *bufio.Reader) {
 		t.Fatalf("expected a continuation request, got %q", line)
 	}
 }
+
+// TestLoopbackCatenateBadURL pins the RFC 4469 section 3 refusal.
+//
+// An unresolvable URL is NO [BADURL <url>], not a bare BAD. The distinction is
+// what a client acts on: BADURL names the offending part, so a catenation of
+// several URLs can report which one failed and retry without it, while a BAD
+// says only that the whole command was malformed.
+//
+// The second half matters as much as the first. A URL part consumes no literal,
+// so the wire is left at a part boundary and the connection must remain usable —
+// if it did not, reporting a recoverable error rather than a fatal one would be
+// a lie.
+func TestLoopbackCatenateBadURL(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	badURL := "imap://localhost/INBOX/;UID=99999"
+	writeRawCommand(t, clientSide, "C1 APPEND INBOX CATENATE (URL \""+badURL+"\")\r\n")
+	_, tagged := collectUntilTag(t, reader, "C1 ")
+	if !strings.HasPrefix(tagged, "C1 NO") {
+		t.Errorf("unresolvable CATENATE URL = %q, want NO", tagged)
+	}
+	if !strings.Contains(tagged, "BADURL") {
+		t.Errorf("unresolvable CATENATE URL = %q, want the BADURL response code", tagged)
+	}
+	if !strings.Contains(tagged, badURL) {
+		t.Errorf("BADURL did not name the offending URL: %q", tagged)
+	}
+
+	writeRawCommand(t, clientSide, "C2 NOOP\r\n")
+	if _, tagged := collectUntilTag(t, reader, "C2 "); !strings.HasPrefix(tagged, "C2 OK") {
+		t.Fatalf("connection unusable after a refused CATENATE URL: %q", tagged)
+	}
+}

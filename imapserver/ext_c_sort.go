@@ -122,6 +122,23 @@ func requireCapability(c *conn, name string) error {
 	return fmt.Errorf("%s is not available", name)
 }
 
+// requireAnyCapability refuses a command unless at least one of the named
+// capabilities is advertised.
+//
+// A few commands are defined by more than one extension and are available under
+// any of them — CANCELUPDATE belongs to both halves of RFC 5267. Gating such a
+// command on a single name makes it vanish for a backend that implements the
+// other half.
+func requireAnyCapability(c *conn, names ...string) error {
+	advertised := advertisedCapabilities(c)
+	for _, name := range names {
+		if advertised[name] {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not available", strings.Join(names, " or "))
+}
+
 // selectedImplements builds a capability witness requiring the selected mailbox
 // to implement an optional interface.
 //

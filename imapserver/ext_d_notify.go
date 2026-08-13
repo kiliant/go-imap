@@ -45,6 +45,16 @@ type SessionUpdater struct {
 
 // Push publishes one event. It returns ErrUpdaterClosed once the session's
 // NOTIFY registration has been replaced or the session has ended.
+//
+// The update must name a mailbox and carry a Status, which is the untagged
+// STATUS form RFC 5465 section 6 reports these in. Anything else is refused
+// rather than accepted and dropped later: a Push that reports success and never
+// reaches the client is indistinguishable, from the backend, from one that did.
+//
+// A successful Push means the update is queued, not that it reached the client.
+// The queue is bounded and drops its oldest entry under pressure — see
+// sessionUpdateQueue for why that is the right trade for NOTIFY and the wrong
+// one for a selected mailbox.
 func (u *SessionUpdater) Push(update *SessionUpdate) error {
 	if u == nil {
 		return ErrUpdaterClosed
@@ -166,6 +176,18 @@ type sessionUpdaterCore struct {
 func (u *sessionUpdaterCore) push(update *SessionUpdate) error {
 	if update == nil || update.Mailbox == "" {
 		return fmt.Errorf("imapserver: NOTIFY update requires a mailbox")
+	}
+	// Reject what cannot be delivered rather than queueing it and dropping it in
+	// drainNotify. The framework reports these as untagged STATUS, so an update
+	// with no Status has no wire form; accepting it would tell the backend its
+	// event was published and then silently discard it, which is the hardest
+	// kind of delivery bug to find from either end.
+	//
+	// RFC 5465 section 5 does report MailboxName as untagged LIST and the
+	// metadata events as untagged METADATA. Those need a field on SessionUpdate,
+	// which is additive when it lands; until then the honest answer is an error.
+	if update.Status == nil {
+		return fmt.Errorf("imapserver: NOTIFY update for %q has no Status, which is the only form the framework can deliver", update.Mailbox)
 	}
 	u.mu.RLock()
 	defer u.mu.RUnlock()
