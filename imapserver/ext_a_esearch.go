@@ -30,6 +30,8 @@ const (
 	searchReturnAll   = "ALL"
 	searchReturnCount = "COUNT"
 	searchReturnSave  = "SAVE"
+	// searchReturnPartial is PARTIAL (RFC 9394), implemented in ext_c_partial.go.
+	searchReturnPartial = "PARTIAL"
 )
 
 // searchResultMarker is the SEARCHRES reference to the last saved result.
@@ -60,7 +62,13 @@ func parseSearchReturnOptions(decoder *imapwire.Decoder, args *searchArgs) error
 		if !decoder.ExpectAtom(&option) {
 			return decoder.Err()
 		}
-		args.returnOptions = append(args.returnOptions, strings.ToUpper(option))
+		option = strings.ToUpper(option)
+		args.returnOptions = append(args.returnOptions, option)
+		// Most return options are bare atoms. PARTIAL carries a range, which is
+		// read by the group C file that owns the extension.
+		if option == searchReturnPartial {
+			return parseSearchPartialRange(decoder, args)
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -87,6 +95,10 @@ func validateSearchReturnOptions(c *conn, args *searchArgs) error {
 		case searchReturnSave:
 			if !advertised["SEARCHRES"] {
 				return fmt.Errorf("SEARCH return option SAVE requires SEARCHRES")
+			}
+		case searchReturnPartial:
+			if !advertised["PARTIAL"] {
+				return fmt.Errorf("SEARCH return option PARTIAL requires PARTIAL")
 			}
 		default:
 			return fmt.Errorf("unsupported SEARCH return option %q", option)
@@ -138,6 +150,9 @@ func writeESearchResponse(c *conn, command *queuedCommand, args *searchArgs, num
 	if requested[searchReturnCount] {
 		c.encoder.SP().Atom(searchReturnCount).SP().Number(uint32(len(numbers)))
 	}
+	if requested[searchReturnPartial] {
+		writeSearchPartial(c, args, numbers)
+	}
 	c.encoder.CRLF()
 	return c.encoder.Flush()
 }
@@ -151,7 +166,8 @@ func searchReturnSet(args *searchArgs) map[string]bool {
 		requested[option] = true
 	}
 	if !requested[searchReturnMin] && !requested[searchReturnMax] &&
-		!requested[searchReturnAll] && !requested[searchReturnCount] {
+		!requested[searchReturnAll] && !requested[searchReturnCount] &&
+		!requested[searchReturnPartial] {
 		requested[searchReturnAll] = true
 	}
 	return requested

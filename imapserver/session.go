@@ -423,7 +423,10 @@ func updateBatchSize(batch *UpdateBatch) int64 {
 }
 
 type selectedState struct {
-	mailbox  SelectedMailbox
+	mailbox SelectedMailbox
+	// name is the selected mailbox's name, which MULTISEARCH needs to name the
+	// default search source. See ext_c_multisearch.go.
+	name     string
 	uids     []imap.UID
 	revision MailboxRevision
 	readOnly bool
@@ -513,6 +516,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 	}
 	selected := &selectedState{
 		mailbox:  result.Mailbox,
+		name:     result.Snapshot.Status.Mailbox,
 		uids:     slices.Clone(result.Snapshot.UIDs),
 		revision: result.Snapshot.Revision,
 		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,

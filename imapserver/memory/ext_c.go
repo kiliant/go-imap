@@ -2,6 +2,9 @@ package memory
 
 import (
 	"context"
+	"encoding/base64"
+	"io"
+	"mime/quotedprintable"
 	"slices"
 	"strings"
 	"time"
@@ -227,3 +230,113 @@ var (
 	_ imapserver.SortMailbox   = (*selected)(nil)
 	_ imapserver.ThreadMailbox = (*selected)(nil)
 )
+
+// MultiSearch implements [imapserver.MultiSearchSession].
+//
+// Each named mailbox is evaluated independently and reported with its own
+// UIDVALIDITY, because a UID from one mailbox means nothing in another.
+//
+// A mailbox that does not exist is skipped rather than failing the command: RFC
+// 7377 section 2.1 reports per-mailbox results, and one bad name in a list
+// should not discard the results for every other mailbox the client asked about.
+func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *imapserver.MultiSearchOptions) ([]imapserver.MultiSearchMailboxResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	charset := ""
+	if options != nil {
+		charset = options.Charset
+	}
+	if criteria == nil {
+		criteria = imap.SearchAll
+	}
+	s.account.mu.Lock()
+	defer s.account.mu.Unlock()
+	if s.closed {
+		return nil, noError(imap.CodeClosed, "session is closed")
+	}
+	results := make([]imapserver.MultiSearchMailboxResult, 0, len(mailboxes))
+	for _, name := range mailboxes {
+		m := s.account.mailboxes[mailboxKey(name)]
+		if m == nil {
+			continue
+		}
+		var matches []imap.UID
+		for i, msg := range m.messages {
+			metadata := imapmessage.Metadata{
+				SeqNum:       imap.SeqNum(i + 1),
+				UID:          msg.uid,
+				Flags:        cloneFlags(msg.flags),
+				InternalDate: msg.internalDate,
+				RFC822Size:   int64(len(msg.raw)),
+			}
+			ok, err := imapmessage.Match(msg.analysis, metadata, criteria, &imapmessage.MatchOptions{Charset: charset})
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				matches = append(matches, msg.uid)
+			}
+		}
+		results = append(results, imapserver.MultiSearchMailboxResult{
+			Mailbox:     m.name,
+			UIDValidity: m.uidValidity,
+			UIDs:        matches,
+		})
+	}
+	return results, nil
+}
+
+var _ imapserver.MultiSearchSession = (*session)(nil)
+
+// openBinarySection answers a BINARY[] fetch: the part's bytes with its
+// content-transfer-encoding undone.
+//
+// The decoding is done here rather than in internal/imapmessage because it is
+// backend work by the design's own split — the framework has no access to the
+// message — and because imapmessage belongs to another task. A backend with a
+// store that already keeps decoded parts would answer this without decoding
+// anything.
+//
+// RFC 3516 section 4.3 requires an UNKNOWN-CTE failure rather than a guess when
+// the encoding cannot be undone; returning the raw bytes would hand the client
+// base64 it believes is binary.
+func openBinarySection(msg *message, part []int) (io.Reader, error) {
+	raw, _, err := msg.analysis.OpenBodySection(&imap.FetchItemBodySection{Part: part, Peek: true})
+	if err != nil {
+		return nil, err
+	}
+	switch strings.ToLower(partEncoding(msg.analysis.BodyStructure, part)) {
+	case "", "7bit", "8bit", "binary":
+		return raw, nil
+	case "base64":
+		return base64.NewDecoder(base64.StdEncoding, raw), nil
+	case "quoted-printable":
+		return quotedprintable.NewReader(raw), nil
+	default:
+		return nil, &imap.Error{
+			Type: imap.ErrorTypeNo,
+			Code: imap.CodeUnknownCTE,
+			Text: "cannot decode this content-transfer-encoding",
+		}
+	}
+}
+
+// partEncoding walks the body structure to the named part and reports its
+// content-transfer-encoding. An empty path means the whole message.
+func partEncoding(structure imap.BodyStructure, part []int) string {
+	current := structure
+	for _, index := range part {
+		multipart, ok := current.(*imap.BodyStructureMultiPart)
+		if !ok || index < 1 || index > len(multipart.Children) {
+			// A path into a non-multipart is the message itself, which the
+			// single-part branch below then reports on.
+			break
+		}
+		current = multipart.Children[index-1]
+	}
+	if single, ok := current.(*imap.BodyStructureSinglePart); ok {
+		return single.Encoding
+	}
+	return ""
+}

@@ -21,6 +21,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"MetadataSession":       {"GetMetadata", "SetMetadata"},
 		"MoveMailbox":           {"Move"},
 		"MoveSupport":           {"SupportsMove"},
+		"MultiSearchSession":    {"MultiSearch"},
 		"NamespaceSession":      {"Namespace"},
 		"QResyncMailbox":        {"Resync"},
 		"QuotaSession":          {"GetQuota", "QuotaRoots"},
@@ -159,7 +160,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
 		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
 		QuotaOptions{}, ACLOptions{}, ACLSetOptions{}, MetadataOptions{}, NamespaceOptions{}, UnauthenticateOptions{},
-		SortOptions{}, ThreadOptions{},
+		SortOptions{}, ThreadOptions{}, MultiSearchOptions{}, MultiSearchMailboxResult{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")

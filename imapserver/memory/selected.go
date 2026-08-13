@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -445,6 +446,31 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 				key = "BODYSTRUCTURE"
 			}
 			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: msg.analysis.BodyStructure})
+		case *imap.FetchItemBinarySection:
+			// BINARY[] delivers the section with its content-transfer-encoding
+			// already undone, which is the whole point of RFC 3516: the client
+			// receives bytes rather than base64 it has to decode itself.
+			reader, err := openBinarySection(msg, item.Part)
+			if err != nil {
+				return nil, false, err
+			}
+			key := imap.FetchDataKey(binarySectionKey(item, false))
+			data.Items[key] = append(data.Items[key], &imap.FetchDataBinarySection{
+				Part:    append([]int(nil), item.Part...),
+				Literal: reader,
+			})
+			marksSeen = marksSeen || !item.Peek
+		case *imap.FetchItemBinarySectionSize:
+			reader, err := openBinarySection(msg, item.Part)
+			if err != nil {
+				return nil, false, err
+			}
+			size, err := readerSize(reader)
+			if err != nil {
+				return nil, false, err
+			}
+			key := imap.FetchDataKey(binarySectionKey(&imap.FetchItemBinarySection{Part: item.Part}, true))
+			data.Items[key] = append(data.Items[key], imap.FetchDataBinarySectionSize(size))
 		case *imap.FetchItemBodySection:
 			reader, _, err := msg.analysis.OpenBodySection(item)
 			if err != nil {
@@ -468,6 +494,38 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 		}
 	}
 	return data, marksSeen, nil
+}
+
+// binarySectionKey renders the response key for a BINARY or BINARY.SIZE item.
+// RFC 3516 keys the response by the same text the client sent.
+func binarySectionKey(item *imap.FetchItemBinarySection, size bool) string {
+	var b strings.Builder
+	b.WriteString("BINARY")
+	if size {
+		b.WriteString(".SIZE")
+	}
+	b.WriteByte('[')
+	for i, number := range item.Part {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.Itoa(number))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// readerSize measures a section without retaining it. BINARY.SIZE reports the
+// decoded length, which is not derivable from the stored bytes.
+func readerSize(reader io.Reader) (uint32, error) {
+	count, err := io.Copy(io.Discard, reader)
+	if err != nil {
+		return 0, err
+	}
+	if closer, ok := reader.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	return uint32(count), nil
 }
 
 func bodySectionKey(item *imap.FetchItemBodySection) string {

@@ -97,3 +97,96 @@ func TestGroupCCapabilitiesRequireBackendWitness(t *testing.T) {
 		t.Errorf("SORT accepted without backend support: %q", tagged)
 	}
 }
+
+// PARTIAL windows an ESEARCH result. RFC 9394.
+func TestLoopbackSearchPartial(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "C1 SEARCH RETURN (PARTIAL 1:2) ALL\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "C1 ")
+	if !strings.HasPrefix(tagged, "C1 OK") {
+		t.Fatalf("SEARCH RETURN (PARTIAL) failed: %q", tagged)
+	}
+	line := findResponse(t, untagged, "* ESEARCH")
+	if !strings.Contains(line, "PARTIAL (1:2 1:2)") {
+		t.Errorf("PARTIAL = %q, want the window and its messages", line)
+	}
+	// PARTIAL alone must not also produce ALL, or the windowing saves nothing.
+	if strings.Contains(line, " ALL ") {
+		t.Errorf("PARTIAL implied ALL: %q", line)
+	}
+
+	// A negative range counts back from the end.
+	writeRawCommand(t, clientSide, "C2 SEARCH RETURN (PARTIAL -1:-1) ALL\r\n")
+	untagged, _ = collectUntilTag(t, reader, "C2 ")
+	if line := findResponse(t, untagged, "* ESEARCH"); !strings.Contains(line, "PARTIAL (-1:-1 3)") {
+		t.Errorf("negative PARTIAL = %q, want the last message", line)
+	}
+
+	// A window past the end is NIL, not an omission: the client must be able
+	// to tell "nothing there" from "the server ignored PARTIAL".
+	writeRawCommand(t, clientSide, "C3 SEARCH RETURN (PARTIAL 50:60) ALL\r\n")
+	untagged, _ = collectUntilTag(t, reader, "C3 ")
+	if line := findResponse(t, untagged, "* ESEARCH"); !strings.Contains(line, "PARTIAL (50:60 NIL)") {
+		t.Errorf("out-of-range PARTIAL = %q, want NIL", line)
+	}
+
+	// A range mixing signs has no meaning and is refused.
+	writeRawCommand(t, clientSide, "C4 SEARCH RETURN (PARTIAL 1:-2) ALL\r\n")
+	if _, tagged := collectUntilTag(t, reader, "C4 "); !strings.HasPrefix(tagged, "C4 BAD") {
+		t.Errorf("mixed-sign PARTIAL accepted: %q", tagged)
+	}
+}
+
+// MULTISEARCH searches mailboxes the connection has not selected, and names the
+// mailbox and UIDVALIDITY so the UIDs mean something. RFC 7377.
+func TestLoopbackMultiSearch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "C1 ESEARCH IN (INBOX) ALL\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "C1 ")
+	if !strings.HasPrefix(tagged, "C1 OK") {
+		t.Fatalf("ESEARCH failed: %q", tagged)
+	}
+	line := findResponse(t, untagged, "* ESEARCH")
+	for _, want := range []string{"MAILBOX", "UIDVALIDITY", "UID", "ALL"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("ESEARCH response has no %s: %q", want, line)
+		}
+	}
+
+	// A mailbox with no matches produces no response at all, which is how a
+	// client distinguishes it from one that was not searched.
+	writeRawCommand(t, clientSide, "C2 CREATE Empty\r\n")
+	collectUntilTag(t, reader, "C2 ")
+	writeRawCommand(t, clientSide, "C3 ESEARCH IN (Empty) ALL\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "C3 ")
+	if !strings.HasPrefix(tagged, "C3 OK") {
+		t.Fatalf("ESEARCH on an empty mailbox failed: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.HasPrefix(line, "* ESEARCH") {
+			t.Errorf("empty mailbox produced an ESEARCH response: %q", line)
+		}
+	}
+}
+
+// BINARY[] delivers the section decoded, which is the point of RFC 3516.
+func TestLoopbackBinaryFetch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	writeRawCommand(t, clientSide, "C1 FETCH 1 (BINARY.SIZE[])\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "C1 ")
+	if !strings.HasPrefix(tagged, "C1 OK") {
+		t.Fatalf("BINARY.SIZE fetch failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* 1 FETCH"); !strings.Contains(line, "BINARY.SIZE[]") {
+		t.Errorf("BINARY.SIZE = %q", line)
+	}
+}

@@ -48,6 +48,9 @@ var supportedCapabilities = map[string]bool{
 	"SORT":         true,
 	"SORT=DISPLAY": true,
 	"THREAD":       true,
+	"BINARY":       true,
+	"MULTISEARCH":  true,
+	"UTF8=APPEND":  true,
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared

@@ -16,7 +16,9 @@ type searchArgs struct {
 	// ESEARCH response shape. See ext_a_esearch.go.
 	extended      bool
 	returnOptions []string
-	criteria      imap.SearchCriteria
+	// partial is PARTIAL's requested window. See ext_c_partial.go.
+	partial  *searchPartialRange
+	criteria imap.SearchCriteria
 }
 
 func parseSearch(decoder *imapwire.Decoder) (any, int64, error) {

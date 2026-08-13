@@ -148,20 +148,20 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 | Capability | RFC | Client | Server |
 |---|---|---|---|
-| BINARY | 3516 | done | — [^srvpending] |
-| CATENATE | 4469 | done | — [^srvpending] |
-| MULTIAPPEND | 3502 | done | — [^srvpending] |
+| BINARY | 3516 | done | done [^srvbinary] |
+| CATENATE | 4469 | done | — [^srvliteralinterleave] |
+| MULTIAPPEND | 3502 | done | — [^srvliteralinterleave] |
 | COMPRESS=DEFLATE | 4978 | done | done [^srvcompress] |
 | UTF8=ACCEPT | 9755 | done | done [^srvcompress] |
-| UTF8=ALL | 5738, 9755 | done | — [^srvpending] |
-| UTF8=APPEND | 5738, 9755 | done | — [^srvpending] |
-| UTF8=ONLY | 9755 | done | — [^srvpending] |
-| UTF8=USER | 5738, 9755 | done | — [^srvpending] |
+| UTF8=ALL | 5738, 9755 | done | — [^srvutf8] |
+| UTF8=APPEND | 5738, 9755 | done | done |
+| UTF8=ONLY | 9755 | done | — [^srvutf8] |
+| UTF8=USER | 5738, 9755 | done | — [^srvutf8] |
 | SORT | 5256 | done | done |
 | SORT=DISPLAY | 5957 | done | done |
 | THREAD | 5256 | done | done [^srvthread] |
-| MULTISEARCH | 7377 | done | — [^srvpending] |
-| PARTIAL | 9394 | done | — [^srvpending] |
+| MULTISEARCH | 7377 | done | done [^srvmultisearch] |
+| PARTIAL | 9394 | done | done [^srvpartial] |
 | SEARCH=FUZZY | 6203 | done | done [^srvfuzzy] |
 
 [^srvcompress]: Framework-owned and already delivered by T19/T22, not by T23.
@@ -171,6 +171,36 @@ CONDSTORE `MODIFIED` on tagged OK.
     and refuses REFERENCES rather than answering it with ORDEREDSUBJECT
     results, which would silently mis-thread a client's view; REFERENCES needs
     a Message-ID graph the backend does not retain.
+
+[^srvbinary]: FETCH side. `BINARY[]` and `BINARY.SIZE[]` decode the
+    content-transfer-encoding, and an encoding that cannot be undone fails with
+    UNKNOWN-CTE rather than handing the client base64 it believes is binary.
+    Binary APPEND (a literal8 payload) is blocked with CATENATE and MULTIAPPEND
+    below.
+
+[^srvliteralinterleave]: **Blocked, escalated.** Both need the command parser to
+    consume one literal before it can parse the next message's header — the
+    second literal's length is not on the wire until the first has been read.
+    The framework runs a command's parse to completion before its handler, and
+    the decoder is owned by the reader goroutine, so expressing this needs a
+    reader-protocol change in `imapserver/conn.go` (T19's file). Recorded per
+    BOARD.md rather than worked around; a partial implementation that read only
+    the first message would silently drop the rest.
+
+[^srvutf8]: RFC 9755 deprecates UTF8=ALL and UTF8=USER. UTF8=ONLY is a statement
+    that the server *refuses* ASCII-only clients, which this framework cannot
+    honour, and advertising it while still serving them would be a false claim.
+
+[^srvmultisearch]: The ESEARCH command, searching mailboxes the connection has
+    not selected. Each result carries its mailbox and UIDVALIDITY, without which
+    a UID from another mailbox is meaningless. RFC 7377's scope options
+    (`subtree`, `mailboxes`, `personal`) are refused rather than misread as
+    mailbox names; plain names are supported.
+
+[^srvpartial]: Framework-owned windowing of an ESEARCH result, including RFC
+    9394's negative ranges. It saves wire bytes and client memory, not backend
+    work — the backend still evaluates the whole search, and RFC 9394 defines no
+    interface that would let it stop early.
 
 [^srvfuzzy]: The FUZZY modifier reaches the backend through the open search
     criteria tree with no framework translation, so the capability is purely a
