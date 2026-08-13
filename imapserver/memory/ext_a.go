@@ -37,6 +37,7 @@ var supportedCapabilities = map[string]bool{
 	"STATUS=SIZE": true,
 	"APPENDLIMIT": true,
 	"PREVIEW":     true,
+	"REPLACE":     true,
 }
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared

@@ -374,3 +374,65 @@ func TestGroupBCapabilitiesRequireBackendWitness(t *testing.T) {
 		}
 	}
 }
+
+// REPLACE is one atomic operation: the old message is gone and the new one is
+// present, with no observable state in between. RFC 8508.
+func TestLoopbackReplace(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	body := "Subject: replacement\r\n\r\nnew body\r\n"
+	writeRawCommand(t, clientSide, "B1 REPLACE 1 INBOX {"+strconv.Itoa(len(body))+"}\r\n")
+	if line, err := reader.ReadString('\n'); err != nil || !strings.HasPrefix(line, "+") {
+		t.Fatalf("expected a continuation request, got %q %v", line, err)
+	}
+	writeRawCommand(t, clientSide, body+"\r\n")
+	_, tagged := collectUntilTag(t, reader, "B1 ")
+	if !strings.HasPrefix(tagged, "B1 OK") {
+		t.Fatalf("REPLACE failed: %q", tagged)
+	}
+	if !strings.Contains(tagged, "APPENDUID") {
+		t.Errorf("REPLACE did not report APPENDUID: %q", tagged)
+	}
+
+	// The mailbox still holds three messages: one replaced, not one added.
+	writeRawCommand(t, clientSide, "B2 STATUS INBOX (MESSAGES)\r\n")
+	untagged, _ := collectUntilTag(t, reader, "B2 ")
+	if status := findResponse(t, untagged, "* STATUS"); !strings.Contains(status, "MESSAGES 3") {
+		t.Errorf("STATUS after REPLACE = %q, want MESSAGES 3", status)
+	}
+
+	// The original UID is gone, and the replacement carries the new text.
+	writeRawCommand(t, clientSide, "B3 UID FETCH 1 (UID)\r\n")
+	untagged, _ = collectUntilTag(t, reader, "B3 ")
+	for _, line := range untagged {
+		if strings.Contains(line, "FETCH") {
+			t.Errorf("replaced UID 1 is still present: %q", line)
+		}
+	}
+}
+
+// REPLACE names exactly one message; a range is refused rather than guessed at.
+func TestLoopbackReplaceRefusesMultipleMessages(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	body := "Subject: x\r\n\r\nx\r\n"
+	writeRawCommand(t, clientSide, "B1 REPLACE 1:2 INBOX {"+strconv.Itoa(len(body))+"}\r\n")
+	// The literal is still announced, so the server must drain it before
+	// answering or the connection desynchronises.
+	if line, err := reader.ReadString('\n'); err == nil && strings.HasPrefix(line, "+") {
+		writeRawCommand(t, clientSide, body+"\r\n")
+	}
+	if _, tagged := collectUntilTag(t, reader, "B1 "); !strings.HasPrefix(tagged, "B1 BAD") {
+		t.Errorf("REPLACE accepted a range: %q", tagged)
+	}
+	// The connection must still be usable, which is what proves the literal
+	// was drained rather than left on the wire.
+	writeRawCommand(t, clientSide, "B2 NOOP\r\n")
+	if _, tagged := collectUntilTag(t, reader, "B2 "); !strings.HasPrefix(tagged, "B2 OK") {
+		t.Errorf("connection desynchronised after a refused REPLACE: %q", tagged)
+	}
+}

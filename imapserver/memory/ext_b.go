@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/internal/imapmessage"
 )
 
 // Group B capability support: CONDSTORE and QRESYNC (RFC 7162), plus the
@@ -216,3 +218,81 @@ func previewOf(msg *message) string {
 	}
 	return preview
 }
+
+// Replace implements [imapserver.ReplaceMailbox].
+//
+// The removal and the store happen under one lock, so no other session can
+// observe the message twice or not at all — which is the entire reason RFC 8508
+// exists rather than leaving clients to issue APPEND and EXPUNGE themselves.
+//
+// The literal is read before the lock is taken. Reading it holds the connection
+// open for as long as the client takes to send it, and doing that under the
+// account lock would let one slow client stall every other session.
+func (s *selected) Replace(ctx context.Context, uid imap.UID, name string, literal io.Reader, options *imapserver.ReplaceOptions) (*imap.AppendData, error) {
+	if literal == nil {
+		return nil, noError(imap.CodeCannot, "nil message literal")
+	}
+	raw, err := io.ReadAll(&contextReader{ctx: ctx, reader: literal})
+	if err != nil {
+		return nil, err
+	}
+	analysis, err := imapmessage.Analyze(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return nil, err
+	}
+	internalDate := time.Now()
+	var flags []imap.Flag
+	var origin imapserver.ChangeToken
+	if options != nil {
+		flags = uniqueFlags(options.Flags)
+		origin = options.Origin
+		if !options.InternalDate.IsZero() {
+			internalDate = options.InternalDate
+		}
+	}
+
+	s.session.account.mu.Lock()
+	defer s.session.account.mu.Unlock()
+	if s.closed {
+		return nil, noError(imap.CodeClosed, "mailbox is no longer selected")
+	}
+	destination := s.session.account.mailboxes[mailboxKey(name)]
+	if destination == nil {
+		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
+	}
+	var found bool
+	retained := make([]*message, 0, len(s.mailbox.messages))
+	for _, msg := range s.mailbox.messages {
+		if msg.uid == uid {
+			found = true
+			continue
+		}
+		retained = append(retained, msg)
+	}
+	if !found {
+		return nil, noError(imap.CodeCannot, "message does not exist")
+	}
+
+	// The removal is applied before the store. When the destination is the
+	// selected mailbox these are the same slice, and appending first would let
+	// the retained slice overwrite the message just added.
+	s.mailbox.messages = retained
+	recordVanishedLocked(s.mailbox, uid)
+
+	newUID := destination.uidNext
+	destination.uidNext++
+	destination.messages = append(destination.messages, &message{
+		uid: newUID, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
+		modSeq: bumpModSeqLocked(destination), saveDate: time.Now(),
+	})
+
+	// Two batches when the mailboxes differ, because a batch describes one
+	// mailbox's observable change and watchers are per mailbox.
+	publishLocked(s.mailbox, advanceLocked(s.mailbox, origin,
+		[]imapserver.Update{&imapserver.UpdateExpunge{UID: uid}}))
+	publishLocked(destination, advanceLocked(destination, origin,
+		[]imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{newUID}}}))
+	return &imap.AppendData{HasUID: true, UIDValidity: destination.uidValidity, UID: newUID}, nil
+}
+
+var _ imapserver.ReplaceMailbox = (*selected)(nil)

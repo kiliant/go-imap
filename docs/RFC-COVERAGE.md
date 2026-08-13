@@ -90,16 +90,34 @@ servers, Dovecot and Stalwart.
 
 ## Group B — synchronisation & identity (task T09)
 
-| Capability | RFC | Status |
-|---|---|---|
-| CONDSTORE | 7162 | verified |
-| QRESYNC | 7162 | verified |
-| OBJECTID | 8474 | verified [^objectid] |
-| SAVEDATE | 8514 | verified [^savedate] |
-| STATUS=SIZE | 8438 | verified |
-| APPENDLIMIT | 7889 | done [^appendlimit] |
-| PREVIEW | 8970 | verified [^preview] |
-| REPLACE | 8508 | done [^replace] |
+| Capability | RFC | Client | Server |
+|---|---|---|---|
+| CONDSTORE | 7162 | verified | done [^srvcondstore] |
+| QRESYNC | 7162 | verified | done [^srvqresync] |
+| OBJECTID | 8474 | verified [^objectid] | done [^srvitems] |
+| SAVEDATE | 8514 | verified [^savedate] | done [^srvitems] |
+| STATUS=SIZE | 8438 | verified | done [^srvitems] |
+| APPENDLIMIT | 7889 | done [^appendlimit] | done [^srvitems] |
+| PREVIEW | 8970 | verified [^preview] | done [^srvitems] |
+| REPLACE | 8508 | done [^replace] | done [^srvreplace] |
+
+[^srvcondstore]: Backend-delegated through the optional `CondStoreMailbox`.
+    Conditional STORE reports rejected messages via MODIFIED on a successful
+    tagged OK, never as an error.
+
+[^srvqresync]: Backend-delegated through the optional `QResyncMailbox`. The
+    reference `memory` backend implements it exactly within one process
+    lifetime and documents that its removal record does not survive a restart —
+    which is the case QRESYNC exists for. A durable backend must persist it.
+
+[^srvitems]: No framework machinery and no backend interface: these are FETCH
+    and STATUS items, and both sets are open types in `package imap`. The
+    server-side cost is one capability descriptor witnessing that the backend
+    produces the item.
+
+[^srvreplace]: Backend-delegated through the optional `ReplaceMailbox`. Never
+    synthesised from APPEND plus EXPUNGE — a client using REPLACE is asking for
+    atomicity, which a synthesised version is precisely unable to give.
 
 CONDSTORE, QRESYNC, OBJECTID, SAVEDATE, STATUS=SIZE and PREVIEW are exercised
 against the servers that advertise them (Dovecot, Stalwart and/or Cyrus),

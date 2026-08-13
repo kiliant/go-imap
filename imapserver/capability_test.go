@@ -19,6 +19,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"MoveMailbox":       {"Move"},
 		"MoveSupport":       {"SupportsMove"},
 		"QResyncMailbox":    {"Resync"},
+		"ReplaceMailbox":    {"Replace"},
 		"SelectedMailbox":   {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
 		"Session":           {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
 		"Update":            {"update"},
@@ -74,6 +75,9 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 		"CopyOptions.MutationOptions":    true,
 		"MoveOptions.MutationOptions":    true,
 		"ExpungeOptions.MutationOptions": true,
+		// REPLACE carries the same mutation origin as every other mutating
+		// command; only its extension-specific fields bind to a feature.
+		"ReplaceOptions.MutationOptions": true,
 		"Options.TLSConfig":              true,
 		"Options.RequireTLS":             true,
 		"Options.AllowInsecureAuth":      true,
@@ -120,7 +124,13 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 					if baseline[key] {
 						continue
 					}
-					feature := reflect.StructTag(strings.Trim(field.Tag.Value, "`")).Get("imapfeature")
+					// An untagged field has a nil Tag, which is the most likely
+					// way for this gate to be tripped: someone added a field and
+					// no binding at all. Report that rather than panicking on it.
+					feature := ""
+					if field.Tag != nil {
+						feature = reflect.StructTag(strings.Trim(field.Tag.Value, "`")).Get("imapfeature")
+					}
 					if feature == "" {
 						t.Errorf("%s is not a baseline field and has no imapfeature binding", key)
 					} else if !knownFeatures[feature] {
@@ -138,7 +148,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		CreateOptions{}, DeleteOptions{}, RenameOptions{}, SubscribeOptions{}, UnsubscribeOptions{},
 		AppendOptions{}, SelectOptions{}, FetchOptions{}, SearchOptions{}, StoreFlags{}, StoreOptions{}, CopyOptions{},
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
-		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{},
+		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")
