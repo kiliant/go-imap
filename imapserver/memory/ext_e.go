@@ -195,9 +195,9 @@ func urlUID(url string) imap.UID {
 var comparators = []string{"i;unicode-casemap", "i;octet"}
 
 // Comparators implements [imapserver.ComparatorSession].
-func (s *session) Comparators(ctx context.Context, _ *imapserver.ComparatorOptions) (string, []string, error) {
+func (s *session) Comparators(ctx context.Context, _ *imapserver.ComparatorOptions) (*imapserver.ComparatorData, error) {
 	if err := ctx.Err(); err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
@@ -205,15 +205,18 @@ func (s *session) Comparators(ctx context.Context, _ *imapserver.ComparatorOptio
 	if active == "" {
 		active = comparators[0]
 	}
-	return active, append([]string(nil), comparators...), nil
+	return &imapserver.ComparatorData{
+		Active:    active,
+		Available: append([]string(nil), comparators...),
+	}, nil
 }
 
 // SetComparator implements [imapserver.ComparatorSession]. It takes the first
-// name it can serve, and reports empty when it can serve none — which the
+// name it can serve, and reports nil when it can serve none — which the
 // framework turns into BADCOMPARATOR rather than a generic failure.
-func (s *session) SetComparator(ctx context.Context, order []string, _ *imapserver.ComparatorOptions) (string, error) {
+func (s *session) SetComparator(ctx context.Context, order []string, _ *imapserver.ComparatorOptions) (*imapserver.ComparatorResult, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return nil, err
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
@@ -221,11 +224,11 @@ func (s *session) SetComparator(ctx context.Context, order []string, _ *imapserv
 		for _, available := range comparators {
 			if strings.EqualFold(requested, available) {
 				s.comparator = available
-				return available, nil
+				return &imapserver.ComparatorResult{Active: available}, nil
 			}
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 // filters are the saved searches this backend serves. A real server would store

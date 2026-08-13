@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -30,18 +31,45 @@ import (
 // as strings: a server supporting one this library has never heard of needs no
 // change here.
 type ComparatorSession interface {
-	// Comparators reports the active comparator and the ones available, most
-	// preferred first.
-	Comparators(ctx context.Context, options *ComparatorOptions) (active string, available []string, err error)
-	// SetComparator selects one of the offered names. The returned name is the
-	// one adopted, empty when none of the requested names can be served.
-	SetComparator(ctx context.Context, order []string, options *ComparatorOptions) (string, error)
+	// Comparators reports the active comparator and the ones available.
+	Comparators(ctx context.Context, options *ComparatorOptions) (*ComparatorData, error)
+	// SetComparator selects one of the offered names. A nil result means none of
+	// the requested names can be served.
+	SetComparator(ctx context.Context, order []string, options *ComparatorOptions) (*ComparatorResult, error)
 }
 
 // ComparatorOptions configures a COMPARATOR operation. A nil pointer selects
 // the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
 type ComparatorOptions struct{ _ struct{} }
+
+// ComparatorData is a backend's report of its comparator state.
+//
+// It is a struct rather than two return values for the reason [LanguageResult]
+// is one: RFC 4790 section 3.1 has a comparator declare which of equality,
+// substring and ordering matching it supports, and RFC 5255 section 4.6 requires
+// an ordering-capable comparator for SORT. A server offering both
+// i;ascii-casemap and a collation that cannot order needs somewhere to say so,
+// or the framework cannot refuse a SORT under the wrong one. Nothing reads that
+// yet; the room for it is the point.
+// Construct with keyed fields only; fields may be added in a future release.
+type ComparatorData struct {
+	// Active is the comparator currently in force.
+	Active string
+	// Available lists the comparators this session can adopt, most preferred
+	// first.
+	Available []string
+	_         struct{}
+}
+
+// ComparatorResult is a backend's answer to a COMPARATOR selection.
+// Construct with keyed fields only; fields may be added in a future release.
+type ComparatorResult struct {
+	// Active is the comparator actually adopted, which may differ from the
+	// request when the backend matched a name it considers equivalent.
+	Active string
+	_      struct{}
+}
 
 // FilterSession is the optional FILTERS support of RFC 5466: named, server-side
 // search filters a client references instead of restating the criteria.
@@ -107,7 +135,7 @@ func handleComparator(ctx context.Context, c *conn, command *queuedCommand) erro
 		if err != nil {
 			return writeBackendError(c, command.tag, command.name, err)
 		}
-		if adopted == "" {
+		if adopted == nil || adopted.Active == "" {
 			// RFC 5255 section 4.7 uses BADCOMPARATOR for a request naming
 			// nothing the server can serve, so the client can distinguish it
 			// from an ordinary failure and fall back.
@@ -115,13 +143,17 @@ func handleComparator(ctx context.Context, c *conn, command *queuedCommand) erro
 				"no requested comparator is available")
 		}
 	}
-	active, available, err := session.Comparators(ctx, nil)
+	data, err := session.Comparators(ctx, nil)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("COMPARATOR").SP().String(active)
-	if len(available) > 0 {
-		c.encoder.SP().List(len(available), func(i int) { c.encoder.String(available[i]) })
+	if data == nil {
+		return writeBackendError(c, command.tag, command.name,
+			fmt.Errorf("imapserver: backend COMPARATOR returned nil"))
+	}
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("COMPARATOR").SP().String(data.Active)
+	if len(data.Available) > 0 {
+		c.encoder.SP().List(len(data.Available), func(i int) { c.encoder.String(data.Available[i]) })
 	}
 	c.encoder.CRLF()
 	if err := c.encoder.Flush(); err != nil {
