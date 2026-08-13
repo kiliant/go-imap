@@ -469,3 +469,33 @@ func TestLoopbackReplaceRequiresAdvertisedCapability(t *testing.T) {
 		t.Errorf("REPLACE accepted without an advertised capability: %q", tagged)
 	}
 }
+
+// RFC 7162's grammar for UNCHANGEDSINCE is mod-sequence-valzer, and Example 8
+// uses UNCHANGEDSINCE 0 as a probe that always fails — it is how a client tests
+// atomically for the presence of a keyword. Zero is therefore a real value, not
+// "no modifier", and the conditional path must still be taken.
+func TestLoopbackCondStoreUnchangedSinceZeroIsConditional(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSessionIn(t, ctx, true)
+	writeRawCommand(t, clientSide, "B1 ENABLE CONDSTORE\r\n")
+	collectUntilTag(t, reader, "B1 ")
+	writeRawCommand(t, clientSide, "B1b SELECT INBOX\r\n")
+	collectUntilTag(t, reader, "B1b ")
+
+	// Every seeded message has a modseq above zero, so this must modify
+	// nothing and report all of them as MODIFIED.
+	writeRawCommand(t, clientSide, "B2 STORE 1:3 (UNCHANGEDSINCE 0) +FLAGS (\\Answered)\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "B2 ")
+	if !strings.HasPrefix(tagged, "B2 OK") {
+		t.Fatalf("conditional STORE should succeed: %q", tagged)
+	}
+	if !strings.Contains(tagged, "MODIFIED") {
+		t.Errorf("UNCHANGEDSINCE 0 was treated as unconditional: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.Contains(line, "Answered") {
+			t.Errorf("UNCHANGEDSINCE 0 modified a message: %q", line)
+		}
+	}
+}

@@ -388,6 +388,71 @@ Per `CLAUDE.md`, this needed explicit written approval from the human before it
 became real, and it has that approval now. `imapserver/go.mod` and the root
 `go.work` are T25's to create, at v1.0.
 
+## 10. The `imapserver` enforcement gates — added by T23, 2026-08-13
+
+Three mechanical gates in `imapserver/capability_test.go` enforce the rules above
+for the server framework. They are recorded here because a gate that lives only
+in a test file is a gate the next task deletes as a test failure rather than
+recognising as an API decision — which is exactly the history section 3 records
+about the options-struct rule.
+
+**The interface method-set gate.** `TestBackendInterfaceMethodSets` compares a
+hand-written map of every exported interface against an AST scan of the package.
+Adding a method to an existing interface, adding an interface, or removing one
+all fail it. The map is meant to be edited deliberately: the diff to that literal
+is the record of what the API grew.
+
+**The struct guard.** `TestGrowableConfigurationStructsAreGuarded` requires
+`_ struct{}` on every exported struct in `imapserver`, walking the package rather
+than iterating a list — section 7's point is that the rule is not a judgement
+call, and a list makes it one again. Framework-constructed types are exempt
+through `unguardedByDesign`, which carries a one-line reason each and is checked
+in both directions so a stale exemption fails too.
+
+**The feature-binding gate.** Every field on an `imapserver` options struct that
+is not part of the rev1 baseline carries an `imapfeature:"<id>"` tag naming the
+feature that activates it, and `TestExtensionOptionFieldsHaveFeatureBinding`
+fails on a missing or unknown binding. The framework populates such a field only
+when its feature is active for the session, so the pairing between "capability
+advertised" and "option field set" is executed rather than remembered. Without
+it, a field added for a new RFC is silently ignored by an older backend and the
+server claims a capability it does not honour.
+
+### Capability witnesses
+
+A capability whose behaviour the backend must implement is advertised only when
+the backend witnesses it. `imapserver` has two witness styles and the choice
+between them is not stylistic:
+
+- **`CapabilitySupport`** — `SupportsCapability(name string) bool`, keyed by the
+  wire token. Use it where support is spread across data the backend returns and
+  no type can see it: CHILDREN, SAVEDATE, WITHIN, CONDSTORE. A future RFC is then
+  a new *token*, which is a data change rather than a type change — rule 1
+  applied to the witness layer.
+- **A structural check** that the session or selected mailbox implements the
+  optional interface. Use it where the interface *is* the whole of the support:
+  QUOTA, ACL, METADATA. The type system then makes it impossible to advertise
+  what is not implemented.
+
+Every extension command handler calls `requireCapability` before doing any work,
+whichever witness its capability uses. Holding an optional interface is not
+consent to advertise it.
+
+### Exception: `MoveSupport` predates `CapabilitySupport` — recorded 2026-08-13
+
+`MoveSupport` (`SupportsMove() bool`) is a single-capability witness for atomic
+MOVE, added by T19 before `CapabilitySupport` existed. It is redundant:
+`CapabilitySupport("MOVE")` expresses the same thing.
+
+It is kept rather than collapsed because MOVE's witness is also consulted for the
+IMAP4rev2 gate, so removing it is a behavioural change to rev2 advertisement
+rather than a rename — and `imapserver` is pre-1.0 but T19/T20 shipped against
+this surface. **Collapsing it is the right move and the window is open only until
+`imapserver` v1.0**; after that the second witness is permanent. Recorded here so
+the decision is deliberate, per CLAUDE.md's requirement that a deviation carry a
+written exception. T25 should either collapse it or promote this paragraph to a
+permanent entry.
+
 ## Reviewing against this document
 
 The `api-guardian` agent (`.claude/agents/api-guardian.md`) reviews every diff

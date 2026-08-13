@@ -34,10 +34,16 @@ type MetadataOptions struct {
 	// Depth limits how far below each requested entry the server descends:
 	// "0", "1" or "infinity" per RFC 5464 section 4.2.2. Empty means "0".
 	Depth string `imapfeature:"metadata"`
-	// MaxSize suppresses values larger than this many octets, and is zero when
-	// the client set no limit. RFC 5464 section 4.2.2.
+	// MaxSize suppresses values larger than this many octets.
+	// RFC 5464 section 4.2.2.
+	//
+	// HasMaxSize carries presence separately: MAXSIZE 0 is a real request —
+	// it suppresses every value and asks for them all to be named in
+	// METADATA LONGENTRIES — and is not the same as no MAXSIZE at all.
 	MaxSize uint32 `imapfeature:"metadata"`
-	_       struct{}
+	// HasMaxSize reports whether the client supplied MAXSIZE.
+	HasMaxSize bool `imapfeature:"metadata"`
+	_          struct{}
 }
 
 const featureMetadata featureID = "metadata"
@@ -109,6 +115,7 @@ func parseGetMetadata(decoder *imapwire.Decoder) (any, int64, error) {
 				if !decoder.ExpectNumber(&args.options.MaxSize) {
 					return decoder.Err()
 				}
+				args.options.HasMaxSize = true
 			default:
 				return fmt.Errorf("unsupported GETMETADATA option %q", name)
 			}

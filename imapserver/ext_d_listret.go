@@ -32,7 +32,29 @@ const (
 // Zero means unlimited for either value, which is how a server with no limit
 // declines to advertise one.
 type MessageLimitSession interface {
-	MessageLimits(ctx context.Context, options *MessageLimitOptions) (messageLimit, saveLimit uint32, err error)
+	MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)
+}
+
+// MessageLimits is a backend's RFC 9738 limits.
+//
+// Each limit carries its presence separately rather than using zero as an
+// absence, because RFC 9738 lets a server advertise one limit without the other
+// and a limit of zero is a legal — if unwelcoming — value. The "…LIMIT=" family
+// already has more than one member in this library (RFC 7889's APPENDLIMIT), so
+// a third is a field here rather than another return value.
+// Construct with keyed fields only; fields may be added in a future release.
+type MessageLimits struct {
+	// MessageLimit is the largest number of messages the server accepts into
+	// one mailbox, valid only when HasMessageLimit is set.
+	MessageLimit uint32
+	// HasMessageLimit reports whether the backend enforces a message limit.
+	HasMessageLimit bool
+	// SaveLimit is the largest number the server retains, valid only when
+	// HasSaveLimit is set.
+	SaveLimit uint32
+	// HasSaveLimit reports whether the backend enforces a save limit.
+	HasSaveLimit bool
+	_            struct{}
 }
 
 // MessageLimitOptions configures the limit query. A nil pointer selects the
@@ -163,23 +185,25 @@ func parseListMetadataEntries(decoder *imapwire.Decoder, args *listArgs) error {
 // legal advertisement. The descriptor table decides *whether* to advertise;
 // this decides what the token says.
 func capabilityValueOverrides(state *sessionState, names []string) []string {
-	messageLimit, saveLimit, ok := sessionMessageLimits(state)
-	if !ok {
+	if state == nil || state.limits == nil {
 		return names
 	}
+	limits := state.limits
 	rewritten := make([]string, 0, len(names))
 	for _, name := range names {
 		switch name {
 		case "MESSAGELIMIT":
-			if messageLimit == 0 {
+			// A backend may enforce one limit and not the other, so each token
+			// is advertised only when its own limit is present.
+			if !limits.HasMessageLimit {
 				continue
 			}
-			rewritten = append(rewritten, messageLimitPrefix+strconv.FormatUint(uint64(messageLimit), 10))
+			rewritten = append(rewritten, messageLimitPrefix+strconv.FormatUint(uint64(limits.MessageLimit), 10))
 		case "SAVELIMIT":
-			if saveLimit == 0 {
+			if !limits.HasSaveLimit {
 				continue
 			}
-			rewritten = append(rewritten, saveLimitPrefix+strconv.FormatUint(uint64(saveLimit), 10))
+			rewritten = append(rewritten, saveLimitPrefix+strconv.FormatUint(uint64(limits.SaveLimit), 10))
 		default:
 			rewritten = append(rewritten, name)
 		}
@@ -204,21 +228,11 @@ func resolveMessageLimits(ctx context.Context, state *sessionState) {
 	if !ok {
 		return
 	}
-	messageLimit, saveLimit, err := session.MessageLimits(ctx, nil)
-	if err != nil {
+	limits, err := session.MessageLimits(ctx, nil)
+	if err != nil || limits == nil {
 		return
 	}
-	state.messageLimit, state.saveLimit = messageLimit, saveLimit
-}
-
-func sessionMessageLimits(state *sessionState) (uint32, uint32, bool) {
-	if state == nil || state.session == nil {
-		return 0, 0, false
-	}
-	if _, ok := state.session.(MessageLimitSession); !ok {
-		return 0, 0, false
-	}
-	return state.messageLimit, state.saveLimit, true
+	state.limits = limits
 }
 
 // validateListExtensionReturnOptions accepts the two return options this file

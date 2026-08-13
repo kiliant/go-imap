@@ -52,7 +52,23 @@ type SCRAMCredentials interface {
 	// A backend implementing this must also accept the SCRAM mechanism in
 	// Backend.Authenticate with an empty Password: the framework has already
 	// verified the client's proof by then, and there is no password to check.
-	SCRAMCredentials(ctx context.Context, mechanism, username string) (*SCRAMStoredCredentials, error)
+	SCRAMCredentials(ctx context.Context, mechanism, username string, options *SCRAMCredentialsOptions) (*SCRAMStoredCredentials, error)
+}
+
+// SCRAMCredentialsOptions configures a SCRAM credential lookup. A nil pointer
+// selects the defaults.
+//
+// AuthzID is the authorization identity from RFC 5802 section 5.1's "a=" field:
+// the identity the client wants to act as, when it differs from the one it
+// authenticated as. That is the ordinary proxy-authentication and
+// admin-as-user case, and a backend cannot implement it without seeing the
+// field.
+// Construct with keyed fields only; fields may be added in a future release.
+type SCRAMCredentialsOptions struct {
+	// AuthzID is the requested authorization identity, or empty when the
+	// client asked to act as itself.
+	AuthzID string `imapfeature:"scram"`
+	_       struct{}
 }
 
 // SCRAMStoredCredentials is one user's stored SCRAM derivation. It is
@@ -79,7 +95,15 @@ var scramMechanisms = map[string]func() hash.Hash{
 	"SCRAM-SHA-256": sha256.New,
 }
 
+const featureSCRAM featureID = "scram"
+
 func init() {
+	registerFeatures(featureDescriptor{
+		ID: featureSCRAM,
+		Active: func(_ *sessionState, advertised map[string]bool) bool {
+			return advertised["AUTH=SCRAM-SHA-256"] || advertised["AUTH=SCRAM-SHA-1"]
+		},
+	})
 	for name := range scramMechanisms {
 		registerCapabilities(capabilityDescriptor{
 			Name:            "AUTH=" + name,
@@ -121,11 +145,11 @@ func handleSCRAMAuthenticate(ctx context.Context, c *conn, command *queuedComman
 	if clientFirst == nil {
 		return c.writeBad(command.tag, "AUTHENTICATE cancelled")
 	}
-	bare, username, clientNonce, err := parseSCRAMClientFirst(string(clientFirst))
+	bare, username, authzID, clientNonce, err := parseSCRAMClientFirst(string(clientFirst))
 	if err != nil {
 		return authenticationRejected(c, command)
 	}
-	stored, err := store.SCRAMCredentials(ctx, mechanism, username)
+	stored, err := store.SCRAMCredentials(ctx, mechanism, username, &SCRAMCredentialsOptions{AuthzID: authzID})
 	if err != nil || stored == nil || len(stored.StoredKey) == 0 || !scramIterationsValid(stored.Iterations) {
 		return authenticationRejected(c, command)
 	}
@@ -173,6 +197,7 @@ func handleSCRAMAuthenticate(ctx context.Context, c *conn, command *queuedComman
 	// reference backend did until this was written down.
 	return authenticateBackend(ctx, c, command.tag, &Credentials{
 		Mechanism: mechanism,
+		AuthzID:   authzID,
 		Username:  username,
 	})
 }
@@ -211,15 +236,27 @@ func authenticationRejected(c *conn, command *queuedCommand) error {
 // binding and is deliberately not using it. Since this server never advertises
 // a -PLUS mechanism, that belief is wrong and the exchange is refused rather
 // than continued — RFC 5802 section 6 makes this the downgrade detection.
-func parseSCRAMClientFirst(message string) (bare, username, nonce string, err error) {
-	switch {
-	case strings.HasPrefix(message, "n,,"):
-		bare = message[len("n,,"):]
-	case strings.HasPrefix(message, "n,"), strings.HasPrefix(message, "y,"):
-		return "", "", "", fmt.Errorf("unsupported SCRAM GS2 header")
-	default:
-		return "", "", "", fmt.Errorf("malformed SCRAM client-first message")
+func parseSCRAMClientFirst(message string) (bare, username, authzID, nonce string, err error) {
+	header, rest, found := strings.Cut(message, ",")
+	if !found || header != "n" {
+		// A "y" header means the client believes the server supports channel
+		// binding and is choosing not to use it. This server advertises no
+		// -PLUS mechanism, so that belief can only come from tampering, and
+		// RFC 5802 section 6 makes refusing it the downgrade detection.
+		return "", "", "", "", fmt.Errorf("unsupported SCRAM GS2 header")
 	}
+	authzField, remainder, found := strings.Cut(rest, ",")
+	if !found {
+		return "", "", "", "", fmt.Errorf("malformed SCRAM client-first message")
+	}
+	if authzField != "" {
+		value, ok := strings.CutPrefix(authzField, "a=")
+		if !ok {
+			return "", "", "", "", fmt.Errorf("malformed SCRAM authorization identity")
+		}
+		authzID = strings.NewReplacer("=2C", ",", "=3D", "=").Replace(value)
+	}
+	bare = remainder
 	for _, field := range strings.Split(bare, ",") {
 		value, ok := strings.CutPrefix(field, "n=")
 		if ok {
@@ -232,9 +269,9 @@ func parseSCRAMClientFirst(message string) (bare, username, nonce string, err er
 		}
 	}
 	if username == "" || nonce == "" {
-		return "", "", "", fmt.Errorf("malformed SCRAM client-first message")
+		return "", "", "", "", fmt.Errorf("malformed SCRAM client-first message")
 	}
-	return bare, username, nonce, nil
+	return bare, username, authzID, nonce, nil
 }
 
 // parseSCRAMClientFinal reads "c=biws,r=nonce,p=proof" and checks the nonce.

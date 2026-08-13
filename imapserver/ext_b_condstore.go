@@ -155,7 +155,7 @@ func parseStoreModifiers(decoder *imapwire.Decoder, args *storeArgs) error {
 	if err := parseModSeqModifiers(decoder, map[string]bool{"UNCHANGEDSINCE": true}, values); err != nil {
 		return err
 	}
-	args.unchangedSince = values["UNCHANGEDSINCE"]
+	args.unchangedSince, args.hasUnchangedSince = values["UNCHANGEDSINCE"]
 	if !decoder.ExpectSP() {
 		return decoder.Err()
 	}

@@ -77,6 +77,13 @@ type MoveMailbox interface {
 // implement [MoveMailbox].
 //
 // Backend implementations must make SupportsMove safe for concurrent use.
+//
+// Deprecated in intent, not yet in fact: [CapabilitySupport] expresses the same
+// thing keyed by wire token, and this interface exists only because it predates
+// it. It is kept because MOVE's witness also gates IMAP4rev2 advertisement, so
+// collapsing it is a behavioural change rather than a rename. See
+// docs/API-STABILITY.md section 10; the window to collapse it closes at
+// imapserver v1.0.
 type MoveSupport interface {
 	SupportsMove() bool
 }
@@ -323,12 +330,21 @@ type StoreOptions struct {
 	// Silent suppresses the command's FETCH responses, but not state updates.
 	Silent bool
 	// UnchangedSince makes the store conditional: a message whose modification
-	// sequence exceeds this value must be left unmodified. Zero means
-	// unconditional. Backends report the rejected messages through the
-	// CONDSTORE optional interface rather than an error, since a partial
-	// failure is a successful command. RFC 7162 section 3.1.3.
+	// sequence exceeds this value must be left unmodified. Backends report the
+	// rejected messages through the CONDSTORE optional interface rather than an
+	// error, since a partial failure is a successful command.
+	// RFC 7162 section 3.1.3.
+	//
+	// HasUnchangedSince carries presence separately because zero is a real
+	// value here, not an absence: the grammar is mod-sequence-valzer, and RFC
+	// 7162 Example 8 uses UNCHANGEDSINCE 0 as a probe that always fails, which
+	// is how a client tests atomically for the presence of a keyword. Reading
+	// UnchangedSince without checking HasUnchangedSince turns that probe into
+	// an unconditional store of the messages it was meant to protect.
 	UnchangedSince uint64 `imapfeature:"condstore-store"`
-	_              struct{}
+	// HasUnchangedSince reports whether the client supplied UNCHANGEDSINCE.
+	HasUnchangedSince bool `imapfeature:"condstore-store"`
+	_                 struct{}
 }
 
 // CopyOptions configures COPY. A nil pointer selects the defaults.

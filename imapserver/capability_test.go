@@ -156,20 +156,85 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 	}
 }
 
+// framework-constructed exported structs are exempt from the unkeyed-literal
+// guard: a caller never builds one, so adding a field to it cannot break any
+// caller's literal. Each needs a reason, because "it seemed fine" is how an
+// exception list stops meaning anything.
+var unguardedByDesign = map[string]string{
+	"Server":        "constructed by New, never by a caller",
+	"SearchQuery":   "constructed by the framework from parsed criteria; has no exported fields",
+	"ListWriter":    "framework-provided writer; callers receive one, never build one",
+	"FetchWriter":   "framework-provided writer",
+	"ExpungeWriter": "framework-provided writer",
+	"Updater":       "framework-provided; callers receive one from Select",
+}
+
+// TestGrowableConfigurationStructsAreGuarded requires every exported struct in
+// the package to carry an unexported sentinel field.
+//
+// It walks the package rather than iterating a hand-written list. A list is a
+// judgement call per struct, and API-STABILITY.md section 7 says the point of
+// the rule is that it is not a judgement call: a future group adding an
+// unguarded options struct and forgetting to list it would otherwise pass
+// green, which is exactly the failure the guard exists to prevent.
 func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
-	for _, value := range []any{
-		ConnInfo{}, Credentials{}, Options{}, Limits{}, AuthenticateOptions{}, MutationOptions{}, ListOptions{}, StatusOptions{},
-		CreateOptions{}, DeleteOptions{}, RenameOptions{}, SubscribeOptions{}, UnsubscribeOptions{},
-		AppendOptions{}, SelectOptions{}, FetchOptions{}, SearchOptions{}, StoreFlags{}, StoreOptions{}, CopyOptions{},
-		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
-		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
-		QuotaOptions{}, ACLOptions{}, ACLSetOptions{}, MetadataOptions{}, NamespaceOptions{}, UnauthenticateOptions{},
-		SortOptions{}, ThreadOptions{}, MultiSearchOptions{}, MultiSearchMailboxResult{}, MessageLimitOptions{}, LanguageOptions{}, URLAuthOptions{}, SCRAMStoredCredentials{},
-	} {
-		typeOf := reflect.TypeOf(value)
-		field, ok := typeOf.FieldByName("_")
-		if !ok || field.Type != reflect.TypeOf(struct{}{}) {
-			t.Errorf("%s has no unexported sentinel guard", typeOf.Name())
+	files := parseServerFiles(t, 0)
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range general.Specs {
+				typeSpec := spec.(*ast.TypeSpec)
+				if !ast.IsExported(typeSpec.Name.Name) {
+					continue
+				}
+				structure, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				if _, exempt := unguardedByDesign[typeSpec.Name.Name]; exempt {
+					continue
+				}
+				if !hasSentinelField(structure) {
+					t.Errorf("%s has no unexported sentinel guard; add `_ struct{}` or an entry in unguardedByDesign with a reason",
+						typeSpec.Name.Name)
+				}
+			}
 		}
 	}
+	// An exemption for a struct that no longer exists is a stale claim, so the
+	// list is checked in both directions.
+	declared := make(map[string]bool)
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range general.Specs {
+				declared[spec.(*ast.TypeSpec).Name.Name] = true
+			}
+		}
+	}
+	for name := range unguardedByDesign {
+		if !declared[name] {
+			t.Errorf("unguardedByDesign names %s, which no longer exists", name)
+		}
+	}
+}
+
+func hasSentinelField(structure *ast.StructType) bool {
+	for _, field := range structure.Fields.List {
+		for _, name := range field.Names {
+			if name.Name != "_" {
+				continue
+			}
+			if inner, ok := field.Type.(*ast.StructType); ok && len(inner.Fields.List) == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -37,19 +38,28 @@ type UnauthenticateSession interface {
 // Construct with keyed fields only; fields may be added in a future release.
 type UnauthenticateOptions struct{ _ struct{} }
 
-// defaultNamespace is what a backend that does not implement NamespaceSession
-// presents: one personal namespace at the root, with the hierarchy delimiter
-// this framework uses.
-var defaultNamespace = imap.NamespaceData{
-	Personal: []imap.NamespaceDescriptor{{Prefix: "", Delimiter: '/'}},
-}
+// NAMESPACE has no framework default, deliberately.
+//
+// An earlier version answered a backend that does not implement
+// NamespaceSession with one personal namespace at prefix "" and a hardcoded "/"
+// delimiter. That is wrong for any backend using another separator — Courier and
+// Dovecot's Maildir++ layout both use "." — and it is wrong in the worst way: the
+// delimiter in every LIST response comes from the backend through
+// imap.ListData.Delimiter, so the invented NAMESPACE contradicted the server's
+// own LIST output. A client that believed it would build mailbox paths that do
+// not exist.
+//
+// The framework cannot guess the delimiter, so it does not: NAMESPACE is
+// advertised only when the backend implements NamespaceSession and can answer
+// for itself.
 
 func init() {
 	registerCapabilities(
-		// NAMESPACE is always answerable: the framework has a default for a
-		// backend that does not implement the interface, so unlike the other
-		// group D capabilities this one needs no witness.
-		capabilityDescriptor{Name: "NAMESPACE", States: stateMaskAuthenticated | stateMaskSelected},
+		capabilityDescriptor{
+			Name:            "NAMESPACE",
+			States:          stateMaskAuthenticated | stateMaskSelected,
+			RequiresBackend: sessionImplements[NamespaceSession](),
+		},
 		capabilityDescriptor{
 			Name:            "UNAUTHENTICATE",
 			States:          stateMaskAuthenticated | stateMaskSelected,
@@ -73,15 +83,20 @@ func init() {
 }
 
 func handleNamespace(ctx context.Context, c *conn, command *queuedCommand) error {
-	data := &defaultNamespace
-	if session, ok := c.state.session.(NamespaceSession); ok {
-		reported, err := session.Namespace(ctx, nil)
-		if err != nil {
-			return writeBackendError(c, command.tag, command.name, err)
-		}
-		if reported != nil {
-			data = reported
-		}
+	if err := requireCapability(c, "NAMESPACE"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
+	session, ok := c.state.session.(NamespaceSession)
+	if !ok {
+		return c.writeBad(command.tag, "NAMESPACE is not available")
+	}
+	data, err := session.Namespace(ctx, nil)
+	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if data == nil {
+		return writeBackendError(c, command.tag, command.name,
+			fmt.Errorf("imapserver: backend implements NamespaceSession but reported no namespaces"))
 	}
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("NAMESPACE")
 	for _, set := range [][]imap.NamespaceDescriptor{data.Personal, data.OtherUsers, data.Shared} {

@@ -1,12 +1,14 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -39,17 +41,17 @@ func (s *session) Languages(ctx context.Context, _ *imapserver.LanguageOptions) 
 // RFC 4647 matches language tags case-insensitively and by prefix, so "en-GB"
 // selects "en". Returning the tag actually adopted rather than the one asked
 // for is what lets the client know which it got.
-func (s *session) SetLanguage(ctx context.Context, tag string, _ *imapserver.LanguageOptions) (string, error) {
+func (s *session) SetLanguage(ctx context.Context, tag string, _ *imapserver.LanguageOptions) (*imapserver.LanguageResult, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return nil, err
 	}
 	requested := strings.ToLower(strings.TrimSpace(tag))
 	for _, available := range languages {
 		if requested == available || strings.HasPrefix(requested, available+"-") {
-			return available, nil
+			return &imapserver.LanguageResult{Tag: available}, nil
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 // urlAuthKey returns the per-mailbox secret behind its URLAUTH tokens, creating
@@ -104,7 +106,7 @@ func (s *session) GenerateURLAuth(ctx context.Context, url, mechanism string, _ 
 // returned. A variable-time comparison here would leak the token a byte at a
 // time to anyone allowed to present a guess, which is the whole attack URLAUTH
 // has to withstand.
-func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.URLAuthOptions) ([]byte, error) {
+func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.URLAuthOptions) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -129,7 +131,7 @@ func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.UR
 	uid := urlUID(base)
 	for _, msg := range m.messages {
 		if msg.uid == uid {
-			return append([]byte(nil), msg.raw...), nil
+			return io.NopCloser(bytes.NewReader(append([]byte(nil), msg.raw...))), nil
 		}
 	}
 	return nil, nil

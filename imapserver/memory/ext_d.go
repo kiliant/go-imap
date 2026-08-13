@@ -252,10 +252,10 @@ func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.M
 	if err != nil {
 		return nil, err
 	}
-	maxSize := uint32(0)
+	maxSize, hasMaxSize := uint32(0), false
 	depth := ""
 	if options != nil {
-		maxSize, depth = options.MaxSize, options.Depth
+		maxSize, hasMaxSize, depth = options.MaxSize, options.HasMaxSize, options.Depth
 	}
 	var reported []imap.MetadataEntry
 	for _, requested := range entries {
@@ -265,7 +265,7 @@ func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.M
 			}
 			// RFC 5464 section 4.2.2: a value beyond MAXSIZE is omitted, not
 			// truncated, because a truncated annotation is not the annotation.
-			if maxSize != 0 && uint32(len(value)) > maxSize {
+			if hasMaxSize && uint32(len(value)) > maxSize {
 				continue
 			}
 			held := value
@@ -363,13 +363,19 @@ func (s *session) Unauthenticate(ctx context.Context, _ *imapserver.Unauthentica
 
 // MessageLimits implements [imapserver.MessageLimitSession].
 //
-// RFC 9738 puts the value inside the advertised capability token, so a zero
-// here means "advertise nothing" rather than "advertise a limit of zero".
-func (s *session) MessageLimits(ctx context.Context, _ *imapserver.MessageLimitOptions) (uint32, uint32, error) {
+// RFC 9738 puts the value inside the advertised capability token. Presence is
+// carried by the Has fields, so a backend can enforce one limit and not the
+// other, and a genuine limit of zero stays expressible.
+func (s *session) MessageLimits(ctx context.Context, _ *imapserver.MessageLimitOptions) (*imapserver.MessageLimits, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, 0, err
+		return nil, err
 	}
-	return memoryMessageLimit, memorySaveLimit, nil
+	return &imapserver.MessageLimits{
+		MessageLimit:    memoryMessageLimit,
+		HasMessageLimit: true,
+		SaveLimit:       memorySaveLimit,
+		HasSaveLimit:    true,
+	}, nil
 }
 
 // The reference backend keeps everything in memory, so these are modest on

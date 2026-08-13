@@ -15,9 +15,11 @@ type storeArgs struct {
 	op     StoreFlagsOp
 	silent bool
 	flags  []imap.Flag
-	// unchangedSince is CONDSTORE's UNCHANGEDSINCE modifier.
+	// unchangedSince is CONDSTORE's UNCHANGEDSINCE modifier, and
+	// hasUnchangedSince its presence — zero is a legal value.
 	// See ext_b_condstore.go.
-	unchangedSince uint64
+	unchangedSince    uint64
+	hasUnchangedSince bool
 }
 
 func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
@@ -70,7 +72,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return c.writeBad(command.tag, "invalid STORE message set")
 	}
-	if err := validateCondStoreUse(c, args.unchangedSince != 0, "STORE UNCHANGEDSINCE"); err != nil {
+	if err := validateCondStoreUse(c, args.hasUnchangedSince, "STORE UNCHANGEDSINCE"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	origin := nextCommandOrigin()
@@ -103,15 +105,16 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.encoder.Flush()
 	})
 	options := &StoreOptions{
-		MutationOptions: MutationOptions{Origin: origin},
-		Silent:          args.silent,
-		UnchangedSince:  args.unchangedSince,
+		MutationOptions:   MutationOptions{Origin: origin},
+		Silent:            args.silent,
+		UnchangedSince:    args.unchangedSince,
+		HasUnchangedSince: args.hasUnchangedSince,
 	}
 	flags := &StoreFlags{Op: args.op, Flags: args.flags}
 	// A conditional store takes the CONDSTORE path so the backend can report
 	// which messages it refused; an unconditional one stays on the base method.
 	var condStore *CondStoreResult
-	if args.unchangedSince != 0 {
+	if args.hasUnchangedSince {
 		condStore, err = storeCondStore(ctx, c, writer, uids, flags, options)
 	} else {
 		err = c.state.selected.mailbox.Store(ctx, writer, uids, flags, options)

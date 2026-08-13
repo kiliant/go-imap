@@ -75,7 +75,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 		conditional, err := condStore.StoreCondStore(context.Background(), discardFetchWriter(),
 			imap.UIDSetNum(uids[0]), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagAnswered}},
-			&imapserver.StoreOptions{UnchangedSince: 1})
+			&imapserver.StoreOptions{UnchangedSince: 1, HasUnchangedSince: true})
 		// A rejection is a successful command, not an error: RFC 7162
 		// section 3.1.3. Returning an error here would discard the messages
 		// that did change.
@@ -105,7 +105,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		// would make a client delete a message it still has.
 		report, err := resync.Resync(context.Background(), &imapserver.QResyncSelect{
 			UIDValidity: result.Snapshot.Status.UIDValidity,
-		})
+		}, nil)
 		if err != nil {
 			t.Fatalf("Resync: %v", err)
 		}
@@ -366,7 +366,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement SCRAMCredentials")
 		}
-		stored, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username)
+		stored, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username, nil)
 		if err != nil {
 			t.Fatalf("SCRAMCredentials: %v", err)
 		}
@@ -383,7 +383,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 		// The derivation must be stable, or every login would need a fresh one
 		// and no client could ever authenticate twice.
-		again, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username)
+		again, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username, nil)
 		if err != nil || again == nil {
 			t.Fatalf("second SCRAMCredentials call: %v", err)
 		}
@@ -392,7 +392,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 		// An unknown user must not be distinguishable by a different error
 		// shape, so this only asserts it does not succeed.
-		if unknown, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", "no-such-user-9999"); err == nil && unknown != nil {
+		if unknown, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", "no-such-user-9999", nil); err == nil && unknown != nil {
 			t.Error("SCRAMCredentials answered for an unknown user")
 		}
 	})
@@ -416,13 +416,15 @@ func runExtensions(t *testing.T, harness *Harness) {
 		// The security property: tampering with the token must not resolve.
 		// Everything else about URLAUTH is formatting.
 		forged := authorized[:len(authorized)-1] + "x"
-		if content, _ := urlAuth.FetchURLAuth(context.Background(), forged, nil); len(content) != 0 {
+		if content, _ := urlAuth.FetchURLAuth(context.Background(), forged, nil); content != nil {
+			_ = content.Close()
 			t.Error("a forged authorization token was honoured")
 		}
 		if err := urlAuth.ResetURLAuthKey(context.Background(), "", nil); err != nil {
 			t.Fatalf("ResetURLAuthKey: %v", err)
 		}
-		if content, _ := urlAuth.FetchURLAuth(context.Background(), authorized, nil); len(content) != 0 {
+		if content, _ := urlAuth.FetchURLAuth(context.Background(), authorized, nil); content != nil {
+			_ = content.Close()
 			t.Error("a reset key did not revoke an outstanding URL")
 		}
 	})
@@ -445,11 +447,11 @@ func runExtensions(t *testing.T, harness *Harness) {
 		// backend does not keep.
 		for _, tag := range available {
 			adopted, err := languages.SetLanguage(context.Background(), tag, nil)
-			if err != nil || adopted == "" {
+			if err != nil || adopted == nil || adopted.Tag == "" {
 				t.Errorf("advertised language %q cannot be selected: %v", tag, err)
 			}
 		}
-		if adopted, _ := languages.SetLanguage(context.Background(), "zz-nonexistent", nil); adopted != "" {
+		if adopted, _ := languages.SetLanguage(context.Background(), "zz-nonexistent", nil); adopted != nil && adopted.Tag != "" {
 			t.Error("an unavailable language was adopted")
 		}
 	})

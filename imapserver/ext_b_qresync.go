@@ -27,8 +27,15 @@ type QResyncMailbox interface {
 	// modification sequence. Changed messages are reported by the framework
 	// through an ordinary FETCH, so this answers only the question a FETCH
 	// cannot: what is no longer there.
-	Resync(ctx context.Context, params *QResyncSelect) (*QResyncResult, error)
+	Resync(ctx context.Context, params *QResyncSelect, options *QResyncOptions) (*QResyncResult, error)
 }
+
+// QResyncOptions configures a resynchronisation. A nil pointer selects the
+// defaults. It is empty today and exists so a future QRESYNC parameter has a
+// framework-side home: QResyncSelect carries what the *client* claimed, which
+// is a different thing.
+// Construct with keyed fields only; fields may be added in a future release.
+type QResyncOptions struct{ _ struct{} }
 
 // QResyncResult is a backend's answer to a QRESYNC resynchronisation.
 // Construct with keyed fields only; fields may be added in a future release.
@@ -174,7 +181,7 @@ func writeQResyncSelection(ctx context.Context, c *conn, params *QResyncSelect, 
 	if !ok {
 		return fmt.Errorf("imapserver: backend advertises QRESYNC but the selected mailbox does not implement QResyncMailbox")
 	}
-	result, err := mailbox.Resync(ctx, params)
+	result, err := mailbox.Resync(ctx, params, nil)
 	if err != nil {
 		return err
 	}

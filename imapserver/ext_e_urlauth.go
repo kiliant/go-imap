@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"io"
 
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
@@ -19,8 +20,15 @@ type URLAuthSession interface {
 	// its access identifier and authorization token appended.
 	GenerateURLAuth(ctx context.Context, url, mechanism string, options *URLAuthOptions) (string, error)
 	// FetchURLAuth returns the content an authorized URL names, verifying the
-	// token first.
-	FetchURLAuth(ctx context.Context, url string, options *URLAuthOptions) ([]byte, error)
+	// token first. A nil reader means the URL did not resolve, which is not an
+	// error: RFC 4467 section 5.3 reports that as NIL beside the URL.
+	//
+	// It streams rather than returning bytes because the content is a whole
+	// message: RFC 4469 CATENATE builds a new message out of URL parts fetched
+	// through this path, and RFC 5524 URLAUTH=BINARY returns decoded binary.
+	// Buffering either in full before a single byte reaches the wire is the
+	// cost this signature exists to avoid.
+	FetchURLAuth(ctx context.Context, url string, options *URLAuthOptions) (io.ReadCloser, error)
 	// ResetURLAuthKey invalidates the secrets behind a mailbox's URLs. An empty
 	// mailbox name resets every mailbox, which RFC 4467 section 5.1 defines as
 	// the way to revoke everything at once.
@@ -158,9 +166,22 @@ func handleURLFetch(ctx context.Context, c *conn, command *queuedCommand) error 
 		// does not discard the others.
 		if backendErr != nil || content == nil {
 			c.encoder.NIL()
-		} else {
-			c.encoder.Literal8(string(content))
+			c.encoder.Special(')')
+			continue
 		}
+		// The literal must be measured before it is announced, so the reader is
+		// drained here. Streaming it straight to the wire needs a length the
+		// backend does not supply; a future URLAuthContent carrying Size would
+		// let this stay lazy, which is why the interface returns a reader
+		// rather than bytes.
+		raw, readErr := io.ReadAll(content)
+		_ = content.Close()
+		if readErr != nil {
+			c.encoder.NIL()
+			c.encoder.Special(')')
+			continue
+		}
+		c.encoder.Literal8(string(raw))
 		c.encoder.Special(')')
 	}
 	c.encoder.CRLF()

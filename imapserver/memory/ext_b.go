@@ -71,9 +71,10 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 		return nil, noError(imap.CodeClosed, "mailbox is no longer selected")
 	}
 	var origin imapserver.ChangeToken
-	silent, unchangedSince := false, uint64(0)
+	silent, unchangedSince, hasUnchangedSince := false, uint64(0), false
 	if options != nil {
-		origin, silent, unchangedSince = options.Origin, options.Silent, options.UnchangedSince
+		origin, silent = options.Origin, options.Silent
+		unchangedSince, hasUnchangedSince = options.UnchangedSince, options.HasUnchangedSince
 	}
 	var changes []imapserver.Update
 	var results []*imap.FetchMessageData
@@ -82,7 +83,9 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 		if !uids.Contains(msg.uid) {
 			continue
 		}
-		if unchangedSince != 0 && msg.modSeq > unchangedSince {
+		// Zero is a real bound, not an absence: UNCHANGEDSINCE 0 is RFC 7162
+		// Example 8's probe, and every message with a modseq fails it.
+		if hasUnchangedSince && msg.modSeq > unchangedSince {
 			modified = append(modified, msg.uid)
 			continue
 		}
@@ -97,7 +100,7 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 		// RFC 7162 section 3.1.3: a conditional store reports the new
 		// modification sequence even for .SILENT, because the client needs it
 		// to issue the next conditional command.
-		if !silent || unchangedSince != 0 {
+		if !silent || hasUnchangedSince {
 			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
 		}
 	}
@@ -121,7 +124,7 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 //
 // Vanished is answered from the retained removal record; Changed from the
 // messages still present whose modification sequence is newer than the client's.
-func (s *selected) Resync(ctx context.Context, params *imapserver.QResyncSelect) (*imapserver.QResyncResult, error) {
+func (s *selected) Resync(ctx context.Context, params *imapserver.QResyncSelect, _ *imapserver.QResyncOptions) (*imapserver.QResyncResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -30,12 +30,17 @@ type scramDerivation struct {
 }
 
 // SCRAMCredentials implements [imapserver.SCRAMCredentials].
-func (b *Backend) SCRAMCredentials(ctx context.Context, mechanism, username string) (*imapserver.SCRAMStoredCredentials, error) {
+func (b *Backend) SCRAMCredentials(ctx context.Context, mechanism, username string, options *imapserver.SCRAMCredentialsOptions) (*imapserver.SCRAMStoredCredentials, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	newHash, ok := scramHash(mechanism)
 	if !ok {
+		return nil, authenticationError()
+	}
+	// This backend has no notion of one identity acting as another, so a
+	// request to do so is refused rather than quietly ignored.
+	if options != nil && options.AuthzID != "" && options.AuthzID != username {
 		return nil, authenticationError()
 	}
 	b.mu.RLock()

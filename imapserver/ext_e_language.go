@@ -28,16 +28,30 @@ type LanguageSession interface {
 	// Languages reports the language tags this session can serve, most
 	// preferred first.
 	Languages(ctx context.Context, options *LanguageOptions) ([]string, error)
-	// SetLanguage selects one of them. The returned tag is the one actually
+	// SetLanguage selects one of them. The result names the tag actually
 	// adopted, which may differ from the request when the backend matched a
-	// prefix.
-	SetLanguage(ctx context.Context, tag string, options *LanguageOptions) (string, error)
+	// prefix, and is nil when the backend cannot serve the request.
+	SetLanguage(ctx context.Context, tag string, options *LanguageOptions) (*LanguageResult, error)
 }
 
 // LanguageOptions configures a LANGUAGE operation. A nil pointer selects the
 // defaults.
 // Construct with keyed fields only; fields may be added in a future release.
 type LanguageOptions struct{ _ struct{} }
+
+// LanguageResult is a backend's answer to a LANGUAGE selection.
+//
+// It is a struct rather than a bare tag because RFC 5255 section 3.2 requires
+// the server, after a successful LANGUAGE, to follow it with an untagged
+// NAMESPACE response carrying the namespace prefixes *translated into the
+// adopted language*. Only the backend can supply those, so there has to be
+// somewhere to put them when that lands.
+// Construct with keyed fields only; fields may be added in a future release.
+type LanguageResult struct {
+	// Tag is the language actually adopted.
+	Tag string
+	_   struct{}
+}
 
 func init() {
 	registerCapabilities(
@@ -116,11 +130,11 @@ func handleLanguage(ctx context.Context, c *conn, command *queuedCommand) error 
 	// choice.
 	for _, tag := range tags {
 		adopted, err := session.SetLanguage(ctx, tag, nil)
-		if err != nil || adopted == "" {
+		if err != nil || adopted == nil || adopted.Tag == "" {
 			continue
 		}
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("LANGUAGE").SP().
-			List(1, func(int) { c.encoder.String(adopted) }).CRLF()
+			List(1, func(int) { c.encoder.String(adopted.Tag) }).CRLF()
 		if err := c.encoder.Flush(); err != nil {
 			return err
 		}
