@@ -459,26 +459,131 @@ permanent entry.
 recording as the first exercise of the rule rather than leaving the next person
 to wonder whether it was allowed.
 
-The rule is the one CLAUDE.md states: **adding a type to `package imap` after
-v1.0 is additive and always permitted; reshaping an existing type is not.** A new
-`SearchCriteria` implementation adds a case that consumers may ignore — the
-interface is closed by an unexported method, so no external type asserts
-exhaustively over it — while changing `SearchString`'s fields would break every
-caller that constructs one.
+**Adding a type to `package imap` is source-compatible and always permitted.
+That is not the same as being safe, and the first draft of this section confused
+the two.** Reshaping an existing type is breaking and still needs approval; that
+half was never in doubt.
 
-What made this one safe to take mid-task rather than escalate:
+The half that was wrong: the original text argued a new `SearchCriteria`
+implementation "adds a case that consumers may ignore — the interface is closed
+by an unexported method, so no external type asserts exhaustively over it." The
+premise is false. The interface being closed to *implementers* says nothing about
+*consumers*, and this library has consumers that must switch over it
+exhaustively: every `imapserver` backend receives an `imap.SearchCriteria` and
+its only possible implementation is a type switch. A backend compiled before the
+new type exists does not fail to compile. It falls to `default` and returns a
+wrong answer — for SEARCH, a silently empty result indistinguishable from a
+correct search that matched nothing.
 
-- it is a new type, not a change to one;
-- it satisfies an existing closed interface, so no signature moved;
-- the gap was already recorded — the client's FILTERS work escalated the missing
-  type to T02 and it was never added, so this closed a known hole rather than
-  inventing surface;
-- `internal/imapmessage`'s criterion-coverage gate caught the omission
-  immediately and was extended to express "this criterion must fail to
-  evaluate", rather than exempted.
+That was not hypothetical. FILTER substitution was wired into SEARCH alone while
+SORT, THREAD and ESEARCH passed the raw tree through, so the guarantee this
+section rested on was already untrue when it was written.
 
-A future extension needing a root-package *reshape* is a different question and
-still needs the human's approval.
+#### The rule, restated
+
+A new implementation of an open marker interface in `package imap` is permitted
+when **either**:
+
+- **(a) the framework guarantees it never reaches a consumer that predates it** —
+  and the guarantee is written on the consumer-facing declaration, not only in
+  the code that upholds it, *and* a test enforces it for every path that reaches
+  a consumer; **or**
+- **(b) the interface documents what a consumer does with an unrecognised case**,
+  so a backend author has an answer other than "fall through and hope".
+
+Adding an ordinary named type — a string-backed vocabulary, a struct nothing
+type-switches over — is unconditionally additive. The condition applies to
+implementations of open marker interfaces, which are the ones consumers discover
+by type assertion.
+
+#### How `imap.SearchFilter` satisfies (a)
+
+- The framework substitutes every `SearchFilter` for the criteria it names before
+  any backend sees the tree, and refuses an undefined name with
+  `UNDEFINED-FILTER` rather than matching nothing.
+- The guarantee is stated on `SearchQuery.Criteria` and on
+  `MultiSearchSession.MultiSearch` — the two places a backend receives criteria —
+  and it covers `SearchSeqNum` in the same sentence, which was already normalised
+  and previously documented only there.
+- `TestSearchQueryNormalisationGuarantee` drives SEARCH, SORT, THREAD and ESEARCH
+  with a FILTER key and asserts the substituted answer. It was verified to fail
+  on all three unwired commands before the fix, not merely to pass after it.
+
+Also true, and still worth recording: it is a new type rather than a change to
+one; it satisfies an existing interface, so no signature moved; it closed a gap
+the client's FILTERS work had already escalated; and `internal/imapmessage`'s
+criterion-coverage gate was extended to express "this criterion must fail to
+evaluate" rather than exempted.
+
+#### The next one
+
+RFC 5257 (ANNOTATE) adds an `ANNOTATION` search key — the identical shape, on the
+deferred rows of `docs/RFC-COVERAGE.md`. It will arrive with the same reasoning
+available to it, so the conditions above are what it must be held to, not the
+precedent that "T23 added one, so this is fine."
+
+A future extension needing a root-package *reshape* remains a different question
+and still needs the human's approval.
+
+### Shared client/server vocabulary belongs in `package imap` — decided 2026-08-13
+
+T23 gave `imapserver` its own NOTIFY event and specifier vocabulary while
+`imapclient` already had one. The two disagreed: the client canonicalised events
+as `MessageNew`, the server upper-cased them to `MESSAGENEW`, and both declared a
+`NotifyMailboxSpecifier` with the same seven constants. `imapclient.NotifyMailboxes`
+was the MAILBOXES *constant*; `imapserver.NotifyMailboxes` was a watch-group
+*struct*.
+
+Nothing failed. Both packages compiled, both test suites were green, and a backend
+author comparing an event against the constant from the wrong package would simply
+have matched nothing — a NOTIFY registration that silently never fires, which the
+client reads as "nothing has changed".
+
+**The vocabulary moved to `package imap`** (`notify.go`) and the server dropped
+its copies. This is the layering rule in CLAUDE.md applied rather than restated:
+the root package is "the shared vocabulary, which is what lets the future server
+framework reuse it without an API break."
+
+The spelling adopted is the client's, because `imapclient` is frozen at v1.0 and
+its constant values can never move, while `imapserver` is pre-1.0 and its still
+can. Deferring would have meant changing released values later or keeping both
+spellings permanently.
+
+#### Values were unified; type identity was not
+
+The obvious move — alias `imapclient.NotifyEventName` to `imap.NotifyEventName` —
+was tried and backed out. It is invisible to realistic callers: an alias is the
+same type, so assignment, constant comparison, `NotifyFilter` construction and
+dynamic type assertion through an interface all behave identically, verified
+against a consumer written to the v1.0 surface. But it changes type identity, and
+`apidiff` correctly reports sixteen symbols as incompatible.
+
+Overriding the gate was available — the policy allows it with a human decision
+and a CHANGELOG entry — and was declined. **The gate's value is that it is not
+argued with.** This would have been the first post-v1.0 enforcement, and
+establishing at the first opportunity that a sufficiently good argument moves it
+would have cost more than the duplication saves.
+
+Instead `imapclient` keeps its own defined types and derives their constant
+*values* from the root constants by constant conversion:
+
+```go
+const NotifyEventMessageNew NotifyEventName = NotifyEventName(imap.NotifyEventMessageNew)
+```
+
+This is a compile-time constant, so the two definitions cannot drift, and
+`apidiff` reports no change to `imapclient` at all. The divergence that caused
+the bug is gone; only the redundant type identity remains, and nothing needs to
+bridge it — the client writes NOTIFY commands and the server parses them, so a
+value never crosses from one package's type to the other's in a single program.
+
+Collapsing the identities is an `imapclient` v2 change. It is not urgent, because
+the values can no longer diverge.
+
+The general rule: **a string-backed name set that both the client and the server
+must spell identically goes in `package imap` from the start**, not in whichever
+package implements it first. Retrofitting the values is cheap; retrofitting the
+identity is not.
 
 ## Reviewing against this document
 

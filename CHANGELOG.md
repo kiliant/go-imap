@@ -32,6 +32,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `imapclient` now uses the shared semantic codec for FETCH, SEARCH, ENVELOPE
   and BODYSTRUCTURE without changing its exported API or interoperability
   behaviour.
+- **The NOTIFY vocabulary is now defined once, in `package imap`.** The client
+  and the server had each declared their own event and specifier names and had
+  diverged: `imapclient` spelled events `MessageNew`, `imapserver` spelled them
+  `MESSAGENEW`, so a backend comparing against the wrong package's constant
+  matched nothing and simply never delivered.
+
+  `imap.NotifyEventName` and `imap.NotifyMailboxSpecifier` are the definition.
+  `imapclient`'s types keep their own identity — this package is frozen — but
+  their constant *values* are now derived from the root constants, so the two
+  cannot drift apart again. `imapclient`'s exported API is unchanged; `apidiff`
+  reports no difference for it.
 
 ## [1.0.0] - 2026-08-06
 

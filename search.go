@@ -27,6 +27,24 @@ import "time"
 //
 // Some implementations carry slices, so a SearchCriteria is not necessarily
 // comparable and must not be used as a map key.
+//
+// # Consumers
+//
+// The set being closed to external implementers does not make it closed to
+// growth: a later release of this library may add a key, so code that switches
+// over a SearchCriteria it did not build must expect a type it has never seen.
+//
+// Treat an unrecognised criterion as an error, never as "does not match". The
+// two are indistinguishable to the client — an empty result reads as a correct
+// search that found nothing — so a silent default turns a library upgrade into
+// wrong answers with no symptom. Failing loudly is the whole point; the specific
+// error matters less. The evaluator behind imapserver/memory returns a sentinel
+// its callers can recognise rather than reporting no match.
+//
+// Backends are the main consumers, and they are given a narrower guarantee than
+// this: the framework promises no SearchSeqNum and no [SearchFilter] ever
+// reaches them. See imapserver.SearchQuery.Criteria and
+// docs/API-STABILITY.md section 10.
 type SearchCriteria interface {
 	searchCriteria()
 }
