@@ -317,13 +317,27 @@ func (c *conn) readClientData(ctx context.Context, read func(*imapwire.Decoder) 
 	if err := c.requestClientData(ctx, request); err != nil {
 		return nil, err
 	}
-	select {
-	case result := <-request.reply:
-		return result.value, result.err
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	case <-c.ctx.Done():
-		return nil, context.Cause(c.ctx)
+	for {
+		select {
+		case result := <-request.reply:
+			return result.value, result.err
+		case literal := <-c.literalRequests:
+			// A read requested by a handler may itself meet a literal — a
+			// MULTIAPPEND message after the first, or a CATENATE TEXT part.
+			// Literal approval is normally serviced by the event loop, but the
+			// handler that is waiting here *is* the event loop, so leaving it
+			// to the outer select would deadlock: the reader waits for approval
+			// that only this goroutine can give.
+			//
+			// Servicing it inline is safe for the same reason. handleLiteralRequest
+			// reads connection state and writes the continuation through the
+			// event-loop-owned encoder, and this is that goroutine.
+			c.handleLiteralRequest(literal)
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		case <-c.ctx.Done():
+			return nil, context.Cause(c.ctx)
+		}
 	}
 }
 

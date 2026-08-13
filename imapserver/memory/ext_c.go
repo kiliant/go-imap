@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"io"
@@ -226,9 +227,38 @@ func (s *selected) matching(ctx context.Context, query *imapserver.SearchQuery, 
 	return matched, nil
 }
 
+// ResolveCatenateURL implements [imapserver.CatenateSession].
+//
+// CATENATE URLs name a message this account can read. They are resolved through
+// the same path URLFETCH uses, minus the authorization token: the client is
+// already authenticated as the owner, so RFC 4469 section 3 requires only that
+// the URL refer to something it may read — which here means its own mailboxes.
+func (s *session) ResolveCatenateURL(ctx context.Context, url string, _ *imapserver.CatenateOptions) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.account.mu.Lock()
+	defer s.account.mu.Unlock()
+	if s.closed {
+		return nil, noError(imap.CodeClosed, "session is closed")
+	}
+	m := s.account.mailboxes[mailboxKey(urlMailbox(url))]
+	if m == nil {
+		return nil, noError(imap.CodeNonExistent, "no such mailbox in CATENATE URL")
+	}
+	uid := urlUID(url)
+	for _, msg := range m.messages {
+		if msg.uid == uid {
+			return io.NopCloser(bytes.NewReader(append([]byte(nil), msg.raw...))), nil
+		}
+	}
+	return nil, noError(imap.CodeNonExistent, "no such message in CATENATE URL")
+}
+
 var (
-	_ imapserver.SortMailbox   = (*selected)(nil)
-	_ imapserver.ThreadMailbox = (*selected)(nil)
+	_ imapserver.CatenateSession = (*session)(nil)
+	_ imapserver.SortMailbox     = (*selected)(nil)
+	_ imapserver.ThreadMailbox   = (*selected)(nil)
 )
 
 // MultiSearch implements [imapserver.MultiSearchSession].

@@ -17,6 +17,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"ACLSetSession":         {"DeleteACL", "SetACL"},
 		"Backend":               {"Authenticate"},
 		"CapabilitySupport":     {"SupportsCapability"},
+		"CatenateSession":       {"ResolveCatenateURL"},
 		"CondStoreMailbox":      {"StoreCondStore"},
 		"LanguageSession":       {"Languages", "SetLanguage"},
 		"MessageLimitSession":   {"MessageLimits"},

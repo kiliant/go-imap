@@ -149,8 +149,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 | Capability | RFC | Client | Server |
 |---|---|---|---|
 | BINARY | 3516 | done | done [^srvbinary] |
-| CATENATE | 4469 | done | — [^srvliteralinterleave] |
-| MULTIAPPEND | 3502 | done | — [^srvliteralinterleave] |
+| CATENATE | 4469 | done | done [^srvcatenate] |
+| MULTIAPPEND | 3502 | done | done [^srvmultiappend] |
 | COMPRESS=DEFLATE | 4978 | done | done [^srvcompress] |
 | UTF8=ACCEPT | 9755 | done | done [^srvcompress] |
 | UTF8=ALL | 5738, 9755 | done | — [^srvutf8] |
@@ -178,14 +178,17 @@ CONDSTORE `MODIFIED` on tagged OK.
     Binary APPEND (a literal8 payload) is blocked with CATENATE and MULTIAPPEND
     below.
 
-[^srvliteralinterleave]: **Blocked, escalated.** Both need the command parser to
-    consume one literal before it can parse the next message's header — the
-    second literal's length is not on the wire until the first has been read.
-    The framework runs a command's parse to completion before its handler, and
-    the decoder is owned by the reader goroutine, so expressing this needs a
-    reader-protocol change in `imapserver/conn.go` (T19's file). Recorded per
-    BOARD.md rather than worked around; a partial implementation that read only
-    the first message would silently drop the rest.
+[^srvmultiappend]: Parsing continues between literals: the parser reads to the
+    first literal's announcement, the handler consumes it, then asks the reader
+    for the next chunk over the same path continuations and IDLE use. Not atomic
+    across messages — `Session.Append` stores one at a time, so a failure leaves
+    the messages already stored, and the framework says so rather than
+    pretending. RFC 3502's UID-set form of APPENDUID is reported.
+
+[^srvcatenate]: Client text and server-side URLs assembled into one message
+    through the optional `CatenateSession`. Parts are read in order because each
+    literal's length is only knowable once the previous is off the wire; that
+    buffering is the grammar's price, not a design choice.
 
 [^srvutf8]: RFC 9755 deprecates UTF8=ALL and UTF8=USER. UTF8=ONLY is a statement
     that the server *refuses* ASCII-only clients, which this framework cannot
@@ -221,7 +224,7 @@ CONDSTORE `MODIFIED` on tagged OK.
 | LIST-METADATA | 9590 | done | done |
 | NOTIFY | 5465 | done | — [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
-| UIDONLY | 9586 | done | — [^srvuidonly] |
+| UIDONLY | 9586 | done | done [^srvuidonly] |
 | INPROGRESS | 9585 | done | done [^srvinprogress] |
 | MESSAGELIMIT= | 9738 | done | done |
 | SAVELIMIT= | 9738 | done | done |
@@ -235,12 +238,12 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvrights]: Rights are open `imap.ACLRights` strings in both directions; a
     letter this library does not know passes through verbatim.
 
-[^srvuidonly]: **Blocked.** RFC 9586 requires FETCH responses to become
-    `* UIDFETCH <uid> (...)` once enabled. The FETCH item-list encoder lives in
-    `internal/imapcodec` (T18's package) with no items-only entry point, so the
-    response form cannot be produced from `imapserver`. Advertising UIDONLY
-    while still sending `* n FETCH` would be a false claim, so it is not
-    advertised at all.
+[^srvuidonly]: All-or-nothing, as the RFC requires. Sequence-number commands are
+    refused rather than reinterpreted as UIDs, unilateral FETCH becomes
+    UIDFETCH, and EXPUNGE becomes VANISHED because an untagged EXPUNGE carries a
+    sequence number and cannot be sent at all. `WriteUIDFetchResponse` was added
+    to `internal/imapcodec`, sharing the item grammar with `WriteFetchResponse`
+    rather than duplicating it.
 
 [^srvnotify]: **Escalated, not deferred by choice.** NOTIFY needs a
     session-scoped update channel in `imapserver/session.go`, which T23 does not

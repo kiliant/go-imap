@@ -1,7 +1,9 @@
 package imapserver_test
 
 import (
+	"bufio"
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -188,5 +190,82 @@ func TestLoopbackBinaryFetch(t *testing.T) {
 	}
 	if line := findResponse(t, untagged, "* 1 FETCH"); !strings.Contains(line, "BINARY.SIZE[]") {
 		t.Errorf("BINARY.SIZE = %q", line)
+	}
+}
+
+// MULTIAPPEND stores several messages in one command. Each literal's length is
+// only knowable once the previous one is off the wire, so this exercises the
+// interleaved parse the extension needed. RFC 3502.
+func TestLoopbackMultiAppend(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	first := "Subject: multi one\r\n\r\none\r\n"
+	second := "Subject: multi two\r\n\r\ntwo\r\n"
+	writeRawCommand(t, clientSide, "C1 APPEND INBOX {"+strconv.Itoa(len(first))+"}\r\n")
+	expectContinuation(t, reader)
+	writeRawCommand(t, clientSide, first+" {"+strconv.Itoa(len(second))+"}\r\n")
+	expectContinuation(t, reader)
+	writeRawCommand(t, clientSide, second+"\r\n")
+	_, tagged := collectUntilTag(t, reader, "C1 ")
+	if !strings.HasPrefix(tagged, "C1 OK") {
+		t.Fatalf("MULTIAPPEND failed: %q", tagged)
+	}
+	// RFC 3502 extends APPENDUID to a UID set, so both messages are named.
+	if !strings.Contains(tagged, "APPENDUID") {
+		t.Errorf("MULTIAPPEND did not report APPENDUID: %q", tagged)
+	}
+
+	writeRawCommand(t, clientSide, "C2 STATUS INBOX (MESSAGES)\r\n")
+	untagged, _ := collectUntilTag(t, reader, "C2 ")
+	if line := findResponse(t, untagged, "* STATUS"); !strings.Contains(line, "MESSAGES 5") {
+		t.Errorf("STATUS after MULTIAPPEND = %q, want the 3 seeded plus 2", line)
+	}
+}
+
+// CATENATE builds a message from client text and server-side URLs, without the
+// client having to fetch and re-upload the parts. RFC 4469.
+func TestLoopbackCatenate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	header := "Subject: catenated\r\n\r\n"
+	writeRawCommand(t, clientSide, "C1 APPEND INBOX CATENATE (TEXT {"+strconv.Itoa(len(header))+"}\r\n")
+	expectContinuation(t, reader)
+	// A URL part naming a message already on the server, then the closing
+	// parenthesis.
+	writeRawCommand(t, clientSide, header+" URL \"imap://alice@example.com/INBOX/;UID=1\")\r\n")
+	_, tagged := collectUntilTag(t, reader, "C1 ")
+	if !strings.HasPrefix(tagged, "C1 OK") {
+		t.Fatalf("CATENATE failed: %q", tagged)
+	}
+
+	// The stored message is the header followed by the referenced message's
+	// bytes, which is what distinguishes CATENATE from an ordinary append.
+	writeRawCommand(t, clientSide, "C2 UID FETCH 4 (BODY.PEEK[])\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "C2 ")
+	if !strings.HasPrefix(tagged, "C2 OK") {
+		t.Fatalf("FETCH of the catenated message failed: %q", tagged)
+	}
+	joined := strings.Join(untagged, "\n")
+	if !strings.Contains(joined, "catenated") {
+		t.Errorf("catenated message lacks its own header: %q", joined)
+	}
+	if !strings.Contains(joined, "seeded a") {
+		t.Errorf("catenated message lacks the referenced part: %q", joined)
+	}
+}
+
+// expectContinuation reads a "+" continuation request.
+func expectContinuation(t *testing.T, reader *bufio.Reader) {
+	t.Helper()
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(line, "+") {
+		t.Fatalf("expected a continuation request, got %q", line)
 	}
 }
