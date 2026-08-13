@@ -132,15 +132,18 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if credentials == nil || credentials.Username == "" || (credentials.AuthzID != "" && credentials.AuthzID != credentials.Username) {
 		return nil, authenticationError()
 	}
-	switch strings.ToUpper(credentials.Mechanism) {
-	case "PLAIN", "LOGIN":
-	default:
+	// SCRAM arrives already verified: the framework checked the client's proof
+	// against the derivation this backend supplied, and no password was ever
+	// sent. Re-checking one here would reject every SCRAM login.
+	mechanism := strings.ToUpper(credentials.Mechanism)
+	verified := strings.HasPrefix(mechanism, "SCRAM-")
+	if !verified && mechanism != "PLAIN" && mechanism != "LOGIN" {
 		return nil, authenticationError()
 	}
 	b.mu.RLock()
 	a := b.accounts[credentials.Username]
 	b.mu.RUnlock()
-	if a == nil || credentials.Password != a.password {
+	if a == nil || (!verified && credentials.Password != a.password) {
 		return nil, authenticationError()
 	}
 	return &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}, nil

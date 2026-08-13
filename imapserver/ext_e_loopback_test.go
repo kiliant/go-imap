@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiliant/go-imap/imapclient"
+	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/imapserver/memory"
 )
 
 // LANGUAGE reports what is available, then adopts one. RFC 5255 section 3.2.
@@ -142,5 +146,47 @@ func TestGroupEUnadvertisedCapabilities(t *testing.T) {
 		if !strings.Contains(line, present) {
 			t.Errorf("%s is implemented but not advertised: %q", present, line)
 		}
+	}
+}
+
+// A full SCRAM-SHA-256 exchange against the server, driven by the real client.
+// The client mechanism verifies the server's signature, so a passing exchange
+// proves mutual authentication rather than just that the server said OK.
+func TestLoopbackSCRAMAuthentication(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+	client, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
+
+	if err := client.Capability(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !client.Capabilities()["AUTH=SCRAM-SHA-256"] {
+		t.Fatalf("AUTH=SCRAM-SHA-256 is not advertised: %v", client.Capabilities())
+	}
+	if err := client.Authenticate(ctx, "alice", "secret", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err != nil {
+		t.Fatalf("SCRAM-SHA-256 authentication failed: %v", err)
+	}
+	if _, err := client.Select("INBOX", nil).Wait(ctx); err != nil {
+		t.Fatalf("SELECT after SCRAM failed: %v", err)
+	}
+}
+
+// A wrong password must fail, and must fail the same way an unknown user does.
+func TestLoopbackSCRAMRejectsBadPassword(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+
+	client, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
+	if err := client.Authenticate(ctx, "alice", "wrong", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err == nil {
+		t.Error("a wrong password was accepted")
+	}
+
+	other, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
+	if err := other.Authenticate(ctx, "nobody", "secret", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err == nil {
+		t.Error("an unknown user was accepted")
 	}
 }

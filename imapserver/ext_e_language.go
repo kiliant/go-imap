@@ -2,7 +2,6 @@ package imapserver
 
 import (
 	"context"
-	"strings"
 
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
@@ -128,10 +127,4 @@ func handleLanguage(ctx context.Context, c *conn, command *queuedCommand) error 
 		return c.writeTagged(command.tag, "OK", command.name+" completed")
 	}
 	return c.writeTagged(command.tag, "NO", "no requested language is available")
-}
-
-// normaliseLanguageTag folds a language tag for comparison. RFC 5255 defers to
-// RFC 4647's case-insensitive matching.
-func normaliseLanguageTag(tag string) string {
-	return strings.ToLower(strings.TrimSpace(tag))
 }

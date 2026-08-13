@@ -314,8 +314,8 @@ break the client; full command support is best-effort.
 | Item | RFC | Task | Status | Note |
 |---|---|---|---|---|
 | Response codes | 5530 | T02 | done | ~20 codes; `ResponseCode` must stay open |
-| SCRAM-SHA-1/-256 | 5802, 7677 | T04 | done | SASL |
-| SCRAM-SHA-*-PLUS | 5802, 7677 | T04 | done | channel binding to TLS exporter |
+| SCRAM-SHA-1/-256 | 5802, 7677 | T04, T23 | done | SASL; server side in T23 [^srvscram] |
+| SCRAM-SHA-*-PLUS | 5802, 7677 | T04 | done (client) | channel binding to TLS exporter; **not** server-side [^srvscramplus] |
 | OAUTHBEARER | 7628 | T04 | done | |
 | XOAUTH2 | — | T04 | done | de-facto, Gmail/Outlook |
 | PLAIN | 4616 | T04 | verified | |
@@ -329,3 +329,17 @@ break the client; full command support is best-effort.
 `UIDBATCHES` is currently an IETF draft (`ietf-mailmaint-imap-uidbatches`), not
 yet an RFC. Do not implement against a draft before v1.0 — a draft that changes
 would force a post-v1.0 break. Re-check at each milestone.
+
+[^srvscram]: Server side added by T23 through the optional `SCRAMCredentials`
+    backend interface. The exchange, nonces and proof verification are
+    framework-owned; the backend supplies salt, iteration count, StoredKey and
+    ServerKey, and never sees a password. Verified end to end against the real
+    client, which checks the server's signature — so a passing exchange is
+    mutual authentication, not just a server that said OK. SCRAM is permitted on
+    cleartext without the `AllowInsecureAuth` opt-in PLAIN needs, because no
+    password crosses the wire.
+
+[^srvscramplus]: The `-PLUS` variants are deliberately not advertised
+    server-side. Advertising them commits the server to rejecting a client that
+    downgrades to the non-PLUS form, and getting that wrong converts a downgrade
+    defence into a downgrade vector. Absent is better than approximate.

@@ -29,6 +29,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"QuotaSession":          {"GetQuota", "QuotaRoots"},
 		"QuotaSetSession":       {"SetQuota"},
 		"ReplaceMailbox":        {"Replace"},
+		"SCRAMCredentials":      {"SCRAMCredentials"},
 		"SelectedMailbox":       {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
 		"Session":               {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
 		"SortMailbox":           {"Sort"},
@@ -163,7 +164,7 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 		MoveOptions{}, ExpungeOptions{}, SelectResult{}, SelectSnapshot{}, UpdateBatch{}, UpdateAdd{}, UpdateFlags{},
 		UpdateExpunge{}, UpdateVanished{}, SearchResult{}, QResyncSelect{}, CondStoreResult{}, QResyncResult{}, ReplaceOptions{},
 		QuotaOptions{}, ACLOptions{}, ACLSetOptions{}, MetadataOptions{}, NamespaceOptions{}, UnauthenticateOptions{},
-		SortOptions{}, ThreadOptions{}, MultiSearchOptions{}, MultiSearchMailboxResult{}, MessageLimitOptions{}, LanguageOptions{}, URLAuthOptions{},
+		SortOptions{}, ThreadOptions{}, MultiSearchOptions{}, MultiSearchMailboxResult{}, MessageLimitOptions{}, LanguageOptions{}, URLAuthOptions{}, SCRAMStoredCredentials{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		field, ok := typeOf.FieldByName("_")
