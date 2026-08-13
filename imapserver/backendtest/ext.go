@@ -332,6 +332,128 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 	})
 
+	t.Run("multisearch-results-carry-their-mailbox", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		searcher, ok := session.(imapserver.MultiSearchSession)
+		if !ok {
+			t.Skip("backend does not implement MultiSearchSession")
+		}
+		mailbox := populate(t, session, "multisearch")
+		results, err := searcher.MultiSearch(context.Background(), []string{mailbox}, imap.SearchAll, nil)
+		if err != nil {
+			t.Fatalf("MultiSearch: %v", err)
+		}
+		for _, result := range results {
+			// A UID without its mailbox and UIDVALIDITY is unusable: the client
+			// cannot tell which mailbox it belongs to, which is the entire
+			// difference between MULTISEARCH and SEARCH.
+			if result.Mailbox == "" {
+				t.Errorf("result names no mailbox: %#v", result)
+			}
+			if len(result.UIDs) != 0 && result.UIDValidity == 0 {
+				t.Errorf("result for %q carries UIDs with no UIDVALIDITY", result.Mailbox)
+			}
+		}
+	})
+
+	t.Run("scram-credentials-are-derivations-not-passwords", func(t *testing.T) {
+		instance := harness.New()
+		if instance == nil || instance.Backend == nil {
+			t.Fatal("backendtest: factory returned nil instance or backend")
+		}
+		store, ok := instance.Backend.(imapserver.SCRAMCredentials)
+		if !ok {
+			t.Skip("backend does not implement SCRAMCredentials")
+		}
+		stored, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username)
+		if err != nil {
+			t.Fatalf("SCRAMCredentials: %v", err)
+		}
+		if stored == nil {
+			t.Fatal("SCRAMCredentials returned nothing for a valid user")
+		}
+		if len(stored.Salt) == 0 || len(stored.StoredKey) == 0 || len(stored.ServerKey) == 0 {
+			t.Errorf("incomplete derivation: %#v", stored)
+		}
+		// RFC 7677 section 4 sets the floor. A backend below it is offering
+		// SCRAM that is not worth the round trips.
+		if stored.Iterations < 4096 {
+			t.Errorf("iteration count %d is below the RFC 7677 minimum", stored.Iterations)
+		}
+		// The derivation must be stable, or every login would need a fresh one
+		// and no client could ever authenticate twice.
+		again, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username)
+		if err != nil || again == nil {
+			t.Fatalf("second SCRAMCredentials call: %v", err)
+		}
+		if string(again.StoredKey) != string(stored.StoredKey) {
+			t.Error("the stored key changed between calls")
+		}
+		// An unknown user must not be distinguishable by a different error
+		// shape, so this only asserts it does not succeed.
+		if unknown, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", "no-such-user-9999"); err == nil && unknown != nil {
+			t.Error("SCRAMCredentials answered for an unknown user")
+		}
+	})
+
+	t.Run("urlauth-refuses-a-forged-token", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		urlAuth, ok := session.(imapserver.URLAuthSession)
+		if !ok {
+			t.Skip("backend does not implement URLAuthSession")
+		}
+		mailbox := populate(t, session, "urlauth")
+		url := "imap://" + instance.Credentials.Username + "@example.com/" + mailbox + "/;UID=1"
+		authorized, err := urlAuth.GenerateURLAuth(context.Background(), url, "INTERNAL", nil)
+		if err != nil {
+			t.Fatalf("GenerateURLAuth: %v", err)
+		}
+		if authorized == url {
+			t.Fatal("GenerateURLAuth returned the URL unchanged, so it carries no token")
+		}
+		// The security property: tampering with the token must not resolve.
+		// Everything else about URLAUTH is formatting.
+		forged := authorized[:len(authorized)-1] + "x"
+		if content, _ := urlAuth.FetchURLAuth(context.Background(), forged, nil); len(content) != 0 {
+			t.Error("a forged authorization token was honoured")
+		}
+		if err := urlAuth.ResetURLAuthKey(context.Background(), "", nil); err != nil {
+			t.Fatalf("ResetURLAuthKey: %v", err)
+		}
+		if content, _ := urlAuth.FetchURLAuth(context.Background(), authorized, nil); len(content) != 0 {
+			t.Error("a reset key did not revoke an outstanding URL")
+		}
+	})
+
+	t.Run("language-reports-what-it-adopts", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		languages, ok := session.(imapserver.LanguageSession)
+		if !ok {
+			t.Skip("backend does not implement LanguageSession")
+		}
+		available, err := languages.Languages(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("Languages: %v", err)
+		}
+		if len(available) == 0 {
+			t.Fatal("a backend implementing LanguageSession must offer at least one language")
+		}
+		// Every advertised tag must be selectable, or the list is a promise the
+		// backend does not keep.
+		for _, tag := range available {
+			adopted, err := languages.SetLanguage(context.Background(), tag, nil)
+			if err != nil || adopted == "" {
+				t.Errorf("advertised language %q cannot be selected: %v", tag, err)
+			}
+		}
+		if adopted, _ := languages.SetLanguage(context.Background(), "zz-nonexistent", nil); adopted != "" {
+			t.Error("an unavailable language was adopted")
+		}
+	})
+
 	t.Run("namespace-reports-a-personal-namespace", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
