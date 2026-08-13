@@ -17,7 +17,8 @@ import (
 // [imap.NotifyEventName] and [imap.NotifyMailboxSpecifier]. Aliasing them would
 // be invisible to every realistic caller, but it changes type identity, which
 // this package froze at v1.0. The *values* are what had to agree, and they are
-// derived from the root constants below, so the two cannot drift apart.
+// derived from the root constants below, so their *values* cannot drift apart.
+// Membership is pinned separately, by TestNotifyVocabularyMirrorsRootPackage.
 // Collapsing the identities is an imapclient v2 change; see
 // docs/API-STABILITY.md.
 

@@ -506,23 +506,55 @@ func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID) *SearchQuery 
 	return &SearchQuery{criteria: normalizeSearchCriteria(criteria, uids)}
 }
 
-func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {
+// searchCriteriaChildren decomposes a container criterion into its children and
+// a function that rebuilds it from replacements. A leaf reports nil.
+//
+// This is the single definition of "which search keys contain other search
+// keys", and every traversal of a criteria tree goes through it.
+//
+// It exists because there were two such traversals and they disagreed.
+// normalizeSearchCriteria descended into SearchFuzzy; the FILTER substitution
+// walk did not, so `SEARCH FUZZY FILTER "x"` delivered an unsubstituted
+// imap.SearchFilter to the backend and skipped the FILTERS capability check with
+// it. Nothing forced the two lists to agree, and a hand-maintained list of
+// container types is exactly the thing that silently falls behind when RFC N+1
+// adds a container key. TestSearchCriteriaContainersAreTraversed fails if one
+// is added to package imap without appearing here.
+func searchCriteriaChildren(criteria imap.SearchCriteria) ([]imap.SearchCriteria, func([]imap.SearchCriteria) imap.SearchCriteria) {
 	switch criteria := criteria.(type) {
 	case imap.SearchAnd:
-		normalized := make(imap.SearchAnd, len(criteria))
-		for i, child := range criteria {
+		return criteria, func(children []imap.SearchCriteria) imap.SearchCriteria {
+			return imap.SearchAnd(children)
+		}
+	case imap.SearchOr:
+		return []imap.SearchCriteria{criteria.Left, criteria.Right},
+			func(children []imap.SearchCriteria) imap.SearchCriteria {
+				return imap.SearchOr{Left: children[0], Right: children[1]}
+			}
+	case imap.SearchNot:
+		return []imap.SearchCriteria{criteria.Criteria},
+			func(children []imap.SearchCriteria) imap.SearchCriteria {
+				return imap.SearchNot{Criteria: children[0]}
+			}
+	case imap.SearchFuzzy:
+		return []imap.SearchCriteria{criteria.Criteria},
+			func(children []imap.SearchCriteria) imap.SearchCriteria {
+				return imap.SearchFuzzy{Criteria: children[0]}
+			}
+	default:
+		return nil, nil
+	}
+}
+
+func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {
+	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
+		normalized := make([]imap.SearchCriteria, len(children))
+		for i, child := range children {
 			normalized[i] = normalizeSearchCriteria(child, uids)
 		}
-		return normalized
-	case imap.SearchOr:
-		return imap.SearchOr{
-			Left:  normalizeSearchCriteria(criteria.Left, uids),
-			Right: normalizeSearchCriteria(criteria.Right, uids),
-		}
-	case imap.SearchNot:
-		return imap.SearchNot{Criteria: normalizeSearchCriteria(criteria.Criteria, uids)}
-	case imap.SearchFuzzy:
-		return imap.SearchFuzzy{Criteria: normalizeSearchCriteria(criteria.Criteria, uids)}
+		return rebuild(normalized)
+	}
+	switch criteria := criteria.(type) {
 	case imap.SearchSeqNum:
 		var set imap.UIDSet
 		for i, uid := range uids {
@@ -563,14 +595,23 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 //
 // The framework guarantees the tree contains no [imap.SearchSeqNum] — sequence
 // numbers are resolved to UIDs before the backend sees them — and no
-// [imap.SearchFilter], which is substituted for the criteria it names. A backend
-// therefore never has to handle either, which is what allows the root package to
-// grow new [imap.SearchCriteria] implementations without breaking backends
-// compiled against an earlier version. See docs/API-STABILITY.md section 10.
+// [imap.SearchFilter], which is substituted for the criteria it names. Both hold
+// at every nesting depth, including inside [imap.SearchNot] and
+// [imap.SearchFuzzy]. A backend therefore never has to handle either, which is
+// what allows the root package to grow new [imap.SearchCriteria]
+// implementations without breaking backends compiled against an earlier
+// version. See docs/API-STABILITY.md section 10.
+//
+// The sequence-number half of this applies to queries, so it does not extend to
+// [MultiSearchSession.MultiSearch], which takes criteria directly because
+// RFC 7377 has no single selection to resolve against. The SearchFilter half
+// applies there too.
 //
 // A criterion outside that guarantee reaching a backend is a framework bug, not
-// a case for the backend to interpret; TestSearchQueryNormalisationGuarantee
-// enforces it for every command that builds a query.
+// a case for the backend to interpret. TestSearchQueryNormalisationGuarantee
+// enforces it for every command that builds a query, and
+// TestSearchCriteriaContainersAreTraversed fails if a future container key is
+// added to package imap without the traversal learning to descend into it.
 func (q *SearchQuery) Criteria() imap.SearchCriteria {
 	if q == nil {
 		return nil

@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -210,55 +211,35 @@ func resolveSearchFilters(ctx context.Context, c *conn, criteria imap.SearchCrit
 			}
 		}
 		return resolveSearchFilters(ctx, c, resolved, depth+1)
-	case imap.SearchAnd:
-		resolved := make(imap.SearchAnd, len(node))
-		for i, child := range node {
-			child, err := resolveSearchFilters(ctx, c, child, depth)
-			if err != nil {
-				return nil, err
-			}
-			resolved[i] = child
-		}
-		return resolved, nil
-	case imap.SearchOr:
-		left, err := resolveSearchFilters(ctx, c, node.Left, depth)
-		if err != nil {
-			return nil, err
-		}
-		right, err := resolveSearchFilters(ctx, c, node.Right, depth)
-		if err != nil {
-			return nil, err
-		}
-		return imap.SearchOr{Left: left, Right: right}, nil
-	case imap.SearchNot:
-		inner, err := resolveSearchFilters(ctx, c, node.Criteria, depth)
-		if err != nil {
-			return nil, err
-		}
-		return imap.SearchNot{Criteria: inner}, nil
-	default:
+	}
+	// Containers come from searchCriteriaChildren so this walk and the
+	// UID-normalisation walk cannot disagree about what contains what.
+	children, rebuild := searchCriteriaChildren(criteria)
+	if rebuild == nil {
 		return criteria, nil
 	}
+	resolved := make([]imap.SearchCriteria, len(children))
+	for i, child := range children {
+		child, err := resolveSearchFilters(ctx, c, child, depth)
+		if err != nil {
+			return nil, err
+		}
+		resolved[i] = child
+	}
+	return rebuild(resolved), nil
 }
 
 // searchMentionsFilter skips the substitution walk for the overwhelmingly common
 // tree that names no filter.
+//
+// It is a fast path, so being wrong here is not a missed optimisation: a false
+// negative skips substitution entirely and delivers an unsubstituted
+// imap.SearchFilter to the backend. It therefore uses the same container
+// definition as the walk it guards.
 func searchMentionsFilter(criteria imap.SearchCriteria) bool {
-	switch node := criteria.(type) {
-	case imap.SearchFilter:
+	if _, isFilter := criteria.(imap.SearchFilter); isFilter {
 		return true
-	case imap.SearchAnd:
-		for _, child := range node {
-			if searchMentionsFilter(child) {
-				return true
-			}
-		}
-		return false
-	case imap.SearchOr:
-		return searchMentionsFilter(node.Left) || searchMentionsFilter(node.Right)
-	case imap.SearchNot:
-		return searchMentionsFilter(node.Criteria)
-	default:
-		return false
 	}
+	children, _ := searchCriteriaChildren(criteria)
+	return slices.ContainsFunc(children, searchMentionsFilter)
 }

@@ -385,6 +385,17 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 		{"SORT", "SORT (REVERSE DATE) UTF-8 FILTER \"flagged\"", "* SORT", "* SORT 1"},
 		{"THREAD", "THREAD ORDEREDSUBJECT UTF-8 FILTER \"flagged\"", "* THREAD", "* THREAD (1)"},
 		{"MULTISEARCH", "ESEARCH IN (\"INBOX\") FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
+
+		// Nested, not just top-level. A FILTER under a container key is the
+		// case the first version of this test missed entirely: it only ever
+		// placed the FILTER at the root, so a substitution walk that failed to
+		// descend into FUZZY passed it. RFC 6203's FUZZY takes a search key, so
+		// this is ordinary syntax rather than a contrived tree.
+		{"SEARCH-fuzzy", "SEARCH FUZZY FILTER \"flagged\"", "* SEARCH", "* SEARCH 1"},
+		{"SEARCH-not", "SEARCH NOT FILTER \"flagged\"", "* SEARCH", "* SEARCH 2"},
+		{"SEARCH-or", "SEARCH OR FILTER \"flagged\" FILTER \"flagged\"", "* SEARCH", "* SEARCH 1"},
+		{"SORT-fuzzy", "SORT (REVERSE DATE) UTF-8 FUZZY FILTER \"flagged\"", "* SORT", "* SORT 1"},
+		{"MULTISEARCH-fuzzy", "ESEARCH IN (\"INBOX\") FUZZY FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			tag := "N" + testCase.name

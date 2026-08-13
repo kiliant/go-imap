@@ -169,8 +169,29 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			}
 		}
 	}
+	// Report only what moved. Dumping both maps whole makes the reader diff 28
+	// entries by eye to find the one that changed, and a gate that is painful to
+	// read gets "fixed" by pasting got over want — which is the one repair that
+	// defeats it entirely.
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("exported interface method sets changed\n got: %#v\nwant: %#v\nA new RFC adds an optional interface or options field; it never adds a method to an existing interface.", got, want)
+		for name, wantMethods := range want {
+			gotMethods, present := got[name]
+			if !present {
+				t.Errorf("interface %s was removed or renamed", name)
+				continue
+			}
+			if !slices.Equal(gotMethods, wantMethods) {
+				t.Errorf("interface %s changed:\n  got:  %s\n  want: %s",
+					name, strings.Join(gotMethods, "\n        "), strings.Join(wantMethods, "\n        "))
+			}
+		}
+		for name := range got {
+			if _, present := want[name]; !present {
+				t.Errorf("new exported interface %s is not in the golden table; add it here so "+
+					"its method set is reviewed rather than assumed", name)
+			}
+		}
+		t.Log("A new RFC adds an optional interface or options field; it never adds a method to an existing interface.")
 	}
 }
 

@@ -41,10 +41,20 @@ import "time"
 // error matters less. The evaluator behind imapserver/memory returns a sentinel
 // its callers can recognise rather than reporting no match.
 //
-// Backends are the main consumers, and they are given a narrower guarantee than
-// this: the framework promises no SearchSeqNum and no [SearchFilter] ever
-// reaches them. See imapserver.SearchQuery.Criteria and
-// docs/API-STABILITY.md section 10.
+// Backends are the main consumers, and the framework narrows what reaches them:
+//
+//   - No [SearchFilter] reaches a backend on any command. It is substituted for
+//     the criteria it names first, at every nesting depth, and an undefined name
+//     fails the command rather than matching nothing.
+//   - SearchSeqNum is resolved to UIDs on imapserver.SearchQuery.Criteria, which
+//     covers SEARCH, SORT and THREAD. It is *not* resolved for
+//     imapserver.MultiSearchSession.MultiSearch: RFC 7377 searches several
+//     mailboxes at once, so there is no single selection to resolve sequence
+//     numbers against. A MULTISEARCH backend must handle SearchSeqNum or reject
+//     it.
+//
+// See docs/API-STABILITY.md section 10 for why these guarantees are what allow
+// the root package to grow new SearchCriteria implementations at all.
 type SearchCriteria interface {
 	searchCriteria()
 }

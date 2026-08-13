@@ -41,7 +41,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `imap.NotifyEventName` and `imap.NotifyMailboxSpecifier` are the definition.
   `imapclient`'s types keep their own identity — this package is frozen — but
   their constant *values* are now derived from the root constants, so the two
-  cannot drift apart again. `imapclient`'s exported API is unchanged; `apidiff`
+  cannot drift apart again, and a test requires the two constant sets to stay
+  one-for-one. `imapclient`'s exported API is unchanged; `apidiff`
   reports no difference for it.
 
 ## [1.0.0] - 2026-08-06

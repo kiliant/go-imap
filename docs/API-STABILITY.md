@@ -488,26 +488,58 @@ when **either**:
   and the guarantee is written on the consumer-facing declaration, not only in
   the code that upholds it, *and* a test enforces it for every path that reaches
   a consumer; **or**
-- **(b) the interface documents what a consumer does with an unrecognised case**,
-  so a backend author has an answer other than "fall through and hope".
+- **(b) no consumer switches exhaustively over the interface**, and the interface
+  documents what a consumer does with an unrecognised case.
 
 Adding an ordinary named type — a string-backed vocabulary, a struct nothing
 type-switches over — is unconditionally additive. The condition applies to
 implementations of open marker interfaces, which are the ones consumers discover
 by type assertion.
 
+**Branch (b) does not apply to `imap.SearchCriteria`.** It has exhaustive
+in-repo consumers — every `imapserver` backend, and `internal/imapmessage` — so a
+new `SearchCriteria` implementation may only be justified under (a). This is
+stated by name because (b) is otherwise self-satisfying: the `# Consumers`
+paragraph on `SearchCriteria` already documents the unrecognised case, so an
+agent could cite (b), write no framework code and no test, and pass the rule that
+was written to stop exactly that.
+
+Where (b) does apply, the documented fallback must have shipped in the release
+the consumer surface froze in. A fallback documented after the fact protects
+nobody already compiled — which is the population the rule exists for — so
+retroactive documentation does not satisfy it.
+
+Branch (a) names a test. Branch (b) cannot, which is a reason to prefer (a)
+wherever both are available.
+
 #### How `imap.SearchFilter` satisfies (a)
 
 - The framework substitutes every `SearchFilter` for the criteria it names before
   any backend sees the tree, and refuses an undefined name with
   `UNDEFINED-FILTER` rather than matching nothing.
-- The guarantee is stated on `SearchQuery.Criteria` and on
+- The guarantee is stated on `SearchQuery.Criteria`, on
   `MultiSearchSession.MultiSearch` — the two places a backend receives criteria —
-  and it covers `SearchSeqNum` in the same sentence, which was already normalised
-  and previously documented only there.
+  and on `imap.SearchCriteria` itself, where a consumer of the shared vocabulary
+  would look first. All three say the same thing, including where the
+  `SearchSeqNum` half does *not* hold: MULTISEARCH searches several mailboxes, so
+  there is no single selection to resolve sequence numbers against.
 - `TestSearchQueryNormalisationGuarantee` drives SEARCH, SORT, THREAD and ESEARCH
-  with a FILTER key and asserts the substituted answer. It was verified to fail
-  on all three unwired commands before the fix, not merely to pass after it.
+  with a FILTER key, at the top level and nested under `FUZZY`, `NOT` and `OR`,
+  and asserts the substituted answer. It was verified to fail before each fix,
+  not merely to pass after it.
+- `TestSearchCriteriaContainersAreTraversed` reads the type declarations in
+  `package imap` and fails if a search key that holds other search keys is not
+  handled by the framework's single traversal helper.
+
+That last gate exists because the first version of this section was wrong in
+practice as well as in theory. Substitution was a hand-maintained list of
+container node types that omitted `imap.SearchFuzzy` — a container this library
+already shipped, parsed and advertised — so `SEARCH FUZZY FILTER "x"` delivered
+an unsubstituted `SearchFilter` to the backend and skipped the FILTERS
+capability check with it. A second, separate traversal for UID normalisation did
+handle it, and nothing compared the two. **A guarantee maintained by hand in two
+places is not a guarantee**; branch (a) is only worth anything when a test reads
+the declarations rather than trusting a list.
 
 Also true, and still worth recording: it is a new type rather than a change to
 one; it satisfies an existing interface, so no signature moved; it closed a gap
@@ -571,7 +603,10 @@ Instead `imapclient` keeps its own defined types and derives their constant
 const NotifyEventMessageNew NotifyEventName = NotifyEventName(imap.NotifyEventMessageNew)
 ```
 
-This is a compile-time constant, so the two definitions cannot drift, and
+This is a compile-time constant, so the two definitions cannot drift in *value*.
+`TestNotifyVocabularyMirrorsRootPackage` covers the other axis — a later RFC
+registering an event would otherwise add a constant to `package imap` and leave
+`imapclient` silently without one, with a green build. And
 `apidiff` reports no change to `imapclient` at all. The divergence that caused
 the bug is gone; only the redundant type identity remains, and nothing needs to
 bridge it — the client writes NOTIFY commands and the server parses them, so a
