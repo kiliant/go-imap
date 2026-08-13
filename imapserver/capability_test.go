@@ -18,6 +18,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"Backend":               {"Authenticate"},
 		"CapabilitySupport":     {"SupportsCapability"},
 		"CatenateSession":       {"ResolveCatenateURL"},
+		"ComparatorSession":     {"Comparators", "SetComparator"},
 		"CondStoreMailbox":      {"StoreCondStore"},
 		"LanguageSession":       {"Languages", "SetLanguage"},
 		"MessageLimitSession":   {"MessageLimits"},

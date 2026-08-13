@@ -32,11 +32,19 @@ import (
 // implements the interface, because there is nothing to verify against
 // otherwise.
 //
-// Channel binding (the -PLUS variants) is deliberately not implemented. It needs
-// tls.ConnectionState.ExportKeyingMaterial, which the framework has, but
-// advertising -PLUS commits the server to rejecting a client that downgrades to
-// the non-PLUS form — and getting that wrong turns a downgrade defence into a
-// downgrade vector. It is better absent than approximate.
+// # Channel binding
+//
+// The -PLUS variants bind the authentication to the TLS connection it runs over,
+// so an attacker who terminates TLS and re-originates it cannot relay a captured
+// exchange. The binding value comes from RFC 9266's tls-exporter, which Go
+// exposes as tls.ConnectionState.ExportKeyingMaterial.
+//
+// Advertising -PLUS commits the server to the downgrade defence of RFC 5802
+// section 6, and getting that wrong converts a defence into a vector. Both
+// directions are enforced here: a client sending the "y" header (meaning "I
+// believe you have no -PLUS") is refused whenever -PLUS *is* advertised, since
+// that belief can only come from tampering; and a client choosing a -PLUS
+// mechanism must supply binding data that matches this connection's.
 
 // SCRAMCredentials is the optional SCRAM support of RFC 5802. A Backend
 // implements it when it stores SCRAM derivations rather than passwords.
@@ -91,8 +99,37 @@ type SCRAMStoredCredentials struct {
 // scramMechanisms are the mechanisms this file implements, and the hash each
 // uses.
 var scramMechanisms = map[string]func() hash.Hash{
-	"SCRAM-SHA-1":   sha1.New,
-	"SCRAM-SHA-256": sha256.New,
+	"SCRAM-SHA-1":        sha1.New,
+	"SCRAM-SHA-256":      sha256.New,
+	"SCRAM-SHA-1-PLUS":   sha1.New,
+	"SCRAM-SHA-256-PLUS": sha256.New,
+}
+
+// scramChannelBound reports whether a mechanism name is a -PLUS variant.
+func scramChannelBound(mechanism string) bool {
+	return strings.HasSuffix(mechanism, "-PLUS")
+}
+
+// scramBaseMechanism maps a -PLUS name to the credential family it shares with
+// its unbound form: the stored derivation is the same, only the exchange differs.
+func scramBaseMechanism(mechanism string) string {
+	return strings.TrimSuffix(mechanism, "-PLUS")
+}
+
+// scramChannelBinding returns this connection's RFC 9266 tls-exporter value.
+//
+// It is empty on a cleartext connection, which is why the -PLUS descriptors
+// require TLS: there is nothing to bind to otherwise.
+func scramChannelBinding(c *conn) ([]byte, bool) {
+	state, ok := connectionTLSState(c.currentTransport())
+	if !ok {
+		return nil, false
+	}
+	material, err := state.ExportKeyingMaterial("EXPORTER-Channel-Binding", nil, 32)
+	if err != nil {
+		return nil, false
+	}
+	return material, true
 }
 
 const featureSCRAM featureID = "scram"
@@ -105,11 +142,16 @@ func init() {
 		},
 	})
 	for name := range scramMechanisms {
-		registerCapabilities(capabilityDescriptor{
+		descriptor := capabilityDescriptor{
 			Name:            "AUTH=" + name,
 			States:          stateMaskNotAuthenticated,
 			RequiresBackend: hasSCRAMCredentials,
-		})
+		}
+		// A -PLUS mechanism has nothing to bind to without TLS.
+		if scramChannelBound(name) {
+			descriptor.RequiresTLS = tlsOnly
+		}
+		registerCapabilities(descriptor)
 	}
 }
 
@@ -133,6 +175,14 @@ func isSCRAMMechanism(mechanism string) bool {
 func handleSCRAMAuthenticate(ctx context.Context, c *conn, command *queuedCommand, args *authenticateArgs) error {
 	mechanism := strings.ToUpper(args.mechanism)
 	newHash := scramMechanisms[mechanism]
+	bound := scramChannelBound(mechanism)
+	var binding []byte
+	if bound {
+		var ok bool
+		if binding, ok = scramChannelBinding(c); !ok {
+			return authenticationRejected(c, command)
+		}
+	}
 	store, ok := c.server.backend.(SCRAMCredentials)
 	if !ok {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "authentication mechanism is not supported")
@@ -145,11 +195,14 @@ func handleSCRAMAuthenticate(ctx context.Context, c *conn, command *queuedComman
 	if clientFirst == nil {
 		return c.writeBad(command.tag, "AUTHENTICATE cancelled")
 	}
-	bare, username, authzID, clientNonce, err := parseSCRAMClientFirst(string(clientFirst))
+	plusAdvertised := scramPlusAdvertised(c)
+	bare, username, authzID, clientNonce, err := parseSCRAMClientFirst(string(clientFirst), bound, plusAdvertised)
 	if err != nil {
 		return authenticationRejected(c, command)
 	}
-	stored, err := store.SCRAMCredentials(ctx, mechanism, username, &SCRAMCredentialsOptions{AuthzID: authzID})
+	// The stored derivation is shared with the unbound form: -PLUS changes the
+	// exchange, not the credential.
+	stored, err := store.SCRAMCredentials(ctx, scramBaseMechanism(mechanism), username, &SCRAMCredentialsOptions{AuthzID: authzID})
 	if err != nil || stored == nil || len(stored.StoredKey) == 0 || !scramIterationsValid(stored.Iterations) {
 		return authenticationRejected(c, command)
 	}
@@ -170,7 +223,7 @@ func handleSCRAMAuthenticate(ctx context.Context, c *conn, command *queuedComman
 		return c.writeBad(command.tag, "AUTHENTICATE cancelled")
 	}
 
-	withoutProof, proof, err := parseSCRAMClientFinal(string(response), combinedNonce)
+	withoutProof, proof, err := parseSCRAMClientFinal(string(response), combinedNonce, gs2Header(bound, authzID), binding)
 	if err != nil {
 		return authenticationRejected(c, command)
 	}
@@ -236,13 +289,29 @@ func authenticationRejected(c *conn, command *queuedCommand) error {
 // binding and is deliberately not using it. Since this server never advertises
 // a -PLUS mechanism, that belief is wrong and the exchange is refused rather
 // than continued — RFC 5802 section 6 makes this the downgrade detection.
-func parseSCRAMClientFirst(message string) (bare, username, authzID, nonce string, err error) {
+func parseSCRAMClientFirst(message string, bound, plusAdvertised bool) (bare, username, authzID, nonce string, err error) {
 	header, rest, found := strings.Cut(message, ",")
-	if !found || header != "n" {
-		// A "y" header means the client believes the server supports channel
-		// binding and is choosing not to use it. This server advertises no
-		// -PLUS mechanism, so that belief can only come from tampering, and
-		// RFC 5802 section 6 makes refusing it the downgrade detection.
+	if !found {
+		return "", "", "", "", fmt.Errorf("malformed SCRAM client-first message")
+	}
+	switch {
+	case bound:
+		// A -PLUS mechanism must declare which binding type it used.
+		if header != "p=tls-exporter" {
+			return "", "", "", "", fmt.Errorf("unsupported SCRAM channel binding type")
+		}
+	case header == "n":
+		// "n" means the client does not support channel binding at all, which
+		// is always allowed.
+	case header == "y":
+		// "y" means the client supports channel binding but believes this
+		// server does not. RFC 5802 section 6 makes refusing that the downgrade
+		// detection: if -PLUS *is* advertised, the belief can only come from
+		// someone stripping it in transit.
+		if plusAdvertised {
+			return "", "", "", "", fmt.Errorf("SCRAM channel-binding downgrade detected")
+		}
+	default:
 		return "", "", "", "", fmt.Errorf("unsupported SCRAM GS2 header")
 	}
 	authzField, remainder, found := strings.Cut(rest, ",")
@@ -278,7 +347,7 @@ func parseSCRAMClientFirst(message string) (bare, username, authzID, nonce strin
 //
 // The nonce check is what binds this message to the server-first message this
 // server sent, so a replayed client-final from another exchange fails here.
-func parseSCRAMClientFinal(message, expectedNonce string) (withoutProof string, proof []byte, err error) {
+func parseSCRAMClientFinal(message, expectedNonce, header string, binding []byte) (withoutProof string, proof []byte, err error) {
 	at := strings.LastIndex(message, ",p=")
 	if at < 0 {
 		return "", nil, fmt.Errorf("malformed SCRAM client-final message")
@@ -288,16 +357,52 @@ func parseSCRAMClientFinal(message, expectedNonce string) (withoutProof string, 
 	if err != nil {
 		return "", nil, fmt.Errorf("malformed SCRAM proof")
 	}
-	var nonce string
+	var nonce, channel string
 	for _, field := range strings.Split(withoutProof, ",") {
 		if value, ok := strings.CutPrefix(field, "r="); ok {
 			nonce = value
+		}
+		if value, ok := strings.CutPrefix(field, "c="); ok {
+			channel = value
 		}
 	}
 	if subtle.ConstantTimeCompare([]byte(nonce), []byte(expectedNonce)) != 1 {
 		return "", nil, fmt.Errorf("SCRAM nonce mismatch")
 	}
+	// The c= field carries the GS2 header the client claimed, plus the channel
+	// binding data when one was used. Verifying it is what actually binds the
+	// exchange to this connection: without the check, a -PLUS mechanism would
+	// be no stronger than its unbound form.
+	expectedChannel := base64.StdEncoding.EncodeToString(append([]byte(header), binding...))
+	if subtle.ConstantTimeCompare([]byte(channel), []byte(expectedChannel)) != 1 {
+		return "", nil, fmt.Errorf("SCRAM channel binding mismatch")
+	}
 	return withoutProof, proof, nil
+}
+
+// gs2Header reconstructs the header the client must have sent, which the c=
+// field of its final message repeats.
+func gs2Header(bound bool, authzID string) string {
+	prefix := "n,"
+	if bound {
+		prefix = "p=tls-exporter,"
+	}
+	if authzID == "" {
+		return prefix + ","
+	}
+	escaped := strings.NewReplacer(",", "=2C", "=", "=3D").Replace(authzID)
+	return prefix + "a=" + escaped + ","
+}
+
+// scramPlusAdvertised reports whether any -PLUS mechanism is offered to this
+// session, which decides whether a "y" header is a downgrade attempt.
+func scramPlusAdvertised(c *conn) bool {
+	for _, capability := range deriveCapabilities(&c.state, c.server) {
+		if strings.HasPrefix(capability, "AUTH=SCRAM-") && strings.HasSuffix(capability, "-PLUS") {
+			return true
+		}
+	}
+	return false
 }
 
 // verifySCRAMProof checks the client's proof against the stored key.

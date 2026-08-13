@@ -189,7 +189,47 @@ func urlUID(url string) imap.UID {
 	return imap.UID(uid)
 }
 
+// comparators are the collations this backend can apply. Only the RFC 5255
+// default is real; the ordinal comparator is offered because a client that asks
+// for exact octet comparison can genuinely be served it.
+var comparators = []string{"i;unicode-casemap", "i;octet"}
+
+// Comparators implements [imapserver.ComparatorSession].
+func (s *session) Comparators(ctx context.Context, _ *imapserver.ComparatorOptions) (string, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
+	s.account.mu.Lock()
+	defer s.account.mu.Unlock()
+	active := s.comparator
+	if active == "" {
+		active = comparators[0]
+	}
+	return active, append([]string(nil), comparators...), nil
+}
+
+// SetComparator implements [imapserver.ComparatorSession]. It takes the first
+// name it can serve, and reports empty when it can serve none — which the
+// framework turns into BADCOMPARATOR rather than a generic failure.
+func (s *session) SetComparator(ctx context.Context, order []string, _ *imapserver.ComparatorOptions) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	s.account.mu.Lock()
+	defer s.account.mu.Unlock()
+	for _, requested := range order {
+		for _, available := range comparators {
+			if strings.EqualFold(requested, available) {
+				s.comparator = available
+				return available, nil
+			}
+		}
+	}
+	return "", nil
+}
+
 var (
-	_ imapserver.LanguageSession = (*session)(nil)
-	_ imapserver.URLAuthSession  = (*session)(nil)
+	_ imapserver.ComparatorSession = (*session)(nil)
+	_ imapserver.LanguageSession   = (*session)(nil)
+	_ imapserver.URLAuthSession    = (*session)(nil)
 )

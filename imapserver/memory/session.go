@@ -24,6 +24,8 @@ type session struct {
 	// See ext_d.go.
 	notify       *imapserver.SessionUpdater
 	notifyConfig *imapserver.NotifyConfig
+	// comparator is the active RFC 5255 collation. See ext_e.go.
+	comparator string
 }
 
 func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, reference string, patterns []string, options *imapserver.ListOptions) error {

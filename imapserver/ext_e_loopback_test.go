@@ -126,9 +126,9 @@ func TestLoopbackESort(t *testing.T) {
 	}
 }
 
-// CONTEXT=SEARCH, CONTEXT=SORT and FILTERS are deliberately not advertised.
-// Claiming CONTEXT without sending the incremental updates it promises would be
-// worse than not offering it: silence would read as "nothing changed".
+// What remains unadvertised, and why. FILTERS needs a criteria type the frozen
+// root package does not have; UTF8=ALL and UTF8=USER are deprecated by RFC 9755.
+// Advertising any of them would be a claim the server cannot honour.
 func TestGroupEUnadvertisedCapabilities(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -137,12 +137,12 @@ func TestGroupEUnadvertisedCapabilities(t *testing.T) {
 	writeRawCommand(t, clientSide, "E1 CAPABILITY\r\n")
 	untagged, _ := collectUntilTag(t, reader, "E1 ")
 	line := findResponse(t, untagged, "* CAPABILITY")
-	for _, absent := range []string{"CONTEXT=SEARCH", "CONTEXT=SORT", "FILTERS", "I18NLEVEL=2"} {
+	for _, absent := range []string{"FILTERS", "UTF8=ALL", "UTF8=USER"} {
 		if strings.Contains(line, absent) {
 			t.Errorf("%s is advertised but not implemented: %q", absent, line)
 		}
 	}
-	for _, present := range []string{"LANGUAGE", "URLAUTH", "ESORT", "I18NLEVEL=1"} {
+	for _, present := range []string{"LANGUAGE", "URLAUTH", "ESORT", "I18NLEVEL=1", "I18NLEVEL=2"} {
 		if !strings.Contains(line, present) {
 			t.Errorf("%s is implemented but not advertised: %q", present, line)
 		}
@@ -218,5 +218,38 @@ func TestLoopbackSCRAMDerivationsAreNotShared(t *testing.T) {
 	right, _ := openLoopbackClient(t, ctx, second, &imapclient.Options{AllowInsecureAuth: true})
 	if err := right.Authenticate(ctx, "alice", "different", &imapclient.AuthenticateOptions{Mechanism: "SCRAM-SHA-256"}); err != nil {
 		t.Errorf("the second backend rejected its own password: %v", err)
+	}
+}
+
+// COMPARATOR negotiates how string SEARCH keys are compared. RFC 5255 section 4.
+func TestLoopbackComparator(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSession(t, ctx)
+
+	// With no arguments it reports state rather than changing it.
+	writeRawCommand(t, clientSide, "E1 COMPARATOR\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "E1 ")
+	if !strings.HasPrefix(tagged, "E1 OK") {
+		t.Fatalf("COMPARATOR failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* COMPARATOR"); !strings.Contains(line, "i;unicode-casemap") {
+		t.Errorf("COMPARATOR = %q, want the default active collation", line)
+	}
+
+	writeRawCommand(t, clientSide, "E2 COMPARATOR \"i;octet\"\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "E2 ")
+	if !strings.HasPrefix(tagged, "E2 OK") {
+		t.Fatalf("COMPARATOR selection failed: %q", tagged)
+	}
+	if line := findResponse(t, untagged, "* COMPARATOR"); !strings.Contains(line, "i;octet") {
+		t.Errorf("adopted comparator = %q, want i;octet", line)
+	}
+
+	// A request naming nothing servable gets BADCOMPARATOR, so a client can
+	// tell it apart from an ordinary failure and fall back.
+	writeRawCommand(t, clientSide, "E3 COMPARATOR \"i;nonexistent\"\r\n")
+	if _, tagged := collectUntilTag(t, reader, "E3 "); !strings.Contains(tagged, "BADCOMPARATOR") {
+		t.Errorf("unservable comparator = %q, want BADCOMPARATOR", tagged)
 	}
 }
