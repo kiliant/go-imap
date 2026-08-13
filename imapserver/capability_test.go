@@ -3,6 +3,7 @@ package imapserver
 import (
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"io/fs"
 	"reflect"
@@ -12,35 +13,123 @@ import (
 )
 
 func TestBackendInterfaceMethodSets(t *testing.T) {
+	// want is the full signature of every exported interface method, not merely
+	// the method names.
+	//
+	// Names alone let a signature change through silently, and one went through:
+	// ComparatorSession.Comparators returned (string, []string, error) and was
+	// reshaped to (*ComparatorData, error) with this gate green throughout. Adding
+	// a return value to an existing method is exactly the breaking change this
+	// table exists to make visible, so it has to compare what actually breaks.
 	want := map[string][]string{
-		"ACLSession":            {"GetACL", "ListRights", "MyRights"},
-		"ACLSetSession":         {"DeleteACL", "SetACL"},
-		"Backend":               {"Authenticate"},
-		"CapabilitySupport":     {"SupportsCapability"},
-		"CatenateSession":       {"ResolveCatenateURL"},
-		"ComparatorSession":     {"Comparators", "SetComparator"},
-		"FilterSession":         {"Filter"},
-		"CondStoreMailbox":      {"StoreCondStore"},
-		"LanguageSession":       {"Languages", "SetLanguage"},
-		"MessageLimitSession":   {"MessageLimits"},
-		"MetadataSession":       {"GetMetadata", "SetMetadata"},
-		"MoveMailbox":           {"Move"},
-		"MoveSupport":           {"SupportsMove"},
-		"MultiSearchSession":    {"MultiSearch"},
-		"NamespaceSession":      {"Namespace"},
-		"NotifySession":         {"Notify"},
-		"QResyncMailbox":        {"Resync"},
-		"QuotaSession":          {"GetQuota", "QuotaRoots"},
-		"QuotaSetSession":       {"SetQuota"},
-		"ReplaceMailbox":        {"Replace"},
-		"SCRAMCredentials":      {"SCRAMCredentials"},
-		"SelectedMailbox":       {"Copy", "Expunge", "Fetch", "Search", "Status", "Store", "Unselect"},
-		"Session":               {"Append", "Close", "Create", "Delete", "List", "Rename", "Select", "Status", "Subscribe", "Unsubscribe"},
-		"SortMailbox":           {"Sort"},
-		"ThreadMailbox":         {"Thread"},
-		"URLAuthSession":        {"FetchURLAuth", "GenerateURLAuth", "ResetURLAuthKey"},
-		"UnauthenticateSession": {"Unauthenticate"},
-		"Update":                {"update"},
+		"ACLSession": {
+			"GetACL(ctx context.Context, mailbox string, options *ACLOptions) (*imap.ACLData, error)",
+			"ListRights(ctx context.Context, mailbox, identifier string, options *ACLOptions) (*imap.ListRightsData, error)",
+			"MyRights(ctx context.Context, mailbox string, options *ACLOptions) (imap.ACLRights, error)",
+		},
+		"ACLSetSession": {
+			"DeleteACL(ctx context.Context, mailbox, identifier string, options *ACLOptions) error",
+			"SetACL(ctx context.Context, mailbox, identifier string, rights imap.ACLRights, options *ACLSetOptions) error",
+		},
+		"Backend": {
+			"Authenticate(ctx context.Context, conn *ConnInfo, credentials *Credentials, options *AuthenticateOptions) (Session, error)",
+		},
+		"CapabilitySupport": {
+			"SupportsCapability(name string) bool",
+		},
+		"CatenateSession": {
+			"ResolveCatenateURL(ctx context.Context, url string, options *CatenateOptions) (io.ReadCloser, error)",
+		},
+		"ComparatorSession": {
+			"Comparators(ctx context.Context, options *ComparatorOptions) (*ComparatorData, error)",
+			"SetComparator(ctx context.Context, order []string, options *ComparatorOptions) (*ComparatorResult, error)",
+		},
+		"CondStoreMailbox": {
+			"StoreCondStore(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) (*CondStoreResult, error)",
+		},
+		"FilterSession": {
+			"Filter(ctx context.Context, name string, options *FilterOptions) (imap.SearchCriteria, error)",
+		},
+		"LanguageSession": {
+			"Languages(ctx context.Context, options *LanguageOptions) ([]string, error)",
+			"SetLanguage(ctx context.Context, tag string, options *LanguageOptions) (*LanguageResult, error)",
+		},
+		"MessageLimitSession": {
+			"MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)",
+		},
+		"MetadataSession": {
+			"GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *MetadataOptions) (*imap.MailboxMetadata, error)",
+			"SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *MetadataOptions) error",
+		},
+		"MoveMailbox": {
+			"Move(ctx context.Context, uids imap.UIDSet, destination string, options *MoveOptions) (*imap.CopyData, error)",
+		},
+		"MoveSupport": {
+			"SupportsMove() bool",
+		},
+		"MultiSearchSession": {
+			"MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)",
+		},
+		"NamespaceSession": {
+			"Namespace(ctx context.Context, options *NamespaceOptions) (*imap.NamespaceData, error)",
+		},
+		"NotifySession": {
+			"Notify(ctx context.Context, updater *SessionUpdater, config *NotifyConfig, options *NotifyOptions) error",
+		},
+		"QResyncMailbox": {
+			"Resync(ctx context.Context, params *QResyncSelect, options *QResyncOptions) (*QResyncResult, error)",
+		},
+		"QuotaSession": {
+			"GetQuota(ctx context.Context, root string, options *QuotaOptions) (*imap.QuotaData, error)",
+			"QuotaRoots(ctx context.Context, mailbox string, options *QuotaOptions) ([]string, error)",
+		},
+		"QuotaSetSession": {
+			"SetQuota(ctx context.Context, root string, limits []imap.QuotaResourceLimit, options *QuotaOptions) error",
+		},
+		"ReplaceMailbox": {
+			"Replace(ctx context.Context, uid imap.UID, mailbox string, literal io.Reader, options *ReplaceOptions) (*imap.AppendData, error)",
+		},
+		"SCRAMCredentials": {
+			"SCRAMCredentials(ctx context.Context, mechanism, username string, options *SCRAMCredentialsOptions) (*SCRAMStoredCredentials, error)",
+		},
+		"SelectedMailbox": {
+			"Copy(ctx context.Context, uids imap.UIDSet, destination string, options *CopyOptions) (*imap.CopyData, error)",
+			"Expunge(ctx context.Context, writer *ExpungeWriter, uids *imap.UIDSet, options *ExpungeOptions) error",
+			"Fetch(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, options *FetchOptions) error",
+			"Search(ctx context.Context, query *SearchQuery, options *SearchOptions) (*SearchResult, error)",
+			"Status(ctx context.Context, options *StatusOptions) (*imap.MailboxStatus, error)",
+			"Store(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) error",
+			"Unselect(ctx context.Context) error",
+		},
+		"Session": {
+			"Append(ctx context.Context, mailbox string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error)",
+			"Close(ctx context.Context) error",
+			"Create(ctx context.Context, mailbox string, options *CreateOptions) error",
+			"Delete(ctx context.Context, mailbox string, options *DeleteOptions) error",
+			"List(ctx context.Context, writer *ListWriter, reference string, patterns []string, options *ListOptions) error",
+			"Rename(ctx context.Context, oldName, newName string, options *RenameOptions) error",
+			"Select(ctx context.Context, mailbox string, updater *Updater, options *SelectOptions) (*SelectResult, error)",
+			"Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)",
+			"Subscribe(ctx context.Context, mailbox string, options *SubscribeOptions) error",
+			"Unsubscribe(ctx context.Context, mailbox string, options *UnsubscribeOptions) error",
+		},
+		"SortMailbox": {
+			"Sort(ctx context.Context, query *SearchQuery, keys []imap.SortKeySpec, options *SortOptions) ([]imap.UID, error)",
+		},
+		"ThreadMailbox": {
+			"Thread(ctx context.Context, query *SearchQuery, algorithm imap.ThreadAlgorithm, options *ThreadOptions) ([]imap.ThreadNode, error)",
+		},
+		"URLAuthSession": {
+			"FetchURLAuth(ctx context.Context, url string, options *URLAuthOptions) (io.ReadCloser, error)",
+			"GenerateURLAuth(ctx context.Context, url, mechanism string, options *URLAuthOptions) (string, error)",
+			"ResetURLAuthKey(ctx context.Context, mailbox string, options *URLAuthOptions) error",
+		},
+		"UnauthenticateSession": {
+			"Unauthenticate(ctx context.Context, options *UnauthenticateOptions) error",
+		},
+		"Update": {
+			"update()",
+		},
 	}
 
 	fset := token.NewFileSet()
@@ -66,7 +155,14 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 				}
 				for _, method := range iface.Methods.List {
 					for _, name := range method.Names {
-						got[typeSpec.Name.Name] = append(got[typeSpec.Name.Name], name.Name)
+						var rendered strings.Builder
+						if err := printer.Fprint(&rendered, fset, method.Type); err != nil {
+							t.Fatal(err)
+						}
+						// The printed FuncType leads with "func"; the golden entry
+						// reads better as "Method(args) results".
+						signature := name.Name + strings.TrimPrefix(rendered.String(), "func")
+						got[typeSpec.Name.Name] = append(got[typeSpec.Name.Name], signature)
 					}
 				}
 				slices.Sort(got[typeSpec.Name.Name])
