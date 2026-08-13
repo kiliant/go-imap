@@ -11,8 +11,12 @@ import (
 )
 
 type searchArgs struct {
-	charset  string
-	criteria imap.SearchCriteria
+	charset string
+	// extended records that a RETURN clause was present, which selects the
+	// ESEARCH response shape. See ext_a_esearch.go.
+	extended      bool
+	returnOptions []string
+	criteria      imap.SearchCriteria
 }
 
 func parseSearch(decoder *imapwire.Decoder) (any, int64, error) {
@@ -20,6 +24,9 @@ func parseSearch(decoder *imapwire.Decoder) (any, int64, error) {
 		return nil, 0, decoder.Err()
 	}
 	args := &searchArgs{}
+	if err := parseSearchReturnOptions(decoder, args); err != nil {
+		return nil, 0, err
+	}
 	if searchStartsWithCharset(decoder) {
 		var keyword string
 		if !decoder.ExpectAtom(&keyword) || !decoder.ExpectSP() || !decoder.ExpectAstring(&args.charset) || !decoder.ExpectSP() {
@@ -46,6 +53,9 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid SEARCH arguments")
 	}
+	if err := validateSearchReturnOptions(c, args); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	query := newSearchQuery(args.criteria, c.state.selected.uids)
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
 	if err != nil {
@@ -61,6 +71,7 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	slices.Sort(uids)
 	uids = slices.Compact(uids)
 	numbers := make([]uint32, 0, len(uids))
+	present := make([]imap.UID, 0, len(uids))
 	for _, uid := range uids {
 		if uid == 0 {
 			return writeBackendError(c, command.tag, command.name, fmt.Errorf("imapserver: backend SEARCH returned UID zero"))
@@ -69,18 +80,14 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 		if !ok {
 			continue
 		}
+		present = append(present, uid)
 		if commandUsesUIDs(command) {
 			numbers = append(numbers, uint32(uid))
 		} else {
 			numbers = append(numbers, uint32(seqNum))
 		}
 	}
-	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("SEARCH")
-	for _, number := range numbers {
-		c.encoder.SP().Number(number)
-	}
-	c.encoder.CRLF()
-	if err := c.encoder.Flush(); err != nil {
+	if err := writeSearchResponse(c, command, args, present, numbers); err != nil {
 		return err
 	}
 	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {

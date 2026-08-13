@@ -168,6 +168,13 @@ func resolveMessageSet(selected *selectedState, raw string, uidMode bool) (imap.
 	if selected == nil || raw == "" {
 		return nil, nil, fmt.Errorf("message set requires a selected mailbox")
 	}
+	// SEARCHRES lets "$" stand in for the last saved result anywhere a message
+	// set is accepted, in both the sequence-number and UID number spaces.
+	// See ext_a_esearch.go.
+	if raw == searchResultMarker {
+		set, ordered := resolveSavedSearch(selected)
+		return set, ordered, nil
+	}
 	var ordered []imap.UID
 	if uidMode {
 		set, err := imap.ParseUIDSet(raw)

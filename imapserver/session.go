@@ -430,6 +430,10 @@ type selectedState struct {
 	maxUIDs  int
 	queue    *updateQueue
 	updater  *Updater
+	// savedSearch is the SEARCHRES result referenced by "$". It is framework
+	// state, not backend state, per the contract on SelectedMailbox: it is
+	// scoped to this selection and discarded with it. RFC 5182.
+	savedSearch imap.UIDSet
 }
 
 //lint:ignore U1000 T22's SELECT handler is the first production caller; T19 owns the atomic attachment primitive.
