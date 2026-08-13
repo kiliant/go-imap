@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 )
 
 // Backend authenticates connections. A Backend is shared by all connections
@@ -521,29 +522,7 @@ func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID) *SearchQuery 
 // adds a container key. TestSearchCriteriaContainersAreTraversed fails if one
 // is added to package imap without appearing here.
 func searchCriteriaChildren(criteria imap.SearchCriteria) ([]imap.SearchCriteria, func([]imap.SearchCriteria) imap.SearchCriteria) {
-	switch criteria := criteria.(type) {
-	case imap.SearchAnd:
-		return criteria, func(children []imap.SearchCriteria) imap.SearchCriteria {
-			return imap.SearchAnd(children)
-		}
-	case imap.SearchOr:
-		return []imap.SearchCriteria{criteria.Left, criteria.Right},
-			func(children []imap.SearchCriteria) imap.SearchCriteria {
-				return imap.SearchOr{Left: children[0], Right: children[1]}
-			}
-	case imap.SearchNot:
-		return []imap.SearchCriteria{criteria.Criteria},
-			func(children []imap.SearchCriteria) imap.SearchCriteria {
-				return imap.SearchNot{Criteria: children[0]}
-			}
-	case imap.SearchFuzzy:
-		return []imap.SearchCriteria{criteria.Criteria},
-			func(children []imap.SearchCriteria) imap.SearchCriteria {
-				return imap.SearchFuzzy{Criteria: children[0]}
-			}
-	default:
-		return nil, nil
-	}
+	return imapcodec.SearchCriteriaChildren(criteria)
 }
 
 func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {

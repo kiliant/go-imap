@@ -29,8 +29,11 @@ const (
 // messages the server will accept into one mailbox, and the largest it will
 // keep. A backend implements it when it enforces such a limit.
 //
-// Zero means unlimited for either value, which is how a server with no limit
-// declines to advertise one.
+// A limit is absent when its Has field on [MessageLimits] is unset, not when its
+// value is zero: RFC 9738 lets a server advertise one limit without the other,
+// and MESSAGELIMIT=0 is a legal advertisement meaning nothing may be stored.
+// Reading zero as "unlimited" would make that server indistinguishable from one
+// with no limit at all, and this doc previously said exactly that.
 type MessageLimitSession interface {
 	MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)
 }

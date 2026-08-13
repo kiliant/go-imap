@@ -446,10 +446,12 @@ func validateNotifyWatches(config *imapserver.NotifyConfig) error {
 		return nil
 	}
 	for _, watch := range config.Watches {
-		switch watch.Specifier {
-		case imap.NotifySelected, imap.NotifySelectedDelayed, imap.NotifyPersonal,
-			imap.NotifySubscribed, imap.NotifyInboxes, imap.NotifySubtree, imap.NotifyMailboxes:
-		default:
+		// The registry rather than a local list. A hand-written copy here would
+		// reject a newly registered specifier the client had already learned to
+		// send, with a green build on both sides — the same drift the shared
+		// vocabulary exists to prevent. A backend that implements only some of
+		// them should list those instead, and say so.
+		if !slices.Contains(imap.NotifyMailboxSpecifiers(), watch.Specifier) {
 			// BAD, not NO [BADEVENT]. RFC 5465 section 6 enumerates the mailbox
 			// specifiers in the grammar, so an unrecognised one is a malformed
 			// command rather than a request for something the server declines to

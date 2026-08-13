@@ -60,3 +60,43 @@ const (
 	// NotifyInboxes covers mailboxes the server considers inboxes.
 	NotifyInboxes NotifyMailboxSpecifier = "INBOXES"
 )
+
+// NotifyEventNames returns every NOTIFY event name this library knows, in the
+// order RFC 5465 section 5 registers them.
+//
+// It exists so consumers stop keeping their own copies. The server folds wire
+// input to these spellings, the client mirrors them, and a reference backend
+// decides what it can serve by consulting them — three places that previously
+// each held a hand-written list, which is how the event and specifier
+// vocabularies drifted apart in the first place. A later RFC registering an
+// event adds it here and every consumer sees it.
+//
+// The returned slice is a copy; callers may modify it.
+func NotifyEventNames() []NotifyEventName {
+	return []NotifyEventName{
+		NotifyEventMessageNew,
+		NotifyEventMessageExpunge,
+		NotifyEventFlagChange,
+		NotifyEventMailboxName,
+		NotifyEventSubscriptionChange,
+		NotifyEventMailboxMetadataChange,
+		NotifyEventServerMetadataChange,
+	}
+}
+
+// NotifyMailboxSpecifiers returns every NOTIFY mailbox specifier this library
+// knows. See [NotifyEventNames] for why this is a function rather than a list
+// each consumer keeps.
+//
+// The returned slice is a copy; callers may modify it.
+func NotifyMailboxSpecifiers() []NotifyMailboxSpecifier {
+	return []NotifyMailboxSpecifier{
+		NotifySelected,
+		NotifySelectedDelayed,
+		NotifyPersonal,
+		NotifySubscribed,
+		NotifySubtree,
+		NotifyMailboxes,
+		NotifyInboxes,
+	}
+}

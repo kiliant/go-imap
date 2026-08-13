@@ -144,22 +144,26 @@ func (c *Client) utf8AcceptEnabled() bool {
 	return ok
 }
 
+// searchNeedsCharset reports whether any string in the criteria is non-ASCII, so
+// the command must declare a CHARSET.
+//
+// Containers come from imapcodec.SearchCriteriaChildren rather than a local
+// switch. The local switch omitted imap.SearchFuzzy, and every Client.*Fuzzy
+// entry point wraps the caller's criteria in exactly that type before this runs,
+// so a fuzzy search over non-ASCII text silently skipped the CHARSET guard and
+// went onto the wire undeclared.
 func searchNeedsCharset(criterion imap.SearchCriteria) bool {
-	switch c := criterion.(type) {
-	case imap.SearchAnd:
-		for _, x := range c {
-			if searchNeedsCharset(x) {
-				return true
-			}
+	return imapcodec.SearchCriteriaMentions(criterion, func(node imap.SearchCriteria) bool {
+		switch c := node.(type) {
+		case imap.SearchString:
+			return valueNeedsCharset(c.Value)
+		case imap.SearchHeaderField:
+			return valueNeedsCharset(c.Value)
 		}
-	case imap.SearchOr:
-		return searchNeedsCharset(c.Left) || searchNeedsCharset(c.Right)
-	case imap.SearchNot:
-		return searchNeedsCharset(c.Criteria)
-	case imap.SearchString:
-		return !utf8.ValidString(c.Value) || strings.ContainsFunc(c.Value, func(r rune) bool { return r > 127 })
-	case imap.SearchHeaderField:
-		return !utf8.ValidString(c.Value) || strings.ContainsFunc(c.Value, func(r rune) bool { return r > 127 })
-	}
-	return false
+		return false
+	})
+}
+
+func valueNeedsCharset(value string) bool {
+	return !utf8.ValidString(value) || strings.ContainsFunc(value, func(r rune) bool { return r > 127 })
 }

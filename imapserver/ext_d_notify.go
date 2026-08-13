@@ -59,6 +59,14 @@ func (u *SessionUpdater) Push(update *SessionUpdate) error {
 	if u == nil {
 		return ErrUpdaterClosed
 	}
+	// Validate above the branch, not inside the framework-backed one. The
+	// PushFunc branch is what adapters and backendtest construct, so validating
+	// only in the core left the conformance harness unable to exercise the rule
+	// the framework actually enforces — and any caller able to build a
+	// SessionUpdater able to bypass it.
+	if err := validateSessionUpdate(update); err != nil {
+		return err
+	}
 	if u.core != nil {
 		return u.core.push(update)
 	}
@@ -151,15 +159,7 @@ type NotifyWatch struct {
 // silently discarding it would leave the client watching for an event that will
 // never arrive.
 func canonicalNotifyEvent(name string) imap.NotifyEventName {
-	for _, known := range []imap.NotifyEventName{
-		imap.NotifyEventMessageNew,
-		imap.NotifyEventMessageExpunge,
-		imap.NotifyEventFlagChange,
-		imap.NotifyEventMailboxName,
-		imap.NotifyEventSubscriptionChange,
-		imap.NotifyEventMailboxMetadataChange,
-		imap.NotifyEventServerMetadataChange,
-	} {
+	for _, known := range imap.NotifyEventNames() {
 		if strings.EqualFold(name, string(known)) {
 			return known
 		}
@@ -173,21 +173,29 @@ type sessionUpdaterCore struct {
 	active bool
 }
 
-func (u *sessionUpdaterCore) push(update *SessionUpdate) error {
+// validateSessionUpdate rejects an update the framework has no way to deliver.
+//
+// Queueing one and dropping it in drainNotify would tell the backend its event
+// was published and then silently discard it, which is the hardest kind of
+// delivery bug to find from either end. NOTIFY reports these as untagged STATUS,
+// so an update without one has no wire form at all.
+//
+// RFC 5465 section 5 does report MailboxName as untagged LIST and the metadata
+// events as untagged METADATA. Those need a field on SessionUpdate, which is
+// additive when it lands; until then an error is the truthful answer.
+func validateSessionUpdate(update *SessionUpdate) error {
 	if update == nil || update.Mailbox == "" {
 		return fmt.Errorf("imapserver: NOTIFY update requires a mailbox")
 	}
-	// Reject what cannot be delivered rather than queueing it and dropping it in
-	// drainNotify. The framework reports these as untagged STATUS, so an update
-	// with no Status has no wire form; accepting it would tell the backend its
-	// event was published and then silently discard it, which is the hardest
-	// kind of delivery bug to find from either end.
-	//
-	// RFC 5465 section 5 does report MailboxName as untagged LIST and the
-	// metadata events as untagged METADATA. Those need a field on SessionUpdate,
-	// which is additive when it lands; until then the honest answer is an error.
 	if update.Status == nil {
 		return fmt.Errorf("imapserver: NOTIFY update for %q has no Status, which is the only form the framework can deliver", update.Mailbox)
+	}
+	return nil
+}
+
+func (u *sessionUpdaterCore) push(update *SessionUpdate) error {
+	if err := validateSessionUpdate(update); err != nil {
+		return err
 	}
 	u.mu.RLock()
 	defer u.mu.RUnlock()

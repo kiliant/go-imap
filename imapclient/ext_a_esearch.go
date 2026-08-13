@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -537,21 +538,8 @@ func searchReturnKeywords(options []SearchReturnOption) ([]string, bool, error) 
 // criteriaUseWithin reports whether criteria contain an OLDER or YOUNGER key.
 // WITHIN, RFC 5032 section 3.
 func criteriaUseWithin(criterion imap.SearchCriteria) bool {
-	switch c := criterion.(type) {
-	case imap.SearchAnd:
-		for _, x := range c {
-			if criteriaUseWithin(x) {
-				return true
-			}
-		}
-	case imap.SearchOr:
-		return criteriaUseWithin(c.Left) || criteriaUseWithin(c.Right)
-	case imap.SearchNot:
-		return criteriaUseWithin(c.Criteria)
-	case imap.SearchFuzzy:
-		return criteriaUseWithin(c.Criteria)
-	case imap.SearchWithin:
-		return true
-	}
-	return false
+	return imapcodec.SearchCriteriaMentions(criterion, func(node imap.SearchCriteria) bool {
+		_, ok := node.(imap.SearchWithin)
+		return ok
+	})
 }

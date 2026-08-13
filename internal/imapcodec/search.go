@@ -330,3 +330,66 @@ func readSearchModSeq(dec *imapwire.Decoder) (imap.SearchCriteria, error) {
 	}
 	return imap.SearchModSeq{ModSeq: uint64(n), EntryName: first, EntryType: imap.SearchModSeqMetadata(entryType)}, nil
 }
+
+// SearchCriteriaChildren decomposes a container search key into its children and
+// a function that rebuilds it from replacements. A leaf reports nil.
+//
+// This is the single definition of which search keys contain other search keys,
+// and every exhaustive walk over a criteria tree — in either direction — reaches
+// children through it. It lives here rather than in imapclient or imapserver
+// because both need it and neither can import the other.
+//
+// It is centralised because the duplicates disagreed. imapserver had two walks,
+// one of which omitted imap.SearchFuzzy, so `SEARCH FUZZY FILTER "x"` delivered
+// an unsubstituted imap.SearchFilter to the backend. imapclient had two more,
+// and its CHARSET walk omitted the same type, so every fuzzy search skipped the
+// non-ASCII CHARSET guard. Four hand-maintained copies of one list, two of them
+// wrong, none of them tested against the type declarations.
+//
+// TestSearchCriteriaContainersAreTraversed enforces that this function knows
+// every container in package imap. A new RFC adding a container search key fails
+// there rather than in a consumer's default case.
+func SearchCriteriaChildren(criteria imap.SearchCriteria) ([]imap.SearchCriteria, func([]imap.SearchCriteria) imap.SearchCriteria) {
+	switch criteria := criteria.(type) {
+	case imap.SearchAnd:
+		return criteria, func(children []imap.SearchCriteria) imap.SearchCriteria {
+			return imap.SearchAnd(children)
+		}
+	case imap.SearchOr:
+		return []imap.SearchCriteria{criteria.Left, criteria.Right},
+			func(children []imap.SearchCriteria) imap.SearchCriteria {
+				return imap.SearchOr{Left: children[0], Right: children[1]}
+			}
+	case imap.SearchNot:
+		return []imap.SearchCriteria{criteria.Criteria},
+			func(children []imap.SearchCriteria) imap.SearchCriteria {
+				return imap.SearchNot{Criteria: children[0]}
+			}
+	case imap.SearchFuzzy:
+		return []imap.SearchCriteria{criteria.Criteria},
+			func(children []imap.SearchCriteria) imap.SearchCriteria {
+				return imap.SearchFuzzy{Criteria: children[0]}
+			}
+	default:
+		return nil, nil
+	}
+}
+
+// SearchCriteriaMentions reports whether any node in a criteria tree satisfies
+// the predicate.
+//
+// Offered so a consumer that only needs to ask a question of every node does not
+// write its own traversal — which is how the container lists drifted apart in
+// the first place.
+func SearchCriteriaMentions(criteria imap.SearchCriteria, match func(imap.SearchCriteria) bool) bool {
+	if match(criteria) {
+		return true
+	}
+	children, _ := SearchCriteriaChildren(criteria)
+	for _, child := range children {
+		if SearchCriteriaMentions(child, match) {
+			return true
+		}
+	}
+	return false
+}

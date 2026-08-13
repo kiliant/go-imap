@@ -550,10 +550,17 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if second == nil || *first != *second {
 			t.Errorf("MessageLimits is not stable within a session: %#v then %#v", first, second)
 		}
-		// A zero limit would be advertised as MESSAGELIMIT=0, which tells a
-		// client it may never append.
-		if first.MessageLimit == 0 && first.SaveLimit == 0 {
-			t.Error("both limits are zero, which advertises a server nothing can be stored on")
+		// Presence is carried by the Has fields, not by a zero value. RFC 9738
+		// lets a server advertise one limit without the other, and
+		// MESSAGELIMIT=0 is a legal — if unwelcoming — advertisement, so reading
+		// the value fields to decide whether a limit exists would fail a backend
+		// the framework documents as correct.
+		//
+		// What is worth refusing is implementing the interface and reporting no
+		// limit at all: the capability is then advertised on the strength of a
+		// promise the backend does not make.
+		if !first.HasMessageLimit && !first.HasSaveLimit {
+			t.Error("MessageLimitSession reports neither limit; implement it only when one is enforced")
 		}
 	})
 
@@ -577,12 +584,13 @@ func runExtensions(t *testing.T, harness *Harness) {
 		// releasing something Close still needs would turn every UNAUTHENTICATE
 		// into a failed command *after* the point of no return, where the
 		// framework has already abandoned the selection.
-		if err := session.Close(context.Background()); err != nil {
-			t.Errorf("Close after Unauthenticate failed, which strands the connection: %v", err)
-		}
-		// Idempotent within the framework's sequence: it is called exactly once,
-		// but a second call must not panic.
-		_ = unauth.Unauthenticate(context.Background(), nil)
+		//
+		// The deferred closeSession is that assertion. Calling Close here as well
+		// would require it to be idempotent, and nothing promises that — the
+		// framework calls it exactly once, then drops the session. A backend that
+		// releases its handle and errors on a second Close is correct against the
+		// documented interface, and an earlier draft of this subtest would have
+		// failed it.
 	})
 
 	t.Run("catenate-url-resolves-or-is-refused", func(t *testing.T) {
