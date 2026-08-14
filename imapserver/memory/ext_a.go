@@ -22,6 +22,10 @@ import (
 // genuinely evaluated rather than ignored. Advertising a search key a backend
 // silently drops would make every result quietly wrong.
 var supportedCapabilities = map[string]bool{
+	// UIDPLUS: this backend returns UIDs in AppendData and CopyData, so the
+	// APPENDUID and COPYUID codes are real, and its Expunge honours the UID-set
+	// filter UID EXPUNGE supplies.
+	"UIDPLUS":            true,
 	"CHILDREN":           true,
 	"SPECIAL-USE":        true,
 	"CREATE-SPECIAL-USE": true,
@@ -47,10 +51,14 @@ var supportedCapabilities = map[string]bool{
 	// against the envelope, not silently treated as their non-display forms.
 	"SORT":         true,
 	"SORT=DISPLAY": true,
-	"THREAD":       true,
-	"BINARY":       true,
-	"MULTISEARCH":  true,
-	"UTF8=APPEND":  true,
+	// ORDEREDSUBJECT only. REFERENCES needs a Message-ID graph this backend
+	// does not retain, and answering it with ORDEREDSUBJECT results would
+	// silently mis-thread the client's view — so the token is withheld and
+	// Thread refuses the algorithm. RFC 5256 has no bare "THREAD" capability.
+	"THREAD=ORDEREDSUBJECT": true,
+	"BINARY":                true,
+	"MULTISEARCH":           true,
+	"UTF8=APPEND":           true,
 	// Group E. LANGUAGE and URLAUTH witness themselves through their optional
 	// interfaces; these are the tokens that need a spoken claim.
 	"I18NLEVEL=1": true,

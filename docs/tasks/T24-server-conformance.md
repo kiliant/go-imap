@@ -2,7 +2,7 @@
 
 **Agent:** `fuzz-hardening` + `interop-harness` · **Milestone:** M6 · **Depends on:** T22
 
-**Owns:** `imapserver/**/*_fuzz_test.go`, `interop/servers/goimap/**`
+**Owns:** `imapserver/**/*_fuzz_test.go`, `imapserver/interop/**`
 
 ## What this task is
 

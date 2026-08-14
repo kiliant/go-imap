@@ -146,6 +146,13 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 // length is not knowable until this one is consumed.
 func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage) (*appendPayload, error) {
 	if len(message.catenate) == 0 {
+		// Defence in depth behind decodeFailure. A parse that neither collected
+		// a CATENATE part nor a literal must already have failed; if some future
+		// production ever lets one through, the connection owes the client a BAD
+		// rather than the process a nil dereference.
+		if message.literal == nil {
+			return nil, fmt.Errorf("APPEND message carries no payload")
+		}
 		literal := &appendLiteral{reader: message.literal, remaining: message.literal.Size()}
 		return &appendPayload{reader: literal, literal: message.literal, pending: literal}, nil
 	}

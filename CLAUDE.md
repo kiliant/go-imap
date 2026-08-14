@@ -95,11 +95,15 @@ shells out to `podman`.
 
 - `go test ./...` — unit tests, no network, must stay fast.
 - Run `go test -count=1 -race -tags=interop ./imapclient`, then separately run
-  `go test -count=1 -race -tags=interop ./interop/...` — drives real servers
-  under podman, including interop-tagged production-client tests. The commands
-  must remain sequential because separate package test processes own independent
-  harness lifecycles and could otherwise collide on container names. See
-  `docs/INTEROP.md`. Requires a running podman machine.
+  `go test -count=1 -race -tags=interop ./interop/...`, then separately run
+  `go test -count=1 -race -tags=interop ./imapserver/interop/...` — the first two
+  drive real servers under podman, including interop-tagged production-client
+  tests; the third is the inverse, measuring our own server as a matrix entry and
+  driving real third-party clients (`imaptest`, `mbsync`) against it. The
+  commands must remain sequential because separate package test processes own
+  independent harness lifecycles and could otherwise collide on container names.
+  `.github/scripts/run-interop.sh` runs all three in order, which is what CI
+  uses. See `docs/INTEROP.md`. Requires a running podman machine.
 - Interop tests **skip** on absent server capabilities, never fail. A permanently
   red matrix is a matrix nobody reads.
 - Every parser gets a fuzz target. Malformed input from a hostile server must not

@@ -10,7 +10,53 @@ import (
 )
 
 func handleExpunge(ctx context.Context, c *conn, command *queuedCommand) error {
-	_, err := expungeSelected(ctx, c, command, false)
+	_, err := expungeSelected(ctx, c, command, false, nil)
+	return err
+}
+
+type uidExpungeArgs struct{ set string }
+
+// parseUIDExpunge reads UID EXPUNGE's message set. RFC 4315 section 2.1 gives
+// the command exactly one argument, and it is always a UID set — there is no
+// sequence-numbered form, which is why this does not go through the usual
+// commandUsesUIDs branch.
+func parseUIDExpunge(decoder *imapwire.Decoder) (any, int64, error) {
+	if !decoder.ExpectSP() {
+		return nil, 0, decoder.Err()
+	}
+	args := &uidExpungeArgs{}
+	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectCRLF() {
+		return nil, 0, decoder.Err()
+	}
+	return args, int64(len(args.set)), nil
+}
+
+// handleUIDExpunge implements UID EXPUNGE (RFC 4315 section 2.1): remove the
+// messages that carry \Deleted *and* fall inside the given UID set, leaving
+// every other deleted message in place.
+//
+// The point of the command is concurrency. A client that marks messages deleted
+// and then sends a plain EXPUNGE also destroys anything another session flagged
+// in the meantime; UID EXPUNGE removes exactly what this client asked for.
+// Silently treating it as EXPUNGE would therefore lose other sessions' mail,
+// which is why it is gated on the capability rather than approximated.
+func handleUIDExpunge(ctx context.Context, c *conn, command *queuedCommand) error {
+	args, _ := command.args.(*uidExpungeArgs)
+	if args == nil {
+		return c.writeBad(command.tag, "invalid UID EXPUNGE arguments")
+	}
+	if err := requireCapability(c, "UIDPLUS"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
+	if c.state.selected == nil {
+		return c.writeBad(command.tag, "no mailbox is selected")
+	}
+	// Always resolved as UIDs: the command has no sequence-numbered form.
+	uids, _, err := resolveMessageSet(c.state.selected, args.set, true)
+	if err != nil {
+		return c.writeBad(command.tag, "invalid UID EXPUNGE message set")
+	}
+	_, err = expungeSelected(ctx, c, command, false, &uids)
 	return err
 }
 
@@ -18,7 +64,7 @@ func handleClose(ctx context.Context, c *conn, command *queuedCommand) error {
 	if c.state.selected != nil && c.state.selected.readOnly {
 		return closeSelected(ctx, c, command)
 	}
-	completed, err := expungeSelected(ctx, c, command, true)
+	completed, err := expungeSelected(ctx, c, command, true, nil)
 	if err != nil || !completed {
 		return err
 	}
@@ -37,7 +83,11 @@ func closeSelected(ctx context.Context, c *conn, command *queuedCommand) error {
 	return c.writeTagged(command.tag, "OK", "CLOSE completed")
 }
 
-func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silent bool) (bool, error) {
+// expungeSelected runs EXPUNGE over the whole mailbox, or over uids when
+// UID EXPUNGE restricted it. A nil uids means "every deleted message", which is
+// the contract the backend interface already carried before UID EXPUNGE
+// existed.
+func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silent bool, uids *imap.UIDSet) (bool, error) {
 	selected := c.state.selected
 	if selected == nil {
 		return false, c.writeBad(command.tag, "no mailbox is selected")
@@ -72,7 +122,7 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 		removed = append(removed, uid)
 		return nil
 	})
-	err := selected.mailbox.Expunge(ctx, writer, nil, &ExpungeOptions{MutationOptions: MutationOptions{Origin: origin}})
+	err := selected.mailbox.Expunge(ctx, writer, uids, &ExpungeOptions{MutationOptions: MutationOptions{Origin: origin}})
 	writer.core.close()
 	if err != nil {
 		return false, writeBackendError(c, command.tag, command.name, err)

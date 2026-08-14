@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("1 LOGIN \"interop@example.test\" \"interop-pw\"\r\n2 LIST \"\" \"*\"\r\n3 SELECT \"INBOX\"\r\n4 UID FETCH 1:12 (UID FLAGS)\r\n5 UID FETCH 1 (BODY.PEEK[])\r\n6 UID FETCH 2 (BODY.PEEK[])\r\n7 UID FETCH 3 (BODY.PEEK[])\r\n8 UID FETCH 4 (BODY.PEEK[])\r\n9 UID FETCH 5 (BODY.PEEK[])\r\n10 UID FETCH 6 (BODY.PEEK[])\r\n11 UID FETCH 7 (BODY.PEEK[])\r\n12 UID FETCH 8 (BODY.PEEK[])\r\n13 UID FETCH 9 (BODY.PEEK[])\r\n14 UID FETCH 10 (BODY.PEEK[])\r\n15 UID FETCH 11 (BODY.PEEK[])\r\n16 UID FETCH 12 (BODY.PEEK[])\r\n17 CLOSE\r\n18 LOGOUT\r\n")

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("1 LOGIN \"interop@example.test\" \"interop-pw\"\r\n2 LIST \"\" \"*\"\r\n3 SELECT \"INBOX\"\r\n4 UID FETCH 1:12 (UID FLAGS)\r\n5 CLOSE\r\n6 LOGOUT\r\n")

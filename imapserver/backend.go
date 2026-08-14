@@ -35,6 +35,10 @@ type Backend interface {
 // This method set is the mandatory IMAP4rev1 baseline and is frozen. A future
 // extension adds an optional interface or an option field, not a method here.
 type Session interface {
+	// List is also called by the framework during SELECT and EXAMINE on an
+	// IMAP4rev2 session, to produce the untagged LIST response RFC 9051 §6.3.2
+	// requires, with the selection already installed. An error returned from
+	// that call fails the SELECT.
 	List(ctx context.Context, writer *ListWriter, reference string, patterns []string, options *ListOptions) error
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
 	Create(ctx context.Context, mailbox string, options *CreateOptions) error

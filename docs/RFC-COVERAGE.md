@@ -21,7 +21,7 @@ everything landed by T23 stops at `done`.
 | Capability | RFC | Task | Status |
 |---|---|---|---|
 | IMAP4REV1 | 3501 | T01,T02,T05,T06 | done [^rev1] |
-| IMAP4REV2 | 9051 | T07 | done |
+| IMAP4REV2 | 9051 | T07 | done [^srvrev2] |
 | STARTTLS | 3501, 9051 | T03 | done |
 | LOGINDISABLED | 3501, 9051 | T04 | done |
 | AUTH= | 3501, 9051 | T04 | verified |
@@ -43,6 +43,36 @@ everything landed by T23 stops at `done`.
     under T08's base ownership without appearing in T08's scope table; the scope
     table now includes it. Verified on Dovecot, Stalwart and Cyrus.
 
+[^srvrev2]: Server side gated off until T24. `SERVER-DESIGN.md` §1 sets the bar:
+    `IMAP4REV2` is advertised only when **every** behaviour RFC 9051
+    incorporates is implemented, "advertising it otherwise is a lie the client
+    cannot detect" — so `frameworkRev2` was hardcoded false and no client could
+    `ENABLE` the rev2 paths the package already had. T24 closed the three gaps
+    that kept it false and turned it on:
+
+    - UIDPLUS, the last incorporated behaviour with no advertisement and no
+      `UID EXPUNGE`. See [^srvuidplus].
+    - A bare `SEARCH` answered in the rev1 shape. See [^srvesearch].
+    - `SELECT`/`EXAMINE` sent no untagged `LIST`, which RFC 9051 §6.3.2 adds and
+      RFC 3501 does not have. It is now emitted for rev2 sessions from the
+      backend's own `List`, so the attributes and delimiter agree with what a
+      `LIST` command would report; rev1 sessions still get no such response.
+
+    The advertisement is asserted behaviour rather than a claim:
+    `imapserver/rev2_test.go` probes one command form per incorporated
+    behaviour over the wire, and asserts each rev1/rev2 difference in both
+    directions so enabling rev2 cannot silently change what a rev1 client sees.
+    The `goimap` interop entry lists `IMAP4REV2` in its expected set.
+
+    Those probes run against `imapserver/memory`, which implements everything —
+    so they show the behaviour exists, not that the *gate* holds. It initially
+    did not: the capability was armed on the atomic-MOVE witness alone, so a
+    backend implementing MOVE and nothing else advertised rev2 and was held to
+    the rest of the incorporated set. The gate is now the conjunction of the
+    incorporated capabilities' own witnesses, listed as data in
+    `rev2Incorporated`; see `API-STABILITY.md` §10, "An umbrella capability is
+    witnessed by its members".
+
 ## Group A — core modern (task T08)
 
 | Capability | RFC | Client | Server |
@@ -58,12 +88,26 @@ everything landed by T23 stops at `done`.
 | CHILDREN | 3348 | verified | done |
 | WITHIN | 5032 | verified | done [^srvwithin] |
 
-[^srvuidplus]: Server side delivered by T22 with the base command set, through
-    `imap.AppendData` and `imap.CopyData`, not by T23.
+[^srvuidplus]: T22 delivered the `APPENDUID` and `COPYUID` response codes with
+    the base command set, through `imap.AppendData` and `imap.CopyData`. That
+    was two of RFC 4315's three parts, and this row read `done` while the
+    capability was never advertised and `UID EXPUNGE` was absent from the UID
+    subcommand table — so no conforming client could use any of it. T24
+    completed it after the `goimap` interop entry surfaced the gap: `UID
+    EXPUNGE` is implemented (the `SelectedMailbox.Expunge` contract already
+    carried the UID-set filter), and the capability is advertised behind a
+    `CapabilitySupport` witness, since the two response codes are real only if
+    the backend returns UIDs.
 
 [^srvesearch]: Framework-owned: derived from the SEARCH result the backend
     already returns, so no backend interface and no witness. The saved result
     for `$` is framework state scoped to the selection.
+    Which response shape a SEARCH gets is a function of the session, not of the
+    command: a `RETURN` clause always selects `ESEARCH`, and since T24 so does
+    an enabled IMAP4rev2, because RFC 9051 appendix E removes the untagged
+    `SEARCH` response outright. Until then a rev2 session answered a bare
+    `SEARCH` in the rev1 shape, which a strict rev2 client has no production
+    for. rev1 sessions are unchanged.
 
 [^srvliststatus]: Framework-owned through the mandatory `Session.Status`, issued
     after `Session.List` returns rather than during it, so the backend is not
@@ -171,6 +215,13 @@ CONDSTORE `MODIFIED` on tagged OK.
     and refuses REFERENCES rather than answering it with ORDEREDSUBJECT
     results, which would silently mis-thread a client's view; REFERENCES needs
     a Message-ID graph the backend does not retain.
+    The capability is advertised per algorithm — `THREAD=ORDEREDSUBJECT`,
+    `THREAD=REFERENCES` — as RFC 5256 section 1 defines it. Until T24 the
+    server sent a bare `THREAD` token, which the RFC does not define and which
+    told a client nothing about which tree it would get back; a client looking
+    for `THREAD=ORDEREDSUBJECT` never matched. An unwitnessed algorithm is now
+    refused by the capability gate with a tagged `BAD` before the backend is
+    reached, instead of by the backend with a `NO`.
 
 [^srvbinary]: FETCH side. `BINARY[]` and `BINARY.SIZE[]` decode the
     content-transfer-encoding, and an encoding that cannot be undone fails with

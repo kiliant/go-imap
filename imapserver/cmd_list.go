@@ -99,6 +99,23 @@ func listArgsSize(args *listArgs) int64 {
 	return size
 }
 
+// writeListData encodes one mailbox-listing line. Both LIST and LSUB use it,
+// and so does SELECT, which RFC 9051 section 6.3.2 requires to answer with a
+// LIST response of its own — attribute filtering is the caller's, since only it
+// knows which RETURN options were in force.
+func writeListData(c *conn, name string, attrs []imap.MailboxAttr, data *imap.ListData) error {
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom(name).SP().List(len(attrs), func(i int) {
+		c.encoder.Flag(string(attrs[i]))
+	}).SP()
+	if data.Delimiter == 0 {
+		c.encoder.NIL()
+	} else {
+		c.encoder.String(string(data.Delimiter))
+	}
+	c.encoder.SP().Mailbox(data.Mailbox).CRLF()
+	return c.encoder.Flush()
+}
+
 func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*listArgs)
 	if args == nil || len(args.patterns) == 0 {
@@ -129,17 +146,7 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if wantsPerMailboxResponses(args) {
 			statusMailboxes = append(statusMailboxes, data.Mailbox)
 		}
-		attrs := listResultAttrs(args, options, data.Attrs)
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom(writtenName).SP().List(len(attrs), func(i int) {
-			c.encoder.Flag(string(attrs[i]))
-		}).SP()
-		if data.Delimiter == 0 {
-			c.encoder.NIL()
-		} else {
-			c.encoder.String(string(data.Delimiter))
-		}
-		c.encoder.SP().Mailbox(data.Mailbox).CRLF()
-		return c.encoder.Flush()
+		return writeListData(c, writtenName, listResultAttrs(args, options, data.Attrs), data)
 	})
 	err := c.state.session.List(ctx, writer, args.reference, args.patterns, options)
 	writer.core.close()

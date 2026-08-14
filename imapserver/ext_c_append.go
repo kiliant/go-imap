@@ -100,6 +100,26 @@ func parseAppendMessagePrefix(decoder *imapwire.Decoder, message *appendMessage)
 	return nil
 }
 
+// decodeFailure turns a matcher that declined into a definite error.
+//
+// The decoder says "no" in two different ways. Expect* records the reason and
+// Err returns it; an optional matcher such as Literal reports a bare false and
+// deliberately leaves Err nil, so the caller can try another production against
+// the same bytes. Returning Err unconditionally conflates them, and for the
+// second kind it reports success.
+//
+// That is not a hypothetical. "APPEND INBOX 23+}" — a literal with its opening
+// brace mistyped — parsed as a complete APPEND carrying no payload at all, and
+// the handler then dereferenced the absent literal: a nil-pointer panic, and so
+// a whole-process crash, that any authenticated client could trigger with one
+// line. FuzzServeConnAuthenticated found it in 0.11s.
+func decodeFailure(decoder *imapwire.Decoder, what string) error {
+	if err := decoder.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("malformed %s", what)
+}
+
 // parseAppendPayloadStart reads as far as the first literal of a message's
 // payload — the whole literal for an ordinary append, or CATENATE's opening
 // parenthesis and first part.
@@ -116,7 +136,7 @@ func parseAppendPayloadStart(decoder *imapwire.Decoder, message *appendMessage) 
 	}
 	literal, ok := decoder.Literal()
 	if !ok {
-		return decoder.Err()
+		return decodeFailure(decoder, "APPEND literal")
 	}
 	if literal.Binary() {
 		if err := literal.Discard(); err != nil {
@@ -139,7 +159,7 @@ func parseCatenatePart(decoder *imapwire.Decoder, message *appendMessage) error 
 	case "TEXT":
 		literal, ok := decoder.Literal()
 		if !ok {
-			return decoder.Err()
+			return decodeFailure(decoder, "CATENATE TEXT literal")
 		}
 		message.catenate = append(message.catenate, catenatePart{literal: literal})
 		return nil

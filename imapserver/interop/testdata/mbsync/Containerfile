@@ -1,0 +1,19 @@
+# mbsync (isync), a real third-party IMAP client.
+#
+# SERVER-DESIGN.md §7 wants this for what no suite written alongside the server
+# thinks to exercise: the long-tail sequencing of an actual synchroniser —
+# UIDVALIDITY handling, resumed partial fetches, a second pass that must
+# recognise everything the first pass already stored. Our own tests share their
+# author's reading of the RFC with the server; mbsync does not.
+#
+# Unlike imaptest this needs no source build: Debian packages isync, and the
+# client's protocol behaviour is what is under test, not a specific patch
+# level. The version is still pinned by base image so a run is reproducible.
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        isync \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["mbsync"]

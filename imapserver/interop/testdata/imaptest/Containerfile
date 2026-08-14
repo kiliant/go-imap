@@ -1,0 +1,81 @@
+# Dovecot's imaptest, the de-facto IMAP conformance and stress tool.
+#
+# SERVER-DESIGN.md §7 calls this the highest-value external check available:
+# it is written by people who have fielded every client bug there is, so it
+# finds conformance bugs our own tests are blind to by construction — a test we
+# wrote from the same reading of the RFC that produced the server cannot.
+#
+# There is no published imaptest image, so it is built from source, and so is
+# Dovecot itself. That second part is not gold-plating. imaptest compiles
+# against Dovecot's *internal* headers, which carry no stability promise:
+#
+#   - Debian trixie ships Dovecot 2.4, where imaptest's main branch fails on
+#     changed signatures in iostream-rawlog.h.
+#   - Debian bookworm ships 2.3.19.1, but with a patched imap_parser_create
+#     taking a params argument that no imaptest branch passes.
+#
+# So the distribution's dovecot-dev cannot be used at all, in either release.
+# Building the matching upstream Dovecot and pointing --with-dovecot at its
+# source tree is what upstream documents, and it is the only combination that
+# is a matched pair by construction rather than by luck. Both versions below
+# move together or neither moves.
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        automake \
+        libtool \
+        pkg-config \
+        git \
+        ca-certificates \
+        curl \
+        libssl-dev \
+        zlib1g-dev \
+        libbz2-dev \
+        liblz4-dev \
+        libzstd-dev \
+        libicu-dev \
+        libexpat1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# imaptest's release-2.3 branch targets Dovecot 2.3.21.
+ARG DOVECOT_VERSION=2.3.21
+RUN curl -fsSL "https://dovecot.org/releases/2.3/dovecot-${DOVECOT_VERSION}.tar.gz" \
+        -o /tmp/dovecot.tar.gz \
+    && mkdir -p /src \
+    && tar -xzf /tmp/dovecot.tar.gz -C /src \
+    && rm /tmp/dovecot.tar.gz \
+    && cd "/src/dovecot-${DOVECOT_VERSION}" \
+    # Only lib-dovecot is needed to link imaptest, so every optional subsystem
+    # is switched off. This is build-time scope reduction, not a behaviour
+    # change to the tool: imaptest is a client and uses none of them.
+    && ./configure \
+        --without-pam \
+        --without-shadow \
+        --without-sql \
+        --without-ldap \
+        --without-gssapi \
+        --without-lua \
+        --without-solr \
+        --without-cassandra \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig
+
+# Pinned to a commit, not a branch: an interop check that silently changes what
+# it asserts between runs is not a regression test. This is the head of
+# release-2.3, the branch matching the Dovecot built above.
+ARG IMAPTEST_REF=0de0dbfb8293a71866d284bc1e4ddf9dfbcb6985
+ARG DOVECOT_VERSION=2.3.21
+
+RUN git clone https://github.com/dovecot/imaptest.git /src/imaptest \
+    && cd /src/imaptest \
+    && git checkout "$IMAPTEST_REF" \
+    && ./autogen.sh \
+    && ./configure --with-dovecot="/src/dovecot-${DOVECOT_VERSION}" \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig
+
+ENTRYPOINT ["imaptest"]

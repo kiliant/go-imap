@@ -52,6 +52,19 @@ var capabilityDescriptors = []capabilityDescriptor{
 		}},
 	{Name: "ENABLE", RequiresFramework: []frameworkComponent{frameworkEnable}, States: stateMaskAny},
 	{Name: "ID", RequiresFramework: []frameworkComponent{frameworkCore}, States: stateMaskAny},
+	// UIDPLUS (RFC 4315) is three things: the APPENDUID and COPYUID response
+	// codes, and the UID EXPUNGE command. Until T24 the server emitted the two
+	// codes and implemented neither the command nor the advertisement, so no
+	// conforming client could act on any of it.
+	//
+	// Witnessed rather than framework-only. UID EXPUNGE works for any backend —
+	// the Expunge contract has always carried the UID-set filter — but the two
+	// response codes exist only if the backend returns UIDs in AppendData and
+	// CopyData, and RFC 4315 section 3 requires a UIDPLUS server to send them.
+	// A backend that cannot must not have the claim made on its behalf.
+	{Name: "UIDPLUS", RequiresFramework: []frameworkComponent{frameworkCore},
+		States:          stateMaskAuthenticated | stateMaskSelected,
+		RequiresBackend: backendSupportsCapability("UIDPLUS")},
 	{Name: "LITERAL-", RequiresFramework: []frameworkComponent{frameworkCore}, States: stateMaskAny},
 	{Name: "SASL-IR", RequiresFramework: []frameworkComponent{frameworkAuth}, States: stateMaskNotAuthenticated,
 		RequiresBackend: hasAuthenticationBackend},
@@ -78,9 +91,84 @@ var capabilityDescriptors = []capabilityDescriptor{
 	{Name: "LIST-EXTENDED", RequiresFramework: []frameworkComponent{frameworkListExtend}, States: stateMaskAuthenticated | stateMaskSelected},
 	{Name: "MOVE", RequiresFramework: []frameworkComponent{frameworkMove}, States: stateMaskAuthenticated | stateMaskSelected,
 		RequiresBackend: supportsAtomicMove},
-	{Name: "IMAP4REV2", RequiresFramework: []frameworkComponent{frameworkRev2, frameworkMove}, States: stateMaskAny,
-		RequiresBackend: supportsAtomicMove,
-		Enable:          func(state *sessionState) bool { return state.enable("IMAP4REV2") }},
+}
+
+// IMAP4REV2 is registered here rather than in the table above because it is the
+// only descriptor whose witness is other descriptors, and a table entry that
+// reads the table it is declared in is an initialisation cycle. Registering it
+// from init runs after the table exists. See rev2Incorporated and witnessesRev2.
+func init() {
+	registerCapabilities(capabilityDescriptor{
+		Name:              "IMAP4REV2",
+		RequiresFramework: []frameworkComponent{frameworkRev2, frameworkMove},
+		States:            stateMaskAny,
+		RequiresBackend:   witnessesRev2,
+		Enable:            func(state *sessionState) bool { return state.enable("IMAP4REV2") },
+	})
+}
+
+// rev2Incorporated names the capabilities RFC 9051 §1 folds into IMAP4rev2
+// whose behaviour only the backend can supply. SERVER-DESIGN.md §1 sets the bar:
+// IMAP4REV2 is advertised only when *every* incorporated behaviour is
+// implemented, because "advertising it otherwise is a lie the client cannot
+// detect" — the client has no way to ask which half it got.
+//
+// The rest of the incorporated set — ESEARCH, SEARCHRES, LIST-EXTENDED,
+// LIST-STATUS, ENABLE, IDLE, SASL-IR, LITERAL-, UNSELECT — is answered by the
+// framework from data the backend already returns, so a backend cannot fail to
+// support it and there is nothing to witness.
+//
+// This is a list rather than a predicate on purpose. A future revision that
+// incorporates more extensions adds a token here, which is a data change; a
+// hand-written conjunction would make it a code change, and the one thing we
+// know about the next revision is that nobody will remember to edit it.
+var rev2Incorporated = []string{
+	"CHILDREN",
+	"MOVE",
+	"NAMESPACE",
+	"SPECIAL-USE",
+	"STATUS=SIZE",
+	"UIDPLUS",
+}
+
+// witnessesRev2 asks each incorporated capability's own witness rather than
+// repeating it, so a capability cannot be witnessed one way for its own token
+// and another way for the umbrella.
+//
+// It is one loop in every state, deliberately. Each witness decides for itself
+// what it can say before authentication: the spoken ones answer from the backend,
+// and the structural ones abstain because there is no session to inspect yet.
+// A pre-authentication special case here would be the hand-written conjunction
+// this list exists to abolish — adding a token would then leave the greeting
+// silently unchanged.
+//
+// So the greeting reflects every witness that can answer, and the set is
+// re-derived — and the token withdrawn — once the session exists. That the
+// remainder is deferred rather than assumed is sound because ENABLE consults the
+// derived set too: a backend that loses IMAP4REV2 on authentication can never
+// have rev2 enabled against it, which is where a premature claim would have had
+// consequences.
+func witnessesRev2(state *sessionState, backend Backend) bool {
+	for _, name := range rev2Incorporated {
+		witness := capabilityWitness(name)
+		if witness != nil && !witness(state, backend) {
+			return false
+		}
+	}
+	return true
+}
+
+// capabilityWitness returns the named descriptor's backend witness, or nil when
+// the capability needs no backend support. It returns nil for an unknown name
+// as well; TestRev2IncorporatedNamesResolve is what stops that being silent,
+// because a typo here would otherwise widen the gate rather than break a build.
+func capabilityWitness(name string) func(*sessionState, Backend) bool {
+	for _, descriptor := range capabilityDescriptors {
+		if descriptor.Name == name {
+			return descriptor.RequiresBackend
+		}
+	}
+	return nil
 }
 
 func hasAuthenticationBackend(_ *sessionState, backend Backend) bool { return backend != nil }
@@ -116,7 +204,7 @@ func compiledFrameworkSupport() map[frameworkComponent]bool {
 		frameworkIdle:     true,
 		frameworkCompress: true,
 		frameworkMove:     true,
-		frameworkRev2:     false,
+		frameworkRev2:     true,
 		// LIST-EXTENDED's selection, return and multi-pattern handling is
 		// compiled in as of T23's group A. See ext_a_list.go.
 		frameworkListExtend: true,

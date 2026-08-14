@@ -23,9 +23,17 @@ status=0
 # These processes stay sequential because each owns an independent harness
 # lifecycle: Go runs one test process per package, and combining the package
 # lists starts several copies of every server image on one runner.
-suites=(imapclient interop)
+#
+# imapserver is the inverse of the other two: rather than our client against
+# real servers, it is our server measured as a matrix entry and driven by real
+# third-party clients (imaptest, mbsync) running in containers. It is last
+# because it is the slowest — the imaptest image builds Dovecot from source, for
+# the reasons in docs/INTEROP.md — and because a failure there is our bug, which
+# reads better at the end of a log than buried in the middle.
+suites=(imapclient interop imapserver)
 suite_packages_imapclient=./imapclient
 suite_packages_interop=./interop/...
+suite_packages_imapserver=./imapserver/interop/...
 
 run_suite() {
   local name=$1

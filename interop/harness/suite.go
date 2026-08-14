@@ -76,7 +76,7 @@ func Run(m *testing.M, profiles []definition.Profile) int {
 			_ = session.Close()
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "interop: provision %s: %v\n", profile.Name, err)
+			fmt.Fprintf(os.Stderr, "%s\n", provisionFailure(profile, err))
 			server.DumpDiagnostics(context.Background(), os.Stderr, trace)
 			closeManager(manager)
 			return 1

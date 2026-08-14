@@ -45,9 +45,33 @@ func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
 	if args.op != StoreFlagsSet && args.op != StoreFlagsAdd && args.op != StoreFlagsRemove {
 		return nil, 0, fmt.Errorf("invalid STORE operation %q", operation)
 	}
+	// RFC 3501 section 9 and RFC 9051 section 9 both define
+	//
+	//	store-att-flags = (["+" / "-"] "FLAGS" [".SILENT"]) SP
+	//	                  (flag-list / (flag *(SP flag)))
+	//
+	// so the parentheses are optional: "STORE 1 +FLAGS \Deleted" is as valid as
+	// "STORE 1 +FLAGS (\Deleted)". Only the parenthesised form was accepted
+	// until T24, which made every client using the bare form — Dovecot's
+	// imaptest among them, which is how this was found — unable to set a flag
+	// at all. Nothing in this repository generated the bare form, so no test
+	// here had ever sent one.
 	var rawFlags []string
-	if err := decoder.ExpectFlagList(&rawFlags); err != nil {
-		return nil, 0, err
+	if decoder.PeekSpecial('(') {
+		if err := decoder.ExpectFlagList(&rawFlags); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		for {
+			var flag string
+			if !decoder.ExpectFlag(&flag) {
+				return nil, 0, decoder.Err()
+			}
+			rawFlags = append(rawFlags, flag)
+			if !decoder.SP() {
+				break
+			}
+		}
 	}
 	for _, flag := range rawFlags {
 		args.flags = append(args.flags, imap.Flag(flag))

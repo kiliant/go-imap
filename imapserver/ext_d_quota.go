@@ -214,10 +214,17 @@ func writeQuota(c *conn, data *imap.QuotaData) error {
 // itself is the whole of the support. The two coexist: a capability whose
 // behaviour is spread across data the backend returns needs the spoken witness,
 // while one that is entirely "can you answer this command" needs only this.
+// Before authentication there is no session and the question cannot be asked, so
+// this abstains rather than answering no — matching selectedImplements and
+// supportsAtomicMove, which abstain before a mailbox is selected for the same
+// reason. Abstaining is unreachable for the capabilities that use this witness
+// directly: all of them are authenticated-or-selected, and deriveCapabilities
+// checks the state mask before the witness. It matters only to witnessesRev2,
+// which consults these witnesses from a descriptor advertised in every state.
 func sessionImplements[T any]() func(*sessionState, Backend) bool {
 	return func(state *sessionState, _ Backend) bool {
 		if state == nil || state.session == nil {
-			return false
+			return true
 		}
 		_, ok := state.session.(T)
 		return ok

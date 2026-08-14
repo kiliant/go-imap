@@ -150,6 +150,36 @@ supported memory backend, reusable backend conformance suite, atomic selection
 race gate, UID-normalised SEARCH boundary and independent API approval. T22 is
 ready; T23–T25 remain dependency-blocked.
 
+**Status (2026-08-14): T24's validation work is in.** Against the exit criteria
+above:
+
+- *Interop matrix entry:* done. `goimap` reports a capability table in the same
+  units as Dovecot's and Stalwart's, and the profile assertion holds.
+- *Recorded campaign:* done. 70 discovered targets at 60 s each, 70/70 pass, no
+  crasher, completed 2026-08-14 — including the whole-connection server targets,
+  which cover command decoding end to end rather than only the parser. The seed
+  corpus now contains captured `mbsync` and `imaptest` traffic rather than only
+  hand-written seeds; a 45 s campaign over the enriched corpus turned up 84 new
+  interesting inputs.
+- *Third-party client:* done. `mbsync` completes a full sync and a clean resync.
+- *`imaptest`:* runs, with two recorded findings and one triaged tool
+  limitation — see `INTEROP.md`. It found a real bug on its first contact with
+  the server (`STORE` rejecting the unparenthesised flag list, which every test
+  in this repository passed because none of them sent that form), now fixed.
+
+The one exit criterion **not** met is "passes Dovecot's `imaptest`" without
+qualification. Two conformance findings are open, the more serious being that
+untagged `EXPUNGE` is delivered while a pipelined `FETCH`/`STORE`/`SEARCH` is
+still in progress, which RFC 3501 §7.4.1 forbids precisely because it
+desynchronises message sequence numbers. Fixing it means changing when
+`drainUpdates` flushes, which is shared server-core machinery and wants its own
+regression tests rather than a change landed at the tail of T24.
+
+Turning on `IMAP4REV2` was part of the same pass: it had been gated off behind a
+hardcoded `false`, and `SERVER-DESIGN.md` §1 sets the bar at every incorporated
+behaviour being implemented. Three gaps had to close first — UIDPLUS, a bare
+`SEARCH` answering in the rev1 shape, and `SELECT` sending no untagged `LIST`.
+
 ## Sequencing
 
 ```

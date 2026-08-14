@@ -118,6 +118,18 @@ pointer is non-nil. Callers must pass `&PartialFetchOptions{Range: ...}` or
 `&PartialSearchOptions{Range: ...}`; do not "fix" this by making nil mean a
 magic default range.
 
+**A test-support package inside a v1 module is still public API — T24,
+2026-08-14.** `interop/definition` is scaffolding: nobody outside this repository
+has a reason to import it, and `.github/scripts/apidiff.sh` excludes `/interop`
+from the compatibility gate. Neither fact changes the rule. `Profile.Native`
+shipped as `func(context.Context) (*NativeServer, error)`, and the pressure was
+already recorded in the file that assigns it — a native profile cannot exercise
+STARTTLS without a `TLSConfig` it has nowhere to put. It now takes a
+`*NativeOptions`, empty today, exactly as the paragraph above prescribes. The
+apidiff scope is a gate on us; it changes nothing a user of a module tagged v1
+sees, and the versioning policy below already rules that an exclusion is not a
+licence.
+
 ## 4. Exported interfaces are a liability
 
 Adding a method to an exported interface breaks every external implementer.
@@ -437,6 +449,71 @@ between them is not stylistic:
 Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
+
+### An umbrella capability is witnessed by its members — added by T24, 2026-08-14
+
+`IMAP4REV2` is not a capability a backend implements. It is a claim that every
+behaviour RFC 9051 §1 folds in is implemented, which `SERVER-DESIGN.md` §1 calls
+"a lie the client cannot detect" when it is not true — the client has no way to
+ask which half it got.
+
+T24 shipped it gated on atomic MOVE alone. A backend witnessing MOVE and nothing
+else therefore advertised rev2 and was then held to `UID EXPUNGE`, `APPENDUID`,
+`COPYUID`, `NAMESPACE` and an untagged `LIST` on `SELECT` it had never agreed to
+produce. The api-guardian review of PR #7 demonstrated it against a backend built
+to model a T23 third party, and it is the reason this section exists.
+
+**The rule: an umbrella capability's witness is the conjunction of its members'
+own witnesses, and the membership is a list, not a predicate.** `rev2Incorporated`
+in `imapserver/capability.go` names the members; `witnessesRev2` asks each one's
+own descriptor witness rather than repeating it, so a capability cannot be
+witnessed one way for its own token and another way for the umbrella.
+
+The list is what makes this survive rule 1. A future revision that incorporates
+more extensions adds a token to a slice — a data change. A hand-written
+conjunction would make it a code change, and the one thing we know about the next
+revision is that nobody will remember to edit it. `TestRev2IncorporatedNamesResolve`
+gates the list against the descriptor table, because an unresolvable name reads as
+"needs no backend support" and so fails in the direction that advertises *more*.
+
+**There is no pre-authentication special case, and adding one would undo this.**
+The first version of the fix had one: it checked atomic MOVE alone before a
+session existed, on the reasoning that a structural witness has nothing to assert
+against yet. That reinstated the hand-written conjunction one path down, naming
+exactly one member — so adding a token to `rev2Incorporated` would have changed
+the greeting not at all, silently, which is the failure this section exists to
+prevent.
+
+Instead each witness decides for itself what it can say. The spoken ones answer
+from the backend, which they can do in any state; the structural ones abstain,
+matching `selectedImplements` and `supportsAtomicMove`, which already abstain
+before a mailbox is selected for the same reason. So the greeting reflects every
+witness that can answer, and the remainder is deferred rather than assumed. That
+the deferral is safe rests on `ENABLE` consulting the derived set too: a backend
+that loses `IMAP4REV2` on authentication can never have rev2 enabled against it,
+which is the only place the advertisement has consequences.
+
+The general rule: **a witness that cannot answer yet abstains; it does not answer
+no.** A witness that answers no is believed in every state.
+
+### Witness tokens are API — the THREAD rename, recorded 2026-08-14
+
+§10's witness rule makes the *token string* part of `CapabilitySupport`'s
+contract: a backend witnesses `"CHILDREN"`, and the framework advertises
+CHILDREN. Changing which token the framework asks for is therefore a breaking
+change to every backend that spells the old one, and it breaks silently — the
+capability simply stops being advertised.
+
+T24 made one: THREAD moved from a bare `"THREAD"` witness to per-algorithm
+`"THREAD=ORDEREDSUBJECT"` and `"THREAD=REFERENCES"`. **The change is correct** —
+RFC 5256 defines no bare `THREAD` token, and per-algorithm witnesses are what let
+a backend implement one algorithm and refuse the other rather than being forced to
+claim both. It is recorded here because it is a token *removal*, which is the
+breaking direction, and because the window in which it is free is exactly now:
+`imapserver` has never been tagged, so the affected population is zero.
+
+After `imapserver` v1.0 a rename of this kind needs the old token to keep working
+alongside the new one. Before it, they are free and should be made deliberately.
 
 ### Exception: `MoveSupport` predates `CapabilitySupport` — recorded 2026-08-13
 

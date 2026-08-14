@@ -65,7 +65,7 @@ call, not the originating task's.
 | [T21](T21-message-analysis.md) | Message analysis: bodystructure/envelope generation, search evaluation helper | M6 | T16, v1.0 | `internal/imapmessage/**` | wire-protocol |
 | [T22](T22-base-command-set.md) | Base command set, server side | M6 | T20, T21 | `imapserver/cmd_*.go` | server-core |
 | [T23](T23-server-extensions.md) | Server extensions, groups A–E | M6 | T22 | `imapserver/ext_*.go` | extensions |
-| [T24](T24-server-conformance.md) | Server conformance, interop and fuzzing | M6 | T22 | `imapserver/**/*_fuzz_test.go`, `interop/servers/goimap/**` | fuzz-hardening + interop-harness |
+| [T24](T24-server-conformance.md) | Server conformance, interop and fuzzing | M6 | T22 | `imapserver/**/*_fuzz_test.go`, `imapserver/interop/**` | fuzz-hardening + interop-harness |
 | [T25](T25-server-release.md) | Server API review, docs, release | M6 | T23, T24 | `imapserver` doc comments, `examples/server/**` | docs-release + api-guardian |
 
 T16 is deliberately out of numeric order: it is the design task, it has no
