@@ -28,11 +28,13 @@ import (
 // to name the mailbox and its UIDVALIDITY: a UID means nothing without them, and
 // a flat UID list across mailboxes would be unusable.
 //
-// The criteria carry the same guarantee as [SearchQuery.Criteria]: no
-// [imap.SearchFilter] reaches the backend, because the framework substitutes it
-// for the criteria it names first. Sequence numbers are not normalised here —
-// unlike SEARCH there is no single selected mailbox to normalise against, and
-// RFC 7377 section 2.2 does not define them across an IN clause.
+// The criteria carry the same guarantee as [SearchQuery.Criteria], at every
+// nesting depth: no [imap.SearchFilter] reaches the backend, because the
+// framework substitutes it for the criteria it names first, and no
+// [imap.SearchSeqNum] reaches it either. Where the source is the selected
+// mailbox, sequence numbers are resolved to UIDs; where an IN clause names other
+// mailboxes there is nothing to resolve against, and the command is refused
+// rather than passed on meaning nothing.
 type MultiSearchSession interface {
 	MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)
 }
@@ -180,7 +182,8 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 		return c.writeBad(command.tag, "MULTISEARCH is not available")
 	}
 	mailboxes := args.mailboxes
-	if len(mailboxes) == 0 {
+	selectedIsTheSource := len(mailboxes) == 0
+	if selectedIsTheSource {
 		// With no IN clause the source is the selected mailbox, and there must
 		// be one. RFC 7377 section 2.2.
 		if c.state.selected == nil {
@@ -191,6 +194,19 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	criteria, err := applySearchFilters(ctx, c, args.criteria)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	// A sequence number indexes into one mailbox's message list, and MultiSearch
+	// hands the backend raw criteria with no selection attached. Where the source
+	// *is* the selection, the framework resolves them to UIDs exactly as SEARCH
+	// does. Where it is not, there is nothing to resolve against and the number
+	// would reach the backend meaning nothing — so it is refused rather than
+	// answered wrongly, since an empty result reads as a successful search.
+	if searchMentionsSeqNum(criteria) {
+		if !selectedIsTheSource {
+			return c.writeBad(command.tag,
+				"ESEARCH with an IN clause cannot use message sequence numbers; use UIDs")
+		}
+		criteria = normalizeSearchCriteria(criteria, c.state.selected.uids)
 	}
 	results, err := session.MultiSearch(ctx, mailboxes, criteria, &MultiSearchOptions{Charset: args.charset})
 	if err != nil {

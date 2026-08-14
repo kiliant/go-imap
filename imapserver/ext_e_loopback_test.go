@@ -410,4 +410,49 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 			}
 		})
 	}
+
+	// The other half of the same guarantee: no imap.SearchSeqNum reaches a
+	// backend either.
+	//
+	// SEARCH, SORT and THREAD resolve sequence numbers against the selection.
+	// MULTISEARCH has no single selection when an IN clause names other
+	// mailboxes, so there the number indexes into nothing and the command is
+	// refused — the only two answers that do not hand a backend a criterion it
+	// cannot evaluate.
+	t.Run("seqnum-resolved-against-the-selection", func(t *testing.T) {
+		writeRawCommand(t, clientSide, "NS1 SEARCH 1\r\n")
+		untagged, tagged := collectUntilTag(t, reader, "NS1 ")
+		if !strings.HasPrefix(tagged, "NS1 OK") {
+			t.Fatalf("SEARCH by sequence number failed: %q", tagged)
+		}
+		if line := findResponse(t, untagged, "* SEARCH"); strings.TrimSpace(line) != "* SEARCH 1" {
+			t.Errorf("SEARCH 1 = %q, want message 1", line)
+		}
+		// Without an IN clause the source is the selection, so numbers still
+		// resolve.
+		writeRawCommand(t, clientSide, "NS2 ESEARCH 1\r\n")
+		untagged, tagged = collectUntilTag(t, reader, "NS2 ")
+		if !strings.HasPrefix(tagged, "NS2 OK") {
+			t.Fatalf("ESEARCH without IN by sequence number failed: %q", tagged)
+		}
+		if line := findResponse(t, untagged, "* ESEARCH"); !strings.Contains(line, "ALL 1") {
+			t.Errorf("ESEARCH 1 = %q, want UID 1", line)
+		}
+	})
+
+	t.Run("seqnum-refused-across-an-in-clause", func(t *testing.T) {
+		for _, command := range []string{
+			"ESEARCH IN (\"INBOX\") 1",
+			// Nested, so the refusal cannot depend on the number being at the
+			// top of the tree.
+			"ESEARCH IN (\"INBOX\") NOT 1",
+			"ESEARCH IN (\"INBOX\") FUZZY 1",
+		} {
+			writeRawCommand(t, clientSide, "NS3 "+command+"\r\n")
+			_, tagged := collectUntilTag(t, reader, "NS3 ")
+			if !strings.HasPrefix(tagged, "NS3 BAD") {
+				t.Errorf("%q = %q, want BAD — a sequence number means nothing in a mailbox the client has not selected", command, tagged)
+			}
+		}
+	})
 }

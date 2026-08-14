@@ -201,7 +201,11 @@ CONDSTORE `MODIFIED` on tagged OK.
     not selected. Each result carries its mailbox and UIDVALIDITY, without which
     a UID from another mailbox is meaningless. RFC 7377's scope options
     (`subtree`, `mailboxes`, `personal`) are refused rather than misread as
-    mailbox names; plain names are supported.
+    mailbox names; plain names are supported. Message sequence numbers are
+    resolved against the selection when no IN clause is given and refused when
+    one is: a sequence number indexes into a mailbox the client has not selected,
+    so there is nothing to resolve it against and answering anyway would return a
+    wrong result that looks like a correct empty one.
 
 [^srvpartial]: Framework-owned windowing of an ESEARCH result, including RFC
     9394's negative ranges. It saves wire bytes and client memory, not backend

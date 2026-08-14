@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/kiliant/go-imap"
@@ -523,6 +524,21 @@ func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID) *SearchQuery 
 // is added to package imap without appearing here.
 func searchCriteriaChildren(criteria imap.SearchCriteria) ([]imap.SearchCriteria, func([]imap.SearchCriteria) imap.SearchCriteria) {
 	return imapcodec.SearchCriteriaChildren(criteria)
+}
+
+// searchMentionsSeqNum reports whether a criteria tree names a message sequence
+// number anywhere in it.
+//
+// It shares searchCriteriaChildren with the normalisation walk, so a container
+// key added by a future RFC is traversed by both or by neither —
+// TestSearchCriteriaContainersAreTraversed is what makes that true rather than
+// hoped for.
+func searchMentionsSeqNum(criteria imap.SearchCriteria) bool {
+	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
+		return slices.ContainsFunc(children, searchMentionsSeqNum)
+	}
+	_, ok := criteria.(imap.SearchSeqNum)
+	return ok
 }
 
 func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {

@@ -46,12 +46,11 @@ import "time"
 //   - No [SearchFilter] reaches a backend on any command. It is substituted for
 //     the criteria it names first, at every nesting depth, and an undefined name
 //     fails the command rather than matching nothing.
-//   - SearchSeqNum is resolved to UIDs on imapserver.SearchQuery.Criteria, which
-//     covers SEARCH, SORT and THREAD. It is *not* resolved for
-//     imapserver.MultiSearchSession.MultiSearch: RFC 7377 searches several
-//     mailboxes at once, so there is no single selection to resolve sequence
-//     numbers against. A MULTISEARCH backend must handle SearchSeqNum or reject
-//     it.
+//   - No [SearchSeqNum] reaches a backend either. It is resolved to UIDs against
+//     the selected mailbox, which covers SEARCH, SORT and THREAD. RFC 7377's
+//     MULTISEARCH can name mailboxes other than the selection, where a sequence
+//     number indexes into nothing; there the command is refused instead, so a
+//     backend never has to decide what an unresolvable one means.
 //
 // See docs/API-STABILITY.md section 10 for why these guarantees are what allow
 // the root package to grow new SearchCriteria implementations at all.
