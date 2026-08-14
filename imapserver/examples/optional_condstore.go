@@ -18,6 +18,11 @@
 //  2. The interface lives on the *selected mailbox*, not the session. So the
 //     wrapping happens in Select, and the two layers wrap independently.
 //
+// It is also the example that shows how to climb out of the wrapper trap
+// config.go describes: it forwards to the wrapped mailbox's own implementation
+// rather than reimplementing the comparison, because a wrapper hides every
+// optional interface it does not forward.
+//
 // Run:
 //
 //	go run ./examples/optional_condstore.go ./examples/config.go
@@ -56,26 +61,37 @@ var _ imapserver.CondStoreMailbox = (*condStoreMailbox)(nil)
 // UNCHANGEDSINCE. An unconditional STORE still goes to Store, so a backend does
 // not implement the same flag logic twice.
 //
-// The contract worth getting right is Modified: it lists the messages left
-// *unstored* because their modification sequence exceeded UnchangedSince. An
-// empty set means everything was stored. Reporting a message there that was in
-// fact modified — or omitting one that was not — is how a client's cached view
-// silently diverges, and RFC 7162 §3.1.3 is the failure it is guarding against.
+// This forwards to the wrapped mailbox, which is the second thing worth
+// demonstrating: the wrapper hides the inner value's optional interfaces from
+// the framework, so anything it means to keep it must forward explicitly. That
+// is the trap config.go describes, and this is what climbing out of it looks
+// like.
+//
+// **A conditional store must actually compare.** The contract is that Modified
+// lists the messages left *unstored* because their modification sequence
+// exceeded options.UnchangedSince; an empty set means everything was stored.
+// Delegating to the unconditional Store and reporting an empty Modified set
+// would satisfy the compiler and silently break the extension: RFC 7162's own
+// Example 8 uses UNCHANGEDSINCE 0 as a probe that must always fail, which is
+// how a client tests atomically for a keyword, and answering "stored, nothing
+// modified" turns that probe into an unconditional store of exactly the
+// messages it was meant to protect.
+//
+// Note options.HasUnchangedSince: zero is a real modification sequence and the
+// one the probe uses, so presence is carried separately from value.
 func (m *condStoreMailbox) StoreCondStore(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, flags *imapserver.StoreFlags, options *imapserver.StoreOptions) (*imapserver.CondStoreResult, error) {
-	// A real backend compares each message's modification sequence against
-	// options.UnchangedSince, stores the ones that pass, and reports the rest.
-	// This example stores everything unconditionally, which is only honest
-	// because it also reports an empty Modified set.
-	if err := m.SelectedMailbox.Store(ctx, writer, uids, flags, options); err != nil {
-		return nil, err
+	inner, ok := m.SelectedMailbox.(imapserver.CondStoreMailbox)
+	if !ok {
+		// Refuse rather than degrade. A backend that cannot compare
+		// modification sequences has no business witnessing CONDSTORE, and
+		// answering as though it had is the failure this whole example is
+		// about.
+		return nil, &imap.Error{
+			Type: imap.ErrorTypeNo,
+			Text: "conditional STORE is not supported by this mailbox",
+		}
 	}
-	return &imapserver.CondStoreResult{
-		Modified: imap.UIDSet{},
-		// Zero is legitimate and means "not reported". A wrong number is worse
-		// than no number: a client that trusts it will skip a resynchronisation
-		// it needed.
-		HighestModSeq: 0,
-	}, nil
+	return inner.StoreCondStore(ctx, writer, uids, flags, options)
 }
 
 func main() {

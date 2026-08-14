@@ -25,8 +25,10 @@ import (
 type aclSession struct {
 	imapserver.Session
 
-	// The identity this session authenticated as. A real backend needs it for
-	// MyRights, which is a question about the caller and not about the mailbox.
+	// The identity this session authenticated as. A real backend takes it from
+	// the credentials Authenticate was given; this example has one account, so
+	// it uses the configured name. MyRights needs it because that method is a
+	// question about the caller, not about the mailbox.
 	user string
 }
 

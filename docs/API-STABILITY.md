@@ -527,8 +527,21 @@ rather than a rename — and `imapserver` is pre-1.0 but T19/T20 shipped against
 this surface. **Collapsing it is the right move and the window is open only until
 `imapserver` v1.0**; after that the second witness is permanent. Recorded here so
 the decision is deliberate, per CLAUDE.md's requirement that a deviation carry a
-written exception. T25 should either collapse it or promote this paragraph to a
-permanent entry.
+written exception.
+
+**Decided at T25, 2026-08-14: kept, and this is now the permanent entry.** The
+instruction above named T25 as the point of decision, so leaving it addressed to
+a finished task would be a note nobody owns. The reasoning for keeping it is the
+one the T24 review sharpened: `witnessesRev2` consults each incorporated
+capability's own witness, and `MoveSupport` is the witness for MOVE. Collapsing
+it into `CapabilitySupport("MOVE")` is a behaviour change to rev2 advertisement
+for every backend that witnesses MOVE structurally and speaks no tokens — the
+exact population the T24 probe was built from. That is a change worth making on
+its own evidence, not as a tidying step inside a release task.
+
+The window genuinely runs to `imapserver` v1.0, not to v0.1.0, so nothing is
+lost by deferring it. What would have been lost is the record of why, which is
+this paragraph.
 
 ### Additive root-package growth after v1.0 — exercised 2026-08-13
 

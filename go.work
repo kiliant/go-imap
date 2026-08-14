@@ -9,7 +9,9 @@
 // One consequence to know about: inside the workspace, imapserver builds
 // against the root module's working tree, not against the version its go.mod
 // requires. Verifying that the require line is honest therefore needs
-// GOWORK=off. CI does exactly that; see .github/workflows/ci.yml.
+// GOWORK=off, which cannot run until the root module is published at the
+// required version — so it is a release gate rather than a per-pull-request
+// one. docs/RELEASING.md has it, and running it is part of cutting a tag.
 go 1.24
 
 use (
