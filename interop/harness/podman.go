@@ -80,6 +80,11 @@ type Server struct {
 
 	additionalAddresses map[int]string
 
+	// native is set for a TierInProcess profile, whose server is a value in
+	// this process rather than a container. ID is empty for those, and every
+	// container operation below branches on this field.
+	native *definition.NativeServer
+
 	manager *Manager
 	closed  atomic.Bool
 }
@@ -93,6 +98,10 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 	}
 	ctx, cancel := context.WithTimeout(ctx, m.startTimeout)
 	defer cancel()
+
+	if profile.Native != nil {
+		return m.startNative(ctx, profile)
+	}
 
 	image := profile.Image
 	if profile.BuildContext != "" {
@@ -287,8 +296,12 @@ func (s *Server) AddressForPort(port int) (string, bool) {
 	return address, ok
 }
 
-// Logs returns the server's complete container log.
+// Logs returns the server's complete log: the container's, or whatever an
+// in-process server recorded.
 func (s *Server) Logs(ctx context.Context) (string, error) {
+	if s.native != nil {
+		return s.nativeLogs(), nil
+	}
 	return s.manager.runner.Run(ctx, "logs", s.ID)
 }
 
@@ -322,10 +335,14 @@ func (s *Server) LogDiagnostics(ctx context.Context, t testing.TB, trace fmt.Str
 	t.Log(buf.String())
 }
 
-// Stop removes a running container. It is idempotent.
+// Stop removes a running container, or shuts down an in-process server. It is
+// idempotent.
 func (s *Server) Stop(ctx context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
+	}
+	if s.native != nil {
+		return s.native.Stop(ctx)
 	}
 	_, err := s.manager.runner.Run(ctx, "rm", "--force", "--time", "2", s.ID)
 	return err

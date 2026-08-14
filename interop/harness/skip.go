@@ -26,8 +26,29 @@ func MissingExpectedCapabilities(profile definition.Profile, advertised map[stri
 func AssertProfile(t testing.TB, profile definition.Profile, advertised map[string]bool) {
 	t.Helper()
 	if missing := MissingExpectedCapabilities(profile, advertised); len(missing) != 0 {
-		t.Fatalf("%s capability profile mismatch: missing %s (advertised: %s)", profile.Name, strings.Join(missing, ", "), FormatCapabilities(advertised))
+		t.Fatalf("%s capability profile mismatch: missing %s (advertised: %s)",
+			attribution(profile), strings.Join(missing, ", "), FormatCapabilities(advertised))
 	}
+}
+
+// attribution names the profile and, for our own server, says whose bug a
+// failure is.
+//
+// The distinction is the whole reason the first-party entry is worth having.
+// Dovecot failing its profile nearly always means the image moved; go-imap
+// failing its profile means go-imap is wrong, and a matrix that renders the two
+// identically trains everyone reading it to assume the first.
+func attribution(profile definition.Profile) string {
+	if profile.FirstParty {
+		return profile.Name + " (first-party: this is our bug, not a container problem)"
+	}
+	return profile.Name
+}
+
+// provisionFailure formats a startup or seeding failure with the same
+// attribution AssertProfile applies to capability mismatches.
+func provisionFailure(profile definition.Profile, err error) string {
+	return fmt.Sprintf("interop: provision %s: %v", attribution(profile), err)
 }
 
 // RequireCapabilities skips a feature test when the live server does not
