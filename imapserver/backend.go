@@ -5,6 +5,32 @@
 // stored mail. The mandatory interfaces in this file are the fixed rev1
 // baseline; later extensions add optional interfaces or guarded option fields,
 // never methods to an existing interface.
+//
+// # Stability
+//
+// This is a separate module from github.com/kiliant/go-imap, versioned v0.x,
+// and it does not carry that module's v1 compatibility promise. The root module
+// is frozen: an incompatible change there fails CI. This one may break between
+// minor versions, deliberately — the server contract has had one round of real
+// backend authors and no more, and freezing it on that evidence is how the
+// library this one exists to replace ended up in beta for years.
+//
+// Breaks will be deliberate and named in CHANGELOG.md, never silent: apidiff
+// runs against the previous imapserver/v* tag on every pull request. See
+// docs/RELEASING.md for the two-module scheme and docs/API-STABILITY.md §10 for
+// the rules this package is held to in the meantime.
+//
+// # Writing a backend
+//
+// Start with [github.com/kiliant/go-imap/imapserver/backendtest], not with the
+// interface list below. It is a reusable conformance suite: point it at your
+// Backend and it exercises the mandatory contract and every optional interface
+// you implement, skipping the ones you do not. The interfaces say what the
+// methods are; backendtest says whether you got them right.
+//
+// [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
+// and is supported, not a toy — it is the backend this project's own conformance
+// and interoperability suites run against.
 package imapserver
 
 import (
