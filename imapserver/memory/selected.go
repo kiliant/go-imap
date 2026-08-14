@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,12 @@ type message struct {
 	internalDate time.Time
 	raw          []byte
 	analysis     *imapmessage.Message
+	// modSeq is the CONDSTORE modification sequence, bumped on every change to
+	// this message's flags. See ext_b.go.
+	modSeq uint64
+	// saveDate is when the message was placed in this mailbox, which SAVEDATE
+	// distinguishes from the internal date the message carries.
+	saveDate time.Time
 }
 
 type selected struct {
@@ -57,8 +64,17 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 	}
 	var results []*imap.FetchMessageData
 	var flagUpdates []imapserver.Update
+	changedSince := uint64(0)
+	if options != nil {
+		changedSince = options.ChangedSince
+	}
 	for i, msg := range s.mailbox.messages {
 		if !uids.Contains(msg.uid) {
+			continue
+		}
+		// CONDSTORE's CHANGEDSINCE restricts the result to messages modified
+		// after the client's modification sequence. RFC 7162 section 3.1.4.
+		if changedSince != 0 && msg.modSeq <= changedSince {
 			continue
 		}
 		data, marksSeen, err := fetchMessageData(msg, imap.SeqNum(i+1), items)
@@ -68,10 +84,11 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 		}
 		if marksSeen && !s.readOnly && !imap.ContainsFlag(msg.flags, imap.FlagSeen) {
 			msg.flags = append(msg.flags, imap.FlagSeen)
+			msg.modSeq = bumpModSeqLocked(s.mailbox)
 			if _, requested := data.Items[imap.FetchDataKey(imap.FetchItemFlags)]; requested {
 				data.Items[imap.FetchDataKey(imap.FetchItemFlags)] = []imap.FetchData{imap.FetchDataFlags(cloneFlags(msg.flags))}
 			}
-			flagUpdates = append(flagUpdates, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(msg.flags)})
+			flagUpdates = append(flagUpdates, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(msg.flags), ModSeq: msg.modSeq})
 		}
 		results = append(results, data)
 	}
@@ -159,7 +176,8 @@ func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, ui
 			return err
 		}
 		msg.flags = flags
-		changes = append(changes, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(flags)})
+		msg.modSeq = bumpModSeqLocked(s.mailbox)
+		changes = append(changes, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(flags), ModSeq: msg.modSeq})
 		if !silent {
 			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
 		}
@@ -274,6 +292,7 @@ func (s *selected) Expunge(ctx context.Context, writer *imapserver.ExpungeWriter
 		selected := uids == nil || uids.Contains(msg.uid)
 		if selected && imap.ContainsFlag(msg.flags, imap.FlagDeleted) {
 			removed = append(removed, msg.uid)
+			recordVanishedLocked(s.mailbox, msg.uid)
 			changes = append(changes, &imapserver.UpdateExpunge{UID: msg.uid})
 			continue
 		}
@@ -357,10 +376,16 @@ var (
 	_ imapserver.MoveMailbox     = (*selected)(nil)
 )
 
+// flagsFetchData is the untagged FETCH a STORE reports for one message.
+//
+// MODSEQ is always included: only this backend knows the value, and the
+// framework removes it again for a session that has not enabled CONDSTORE.
+// RFC 7162 section 3.1.4.2.
 func flagsFetchData(seqNum imap.SeqNum, msg *message) *imap.FetchMessageData {
 	return &imap.FetchMessageData{SeqNum: seqNum, Items: map[imap.FetchDataKey][]imap.FetchData{
-		"FLAGS": {imap.FetchDataFlags(cloneFlags(msg.flags))},
-		"UID":   {imap.FetchDataUID(msg.uid)},
+		"FLAGS":  {imap.FetchDataFlags(cloneFlags(msg.flags))},
+		"UID":    {imap.FetchDataUID(msg.uid)},
+		"MODSEQ": {imap.FetchDataModSeq(msg.modSeq)},
 	}}
 }
 
@@ -369,6 +394,9 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 	marksSeen := false
 	for _, item := range items {
 		switch item := item.(type) {
+		case *imap.FetchItemPreview:
+			preview := previewOf(msg)
+			data.Items["PREVIEW"] = append(data.Items["PREVIEW"], &imap.FetchDataPreview{Text: &preview})
 		case imap.FetchItemKeyword:
 			key := imap.FetchDataKey(strings.ToUpper(string(item)))
 			switch item {
@@ -376,6 +404,19 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 				data.Items[key] = append(data.Items[key], imap.FetchDataUID(msg.uid))
 			case imap.FetchItemFlags:
 				data.Items[key] = append(data.Items[key], imap.FetchDataFlags(cloneFlags(msg.flags)))
+			case imap.FetchItemModSeq:
+				data.Items[key] = append(data.Items[key], imap.FetchDataModSeq(msg.modSeq))
+			case imap.FetchItemSaveDate:
+				// RFC 8514 section 3 permits a nil save date for a message
+				// whose arrival time is not known, so the typed value carries
+				// presence separately rather than leaning on the zero time.
+				data.Items[key] = append(data.Items[key], &imap.FetchDataSaveDate{Date: saveDateOf(msg)})
+			case imap.FetchItemEmailID:
+				data.Items[key] = append(data.Items[key], imap.FetchDataObjectID(emailID(msg)))
+			case imap.FetchItemThreadID:
+				// This backend does no threading, and RFC 8474 section 5.4
+				// allows a server to return NIL rather than invent a thread.
+				data.Items[key] = append(data.Items[key], imap.FetchDataObjectID(""))
 			case imap.FetchItemInternalDate:
 				data.Items[key] = append(data.Items[key], &imap.FetchDataInternalDate{Time: msg.internalDate})
 			case imap.FetchItemRFC822Size:
@@ -405,6 +446,31 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 				key = "BODYSTRUCTURE"
 			}
 			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: msg.analysis.BodyStructure})
+		case *imap.FetchItemBinarySection:
+			// BINARY[] delivers the section with its content-transfer-encoding
+			// already undone, which is the whole point of RFC 3516: the client
+			// receives bytes rather than base64 it has to decode itself.
+			reader, err := openBinarySection(msg, item.Part)
+			if err != nil {
+				return nil, false, err
+			}
+			key := imap.FetchDataKey(binarySectionKey(item, false))
+			data.Items[key] = append(data.Items[key], &imap.FetchDataBinarySection{
+				Part:    append([]int(nil), item.Part...),
+				Literal: reader,
+			})
+			marksSeen = marksSeen || !item.Peek
+		case *imap.FetchItemBinarySectionSize:
+			reader, err := openBinarySection(msg, item.Part)
+			if err != nil {
+				return nil, false, err
+			}
+			size, err := readerSize(reader)
+			if err != nil {
+				return nil, false, err
+			}
+			key := imap.FetchDataKey(binarySectionKey(&imap.FetchItemBinarySection{Part: item.Part}, true))
+			data.Items[key] = append(data.Items[key], imap.FetchDataBinarySectionSize(size))
 		case *imap.FetchItemBodySection:
 			reader, _, err := msg.analysis.OpenBodySection(item)
 			if err != nil {
@@ -428,6 +494,38 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 		}
 	}
 	return data, marksSeen, nil
+}
+
+// binarySectionKey renders the response key for a BINARY or BINARY.SIZE item.
+// RFC 3516 keys the response by the same text the client sent.
+func binarySectionKey(item *imap.FetchItemBinarySection, size bool) string {
+	var b strings.Builder
+	b.WriteString("BINARY")
+	if size {
+		b.WriteString(".SIZE")
+	}
+	b.WriteByte('[')
+	for i, number := range item.Part {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.Itoa(number))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// readerSize measures a section without retaining it. BINARY.SIZE reports the
+// decoded length, which is not derivable from the stored bytes.
+func readerSize(reader io.Reader) (uint32, error) {
+	count, err := io.Copy(io.Discard, reader)
+	if err != nil {
+		return 0, err
+	}
+	if closer, ok := reader.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	return uint32(count), nil
 }
 
 func bodySectionKey(item *imap.FetchItemBodySection) string {

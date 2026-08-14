@@ -108,16 +108,18 @@ func compiledFrameworkSupport() map[frameworkComponent]bool {
 	// capability is never advertised merely because a backend happens to expose
 	// a similarly named operation.
 	return map[frameworkComponent]bool{
-		frameworkCore:       true,
-		frameworkStartTLS:   true,
-		frameworkAuth:       true,
-		frameworkEnable:     true,
-		frameworkUTF8:       true,
-		frameworkIdle:       true,
-		frameworkCompress:   true,
-		frameworkMove:       true,
-		frameworkRev2:       false,
-		frameworkListExtend: false,
+		frameworkCore:     true,
+		frameworkStartTLS: true,
+		frameworkAuth:     true,
+		frameworkEnable:   true,
+		frameworkUTF8:     true,
+		frameworkIdle:     true,
+		frameworkCompress: true,
+		frameworkMove:     true,
+		frameworkRev2:     false,
+		// LIST-EXTENDED's selection, return and multi-pattern handling is
+		// compiled in as of T23's group A. See ext_a_list.go.
+		frameworkListExtend: true,
 	}
 }
 
@@ -163,6 +165,9 @@ func deriveCapabilities(state *sessionState, server *Server) []string {
 			capabilities = append(capabilities, descriptor.Name)
 		}
 	}
+	// Capabilities whose advertised token embeds a backend-supplied value are
+	// rewritten here. See ext_d_listret.go.
+	capabilities = capabilityValueOverrides(state, capabilities)
 	slices.Sort(capabilities)
 	if at := slices.Index(capabilities, "IMAP4REV1"); at > 0 {
 		capabilities[0], capabilities[at] = capabilities[at], capabilities[0]

@@ -73,9 +73,19 @@ func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 }
 
 func handleCreate(ctx context.Context, c *conn, command *queuedCommand) error {
-	return handleMailboxMutation(ctx, c, command, "CREATE", func(mailbox string) error {
-		return c.state.session.Create(ctx, mailbox, nil)
-	})
+	args, _ := command.args.(*createArgs)
+	if args == nil || args.mailbox == "" {
+		return c.writeBad(command.tag, "invalid CREATE arguments")
+	}
+	// The USE parameter of CREATE-SPECIAL-USE. See ext_a_create.go.
+	options, err := createOptions(c, args)
+	if err != nil {
+		return writeBackendError(c, command.tag, "CREATE", err)
+	}
+	if err := c.state.session.Create(ctx, args.mailbox, options); err != nil {
+		return writeBackendError(c, command.tag, "CREATE", err)
+	}
+	return c.writeTagged(command.tag, "OK", "CREATE completed")
 }
 
 func handleDelete(ctx context.Context, c *conn, command *queuedCommand) error {

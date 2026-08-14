@@ -423,13 +423,23 @@ func updateBatchSize(batch *UpdateBatch) int64 {
 }
 
 type selectedState struct {
-	mailbox  SelectedMailbox
+	mailbox SelectedMailbox
+	// name is the selected mailbox's name, which MULTISEARCH needs to name the
+	// default search source. See ext_c_multisearch.go.
+	name     string
 	uids     []imap.UID
 	revision MailboxRevision
 	readOnly bool
 	maxUIDs  int
 	queue    *updateQueue
 	updater  *Updater
+	// savedSearch is the SEARCHRES result referenced by "$". It is framework
+	// state, not backend state, per the contract on SelectedMailbox: it is
+	// scoped to this selection and discarded with it. RFC 5182.
+	savedSearch imap.UIDSet
+	// contexts are the CONTEXT=SEARCH registrations, also scoped to this
+	// selection. See ext_e_context.go.
+	contexts []*searchContext
 }
 
 //lint:ignore U1000 T22's SELECT handler is the first production caller; T19 owns the atomic attachment primitive.
@@ -509,6 +519,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 	}
 	selected := &selectedState{
 		mailbox:  result.Mailbox,
+		name:     result.Snapshot.Status.Mailbox,
 		uids:     slices.Clone(result.Snapshot.UIDs),
 		revision: result.Snapshot.Revision,
 		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,

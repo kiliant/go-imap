@@ -90,6 +90,11 @@ type conn struct {
 	resetDecoder    atomic.Bool
 	ready           chan struct{}
 
+	// notifyQueue and notifyUpdater are the session-scoped NOTIFY channel,
+	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
+	notifyQueue   *sessionUpdateQueue
+	notifyUpdater *SessionUpdater
+
 	state  sessionState // event-loop owned
 	logout bool
 
@@ -317,13 +322,27 @@ func (c *conn) readClientData(ctx context.Context, read func(*imapwire.Decoder) 
 	if err := c.requestClientData(ctx, request); err != nil {
 		return nil, err
 	}
-	select {
-	case result := <-request.reply:
-		return result.value, result.err
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	case <-c.ctx.Done():
-		return nil, context.Cause(c.ctx)
+	for {
+		select {
+		case result := <-request.reply:
+			return result.value, result.err
+		case literal := <-c.literalRequests:
+			// A read requested by a handler may itself meet a literal — a
+			// MULTIAPPEND message after the first, or a CATENATE TEXT part.
+			// Literal approval is normally serviced by the event loop, but the
+			// handler that is waiting here *is* the event loop, so leaving it
+			// to the outer select would deadlock: the reader waits for approval
+			// that only this goroutine can give.
+			//
+			// Servicing it inline is safe for the same reason. handleLiteralRequest
+			// reads connection state and writes the continuation through the
+			// event-loop-owned encoder, and this is that goroutine.
+			c.handleLiteralRequest(literal)
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		case <-c.ctx.Done():
+			return nil, context.Cause(c.ctx)
+		}
 	}
 }
 
@@ -392,6 +411,12 @@ func (c *conn) idleUntilDone(ctx context.Context) error {
 			return nil
 		case <-c.updateSignal():
 			if err := c.drainUpdates(updateAccounting{}); err != nil {
+				return err
+			}
+		case <-c.notifySignal():
+			// NOTIFY events about unselected mailboxes reach the client during
+			// IDLE too — that is the point of the extension.
+			if err := c.drainNotify(); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -474,6 +499,11 @@ func (c *conn) eventLoop() (retErr error) {
 		select {
 		case request := <-c.literalRequests:
 			c.handleLiteralRequest(request)
+		case <-c.notifySignal():
+			if err := c.drainNotify(); err != nil {
+				c.failFatal(err)
+				return
+			}
 		case command := <-c.commands:
 			c.releaseCommandBytes(command.bytes)
 			wasPreAuth := c.state.state == stateNotAuthenticated
@@ -496,6 +526,12 @@ func (c *conn) eventLoop() (retErr error) {
 			}
 		case <-c.updateSignal():
 			if err := c.drainUpdates(updateAccounting{}); err != nil {
+				return err
+			}
+		case <-c.notifySignal():
+			// NOTIFY events about unselected mailboxes reach the client during
+			// IDLE too — that is the point of the extension.
+			if err := c.drainNotify(); err != nil {
 				return err
 			}
 		case <-c.ctx.Done():
@@ -647,6 +683,9 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 	if selected == nil || selected.queue == nil {
 		return nil
 	}
+	// removed collects the expunged UIDs so CONTEXT registrations can be told
+	// which of their matches went away. See ext_e_context.go.
+	var removed []imap.UID
 	var pending []deliveredUpdate
 	for _, batch := range selected.queue.popAll() {
 		updates, err := selected.applyBatch(batch, accounting)
@@ -660,11 +699,20 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 		pending = append(pending, updates...)
 	}
 	for _, update := range coalesceWireUpdates(pending) {
+		if update.kind == updateMessageExpunge || update.kind == updateMessageVanished {
+			removed = append(removed, update.uid)
+		}
 		if err := c.writeUpdate(update); err != nil {
 			return err
 		}
 	}
-	return c.encoder.Flush()
+	if err := c.encoder.Flush(); err != nil {
+		return err
+	}
+	// CONTEXT registrations hear which of their matches were removed. This runs
+	// after the ordinary updates so the client sees the expunge before the
+	// REMOVEFROM that explains it.
+	return notifySearchContexts(c, removed)
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {
@@ -681,8 +729,23 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		if update.modSeq != 0 {
 			data.Items[imap.FetchDataKey("MODSEQ")] = []imap.FetchData{imap.FetchDataModSeq(update.modSeq)}
 		}
+		// UIDONLY reshapes unilateral responses too: a client that enabled it
+		// has discarded the machinery for interpreting a sequence number, so
+		// one arriving unsolicited is worse than none at all.
+		// See ext_d_uidonly.go.
+		if uidOnlyEnabled(c) {
+			return imapcodec.WriteUIDFetchResponse(c.encoder, update.uid, data, nil)
+		}
 		return imapcodec.WriteFetchResponse(c.encoder, data, nil)
 	case updateMessageExpunge:
+		// An untagged EXPUNGE carries a sequence number, which UIDONLY forbids
+		// outright (RFC 9586 section 3.3) and which QRESYNC replaces with
+		// VANISHED for the life of the session (RFC 7162 section 3.2.7).
+		if removalsUseVanished(c) {
+			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
+				RawValue([]byte(imap.UIDSetNum(update.uid).String())).CRLF()
+			break
+		}
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(update.seqNum)).SP().Atom("EXPUNGE").CRLF()
 	case updateMessageVanished:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED")

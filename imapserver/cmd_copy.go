@@ -17,7 +17,7 @@ func parseCopy(decoder *imapwire.Decoder) (any, int64, error) {
 		return nil, 0, decoder.Err()
 	}
 	args := &copyArgs{}
-	if !decoder.ExpectSequenceSet(&args.set) || !decoder.ExpectSP() || !decoder.ExpectMailbox(&args.destination) || !decoder.ExpectCRLF() {
+	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() || !decoder.ExpectMailbox(&args.destination) || !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
 	}
 	return args, int64(len(args.set) + len(args.destination)), nil

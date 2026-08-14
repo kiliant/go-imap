@@ -43,13 +43,13 @@ func init() {
 	registerCommand("LIST", stateMaskAuthenticated|stateMaskSelected, false, parseList, handleList)
 	registerCommand("LSUB", stateMaskAuthenticated|stateMaskSelected, false, parseLsub, handleList)
 	registerCommand("STATUS", stateMaskAuthenticated|stateMaskSelected, false, parseStatus, handleStatus)
-	registerCommand("CREATE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleCreate)
+	registerCommand("CREATE", stateMaskAuthenticated|stateMaskSelected, false, parseCreate, handleCreate)
 	registerCommand("DELETE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleDelete)
 	registerCommand("RENAME", stateMaskAuthenticated|stateMaskSelected, false, parseRename, handleRename)
 	registerCommand("SUBSCRIBE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleSubscribe)
 	registerCommand("UNSUBSCRIBE", stateMaskAuthenticated|stateMaskSelected, false, parseMailbox, handleUnsubscribe)
-	registerCommand("SELECT", stateMaskAuthenticated|stateMaskSelected, true, parseMailbox, handleSelect)
-	registerCommand("EXAMINE", stateMaskAuthenticated|stateMaskSelected, true, parseMailbox, handleSelect)
+	registerCommand("SELECT", stateMaskAuthenticated|stateMaskSelected, true, parseSelect, handleSelect)
+	registerCommand("EXAMINE", stateMaskAuthenticated|stateMaskSelected, true, parseSelect, handleSelect)
 	registerCommand("APPEND", stateMaskAuthenticated|stateMaskSelected, true, parseAppend, handleAppend)
 	registerCommand("FETCH", stateMaskSelected, false, parseFetch, handleFetch)
 	registerCommand("STORE", stateMaskSelected, false, parseStore, handleStore)
@@ -167,6 +167,13 @@ func commandUsesUIDs(command *queuedCommand) bool {
 func resolveMessageSet(selected *selectedState, raw string, uidMode bool) (imap.UIDSet, []imap.UID, error) {
 	if selected == nil || raw == "" {
 		return nil, nil, fmt.Errorf("message set requires a selected mailbox")
+	}
+	// SEARCHRES lets "$" stand in for the last saved result anywhere a message
+	// set is accepted, in both the sequence-number and UID number spaces.
+	// See ext_a_esearch.go.
+	if raw == searchResultMarker {
+		set, ordered := resolveSavedSearch(selected)
+		return set, ordered, nil
 	}
 	var ordered []imap.UID
 	if uidMode {

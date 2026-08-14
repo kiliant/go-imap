@@ -12,9 +12,11 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 )
 
 // Backend authenticates connections. A Backend is shared by all connections
@@ -77,8 +79,36 @@ type MoveMailbox interface {
 // implement [MoveMailbox].
 //
 // Backend implementations must make SupportsMove safe for concurrent use.
+//
+// Deprecated in intent, not yet in fact: [CapabilitySupport] expresses the same
+// thing keyed by wire token, and this interface exists only because it predates
+// it. It is kept because MOVE's witness also gates IMAP4rev2 advertisement, so
+// collapsing it is a behavioural change rather than a rename. See
+// docs/API-STABILITY.md section 10; the window to collapse it closes at
+// imapserver v1.0.
 type MoveSupport interface {
 	SupportsMove() bool
+}
+
+// CapabilitySupport is the open witness by which a Backend or Session declares
+// that it implements the behaviour behind an optional capability. A Backend may
+// implement it to describe support before authentication; a Session may
+// implement it when support varies by authenticated user, and is consulted
+// first when it does.
+//
+// name is an upper-case capability token exactly as it appears on the wire,
+// such as "CONDSTORE" or "SPECIAL-USE". The framework never advertises a
+// capability whose behaviour the backend must implement unless this returns
+// true for it, so a backend that does not recognise a name must return false.
+//
+// This witness is deliberately keyed by an open string rather than by one
+// interface per capability: a future RFC is then a new token, which is a data
+// change, not a type change. Atomic MOVE predates it and keeps its own
+// [MoveSupport] witness.
+//
+// Backend implementations must make SupportsCapability safe for concurrent use.
+type CapabilitySupport interface {
+	SupportsCapability(name string) bool
 }
 
 // ConnInfo describes the transport presented to Backend.Authenticate.
@@ -130,11 +160,36 @@ type MutationOptions struct {
 
 // ListOptions configures a LIST or LSUB operation. A nil pointer selects the
 // defaults.
+//
+// Selection options restrict which mailboxes are returned; return options ask
+// for extra attributes on the mailboxes that are returned. LIST-STATUS is not
+// represented here: RFC 5819 delivers it as a separate untagged STATUS response
+// per mailbox, which the framework issues through [Session.Status] once List has
+// returned, so a backend needs no field for it.
 // Construct with keyed fields only; fields may be added in a future release.
 type ListOptions struct {
 	// Subscribed requests subscribed-mailbox selection.
 	Subscribed bool `imapfeature:"list-subscribed"`
-	_          struct{}
+	// SelectRemote requests that remote mailboxes be included. RFC 5258
+	// section 3.
+	SelectRemote bool `imapfeature:"list-extended"`
+	// SelectRecursiveMatch requests that a mailbox be returned when a child
+	// matches the selection criteria, carrying a CHILDINFO extended item.
+	// It is meaningless without another selection option. RFC 5258 section 3.5.
+	SelectRecursiveMatch bool `imapfeature:"list-extended"`
+	// SelectSpecialUse restricts the result to special-use mailboxes.
+	// RFC 6154 section 5.1.
+	SelectSpecialUse bool `imapfeature:"list-special-use"`
+	// ReturnSubscribed asks for the \Subscribed attribute on returned
+	// mailboxes. RFC 5258 section 3.
+	ReturnSubscribed bool `imapfeature:"list-extended"`
+	// ReturnChildren asks for the \HasChildren and \HasNoChildren attributes.
+	// RFC 3348, incorporated into IMAP4rev2.
+	ReturnChildren bool `imapfeature:"list-children"`
+	// ReturnSpecialUse asks for special-use attributes such as \Archive.
+	// RFC 6154 section 5.2.
+	ReturnSpecialUse bool `imapfeature:"list-special-use"`
+	_                struct{}
 }
 
 // StatusOptions configures STATUS. A nil pointer selects the defaults.
@@ -147,7 +202,15 @@ type StatusOptions struct {
 
 // CreateOptions configures CREATE. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
-type CreateOptions struct{ _ struct{} }
+type CreateOptions struct {
+	// SpecialUse are the use attributes requested for the new mailbox, such as
+	// [imap.MailboxAttrArchive]. It is populated only when the backend
+	// witnesses CREATE-SPECIAL-USE through [CapabilitySupport]; a backend that
+	// cannot honour an attribute must fail the command rather than create a
+	// mailbox without it. RFC 6154 section 3.
+	SpecialUse []imap.MailboxAttr `imapfeature:"create-special-use"`
+	_          struct{}
+}
 
 // DeleteOptions configures DELETE. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
@@ -183,7 +246,40 @@ type AppendOptions struct {
 type SelectOptions struct {
 	// ReadOnly distinguishes EXAMINE from SELECT.
 	ReadOnly bool
-	_        struct{}
+	// CondStore asks the backend to report per-message modification sequences
+	// for this selection. RFC 7162 section 3.1.
+	CondStore bool `imapfeature:"condstore-select"`
+	// QResync carries the client's synchronisation state, or nil when the
+	// selection is not a QRESYNC resynchronisation. Implies CondStore.
+	// RFC 7162 section 3.2.5.
+	QResync *QResyncSelect `imapfeature:"qresync"`
+	_       struct{}
+}
+
+// QResyncSelect is the client's claimed synchronisation state, supplied with
+// SELECT or EXAMINE under QRESYNC. A backend answers it by reporting the
+// messages that changed or vanished since ModSeq.
+//
+// UIDValidity is the value the client last saw. When it does not match the
+// mailbox's current UIDVALIDITY the client's state is stale and the backend
+// must ignore the remaining fields.
+// Construct with keyed fields only; fields may be added in a future release.
+type QResyncSelect struct {
+	// UIDValidity is the UIDVALIDITY the client last observed.
+	UIDValidity uint32 `imapfeature:"qresync"`
+	// ModSeq is the modification sequence the client last observed.
+	ModSeq uint64 `imapfeature:"qresync"`
+	// KnownUIDs optionally restricts the report to these UIDs. An empty set
+	// means the client did not restrict it.
+	KnownUIDs imap.UIDSet `imapfeature:"qresync"`
+	// SeqMatchSeqNums and SeqMatchUIDs are the optional sequence match data of
+	// RFC 7162 section 3.2.5.2, letting a backend detect a stale client view
+	// without reporting every UID. Both are empty when absent, and have equal
+	// length when present.
+	SeqMatchSeqNums imap.SeqSet `imapfeature:"qresync"`
+	// SeqMatchUIDs pairs positionally with SeqMatchSeqNums.
+	SeqMatchUIDs imap.UIDSet `imapfeature:"qresync"`
+	_            struct{}
 }
 
 // FetchOptions configures FETCH. A nil pointer selects the defaults.
@@ -191,7 +287,11 @@ type SelectOptions struct {
 type FetchOptions struct {
 	// Items are the data items requested for each matching message.
 	Items []imap.FetchItem
-	_     struct{}
+	// ChangedSince restricts the result to messages whose modification
+	// sequence is greater than this value. Zero means unrestricted.
+	// RFC 7162 section 3.1.4.
+	ChangedSince uint64 `imapfeature:"condstore-fetch"`
+	_            struct{}
 }
 
 // SearchOptions configures SEARCH. A nil pointer selects the defaults.
@@ -231,7 +331,22 @@ type StoreOptions struct {
 	MutationOptions
 	// Silent suppresses the command's FETCH responses, but not state updates.
 	Silent bool
-	_      struct{}
+	// UnchangedSince makes the store conditional: a message whose modification
+	// sequence exceeds this value must be left unmodified. Backends report the
+	// rejected messages through the CONDSTORE optional interface rather than an
+	// error, since a partial failure is a successful command.
+	// RFC 7162 section 3.1.3.
+	//
+	// HasUnchangedSince carries presence separately because zero is a real
+	// value here, not an absence: the grammar is mod-sequence-valzer, and RFC
+	// 7162 Example 8 uses UNCHANGEDSINCE 0 as a probe that always fails, which
+	// is how a client tests atomically for the presence of a keyword. Reading
+	// UnchangedSince without checking HasUnchangedSince turns that probe into
+	// an unconditional store of the messages it was meant to protect.
+	UnchangedSince uint64 `imapfeature:"condstore-store"`
+	// HasUnchangedSince reports whether the client supplied UNCHANGEDSINCE.
+	HasUnchangedSince bool `imapfeature:"condstore-store"`
+	_                 struct{}
 }
 
 // CopyOptions configures COPY. A nil pointer selects the defaults.
@@ -375,7 +490,12 @@ func (*UpdateVanished) update() {}
 type SearchResult struct {
 	// UIDs are the matching message identifiers.
 	UIDs []imap.UID
-	_    struct{}
+	// ModSeq is the highest modification sequence among the matching messages,
+	// or zero when the backend does not track them. The framework reports it
+	// only when the client asked for it and CONDSTORE is active.
+	// RFC 7162 section 3.1.5.
+	ModSeq uint64
+	_      struct{}
 }
 
 // SearchQuery is a UID-normalised SEARCH tree. Values are constructed only by
@@ -388,23 +508,48 @@ func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID) *SearchQuery 
 	return &SearchQuery{criteria: normalizeSearchCriteria(criteria, uids)}
 }
 
+// searchCriteriaChildren decomposes a container criterion into its children and
+// a function that rebuilds it from replacements. A leaf reports nil.
+//
+// This is the single definition of "which search keys contain other search
+// keys", and every traversal of a criteria tree goes through it.
+//
+// It exists because there were two such traversals and they disagreed.
+// normalizeSearchCriteria descended into SearchFuzzy; the FILTER substitution
+// walk did not, so `SEARCH FUZZY FILTER "x"` delivered an unsubstituted
+// imap.SearchFilter to the backend and skipped the FILTERS capability check with
+// it. Nothing forced the two lists to agree, and a hand-maintained list of
+// container types is exactly the thing that silently falls behind when RFC N+1
+// adds a container key. TestSearchCriteriaContainersAreTraversed fails if one
+// is added to package imap without appearing here.
+func searchCriteriaChildren(criteria imap.SearchCriteria) ([]imap.SearchCriteria, func([]imap.SearchCriteria) imap.SearchCriteria) {
+	return imapcodec.SearchCriteriaChildren(criteria)
+}
+
+// searchMentionsSeqNum reports whether a criteria tree names a message sequence
+// number anywhere in it.
+//
+// It shares searchCriteriaChildren with the normalisation walk, so a container
+// key added by a future RFC is traversed by both or by neither —
+// TestSearchCriteriaContainersAreTraversed is what makes that true rather than
+// hoped for.
+func searchMentionsSeqNum(criteria imap.SearchCriteria) bool {
+	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
+		return slices.ContainsFunc(children, searchMentionsSeqNum)
+	}
+	_, ok := criteria.(imap.SearchSeqNum)
+	return ok
+}
+
 func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {
-	switch criteria := criteria.(type) {
-	case imap.SearchAnd:
-		normalized := make(imap.SearchAnd, len(criteria))
-		for i, child := range criteria {
+	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
+		normalized := make([]imap.SearchCriteria, len(children))
+		for i, child := range children {
 			normalized[i] = normalizeSearchCriteria(child, uids)
 		}
-		return normalized
-	case imap.SearchOr:
-		return imap.SearchOr{
-			Left:  normalizeSearchCriteria(criteria.Left, uids),
-			Right: normalizeSearchCriteria(criteria.Right, uids),
-		}
-	case imap.SearchNot:
-		return imap.SearchNot{Criteria: normalizeSearchCriteria(criteria.Criteria, uids)}
-	case imap.SearchFuzzy:
-		return imap.SearchFuzzy{Criteria: normalizeSearchCriteria(criteria.Criteria, uids)}
+		return rebuild(normalized)
+	}
+	switch criteria := criteria.(type) {
 	case imap.SearchSeqNum:
 		var set imap.UIDSet
 		for i, uid := range uids {
@@ -442,6 +587,26 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 
 // Criteria returns the UID-normalised criteria. Callers must treat the returned
 // tree as immutable for the duration of Search.
+//
+// The framework guarantees the tree contains no [imap.SearchSeqNum] — sequence
+// numbers are resolved to UIDs before the backend sees them — and no
+// [imap.SearchFilter], which is substituted for the criteria it names. Both hold
+// at every nesting depth, including inside [imap.SearchNot] and
+// [imap.SearchFuzzy]. A backend therefore never has to handle either, which is
+// what allows the root package to grow new [imap.SearchCriteria]
+// implementations without breaking backends compiled against an earlier
+// version. See docs/API-STABILITY.md section 10.
+//
+// The same guarantee holds for [MultiSearchSession.MultiSearch], which takes
+// criteria directly rather than a query: with no IN clause sequence numbers
+// resolve against the selection, and with one the command is refused, so a
+// backend never receives an unresolvable number there either.
+//
+// A criterion outside that guarantee reaching a backend is a framework bug, not
+// a case for the backend to interpret. TestSearchQueryNormalisationGuarantee
+// enforces it for every command that builds a query, and
+// TestSearchCriteriaContainersAreTraversed fails if a future container key is
+// added to package imap without the traversal learning to descend into it.
 func (q *SearchQuery) Criteria() imap.SearchCriteria {
 	if q == nil {
 		return nil

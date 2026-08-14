@@ -25,6 +25,21 @@ import (
 //
 // Callers can name an item this library does not model by converting a string
 // to [FetchItemKeyword].
+//
+// # Consumers
+//
+// The set being closed to external implementers does not make it closed to
+// growth: a later release may add an item, so code that switches over a
+// FetchItem it did not build must expect a type it has never seen. Server
+// backends are the consumers this applies to — unlike [SearchCriteria], the
+// framework does not narrow what reaches them, because a fetch item is a request
+// for data only the backend holds.
+//
+// Treat an unrecognised item as an error. Returning the message without it is
+// the tempting default and the wrong one: the client asked for that data, gets a
+// FETCH response that omits it, and cannot tell the omission from a message that
+// genuinely has none. Fail with an [*Error] naming the item, as the reference
+// backend in imapserver/memory does.
 type FetchItem interface {
 	fetchItem()
 }

@@ -9,43 +9,57 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
+// The NOTIFY vocabulary is defined once, in the root package, so the client and
+// the server cannot disagree about the spelling of an event name — they did, and
+// a backend comparing against the wrong package's constant matched nothing.
+//
+// These stay distinct defined types rather than becoming aliases of
+// [imap.NotifyEventName] and [imap.NotifyMailboxSpecifier]. Aliasing them would
+// be invisible to every realistic caller, but it changes type identity, which
+// this package froze at v1.0. The *values* are what had to agree, and they are
+// derived from the root constants below, so their *values* cannot drift apart.
+// Membership is pinned separately, by TestNotifyVocabularyMirrorsRootPackage.
+// Collapsing the identities is an imapclient v2 change; see
+// docs/API-STABILITY.md.
+
 // NotifyEventName is a NOTIFY event name. It is string-backed and open-ended:
 // RFC 5465 defines MessageNew, MessageExpunge, FlagChange, MailboxName,
 // SubscriptionChange, MailboxMetadataChange and ServerMetadataChange; later
-// RFCs may add more.
+// RFCs may add more. The canonical spellings are [imap.NotifyEventName]'s.
 type NotifyEventName string
 
 // Notify event names from RFC 5465 section 5.
 const (
-	NotifyEventMessageNew            NotifyEventName = "MessageNew"
-	NotifyEventMessageExpunge        NotifyEventName = "MessageExpunge"
-	NotifyEventFlagChange            NotifyEventName = "FlagChange"
-	NotifyEventMailboxName           NotifyEventName = "MailboxName"
-	NotifyEventSubscriptionChange    NotifyEventName = "SubscriptionChange"
-	NotifyEventMailboxMetadataChange NotifyEventName = "MailboxMetadataChange"
-	NotifyEventServerMetadataChange  NotifyEventName = "ServerMetadataChange"
+	NotifyEventMessageNew            NotifyEventName = NotifyEventName(imap.NotifyEventMessageNew)
+	NotifyEventMessageExpunge        NotifyEventName = NotifyEventName(imap.NotifyEventMessageExpunge)
+	NotifyEventFlagChange            NotifyEventName = NotifyEventName(imap.NotifyEventFlagChange)
+	NotifyEventMailboxName           NotifyEventName = NotifyEventName(imap.NotifyEventMailboxName)
+	NotifyEventSubscriptionChange    NotifyEventName = NotifyEventName(imap.NotifyEventSubscriptionChange)
+	NotifyEventMailboxMetadataChange NotifyEventName = NotifyEventName(imap.NotifyEventMailboxMetadataChange)
+	NotifyEventServerMetadataChange  NotifyEventName = NotifyEventName(imap.NotifyEventServerMetadataChange)
 )
 
 // NotifyMailboxSpecifier names which mailboxes a NOTIFY filter applies to.
+// The canonical spellings are [imap.NotifyMailboxSpecifier]'s.
 type NotifyMailboxSpecifier string
 
 const (
 	// NotifySelected covers the currently selected mailbox.
-	NotifySelected NotifyMailboxSpecifier = "SELECTED"
+	NotifySelected NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifySelected)
 	// NotifySelectedDelayed is SELECTED with delayed MessageNew until the
 	// client becomes idle or issues a command (RFC 5465).
-	NotifySelectedDelayed NotifyMailboxSpecifier = "SELECTED-DELAYED"
+	NotifySelectedDelayed NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifySelectedDelayed)
 	// NotifyPersonal covers all personal-namespace mailboxes.
-	NotifyPersonal NotifyMailboxSpecifier = "PERSONAL"
+	NotifyPersonal NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifyPersonal)
 	// NotifySubscribed covers all subscribed mailboxes.
-	NotifySubscribed NotifyMailboxSpecifier = "SUBSCRIBED"
+	NotifySubscribed NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifySubscribed)
 	// NotifySubtree is used with [NotifyFilter.Mailboxes] patterns.
-	NotifySubtree NotifyMailboxSpecifier = "SUBTREE"
+	NotifySubtree NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifySubtree)
 	// NotifyMailboxes is used with an explicit mailbox list in
 	// [NotifyFilter.Mailboxes].
-	NotifyMailboxes NotifyMailboxSpecifier = "MAILBOXES"
+	NotifyMailboxes NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifyMailboxes)
 	// NotifyInboxes covers mailboxes the server considers inboxes.
-	NotifyInboxes NotifyMailboxSpecifier = "INBOXES"
+	NotifyInboxes NotifyMailboxSpecifier = NotifyMailboxSpecifier(imap.NotifyInboxes)
 )
 
 // NotifyFilter is one mailbox set and its events in a NOTIFY command.

@@ -274,7 +274,28 @@ func TestMatchEverySearchCriterionType(t *testing.T) {
 		{"SearchModSeq", imap.SearchModSeq{ModSeq: 100, EntryName: "/flags/\\draft", EntryType: imap.SearchModSeqMetadataAll}},
 		{"SearchFuzzy", imap.SearchFuzzy{Criteria: imap.SearchString{Key: imap.SearchKeySubject, Value: "status"}}},
 	}
+	// A criterion that must *fail* to evaluate still needs coverage, so it is
+	// asserted here rather than exempted — an exemption would let a future
+	// criterion be forgotten by claiming the same status.
+	mustError := []struct {
+		name      string
+		criterion imap.SearchCriteria
+	}{
+		// A FILTER key names criteria the server stores. Whoever evaluates a
+		// search substitutes it first, so reaching the matcher means it was not
+		// substituted; matching nothing would hide that behind a plausible
+		// empty result.
+		{"SearchFilter", imap.SearchFilter("unseen")},
+	}
 	covered := make(map[string]bool)
+	for _, tt := range mustError {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Match(m, metadata, tt.criterion, options); err == nil {
+				t.Fatalf("Match(%#v) returned no error", tt.criterion)
+			}
+		})
+		covered[tt.name] = true
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := Match(m, metadata, tt.criterion, options)

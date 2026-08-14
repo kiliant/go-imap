@@ -14,9 +14,18 @@ import (
 )
 
 type session struct {
-	account    *account
+	account *account
+	// username is the authenticated identity, which ACL entries are keyed by.
+	// See ext_d.go.
+	username   string
 	selections map[*selected]struct{}
 	closed     bool
+	// notify and notifyConfig are the session's NOTIFY registration.
+	// See ext_d.go.
+	notify       *imapserver.SessionUpdater
+	notifyConfig *imapserver.NotifyConfig
+	// comparator is the active RFC 5255 collation. See ext_e.go.
+	comparator string
 }
 
 func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, reference string, patterns []string, options *imapserver.ListOptions) error {
@@ -36,7 +45,7 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 		if !matchesAnyMailbox(m.name, reference, patterns) {
 			continue
 		}
-		results = append(results, &imap.ListData{Delimiter: '/', Mailbox: m.name})
+		results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
 	}
 	s.account.mu.Unlock()
 	slices.SortFunc(results, func(a, b *imap.ListData) int { return strings.Compare(a.Mailbox, b.Mailbox) })
@@ -112,7 +121,7 @@ func (s *session) Status(ctx context.Context, name string, options *imapserver.S
 	return data, nil
 }
 
-func (s *session) Create(ctx context.Context, name string, _ *imapserver.CreateOptions) error {
+func (s *session) Create(ctx context.Context, name string, options *imapserver.CreateOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -129,6 +138,13 @@ func (s *session) Create(ctx context.Context, name string, _ *imapserver.CreateO
 		return noError(imap.CodeAlreadyExists, "mailbox already exists")
 	}
 	s.account.createMailboxLocked(name)
+	// The USE parameter of CREATE-SPECIAL-USE. A rejected attribute must not
+	// leave a mailbox behind, since the client asked for a mailbox with that
+	// use and would otherwise be told no while one exists. See ext_a.go.
+	if err := s.applyCreateSpecialUseLocked(s.account.mailboxes[key], options); err != nil {
+		delete(s.account.mailboxes, key)
+		return err
+	}
 	return nil
 }
 
@@ -242,9 +258,14 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	}
 	uid := m.uidNext
 	m.uidNext++
-	m.messages = append(m.messages, &message{uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis})
+	m.messages = append(m.messages, &message{
+		uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
+		modSeq: bumpModSeqLocked(m), saveDate: time.Now(),
+	})
 	batch := advanceLocked(m, origin, []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}})
 	publishLocked(m, batch)
+	// NOTIFY watchers hear about a mailbox they have not selected.
+	notifyMailboxLocked(s.account, m)
 	uidValidity := m.uidValidity
 	s.account.mu.Unlock()
 	return &imap.AppendData{HasUID: true, UIDValidity: uidValidity, UID: uid}, nil
@@ -295,6 +316,8 @@ func (s *session) Close(ctx context.Context) error {
 		delete(s.selections, selected)
 	}
 	s.closed = true
+	s.notify, s.notifyConfig = nil, nil
+	delete(s.account.sessions, s)
 	return nil
 }
 
@@ -339,6 +362,28 @@ func statusDataLocked(m *mailbox, options *imapserver.StatusOptions) *imap.Statu
 			data.Values[keyword] = uint64(data.NumUnseen)
 		case imap.StatusItemRecent:
 			data.Values[keyword] = uint64(data.NumRecent)
+		case imap.StatusItemSize:
+			// STATUS=SIZE is the total octet size of the mailbox.
+			// RFC 8438 section 3.
+			var size uint64
+			for _, msg := range m.messages {
+				size += uint64(len(msg.raw))
+			}
+			data.Values[keyword] = size
+		case imap.StatusItemMailboxID:
+			data.Values[keyword] = mailboxID(m)
+		case imap.StatusItemAppendLimit:
+			data.Values[keyword] = uint64(appendLimit)
+		case imap.StatusItemHighestModSeq:
+			data.Values[keyword] = m.highestModSeq
+		case imap.StatusItemDeleted:
+			var deleted uint64
+			for _, msg := range m.messages {
+				if imap.ContainsFlag(msg.flags, imap.FlagDeleted) {
+					deleted++
+				}
+			}
+			data.Values[keyword] = deleted
 		}
 	}
 	return data
@@ -364,13 +409,13 @@ func snapshotLocked(m *mailbox, readOnly bool) imapserver.SelectSnapshot {
 			UIDNext:        m.uidNext,
 			UIDValidity:    m.uidValidity,
 			Unseen:         unseen,
-			NoModSeq:       true,
+			HighestModSeq:  m.highestModSeq,
 			ReadOnly:       readOnly,
 		},
 		Flags:          cloneFlags(flags),
 		PermanentFlags: append(cloneFlags(flags), imap.FlagWildcard),
 		ReadOnly:       readOnly,
-		NoModSeq:       true,
+		HighestModSeq:  m.highestModSeq,
 		Revision:       revision(m.revision),
 	}
 }

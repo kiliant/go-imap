@@ -388,6 +388,282 @@ Per `CLAUDE.md`, this needed explicit written approval from the human before it
 became real, and it has that approval now. `imapserver/go.mod` and the root
 `go.work` are T25's to create, at v1.0.
 
+## 10. The `imapserver` enforcement gates — added by T23, 2026-08-13
+
+Three mechanical gates in `imapserver/capability_test.go` enforce the rules above
+for the server framework. They are recorded here because a gate that lives only
+in a test file is a gate the next task deletes as a test failure rather than
+recognising as an API decision — which is exactly the history section 3 records
+about the options-struct rule.
+
+**The interface method-set gate.** `TestBackendInterfaceMethodSets` compares a
+hand-written map of every exported interface against an AST scan of the package.
+Adding a method to an existing interface, adding an interface, or removing one
+all fail it. The map is meant to be edited deliberately: the diff to that literal
+is the record of what the API grew.
+
+**The struct guard.** `TestGrowableConfigurationStructsAreGuarded` requires
+`_ struct{}` on every exported struct in `imapserver`, walking the package rather
+than iterating a list — section 7's point is that the rule is not a judgement
+call, and a list makes it one again. Framework-constructed types are exempt
+through `unguardedByDesign`, which carries a one-line reason each and is checked
+in both directions so a stale exemption fails too.
+
+**The feature-binding gate.** Every field on an `imapserver` options struct that
+is not part of the rev1 baseline carries an `imapfeature:"<id>"` tag naming the
+feature that activates it, and `TestExtensionOptionFieldsHaveFeatureBinding`
+fails on a missing or unknown binding. The framework populates such a field only
+when its feature is active for the session, so the pairing between "capability
+advertised" and "option field set" is executed rather than remembered. Without
+it, a field added for a new RFC is silently ignored by an older backend and the
+server claims a capability it does not honour.
+
+### Capability witnesses
+
+A capability whose behaviour the backend must implement is advertised only when
+the backend witnesses it. `imapserver` has two witness styles and the choice
+between them is not stylistic:
+
+- **`CapabilitySupport`** — `SupportsCapability(name string) bool`, keyed by the
+  wire token. Use it where support is spread across data the backend returns and
+  no type can see it: CHILDREN, SAVEDATE, WITHIN, CONDSTORE. A future RFC is then
+  a new *token*, which is a data change rather than a type change — rule 1
+  applied to the witness layer.
+- **A structural check** that the session or selected mailbox implements the
+  optional interface. Use it where the interface *is* the whole of the support:
+  QUOTA, ACL, METADATA. The type system then makes it impossible to advertise
+  what is not implemented.
+
+Every extension command handler calls `requireCapability` before doing any work,
+whichever witness its capability uses. Holding an optional interface is not
+consent to advertise it.
+
+### Exception: `MoveSupport` predates `CapabilitySupport` — recorded 2026-08-13
+
+`MoveSupport` (`SupportsMove() bool`) is a single-capability witness for atomic
+MOVE, added by T19 before `CapabilitySupport` existed. It is redundant:
+`CapabilitySupport("MOVE")` expresses the same thing.
+
+It is kept rather than collapsed because MOVE's witness is also consulted for the
+IMAP4rev2 gate, so removing it is a behavioural change to rev2 advertisement
+rather than a rename — and `imapserver` is pre-1.0 but T19/T20 shipped against
+this surface. **Collapsing it is the right move and the window is open only until
+`imapserver` v1.0**; after that the second witness is permanent. Recorded here so
+the decision is deliberate, per CLAUDE.md's requirement that a deviation carry a
+written exception. T25 should either collapse it or promote this paragraph to a
+permanent entry.
+
+### Additive root-package growth after v1.0 — exercised 2026-08-13
+
+`imap.SearchFilter` was added to the frozen root package by T23, and it is worth
+recording as the first exercise of the rule rather than leaving the next person
+to wonder whether it was allowed.
+
+**Adding a type to `package imap` is source-compatible and always permitted.
+That is not the same as being safe, and the first draft of this section confused
+the two.** Reshaping an existing type is breaking and still needs approval; that
+half was never in doubt.
+
+The half that was wrong: the original text argued a new `SearchCriteria`
+implementation "adds a case that consumers may ignore — the interface is closed
+by an unexported method, so no external type asserts exhaustively over it." The
+premise is false. The interface being closed to *implementers* says nothing about
+*consumers*, and this library has consumers that must switch over it
+exhaustively: every `imapserver` backend receives an `imap.SearchCriteria` and
+its only possible implementation is a type switch. A backend compiled before the
+new type exists does not fail to compile. It falls to `default` and returns a
+wrong answer — for SEARCH, a silently empty result indistinguishable from a
+correct search that matched nothing.
+
+That was not hypothetical. FILTER substitution was wired into SEARCH alone while
+SORT, THREAD and ESEARCH passed the raw tree through, so the guarantee this
+section rested on was already untrue when it was written.
+
+#### The rule, restated
+
+A new implementation of an open marker interface in `package imap` is permitted
+when **either**:
+
+- **(a) the framework guarantees it never reaches a consumer that predates it** —
+  and the guarantee is written on the consumer-facing declaration, not only in
+  the code that upholds it, *and* a test enforces it for every path that reaches
+  a consumer; **or**
+- **(b) no consumer switches exhaustively over the interface**, and the interface
+  documents what a consumer does with an unrecognised case.
+
+Adding an ordinary named type — a string-backed vocabulary, a struct nothing
+type-switches over — is unconditionally additive. The condition applies to
+implementations of open marker interfaces, which are the ones consumers discover
+by type assertion.
+
+**Branch (b) does not apply to `imap.SearchCriteria`, `imap.FetchItem`, or
+STATUS items.** Each has exhaustive in-repo consumers — every `imapserver`
+backend, and for search keys `internal/imapmessage` too — so a new
+implementation of one may only be justified under (a). `SearchCriteria` is the
+one the framework narrows: no `SearchFilter` and no `SearchSeqNum` reaches a
+backend, at any nesting depth, on any command. `FetchItem` gets no such
+narrowing, because a fetch item requests data only the backend holds; its
+`# Consumers` paragraph therefore carries the whole contract, and an
+unrecognised item must be an error rather than a silently omitted field.
+
+This is stated by name because (b) is otherwise self-satisfying: the
+`# Consumers` paragraph on `SearchCriteria` already documents the unrecognised
+case, so an agent could cite (b), write no framework code and no test, and pass
+the rule that was written to stop exactly that.
+
+RFC 5257 (ANNOTATE) is the live test of this: it adds an `ANNOTATION` search key
+*and* an `ANNOTATION` fetch item, so it stresses both lists at once.
+
+Where (b) does apply, the documented fallback must have shipped in the release
+the consumer surface froze in. A fallback documented after the fact protects
+nobody already compiled — which is the population the rule exists for — so
+retroactive documentation does not satisfy it.
+
+Branch (a) names a test. Branch (b) cannot, which is a reason to prefer (a)
+wherever both are available.
+
+#### How `imap.SearchFilter` satisfies (a)
+
+- The framework substitutes every `SearchFilter` for the criteria it names before
+  any backend sees the tree, and refuses an undefined name with
+  `UNDEFINED-FILTER` rather than matching nothing.
+- The guarantee is stated on `SearchQuery.Criteria`, on
+  `MultiSearchSession.MultiSearch` — the two places a backend receives criteria —
+  and on `imap.SearchCriteria` itself, where a consumer of the shared vocabulary
+  would look first. All three say the same thing, including where the
+  `SearchSeqNum` half does *not* hold: MULTISEARCH searches several mailboxes, so
+  there is no single selection to resolve sequence numbers against.
+- `TestSearchQueryNormalisationGuarantee` drives SEARCH, SORT, THREAD and ESEARCH
+  with a FILTER key, at the top level and nested under `FUZZY`, `NOT` and `OR`,
+  and asserts the substituted answer. It was verified to fail before each fix,
+  not merely to pass after it.
+- `TestSearchCriteriaContainersAreTraversed` reads the type declarations in
+  `package imap` and fails if a search key that holds other search keys is not
+  handled by the framework's single traversal helper.
+
+That last gate exists because the first version of this section was wrong in
+practice as well as in theory. Substitution was a hand-maintained list of
+container node types that omitted `imap.SearchFuzzy` — a container this library
+already shipped, parsed and advertised — so `SEARCH FUZZY FILTER "x"` delivered
+an unsubstituted `SearchFilter` to the backend and skipped the FILTERS
+capability check with it. A second, separate traversal for UID normalisation did
+handle it, and nothing compared the two. **A guarantee maintained by hand in two
+places is not a guarantee**; branch (a) is only worth anything when a test reads
+the declarations rather than trusting a list.
+
+Also true, and still worth recording: it is a new type rather than a change to
+one; it satisfies an existing interface, so no signature moved; it closed a gap
+the client's FILTERS work had already escalated; and `internal/imapmessage`'s
+criterion-coverage gate was extended to express "this criterion must fail to
+evaluate" rather than exempted.
+
+#### The next one
+
+RFC 5257 (ANNOTATE) adds an `ANNOTATION` search key — the identical shape, on the
+deferred rows of `docs/RFC-COVERAGE.md`. It will arrive with the same reasoning
+available to it, so the conditions above are what it must be held to, not the
+precedent that "T23 added one, so this is fine."
+
+A future extension needing a root-package *reshape* remains a different question
+and still needs the human's approval.
+
+### Shared client/server vocabulary belongs in `package imap` — decided 2026-08-13
+
+T23 gave `imapserver` its own NOTIFY event and specifier vocabulary while
+`imapclient` already had one. The two disagreed: the client canonicalised events
+as `MessageNew`, the server upper-cased them to `MESSAGENEW`, and both declared a
+`NotifyMailboxSpecifier` with the same seven constants. `imapclient.NotifyMailboxes`
+was the MAILBOXES *constant*; `imapserver.NotifyMailboxes` was a watch-group
+*struct*.
+
+Nothing failed. Both packages compiled, both test suites were green, and a backend
+author comparing an event against the constant from the wrong package would simply
+have matched nothing — a NOTIFY registration that silently never fires, which the
+client reads as "nothing has changed".
+
+**The vocabulary moved to `package imap`** (`notify.go`) and the server dropped
+its copies. This is the layering rule in CLAUDE.md applied rather than restated:
+the root package is "the shared vocabulary, which is what lets the future server
+framework reuse it without an API break."
+
+The spelling adopted is the client's, because `imapclient` is frozen at v1.0 and
+its constant values can never move, while `imapserver` is pre-1.0 and its still
+can. Deferring would have meant changing released values later or keeping both
+spellings permanently.
+
+#### Values were unified; type identity was not
+
+The obvious move — alias `imapclient.NotifyEventName` to `imap.NotifyEventName` —
+was tried and backed out. It is invisible to realistic callers: an alias is the
+same type, so assignment, constant comparison, `NotifyFilter` construction and
+dynamic type assertion through an interface all behave identically, verified
+against a consumer written to the v1.0 surface. But it changes type identity, and
+`apidiff` correctly reports sixteen symbols as incompatible.
+
+Overriding the gate was available — the policy allows it with a human decision
+and a CHANGELOG entry — and was declined. **The gate's value is that it is not
+argued with.** This would have been the first post-v1.0 enforcement, and
+establishing at the first opportunity that a sufficiently good argument moves it
+would have cost more than the duplication saves.
+
+Instead `imapclient` keeps its own defined types and derives their constant
+*values* from the root constants by constant conversion:
+
+```go
+const NotifyEventMessageNew NotifyEventName = NotifyEventName(imap.NotifyEventMessageNew)
+```
+
+This is a compile-time constant, so the two definitions cannot drift in *value*.
+`TestNotifyVocabularyMirrorsRootPackage` covers the other axis — a later RFC
+registering an event would otherwise add a constant to `package imap` and leave
+`imapclient` silently without one, with a green build. And
+`apidiff` reports no change to `imapclient` at all. The divergence that caused the bug is gone; only the redundant type identity
+remains.
+
+An earlier draft justified that by claiming a value never crosses from one
+package's type to the other's in a single program. That is false, and worth
+correcting rather than quietly deleting: a proxy or a migration tool built on
+both halves of this module — a shape the nested-module design invites — parses a
+client's NOTIFY with `imapserver` and reissues it upstream with `imapclient`,
+crossing the two types in one call chain. The real justification is smaller and
+holds: both are string-backed, so the crossing costs one conversion and loses
+nothing.
+
+Collapsing the identities is an `imapclient` v2 change. It is not urgent, because
+the values can no longer diverge.
+
+#### Registry accessors — a precedent, with a limit
+
+`imap.NotifyEventNames()` and `imap.NotifyMailboxSpecifiers()` were added
+alongside the vocabulary. They are the first package-level "known values"
+accessors in the root package, and the first new *functions* added to it after
+v1.0, so the precedent needs stating rather than inferring.
+
+They earn their place: three consumers each kept a hand-written copy of the same
+list, which is how the two vocabularies drifted apart to begin with. A later RFC
+registering an event adds it once.
+
+**The limit is that a registry is not a validity test.** These sets are open by
+declaration, so absence from the list means "not known to this release", never
+"invalid". A consumer that rejects a name for being absent starts *accepting* it
+the day the library is upgraded, before anything implements it — which for NOTIFY
+is a watch that never fires and reads to the client as a quiet mailbox. Reject a
+name because you cannot serve it, which is a statement about your own code.
+`imapserver/memory` shows the split: it consults the registry to decide whether a
+specifier is in the grammar at all (a syntax error if not) and its own list to
+decide whether it serves it (`NO [BADEVENT]` if not).
+
+An accessor is therefore justified only where a *shared spelling* is the thing
+being protected. It is not a licence for `imap.FetchItems()` or
+`imap.CapabilityNames()`: those sets are open precisely so that callers may name
+what this library does not model, and a list of them invites the membership test
+that rule 1 exists to prevent.
+
+The general rule: **a string-backed name set that both the client and the server
+must spell identically goes in `package imap` from the start**, not in whichever
+package implements it first. Retrofitting the values is cheap; retrofitting the
+identity is not.
+
 ## Reviewing against this document
 
 The `api-guardian` agent (`.claude/agents/api-guardian.md`) reviews every diff

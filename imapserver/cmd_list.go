@@ -14,6 +14,12 @@ type listArgs struct {
 	patterns  []string
 	selection []string
 	legacy    bool
+	// returnOptions and statusItems carry the LIST-EXTENDED RETURN clause.
+	// See ext_a_list.go.
+	returnOptions []string
+	statusItems   []imap.StatusItem
+	// metadataEntries carries RETURN (METADATA ...). See ext_d_listret.go.
+	metadataEntries []imap.MetadataEntryName
 }
 
 func parseList(decoder *imapwire.Decoder) (any, int64, error) {
@@ -56,6 +62,9 @@ func parseList(decoder *imapwire.Decoder) (any, int64, error) {
 			return nil, 0, decoder.Err()
 		}
 		args.patterns = append(args.patterns, pattern)
+	}
+	if err := parseListReturnOptions(decoder, args); err != nil {
+		return nil, 0, err
 	}
 	if !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
@@ -100,17 +109,15 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, "multiple LIST patterns are not enabled")
 	}
 	options := &ListOptions{}
-	for _, option := range args.selection {
-		if option != "SUBSCRIBED" || !args.legacy && !features[featureListSubscribe] {
-			return c.writeBad(command.tag, fmt.Sprintf("unsupported LIST selection option %q", option))
-		}
-		options.Subscribed = true
+	if err := applyListOptions(c, args, options); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	count := 0
 	writtenName := "LIST"
 	if args.legacy {
 		writtenName = "LSUB"
 	}
+	var statusMailboxes []string
 	writer := newListWriter(func(_ context.Context, data *imap.ListData) error {
 		if data == nil || data.Mailbox == "" {
 			return fmt.Errorf("imapserver: backend LIST returned an invalid mailbox")
@@ -119,8 +126,12 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if count > maxCommandListResults {
 			return commandLimitError("LIST result limit exceeded")
 		}
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom(writtenName).SP().List(len(data.Attrs), func(i int) {
-			c.encoder.Flag(string(data.Attrs[i]))
+		if wantsPerMailboxResponses(args) {
+			statusMailboxes = append(statusMailboxes, data.Mailbox)
+		}
+		attrs := listResultAttrs(args, options, data.Attrs)
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom(writtenName).SP().List(len(attrs), func(i int) {
+			c.encoder.Flag(string(attrs[i]))
 		}).SP()
 		if data.Delimiter == 0 {
 			c.encoder.NIL()
@@ -133,6 +144,15 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 	err := c.state.session.List(ctx, writer, args.reference, args.patterns, options)
 	writer.core.close()
 	if err != nil {
+		return writeBackendError(c, command.tag, writtenName, err)
+	}
+	if err := writeListStatus(ctx, c, args, statusMailboxes); err != nil {
+		return writeBackendError(c, command.tag, writtenName, err)
+	}
+	if err := writeListMyRights(ctx, c, args, statusMailboxes); err != nil {
+		return writeBackendError(c, command.tag, writtenName, err)
+	}
+	if err := writeListMetadata(ctx, c, args, statusMailboxes); err != nil {
 		return writeBackendError(c, command.tag, writtenName, err)
 	}
 	return c.writeTagged(command.tag, "OK", writtenName+" completed")

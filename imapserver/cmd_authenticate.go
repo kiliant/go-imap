@@ -70,6 +70,21 @@ func handleAuthenticate(ctx context.Context, c *conn, command *queuedCommand) er
 	if args == nil {
 		return c.writeBad(command.tag, "invalid AUTHENTICATE arguments")
 	}
+	// SCRAM verifies the client's proof in the framework against material only
+	// the backend holds, so it does not fit the extract-credentials-and-ask
+	// shape the other mechanisms share. See ext_d_scram.go.
+	if isSCRAMMechanism(args.mechanism) {
+		if c.server == nil || c.server.backend == nil {
+			return writeTaggedCondition(c, command.tag, "NO", imap.CodeUnavailable, "", "authentication is unavailable")
+		}
+		if !authenticationTransportAllowed(c, args.mechanism) {
+			return writeTaggedCondition(c, command.tag, "NO", imap.CodePrivacyRequired, "", "authentication mechanism requires transport security")
+		}
+		if !slices.Contains(deriveCapabilities(&c.state, c.server), "AUTH="+strings.ToUpper(args.mechanism)) {
+			return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "authentication mechanism is not available")
+		}
+		return handleSCRAMAuthenticate(ctx, c, command, args)
+	}
 	server, err := newSASLServer(args.mechanism)
 	if err != nil {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "authentication mechanism is not supported")
@@ -134,6 +149,18 @@ func authenticationTransportAllowed(c *conn, mechanism string) bool {
 	if mechanism == "XOAUTH2" || mechanism == "OAUTHBEARER" {
 		return c.state.tls
 	}
+	// SCRAM is allowed on cleartext without the AllowInsecureAuth opt-in that
+	// PLAIN and LOGIN need, because it does not put the password on the wire:
+	// the client sends a proof derived from it and the server never learns it.
+	// A passive observer of a cleartext SCRAM exchange gains nothing usable.
+	//
+	// That is not the same as SCRAM being safe against an *active* attacker,
+	// who can strip the mechanism list down to PLAIN — the defence against
+	// that is channel binding, and this server does not advertise the -PLUS
+	// variants. See ext_d_scram.go for why.
+	if isSCRAMMechanism(mechanism) {
+		return true
+	}
 	if mechanism != "PLAIN" && mechanism != "LOGIN" {
 		return false
 	}
@@ -155,6 +182,9 @@ func authenticateBackend(ctx context.Context, c *conn, tag string, credentials *
 		_ = session.Close(ctx)
 		return writeTaggedCondition(c, tag, "NO", imap.CodeServerBug, "", "authentication state transition failed")
 	}
+	// RFC 9738's advertised limits are resolved once, here, rather than during
+	// every capability derivation. See ext_d_listret.go.
+	resolveMessageLimits(ctx, &c.state)
 	return c.writeTagged(tag, "OK", "authentication completed")
 }
 

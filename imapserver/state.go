@@ -65,6 +65,12 @@ type sessionState struct {
 	compressed bool
 	session    Session
 	selected   *selectedState
+	// limits holds RFC 9738's advertised values, resolved once at
+	// authentication rather than per capability derivation: deriving
+	// capabilities happens on every extension command, and a backend call from
+	// there would be an uncancellable round trip the caller never asked for.
+	// See ext_d_listret.go.
+	limits *MessageLimits
 }
 
 func newSessionState(tlsActive bool) sessionState {
@@ -113,14 +119,39 @@ func (s *sessionState) unselect() *selectedState {
 	return selected
 }
 
+// unauthenticate returns the connection to the not-authenticated state for
+// UNAUTHENTICATE (RFC 8437). It lives here with the other transitions rather
+// than in the extension file, so the state machine stays readable in one place.
+//
+// Every trace of the previous user is dropped, including enabled extensions and
+// the negotiated revision. RFC 8437 section 3 requires that: the connection is
+// about to be reused by a different identity, and leaving CONDSTORE or IMAP4rev2
+// enabled would have the server speak to the next client in a dialect it never
+// negotiated.
+func (s *sessionState) unauthenticate() {
+	if s == nil {
+		return
+	}
+	s.session = nil
+	s.selected = nil
+	s.state = stateNotAuthenticated
+	s.revision = revisionIMAP4rev1
+	s.enabled = make(map[string]bool)
+	s.limits = nil
+}
+
+// enable records a capability as enabled for this session and applies any
+// side effect the capability has on connection state.
+//
+// It does not decide which capabilities may be enabled. That is the capability
+// descriptor table's job: enableCapabilities only reaches this for a token that
+// is currently advertised and whose descriptor declares an Enable function, so
+// a whitelist here would be a second, silently diverging source of truth. An
+// extension registering a descriptor therefore needs no change to this file.
 func (s *sessionState) enable(capability string) bool {
 	capability = strings.ToUpper(capability)
-	switch capability {
-	case "IMAP4REV2":
+	if capability == "IMAP4REV2" {
 		s.revision = revisionIMAP4rev2
-	case "UTF8=ACCEPT":
-	default:
-		return false
 	}
 	s.enabled[capability] = true
 	return true

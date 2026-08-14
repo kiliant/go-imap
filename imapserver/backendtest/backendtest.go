@@ -56,6 +56,10 @@ func Run(t *testing.T, harness *Harness) {
 	if harness == nil || harness.New == nil {
 		t.Fatal("backendtest: nil harness or factory")
 	}
+	// The optional interfaces T23 added. Each subtest skips when the backend
+	// does not implement the interface it covers. See ext.go.
+	runExtensions(t, harness)
+
 	t.Run("snapshot-consistency", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		mailbox := populate(t, session, "snapshot")

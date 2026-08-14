@@ -348,6 +348,38 @@ func WriteFetchResponse(enc *imapwire.Encoder, data *imap.FetchMessageData, size
 	if data == nil || data.SeqNum == 0 {
 		return fmt.Errorf("FETCH response requires a non-zero sequence number")
 	}
+	entries, err := fetchEntries(data, size)
+	if err != nil {
+		return err
+	}
+	enc.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(data.SeqNum)).SP().Atom("FETCH").SP()
+	return writeFetchEntries(enc, entries)
+}
+
+// WriteUIDFetchResponse writes the UIDFETCH response form of UIDONLY, RFC 9586
+// section 3.2: the message is identified by UID and no sequence number appears.
+//
+// It shares the item encoding with WriteFetchResponse rather than duplicating
+// it, because the item grammar is identical between the two and two copies of it
+// would drift.
+func WriteUIDFetchResponse(enc *imapwire.Encoder, uid imap.UID, data *imap.FetchMessageData, size LiteralSizer) error {
+	if data == nil {
+		return fmt.Errorf("UIDFETCH response requires data")
+	}
+	if uid == 0 {
+		return fmt.Errorf("UIDFETCH response requires a non-zero UID")
+	}
+	entries, err := fetchEntries(data, size)
+	if err != nil {
+		return err
+	}
+	enc.BeginResponse(imapwire.ResponseUntagged, "").Atom("UIDFETCH").SP().Number(uint32(uid)).SP()
+	return writeFetchEntries(enc, entries)
+}
+
+// fetchEntries resolves a response's items into wire entries, measuring every
+// literal so the encoder can announce its length.
+func fetchEntries(data *imap.FetchMessageData, size LiteralSizer) ([]fetchEntry, error) {
 	keys := make([]string, 0, len(data.Items))
 	for key := range data.Items {
 		keys = append(keys, string(key))
@@ -357,7 +389,7 @@ func WriteFetchResponse(enc *imapwire.Encoder, data *imap.FetchMessageData, size
 	for _, rawKey := range keys {
 		key := imap.FetchDataKey(rawKey)
 		if !validFetchDataKey(rawKey) {
-			return fmt.Errorf("invalid FETCH data key %q", rawKey)
+			return nil, fmt.Errorf("invalid FETCH data key %q", rawKey)
 		}
 		for _, value := range data.Items[key] {
 			entry := fetchEntry{key: key, value: value, size: -1}
@@ -368,17 +400,23 @@ func WriteFetchResponse(enc *imapwire.Encoder, data *imap.FetchMessageData, size
 					var err error
 					entry.size, err = size(key, value)
 					if err != nil {
-						return err
+						return nil, err
 					}
 				}
 				if entry.size < 0 {
-					return fmt.Errorf("FETCH %s literal size is unknown", key)
+					return nil, fmt.Errorf("FETCH %s literal size is unknown", key)
 				}
 			}
 			entries = append(entries, entry)
 		}
 	}
-	enc.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(data.SeqNum)).SP().Atom("FETCH").SP().Special('(')
+	return entries, nil
+}
+
+// writeFetchEntries writes the parenthesised item list shared by the FETCH and
+// UIDFETCH response forms. The caller has already written the response prefix.
+func writeFetchEntries(enc *imapwire.Encoder, entries []fetchEntry) error {
+	enc.Special('(')
 	for i, entry := range entries {
 		if i > 0 {
 			enc.SP()

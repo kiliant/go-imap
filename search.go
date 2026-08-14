@@ -27,6 +27,33 @@ import "time"
 //
 // Some implementations carry slices, so a SearchCriteria is not necessarily
 // comparable and must not be used as a map key.
+//
+// # Consumers
+//
+// The set being closed to external implementers does not make it closed to
+// growth: a later release of this library may add a key, so code that switches
+// over a SearchCriteria it did not build must expect a type it has never seen.
+//
+// Treat an unrecognised criterion as an error, never as "does not match". The
+// two are indistinguishable to the client — an empty result reads as a correct
+// search that found nothing — so a silent default turns a library upgrade into
+// wrong answers with no symptom. Failing loudly is the whole point; the specific
+// error matters less. The evaluator behind imapserver/memory returns a sentinel
+// its callers can recognise rather than reporting no match.
+//
+// Backends are the main consumers, and the framework narrows what reaches them:
+//
+//   - No [SearchFilter] reaches a backend on any command. It is substituted for
+//     the criteria it names first, at every nesting depth, and an undefined name
+//     fails the command rather than matching nothing.
+//   - No [SearchSeqNum] reaches a backend either. It is resolved to UIDs against
+//     the selected mailbox, which covers SEARCH, SORT and THREAD. RFC 7377's
+//     MULTISEARCH can name mailboxes other than the selection, where a sequence
+//     number indexes into nothing; there the command is refused instead, so a
+//     backend never has to decide what an unresolvable one means.
+//
+// See docs/API-STABILITY.md section 10 for why these guarantees are what allow
+// the root package to grow new SearchCriteria implementations at all.
 type SearchCriteria interface {
 	searchCriteria()
 }
@@ -411,3 +438,15 @@ type SearchFuzzy struct {
 }
 
 func (SearchFuzzy) searchCriteria() {}
+
+// SearchFilter names a server-side saved search filter, which stands in for the
+// criteria the server stores under that name. FILTERS, RFC 5466 section 3.
+//
+// It is a named string type rather than a struct because a filter reference is
+// exactly a name: the criteria it expands to live on the server, and a client
+// never sees them. A server that does not know the name answers with the
+// UNDEFINED-FILTER response code rather than an empty result, so a client can
+// tell "no such filter" from "nothing matched".
+type SearchFilter string
+
+func (SearchFilter) searchCriteria() {}

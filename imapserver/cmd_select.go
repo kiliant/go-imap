@@ -9,20 +9,32 @@ import (
 )
 
 func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
-	mailbox, ok := command.args.(string)
-	if !ok || mailbox == "" {
+	args, ok := command.args.(*selectArgs)
+	if !ok || args == nil || args.mailbox == "" {
 		return c.writeBad(command.tag, "invalid SELECT arguments")
 	}
+	mailbox := args.mailbox
 	readOnly := command.name == "EXAMINE"
+	// SELECT parameters from CONDSTORE and QRESYNC. See ext_b_condstore.go.
+	options := &SelectOptions{ReadOnly: readOnly}
+	if err := applySelectParams(c, args, options); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	if err := abandonCurrentSelection(ctx, c); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	selected, snapshot, err := selectAtomic(ctx, c, mailbox, &SelectOptions{ReadOnly: readOnly})
+	selected, snapshot, err := selectAtomic(ctx, c, mailbox, options)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	if err := writeSelectSnapshot(c, snapshot); err != nil {
 		return err
+	}
+	// The QRESYNC resynchronisation report follows the ordinary selection
+	// responses, so the client has UIDVALIDITY and HIGHESTMODSEQ before it is
+	// told what vanished. See ext_b_qresync.go.
+	if err := writeQResyncSelection(ctx, c, options.QResync, snapshot); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
 	}
 	if err := c.drainUpdates(updateAccounting{}); err != nil {
 		return err

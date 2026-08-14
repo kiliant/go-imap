@@ -31,6 +31,10 @@ type Options struct {
 type Backend struct {
 	mu       sync.RWMutex
 	accounts map[string]*account
+	// scramCache holds this backend's SCRAM derivations. See ext_e_scram.go
+	// for why it must not be package-level.
+	scramMu    sync.Mutex
+	scramCache map[string]*scramDerivation
 }
 
 type account struct {
@@ -39,6 +43,16 @@ type account struct {
 	mailboxes       map[string]*mailbox
 	nextUIDValidity uint32
 	selectFailure   map[string]bool
+	// Group D per-account state. Zero limits mean unlimited, which is how
+	// RFC 9208 reports a resource with no configured bound. See ext_d.go.
+	quotaStorage  uint64
+	quotaMessages uint64
+	metadata      map[imap.MetadataEntryName]string
+	// urlAuthKeys holds the per-mailbox URLAUTH secrets. See ext_e.go.
+	urlAuthKeys map[string][]byte
+	// sessions are the live sessions on this account, so a change in one can
+	// be reported to a NOTIFY registration in another. See ext_d.go.
+	sessions map[*session]struct{}
 }
 
 type mailbox struct {
@@ -47,8 +61,26 @@ type mailbox struct {
 	uidNext     imap.UID
 	revision    uint64
 	subscribed  bool
-	messages    []*message
-	watchers    map[*selected]*imapserver.Updater
+	// specialUse holds the RFC 6154 use attributes assigned at CREATE time.
+	// See ext_a.go.
+	specialUse []imap.MailboxAttr
+	// highestModSeq is the CONDSTORE modification sequence of this mailbox, and
+	// expunged the QRESYNC record of removals retained after the messages
+	// themselves are gone. See ext_b.go.
+	highestModSeq uint64
+	expunged      []expungedRecord
+	// acl and metadata are the group D per-mailbox state. See ext_d.go.
+	acl      map[string]imap.ACLRights
+	metadata map[imap.MetadataEntryName]string
+	messages []*message
+	watchers map[*selected]*imapserver.Updater
+}
+
+// expungedRecord remembers one removal for QRESYNC, so a client that was
+// offline can be told what vanished while it was away.
+type expungedRecord struct {
+	uid    imap.UID
+	modSeq uint64
 }
 
 // New returns an in-memory backend configured by options.
@@ -75,6 +107,9 @@ func newAccount(password string) *account {
 	return a
 }
 
+// createMailboxLocked starts a mailbox at modification sequence 1. Zero is not
+// a usable starting value: RFC 7162 reserves it to mean "this mailbox does not
+// support modification sequences", which is what NOMODSEQ reports.
 func (a *account) createMailboxLocked(name string) *mailbox {
 	m := &mailbox{
 		name:        name,
@@ -104,18 +139,28 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if credentials == nil || credentials.Username == "" || (credentials.AuthzID != "" && credentials.AuthzID != credentials.Username) {
 		return nil, authenticationError()
 	}
-	switch strings.ToUpper(credentials.Mechanism) {
-	case "PLAIN", "LOGIN":
-	default:
+	// SCRAM arrives already verified: the framework checked the client's proof
+	// against the derivation this backend supplied, and no password was ever
+	// sent. Re-checking one here would reject every SCRAM login.
+	mechanism := strings.ToUpper(credentials.Mechanism)
+	verified := strings.HasPrefix(mechanism, "SCRAM-")
+	if !verified && mechanism != "PLAIN" && mechanism != "LOGIN" {
 		return nil, authenticationError()
 	}
 	b.mu.RLock()
 	a := b.accounts[credentials.Username]
 	b.mu.RUnlock()
-	if a == nil || credentials.Password != a.password {
+	if a == nil || (!verified && credentials.Password != a.password) {
 		return nil, authenticationError()
 	}
-	return &session{account: a, selections: make(map[*selected]struct{})}, nil
+	s := &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
+	a.mu.Lock()
+	if a.sessions == nil {
+		a.sessions = make(map[*session]struct{})
+	}
+	a.sessions[s] = struct{}{}
+	a.mu.Unlock()
+	return s, nil
 }
 
 // SupportsMove reports that the memory backend implements atomic MOVE.

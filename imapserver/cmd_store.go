@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/kiliant/go-imap"
-	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -15,6 +14,11 @@ type storeArgs struct {
 	op     StoreFlagsOp
 	silent bool
 	flags  []imap.Flag
+	// unchangedSince is CONDSTORE's UNCHANGEDSINCE modifier, and
+	// hasUnchangedSince its presence — zero is a legal value.
+	// See ext_b_condstore.go.
+	unchangedSince    uint64
+	hasUnchangedSince bool
 }
 
 func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
@@ -23,7 +27,13 @@ func parseStore(decoder *imapwire.Decoder) (any, int64, error) {
 	}
 	args := &storeArgs{}
 	var operation string
-	if !decoder.ExpectSequenceSet(&args.set) || !decoder.ExpectSP() || !decoder.ExpectAtom(&operation) || !decoder.ExpectSP() {
+	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() {
+		return nil, 0, decoder.Err()
+	}
+	if err := parseStoreModifiers(decoder, args); err != nil {
+		return nil, 0, err
+	}
+	if !decoder.ExpectAtom(&operation) || !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
 	operation = strings.ToUpper(operation)
@@ -56,10 +66,16 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if c.state.selected.readOnly {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	uidMode := commandUsesUIDs(command)
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)
 	if err != nil {
 		return c.writeBad(command.tag, "invalid STORE message set")
+	}
+	if err := validateCondStoreUse(c, args.hasUnchangedSince, "STORE UNCHANGEDSINCE"); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	origin := nextCommandOrigin()
 	var responseBytes int64
@@ -71,6 +87,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		if err != nil {
 			return err
 		}
+		mapped = stripModSeqUnlessEnabled(c, mapped)
 		_, cleanup, err := prepareFetchResponseLiterals(mapped, maxCommandFetchBytes)
 		if err != nil {
 			return err
@@ -84,20 +101,37 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 			return commandLimitError("STORE response byte limit exceeded")
 		}
 		responseBytes += wireBytes
-		if err := imapcodec.WriteFetchResponse(c.encoder, mapped, fetchLiteralSize); err != nil {
+		if err := writeFetchLikeResponse(c, mapped); err != nil {
 			return err
 		}
 		return c.encoder.Flush()
 	})
-	err = c.state.selected.mailbox.Store(ctx, writer, uids, &StoreFlags{Op: args.op, Flags: args.flags}, &StoreOptions{
-		MutationOptions: MutationOptions{Origin: origin},
-		Silent:          args.silent,
-	})
+	options := &StoreOptions{
+		MutationOptions:   MutationOptions{Origin: origin},
+		Silent:            args.silent,
+		UnchangedSince:    args.unchangedSince,
+		HasUnchangedSince: args.hasUnchangedSince,
+	}
+	flags := &StoreFlags{Op: args.op, Flags: args.flags}
+	// A conditional store takes the CONDSTORE path so the backend can report
+	// which messages it refused; an unconditional one stays on the base method.
+	var condStore *CondStoreResult
+	if args.hasUnchangedSince {
+		condStore, err = storeCondStore(ctx, c, writer, uids, flags, options)
+	} else {
+		err = c.state.selected.mailbox.Store(ctx, writer, uids, flags, options)
+	}
 	writer.core.close()
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
+	// RFC 7162 section 3.1.3: rejected messages are reported on a successful
+	// tagged OK through MODIFIED, not as a command failure.
+	if modified, ok := condStoreModifiedArgs(condStore); ok {
+		if err := writeTaggedCondition(c, command.tag, "OK", imap.CodeModified, modified, command.name+" completed"); err != nil {
+			return err
+		}
+	} else if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
 		return err
 	}
 	return c.drainUpdates(updateAccounting{origin: origin, effect: effectStore})
