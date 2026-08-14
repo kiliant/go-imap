@@ -64,6 +64,15 @@ everything landed by T23 stops at `done`.
     directions so enabling rev2 cannot silently change what a rev1 client sees.
     The `goimap` interop entry lists `IMAP4REV2` in its expected set.
 
+    Those probes run against `imapserver/memory`, which implements everything —
+    so they show the behaviour exists, not that the *gate* holds. It initially
+    did not: the capability was armed on the atomic-MOVE witness alone, so a
+    backend implementing MOVE and nothing else advertised rev2 and was held to
+    the rest of the incorporated set. The gate is now the conjunction of the
+    incorporated capabilities' own witnesses, listed as data in
+    `rev2Incorporated`; see `API-STABILITY.md` §10, "An umbrella capability is
+    witnessed by its members".
+
 ## Group A — core modern (task T08)
 
 | Capability | RFC | Client | Server |
