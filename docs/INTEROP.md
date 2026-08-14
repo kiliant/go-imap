@@ -247,11 +247,16 @@ still in progress.** RFC 3501 §7.4.1 (RFC 9051 §7.5.1):
 > to prevent a loss of synchronization of message sequence numbers between
 > client and server.
 
-Every command handler calls `drainUpdates` *after* writing its tagged response.
-With a client that does not pipeline, that lands between commands and looks
-correct. With a pipelining client it does not, because "after the tagged OK of
-command *n*" is simultaneously "while command *n+1* is in progress". A captured
-transcript of one session:
+This is not virgin ground: `127e342` ("defer expunge updates past completion")
+already made FETCH, STORE and SEARCH withhold expunges until after their tagged
+response, and `imapserver/cmd_update_order_test.go` pins it. That fix is correct
+for the case it tests — one command at a time.
+
+Pipelining defeats it. Every command handler calls `drainUpdates` *after*
+writing its tagged response, and "after the tagged OK of command *n*" is
+simultaneously "while command *n+1* is in progress" when the client sent *n+1*
+without waiting. Deferring past completion moves the expunge out of one
+forbidden window and into the next one. A captured transcript of one session:
 
 ```
 [5] S> 5.5 OK FETCH completed
@@ -262,11 +267,13 @@ transcript of one session:
 
 imaptest reports the consequence the RFC predicts — `Referenced message
 expunged seq=4 uid=0` — and eventually asserts internally once its view has
-desynchronised. The fix is a change to update-delivery ordering: withhold
-expunges until the server is responding to a command that permits them, rather
-than flushing after each tagged response. That is shared machinery owned by the
-server-core tasks, wants its own loopback regression tests, and is deliberately
-not being landed at the tail of T24.
+desynchronised. The fix is to make the condition "no FETCH/STORE/SEARCH is in
+flight" rather than "the command that just finished was one" — that is, withhold
+expunges until the server is responding to a command that permits them, taking
+the pipeline queue into account, instead of flushing after each tagged response.
+`cmd_update_order_test.go` is the right place to extend, with a pipelined case
+alongside its existing one-at-a-time cases. That is shared machinery owned by
+the server-core tasks and is deliberately not being landed at the tail of T24.
 
 **Open — a keyword created by `STORE` is never re-announced in `FLAGS`.** The
 server reports `$Label1` in a `FETCH FLAGS` response although no untagged
