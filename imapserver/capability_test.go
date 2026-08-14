@@ -591,7 +591,12 @@ func rootPackageDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "search.go")); err != nil {
-		t.Skipf("root package sources not present beside this module: %v", err)
+		// Fatal, not Skip. This is the gate that makes API-STABILITY §10
+		// branch (a) enforced rather than promised, and its failure mode is to
+		// let an unclassified key through — so it disappearing quietly is the
+		// one outcome it must not have.
+		t.Fatalf("root package sources are not beside this module, so the "+
+			"classification gate cannot run: %v", err)
 	}
 	return dir
 }

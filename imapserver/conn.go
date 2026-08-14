@@ -86,17 +86,24 @@ type conn struct {
 	readerRequests  chan readerRequest
 	budgetFreed     chan struct{}
 	queuedBytes     atomic.Int64
-	utf8Accept      atomic.Bool
-	resetDecoder    atomic.Bool
-	ready           chan struct{}
+	// inputPending reports that the reader has bytes it has not yet turned into
+	// a command — that the client is pipelining. Written by the reader
+	// goroutine, read by the event loop, which is why it is atomic.
+	inputPending atomic.Bool
+	utf8Accept   atomic.Bool
+	resetDecoder atomic.Bool
+	ready        chan struct{}
 
 	// notifyQueue and notifyUpdater are the session-scoped NOTIFY channel,
 	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
 	notifyQueue   *sessionUpdateQueue
 	notifyUpdater *SessionUpdater
 
-	state  sessionState // event-loop owned
-	logout bool
+	state sessionState // event-loop owned
+	// executingSeqSensitive is event-loop owned, like state: it is set and
+	// cleared inside execute and read only from drainUpdates.
+	executingSeqSensitive bool
+	logout                bool
 
 	fatalMu sync.Mutex
 	fatal   error
@@ -275,6 +282,14 @@ func (c *conn) readCommands() error {
 			command.bytes = int64(len(tag) + len(name) + 2)
 			command.parseErr = fmt.Errorf("command payload exceeds queue byte limit")
 		}
+		// Published after the whole command line has been consumed and before
+		// the command is queued. Both halves matter: read it earlier and the
+		// command's own unparsed arguments count as pipelined input, so it is
+		// always true; publish it later and the event loop can see the command
+		// without seeing that more follows, which is the race that lets an
+		// expunge into a pipeline.
+		c.inputPending.Store(decoder.Buffered() > 0)
+
 		if err := c.queueCommand(command); err != nil {
 			return err
 		}
@@ -554,7 +569,17 @@ func (c *conn) execute(command *queuedCommand) error {
 	if !c.state.allows(command.descriptor.states) {
 		return c.writeBad(command.tag, "command is not valid in this state")
 	}
-	if err := c.drainUpdates(updateAccounting{}); err != nil {
+	// Scoped to the pre-command drain alone. For a sequence-sensitive command
+	// that arrived in a pipeline, delivering here is as unsafe as delivering
+	// mid-command: the client composed this command against the numbering it
+	// has now. The handler's own drain, after its tagged response, is the point
+	// at which delivery becomes correct — so the flag is cleared before the
+	// handler runs, or that drain would defer forever and the update would
+	// never be sent at all.
+	c.executingSeqSensitive = sequenceSensitiveCommands[command.name]
+	err := c.drainUpdates(updateAccounting{})
+	c.executingSeqSensitive = false
+	if err != nil {
 		return err
 	}
 	ctx := c.ctx
@@ -678,9 +703,63 @@ func (c *conn) updateSignal() <-chan struct{} {
 	return c.state.selected.queue.signal
 }
 
+// expungeDeliveryDeferred reports whether unsolicited updates must wait.
+//
+// RFC 3501 §7.4.1: an EXPUNGE response must not be sent while responding to a
+// FETCH, STORE or SEARCH, "to prevent a loss of synchronization of message
+// sequence numbers between client and server".
+//
+// Deferring past a command's tagged completion satisfies that for a client that
+// waits, and Dovecot's imaptest showed it does not for a client that pipelines:
+// "after the tagged OK of command n" is simultaneously "while command n+1 is in
+// flight", so the expunge moves out of one forbidden window and into the next.
+// The captured transcript is in docs/INTEROP.md.
+//
+// The condition is therefore the queue, not the command that just finished. A
+// command already read but not yet executed was composed by the client against
+// the sequence view as it stands now; renumbering before it runs invalidates
+// the numbers it carries. Waiting until the connection has caught up is the
+// only point at which the two views are known to agree.
+//
+// Deferral is for *unsolicited* updates only. A drain carrying an origin or an
+// effect is accounting for changes this command caused, and it must run: that
+// is what suppresses the duplicate responses the command already wrote itself.
+// Those changes are also ones the client asked for, so they are not a surprise
+// to it.
+func (c *conn) expungeDeliveryDeferred(accounting updateAccounting) bool {
+	if accounting.origin != 0 || accounting.effect != effectNone {
+		return false
+	}
+	// Three ways to still be behind the client: a command parsed and waiting,
+	// bytes read but not yet parsed, or the command running right now being one
+	// whose numbering the client is relying on. The last is what makes the
+	// *final* command of a pipeline safe — its own completion drain is the
+	// first moment both views are known to agree.
+	return len(c.commands) > 0 || c.inputPending.Load() || c.executingSeqSensitive
+}
+
+// sequenceSensitiveCommands are the commands whose arguments or responses carry
+// message sequence numbers, and therefore the ones RFC 3501 §7.4.1 protects.
+// UID covers UID FETCH, UID STORE and UID SEARCH, whose untagged responses
+// still carry sequence numbers even though their arguments do not.
+var sequenceSensitiveCommands = map[string]bool{
+	"FETCH":  true,
+	"STORE":  true,
+	"SEARCH": true,
+	"SORT":   true,
+	"THREAD": true,
+	"UID":    true,
+}
+
 func (c *conn) drainUpdates(accounting updateAccounting) error {
 	selected := c.state.selected
 	if selected == nil || selected.queue == nil {
+		return nil
+	}
+	// Left queued, deliberately: nothing is popped, so the framework's sequence
+	// view does not advance past the client's either. Popping and withholding
+	// the responses would produce exactly the desynchronisation this prevents.
+	if c.expungeDeliveryDeferred(accounting) {
 		return nil
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told

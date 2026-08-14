@@ -32,6 +32,54 @@ import (
 // framework cannot name is one it cannot gate, and handing it to a backend is
 // the exact thing this exists to prevent.
 
+// keyGate decides whether a session may use one search key or fetch item.
+//
+// It is a predicate over session state rather than a capability token, and that
+// is the whole design. A token can only answer "did the backend witness this
+// name", and membership in the FETCH or SEARCH grammar is not always a
+// token question: a protocol revision can absorb an extension into the
+// baseline, after which the key is legal for a session that enabled the
+// revision whether or not the old token was ever advertised.
+//
+// BINARY[] is the case that proves it, and it proved it the hard way — the
+// first version of this file gated on the "BINARY" token and answered
+// NO [CANNOT] to a client it had just told to ENABLE IMAP4REV2. RFC 9051
+// incorporates the BINARY *fetch* half; the token additionally claims the
+// APPEND half, which rev2 did not incorporate, so the two are genuinely
+// different questions. SERVER-DESIGN.md §1 calls this "the case where the
+// distinction bites".
+//
+// The signature is deliberately identical to [featureDescriptor.Active]. The
+// framework already had this shape one file over and already had BINARY right
+// there; sharing the signature is what stops the two models drifting apart
+// again, because a gate can simply *be* a feature's own predicate.
+type keyGate func(state *sessionState, advertised map[string]bool) bool
+
+// baselineKey is the IMAP4rev1 grammar: available to every session.
+func baselineKey(*sessionState, map[string]bool) bool { return true }
+
+// requiresToken gates on a capability the backend witnesses by name.
+func requiresToken(name string) keyGate {
+	return func(_ *sessionState, advertised map[string]bool) bool { return advertised[name] }
+}
+
+// requiresFeature gates on a framework feature, which may be activated by a
+// token or by a protocol revision. See featureDescriptors in capability.go.
+func requiresFeature(id featureID) keyGate {
+	for _, descriptor := range featureDescriptors {
+		if descriptor.ID == id {
+			return func(state *sessionState, advertised map[string]bool) bool {
+				return descriptor.Active(state, advertised) &&
+					(descriptor.Requires == nil || descriptor.Requires(state))
+			}
+		}
+	}
+	// An unknown feature refuses rather than admits, matching the treatment of
+	// an unclassified key. TestEveryKeyGateResolves is what stops it being
+	// silent.
+	return func(*sessionState, map[string]bool) bool { return false }
+}
+
 // baselineSearchKeywords are the argument-less keys of the IMAP4rev1 baseline.
 // SearchKeyword is an open string type, so an unrecognised value is an
 // extension key this framework has not been taught, not a baseline one.
@@ -66,40 +114,40 @@ var baselineSearchStringKeys = map[imap.SearchStringKey]bool{
 // Containers are classified with no capability of their own: the walk in
 // requireCriteriaCapabilities descends into them, so gating a container would
 // double-report its children.
-func criterionCapability(criterion imap.SearchCriteria) (string, bool) {
+func criterionCapability(criterion imap.SearchCriteria) (keyGate, bool) {
 	switch criterion := criterion.(type) {
 	case imap.SearchAnd, imap.SearchOr, imap.SearchNot:
-		return "", true
+		return keyGate(baselineKey), true
 	case imap.SearchKeyword:
 		if baselineSearchKeywords[criterion] {
-			return "", true
+			return keyGate(baselineKey), true
 		}
 		if capability, ok := searchKeywordCapabilities[criterion]; ok {
-			return capability, true
+			return requiresToken(capability), true
 		}
-		return "", false
+		return nil, false
 	case imap.SearchString:
 		if baselineSearchStringKeys[criterion.Key] {
-			return "", true
+			return keyGate(baselineKey), true
 		}
-		return "", false
+		return nil, false
 	case imap.SearchDate, imap.SearchSize, imap.SearchUID, imap.SearchSeqNum,
 		imap.SearchFlagKeyword, imap.SearchHeaderField:
-		return "", true
+		return keyGate(baselineKey), true
 	case imap.SearchModSeq:
-		return "CONDSTORE", true
+		return requiresToken("CONDSTORE"), true
 	case imap.SearchWithin:
-		return "WITHIN", true
+		return requiresToken("WITHIN"), true
 	case imap.SearchObjectID:
-		return "OBJECTID", true
+		return requiresToken("OBJECTID"), true
 	case imap.SearchFuzzy:
-		return "SEARCH=FUZZY", true
+		return requiresToken("SEARCH=FUZZY"), true
 	case imap.SearchSavedResult:
-		return "SEARCHRES", true
+		return requiresToken("SEARCHRES"), true
 	case imap.SearchFilter:
-		return "FILTERS", true
+		return requiresToken("FILTERS"), true
 	default:
-		return "", false
+		return nil, false
 	}
 }
 
@@ -119,27 +167,33 @@ var baselineFetchItemKeywords = map[imap.FetchItemKeyword]bool{
 }
 
 // fetchItemCapability is criterionCapability for the FETCH item list.
-func fetchItemCapability(item imap.FetchItem) (string, bool) {
+func fetchItemCapability(item imap.FetchItem) (keyGate, bool) {
 	switch item := item.(type) {
 	case imap.FetchItemKeyword:
 		if baselineFetchItemKeywords[item] {
-			return "", true
+			return keyGate(baselineKey), true
 		}
 		if capability, ok := fetchItemKeywordCapabilities[item]; ok {
-			return capability, true
+			return requiresToken(capability), true
 		}
-		return "", false
+		return nil, false
 	case *imap.FetchItemBodySection, *imap.FetchItemBodyStructure:
-		return "", true
+		return keyGate(baselineKey), true
 	case *imap.FetchItemBinarySection, *imap.FetchItemBinarySectionSize:
-		// RFC 3516's FETCH half is incorporated into IMAP4rev2, but the BINARY
-		// token claims the APPEND half too. The witness is what a backend
-		// actually agreed to, so gate on it either way.
-		return "BINARY", true
+		// Not the BINARY token. SERVER-DESIGN.md §1 calls this "the case where
+		// the distinction bites": RFC 3516's FETCH half is incorporated into
+		// IMAP4rev2, so BINARY[] is legal for a rev2 client whether or not the
+		// BINARY capability — which additionally claims the APPEND half — is
+		// advertised. featureBinaryFetch already encodes exactly that, so the
+		// gate asks it rather than re-deriving the rule and getting it wrong.
+		//
+		// Gating on the token instead refused BINARY[] under rev2, which is how
+		// this was found.
+		return requiresFeature(featureBinaryFetch), true
 	case *imap.FetchItemPreview:
-		return "PREVIEW", true
+		return requiresToken("PREVIEW"), true
 	default:
-		return "", false
+		return nil, false
 	}
 }
 
@@ -149,7 +203,7 @@ func requireCriteriaCapabilities(c *conn, criteria imap.SearchCriteria) error {
 	if criteria == nil {
 		return nil
 	}
-	capability, classified := criterionCapability(criteria)
+	gate, classified := criterionCapability(criteria)
 	if !classified {
 		return &imap.Error{
 			Type: imap.ErrorTypeNo,
@@ -157,11 +211,11 @@ func requireCriteriaCapabilities(c *conn, criteria imap.SearchCriteria) error {
 			Text: fmt.Sprintf("unsupported search key %T", criteria),
 		}
 	}
-	if capability != "" && !advertisedCapabilities(c)[capability] {
+	if !gate(&c.state, advertisedCapabilities(c)) {
 		return &imap.Error{
 			Type: imap.ErrorTypeNo,
 			Code: imap.CodeCannot,
-			Text: fmt.Sprintf("search key requires the %s capability", capability),
+			Text: fmt.Sprintf("search key %T is not available in this session", criteria),
 		}
 	}
 	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
@@ -177,8 +231,12 @@ func requireCriteriaCapabilities(c *conn, criteria imap.SearchCriteria) error {
 // requireFetchItemCapabilities refuses a FETCH naming an item this session has
 // not been offered.
 func requireFetchItemCapabilities(c *conn, items []imap.FetchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	advertised := advertisedCapabilities(c)
 	for _, item := range items {
-		capability, classified := fetchItemCapability(item)
+		gate, classified := fetchItemCapability(item)
 		if !classified {
 			return &imap.Error{
 				Type: imap.ErrorTypeNo,
@@ -186,11 +244,11 @@ func requireFetchItemCapabilities(c *conn, items []imap.FetchItem) error {
 				Text: fmt.Sprintf("unsupported fetch item %T", item),
 			}
 		}
-		if capability != "" && !advertisedCapabilities(c)[capability] {
+		if !gate(&c.state, advertised) {
 			return &imap.Error{
 				Type: imap.ErrorTypeNo,
 				Code: imap.CodeCannot,
-				Text: fmt.Sprintf("fetch item requires the %s capability", capability),
+				Text: fmt.Sprintf("fetch item %T is not available in this session", item),
 			}
 		}
 	}

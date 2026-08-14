@@ -137,6 +137,31 @@ func (s *overPopulatingSession) Status(ctx context.Context, mailbox string, opti
 type wrappingBackend struct {
 	inner imapserver.Backend
 	wrap  func(imapserver.Session) imapserver.Session
+	// deny withholds capability tokens the inner backend would witness.
+	// memory implements CapabilitySupport on the Backend, not the Session, so
+	// this is the level at which a token can be taken away.
+	deny map[string]bool
+	// denyAll withholds every token, which is what a third-party backend that
+	// witnesses nothing looks like.
+	denyAll bool
+}
+
+// SupportsMove forwards the witness memory declares on its Backend. Without
+// this the wrapper silently withholds atomic MOVE, and with it IMAP4rev2 —
+// which is the wrapper trap the examples document, met in a test.
+func (b *wrappingBackend) SupportsMove() bool {
+	inner, ok := b.inner.(imapserver.MoveSupport)
+	return ok && inner.SupportsMove()
+}
+
+func (b *wrappingBackend) SupportsCapability(name string) bool {
+	if b.denyAll || b.deny[name] {
+		return false
+	}
+	if inner, ok := b.inner.(imapserver.CapabilitySupport); ok {
+		return inner.SupportsCapability(name)
+	}
+	return false
 }
 
 func (b *wrappingBackend) Authenticate(ctx context.Context, conn *imapserver.ConnInfo, credentials *imapserver.Credentials, options *imapserver.AuthenticateOptions) (imapserver.Session, error) {
@@ -258,7 +283,8 @@ func TestExtensionKeysAndItemsAreGated(t *testing.T) {
 		mailbox *noWitnessMailbox
 	)
 	backend := &wrappingBackend{
-		inner: memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}}),
+		denyAll: true,
+		inner:   memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}}),
 		wrap: func(session imapserver.Session) imapserver.Session {
 			return &noWitnessSession{
 				Session: session,
@@ -328,5 +354,84 @@ func TestExtensionKeysAndItemsAreGated(t *testing.T) {
 	writeRawCommand(t, clientSide, "A9 FETCH 1 (FLAGS)\r\n")
 	if _, tagged := collectUntilTag(t, reader, "A9 "); !strings.HasPrefix(tagged, "A9 OK") {
 		t.Errorf("baseline FETCH was refused: %q", tagged)
+	}
+}
+
+// TestParseAdmitsImpliesGateAdmits is the gate on the bug class the capability
+// gate introduced: a key the parser accepts and the framework otherwise
+// supports, refused by the gate.
+//
+// The instance is BINARY[]. RFC 9051 incorporates RFC 3516's *fetch* half, so
+// BINARY[] is legal for a session that enabled IMAP4rev2 whether or not the
+// BINARY token — which additionally claims the APPEND half rev2 did not
+// incorporate — was ever advertised. Gating on the token answered NO [CANNOT]
+// to a client the server had just told to ENABLE IMAP4REV2.
+//
+// The framework already knew the right answer: featureBinaryFetch says
+// "rev2 or the token". The gate now asks that predicate instead of re-deriving
+// it, and this test is what keeps the two from drifting apart again.
+func TestParseAdmitsImpliesGateAdmits(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		denyBinary bool
+		enableRev2 bool
+		want       string
+	}{
+		{name: "rev2-without-binary-token", denyBinary: true, enableRev2: true, want: "OK"},
+		{name: "rev1-with-binary-token", denyBinary: false, enableRev2: false, want: "OK"},
+		{name: "rev1-without-binary-token", denyBinary: true, enableRev2: false, want: "NO"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			deny := map[string]bool{}
+			if testCase.denyBinary {
+				deny["BINARY"] = true
+			}
+			backend := &wrappingBackend{
+				inner: memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}}),
+				wrap:  func(session imapserver.Session) imapserver.Session { return session },
+				deny:  deny,
+			}
+			server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+
+			serverSide, clientSide := net.Pipe()
+			go func() { _ = server.ServeConn(ctx, serverSide) }()
+			reader := bufio.NewReader(clientSide)
+			if _, err := reader.ReadString('\n'); err != nil {
+				t.Fatal(err)
+			}
+			writeRawCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+			if _, tagged := collectUntilTag(t, reader, "A1 "); !strings.HasPrefix(tagged, "A1 OK") {
+				t.Fatalf("LOGIN failed: %q", tagged)
+			}
+			if testCase.enableRev2 {
+				writeRawCommand(t, clientSide, "A2 ENABLE IMAP4REV2\r\n")
+				untagged, tagged := collectUntilTag(t, reader, "A2 ")
+				if !strings.HasPrefix(tagged, "A2 OK") {
+					t.Fatalf("ENABLE failed: %q", tagged)
+				}
+				enabled := false
+				for _, line := range untagged {
+					if strings.Contains(line, "ENABLED") && strings.Contains(line, "IMAP4REV2") {
+						enabled = true
+					}
+				}
+				if !enabled {
+					t.Fatalf("IMAP4REV2 was not enabled; the test would prove nothing: %v", untagged)
+				}
+			}
+			writeRawCommand(t, clientSide, "A3 SELECT INBOX\r\n")
+			if _, tagged := collectUntilTag(t, reader, "A3 "); !strings.HasPrefix(tagged, "A3 OK") {
+				t.Fatalf("SELECT failed: %q", tagged)
+			}
+
+			writeRawCommand(t, clientSide, "A4 FETCH 1 (BINARY[])\r\n")
+			_, tagged := collectUntilTag(t, reader, "A4 ")
+			if !strings.HasPrefix(tagged, "A4 "+testCase.want) {
+				t.Errorf("FETCH BINARY[] = %q, want %s", tagged, testCase.want)
+			}
+		})
 	}
 }

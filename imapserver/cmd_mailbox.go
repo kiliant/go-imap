@@ -66,10 +66,13 @@ func parseRename(decoder *imapwire.Decoder) (any, int64, error) {
 //
 // The backend's value is not modified: it may be shared, cached, or reused.
 //
-// An item that is not a bare keyword is passed through untouched. StatusItem is
-// an open interface — that is rule 1 applied to the STATUS list — so a future
-// RFC may add an item carrying arguments, and narrowing must not be the thing
-// that silently drops it.
+// An item that is not a bare keyword is skipped, because it has nowhere to go:
+// imap.StatusData.Values is keyed by StatusItemKeyword, so an argument-carrying
+// StatusItem has no representation in the reply type at all. That is a frozen
+// root-package constraint rather than a decision here — when package imap grows
+// such an item, StatusData and this helper change together. Saying so is worth
+// more than the comment this replaced, which claimed a pass-through the type
+// system forbids.
 func statusReply(data *imap.StatusData, items []imap.StatusItem) *imap.StatusData {
 	if data == nil || len(data.Values) == 0 {
 		return data

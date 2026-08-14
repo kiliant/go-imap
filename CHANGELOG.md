@@ -144,14 +144,33 @@ previous `imapserver/v*` tag.
   cancel at all. This package is a backend author's first stop, so it should not
   be the one place that ignores rule 2.
 
+#### Fixed
+
+- **Untagged `EXPUNGE` is no longer delivered while a pipelined `FETCH`,
+  `STORE` or `SEARCH` is outstanding**, which RFC 3501 §7.4.1 forbids because it
+  desynchronises message sequence numbers. Expunges were already deferred past a
+  command's tagged completion, and pipelining defeated that: "after the tagged
+  OK of command *n*" is simultaneously "while command *n+1* is in flight", so
+  the update left one forbidden window and entered the next. Found by Dovecot's
+  `imaptest`, which reported the consequence the RFC predicts —
+  `Referenced message expunged seq=4 uid=0`.
+
+  The condition is now the connection's own backlog rather than the command that
+  just finished: an unsolicited renumbering waits while a command is queued,
+  while input has been read but not yet parsed, and across the pre-command drain
+  of a sequence-sensitive command. Nothing is popped from the update queue while
+  deferred, so the framework's sequence view never runs ahead of the client's.
+
+- **BINARY fetch items are gated on the framework's feature rather than on the
+  `BINARY` token.** RFC 9051 incorporates RFC 3516's fetch half, so `BINARY[]`
+  is legal for a session that enabled IMAP4rev2 whether or not the token — which
+  additionally claims the APPEND half rev2 did not incorporate — was ever
+  advertised.
+
 #### Known issues
 
-- **Untagged `EXPUNGE` can be delivered during a pipelined `FETCH`, `STORE` or
-  `SEARCH`**, which RFC 3501 §7.4.1 forbids because it desynchronises sequence
-  numbers. Expunges are already deferred past a command's tagged completion;
-  pipelining defeats that, because "after the tagged OK of command *n*" is
-  "while command *n+1* is in flight". Found by Dovecot's `imaptest` and
-  recorded in its triaged table, so the suite fails on anything new.
+- ~~Untagged `EXPUNGE` during a pipelined `FETCH`/`STORE`/`SEARCH`~~ — **fixed**.
+  See *Fixed* above.
 - **A keyword created by `STORE` is not re-announced in `FLAGS`.**
 
 ## [1.0.0] - 2026-08-06
