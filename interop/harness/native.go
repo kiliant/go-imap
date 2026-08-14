@@ -25,7 +25,11 @@ import (
 // startNative runs a TierInProcess profile and applies the same readiness
 // probe the container path uses.
 func (m *Manager) startNative(ctx context.Context, profile definition.Profile) (_ *Server, err error) {
-	instance, err := profile.Native(ctx, &definition.NativeOptions{})
+	// nil rather than an empty struct: the harness configures nothing today, and
+	// the nil-means-defaults contract is worth having a caller that takes it —
+	// otherwise the branch is written for the first time on the day a field
+	// lands, having never run.
+	instance, err := profile.Native(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("interop: start native %s: %w", profile.Name, err)
 	}

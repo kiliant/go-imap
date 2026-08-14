@@ -302,7 +302,10 @@ func TestRequireTLSOverridesInsecureAuthentication(t *testing.T) {
 }
 
 func TestMoveAndRev2RequireAtomicMoveBackend(t *testing.T) {
-	server := New(moveSupportBackend{}, nil)
+	// The backend witnesses the spoken half of the incorporated set as well as
+	// atomic MOVE, because this test asserts the MOVE half of the rev2 gate and
+	// a backend that witnesses no token at all would fail it for another reason.
+	server := New(moveAndTokensBackend{}, nil)
 	server.framework[frameworkMove] = true
 	server.framework[frameworkRev2] = true
 	state := newSessionState(true)
@@ -399,6 +402,47 @@ func TestRev2RequiresEveryIncorporatedCapability(t *testing.T) {
 	if got := deriveCapabilities(&state, server); slices.Contains(got, "IMAP4REV2") {
 		t.Fatalf("IMAP4REV2 advertised for a MOVE-only session: %v", got)
 	}
+}
+
+// refusingBackend answers no to every spoken token. It is a definite refusal,
+// not the absence of an answer, which is the distinction the greeting has to
+// respect: a witness that can answer before authentication must be believed.
+type refusingBackend struct{ Backend }
+
+func (refusingBackend) SupportsMove() bool             { return true }
+func (refusingBackend) SupportsCapability(string) bool { return false }
+
+// TestRev2GreetingBelievesWitnessesThatCanAnswer covers the pre-authentication
+// path, which had no test at all — and so let witnessesRev2 short-circuit past
+// four witnesses that were perfectly able to answer, while the documentation
+// claimed the greeting was derived from what the backend could answer for.
+//
+// The greeting cannot be complete: NAMESPACE is witnessed by a method on a
+// session that does not exist yet, and that witness abstains. But a backend that
+// says no to UIDPLUS is not abstaining, and rev2 must not be offered to it.
+func TestRev2GreetingBelievesWitnessesThatCanAnswer(t *testing.T) {
+	server := New(refusingBackend{}, nil)
+	server.framework[frameworkMove] = true
+	server.framework[frameworkRev2] = true
+	state := newSessionState(true)
+	if got := deriveCapabilities(&state, server); slices.Contains(got, "IMAP4REV2") {
+		t.Fatalf("IMAP4REV2 in the greeting for a backend refusing every token: %v", got)
+	}
+
+	// The same backend witnessing the spoken half is offered rev2 in the
+	// greeting, because the only witness still outstanding is one that cannot
+	// answer until there is a session to inspect.
+	server.backend = moveAndTokensBackend{}
+	if got := deriveCapabilities(&state, server); !slices.Contains(got, "IMAP4REV2") {
+		t.Fatalf("IMAP4REV2 withheld from the greeting on an abstaining witness: %v", got)
+	}
+}
+
+type moveAndTokensBackend struct{ Backend }
+
+func (moveAndTokensBackend) SupportsMove() bool { return true }
+func (moveAndTokensBackend) SupportsCapability(name string) bool {
+	return slices.Contains(rev2Incorporated, name)
 }
 
 // TestRev2IncorporatedNamesResolve stops a typo in rev2Incorporated widening the

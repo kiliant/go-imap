@@ -476,13 +476,25 @@ revision is that nobody will remember to edit it. `TestRev2IncorporatedNamesReso
 gates the list against the descriptor table, because an unresolvable name reads as
 "needs no backend support" and so fails in the direction that advertises *more*.
 
-One limitation is deliberate and documented at the call site: before
-authentication there is no session, so a structural witness has nothing to assert
-against. The pre-authentication greeting is derived from what the backend itself
-can answer for, and the token is withdrawn once the session exists. That is sound
-because `ENABLE` consults the derived set too, so a backend that loses `IMAP4REV2`
-on authentication can never have rev2 enabled against it — which is the only place
-the advertisement has consequences.
+**There is no pre-authentication special case, and adding one would undo this.**
+The first version of the fix had one: it checked atomic MOVE alone before a
+session existed, on the reasoning that a structural witness has nothing to assert
+against yet. That reinstated the hand-written conjunction one path down, naming
+exactly one member — so adding a token to `rev2Incorporated` would have changed
+the greeting not at all, silently, which is the failure this section exists to
+prevent.
+
+Instead each witness decides for itself what it can say. The spoken ones answer
+from the backend, which they can do in any state; the structural ones abstain,
+matching `selectedImplements` and `supportsAtomicMove`, which already abstain
+before a mailbox is selected for the same reason. So the greeting reflects every
+witness that can answer, and the remainder is deferred rather than assumed. That
+the deferral is safe rests on `ENABLE` consulting the derived set too: a backend
+that loses `IMAP4REV2` on authentication can never have rev2 enabled against it,
+which is the only place the advertisement has consequences.
+
+The general rule: **a witness that cannot answer yet abstains; it does not answer
+no.** A witness that answers no is believed in every state.
 
 ### Witness tokens are API — the THREAD rename, recorded 2026-08-14
 

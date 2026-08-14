@@ -135,20 +135,20 @@ var rev2Incorporated = []string{
 // repeating it, so a capability cannot be witnessed one way for its own token
 // and another way for the umbrella.
 //
-// Before authentication there is no session, and a structural witness —
-// sessionImplements — has nothing to assert against and reports false for every
-// backend. So the pre-authentication greeting is derived from what the backend
-// itself can answer for, and the set is re-derived, and the token withdrawn,
-// once the session exists. That is sound because ENABLE consults the derived set
-// too: a backend that loses IMAP4REV2 on authentication can never have rev2
-// enabled against it, which is where the lie would have had consequences.
+// It is one loop in every state, deliberately. Each witness decides for itself
+// what it can say before authentication: the spoken ones answer from the backend,
+// and the structural ones abstain because there is no session to inspect yet.
+// A pre-authentication special case here would be the hand-written conjunction
+// this list exists to abolish — adding a token would then leave the greeting
+// silently unchanged.
+//
+// So the greeting reflects every witness that can answer, and the set is
+// re-derived — and the token withdrawn — once the session exists. That the
+// remainder is deferred rather than assumed is sound because ENABLE consults the
+// derived set too: a backend that loses IMAP4REV2 on authentication can never
+// have rev2 enabled against it, which is where a premature claim would have had
+// consequences.
 func witnessesRev2(state *sessionState, backend Backend) bool {
-	if !supportsAtomicMove(state, backend) {
-		return false
-	}
-	if state == nil || state.session == nil {
-		return true
-	}
 	for _, name := range rev2Incorporated {
 		witness := capabilityWitness(name)
 		if witness != nil && !witness(state, backend) {
@@ -160,8 +160,8 @@ func witnessesRev2(state *sessionState, backend Backend) bool {
 
 // capabilityWitness returns the named descriptor's backend witness, or nil when
 // the capability needs no backend support. It returns nil for an unknown name
-// as well; TestRev2IncorporatedResolve is what stops that being silent, because
-// a typo here would otherwise widen the gate rather than break a build.
+// as well; TestRev2IncorporatedNamesResolve is what stops that being silent,
+// because a typo here would otherwise widen the gate rather than break a build.
 func capabilityWitness(name string) func(*sessionState, Backend) bool {
 	for _, descriptor := range capabilityDescriptors {
 		if descriptor.Name == name {
