@@ -236,6 +236,64 @@ func TestLoopbackQResyncReportsVanished(t *testing.T) {
 	}
 }
 
+// TestLoopbackQResyncLiveRemovalsUseVanished covers the other half of RFC 7162
+// section 3.2.7: once QRESYNC is enabled, *every* removal is reported as
+// VANISHED, not only the ones answering a resynchronisation.
+//
+// It is a property of the session, so ENABLE alone is enough — no SELECT
+// parameter, no resynchronisation. The bug this pins shipped because every other
+// QRESYNC test selects with the resync parameter, where VANISHED (EARLIER) comes
+// from a different code path, and the one test that did expunge live discarded
+// its untagged responses. A client that had done nothing but ENABLE received
+// "* n EXPUNGE", which it is entitled to treat as a protocol error.
+func TestLoopbackQResyncLiveRemovalsUseVanished(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, clientSide, reader := newGroupARawSessionIn(t, ctx, true)
+
+	writeRawCommand(t, clientSide, "V1 ENABLE QRESYNC\r\n")
+	if _, tagged := collectUntilTag(t, reader, "V1 "); !strings.HasPrefix(tagged, "V1 OK") {
+		t.Fatalf("ENABLE QRESYNC failed: %q", tagged)
+	}
+	writeRawCommand(t, clientSide, "V2 SELECT INBOX\r\n")
+	collectUntilTag(t, reader, "V2 ")
+
+	writeRawCommand(t, clientSide, "V3 STORE 1 +FLAGS (\\Deleted)\r\n")
+	collectUntilTag(t, reader, "V3 ")
+	writeRawCommand(t, clientSide, "V4 EXPUNGE\r\n")
+	untagged, tagged := collectUntilTag(t, reader, "V4 ")
+	if !strings.HasPrefix(tagged, "V4 OK") {
+		t.Fatalf("EXPUNGE failed: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.Contains(line, "EXPUNGE") {
+			t.Errorf("EXPUNGE under QRESYNC reported %q, want VANISHED", strings.TrimSpace(line))
+		}
+	}
+	if line := findResponse(t, untagged, "* VANISHED"); !strings.HasSuffix(strings.TrimSpace(line), "1") {
+		t.Errorf("VANISHED = %q, want the removed UID 1", line)
+	}
+	// A live removal is not a resynchronisation, so it must not be EARLIER —
+	// a client applies the two differently. RFC 7162 section 3.2.10.1.
+	if line := findResponse(t, untagged, "* VANISHED"); strings.Contains(line, "EARLIER") {
+		t.Errorf("a live removal was marked EARLIER: %q", strings.TrimSpace(line))
+	}
+
+	// MOVE removes from the source mailbox too, through its own writer.
+	writeRawCommand(t, clientSide, "V5 CREATE Archive\r\n")
+	collectUntilTag(t, reader, "V5 ")
+	writeRawCommand(t, clientSide, "V6 MOVE 1 Archive\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "V6 ")
+	if !strings.HasPrefix(tagged, "V6 OK") {
+		t.Fatalf("MOVE failed: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.Contains(line, "EXPUNGE") {
+			t.Errorf("MOVE under QRESYNC reported %q, want VANISHED", strings.TrimSpace(line))
+		}
+	}
+}
+
 // RFC 7162 section 3.2.5: QRESYNC must be enabled before it is used as a
 // selection parameter, since the client has to be ready for VANISHED first.
 func TestLoopbackQResyncRequiresEnableFirst(t *testing.T) {

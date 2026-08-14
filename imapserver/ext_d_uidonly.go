@@ -75,14 +75,3 @@ func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
 	}
 	return imapcodec.WriteUIDFetchResponse(c.encoder, uid, &trimmed, fetchLiteralSize)
 }
-
-// uidOnlyRequiresUIDResponses reports whether EXPUNGE must be reported as
-// VANISHED.
-//
-// RFC 9586 section 3.3: an untagged EXPUNGE carries a sequence number, so it
-// cannot be sent at all once UIDONLY is enabled. VANISHED carries UIDs and is
-// the only removal report left, which is why UIDONLY implies QRESYNC's response
-// shape whether or not QRESYNC itself was enabled.
-func uidOnlyRequiresUIDResponses(c *conn) bool {
-	return uidOnlyEnabled(c)
-}

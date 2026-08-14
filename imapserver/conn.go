@@ -738,10 +738,10 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		}
 		return imapcodec.WriteFetchResponse(c.encoder, data, nil)
 	case updateMessageExpunge:
-		// An untagged EXPUNGE carries a sequence number and therefore cannot be
-		// sent under UIDONLY at all; VANISHED is the only removal report left.
-		// RFC 9586 section 3.3.
-		if uidOnlyEnabled(c) {
+		// An untagged EXPUNGE carries a sequence number, which UIDONLY forbids
+		// outright (RFC 9586 section 3.3) and which QRESYNC replaces with
+		// VANISHED for the life of the session (RFC 7162 section 3.2.7).
+		if removalsUseVanished(c) {
 			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
 				RawValue([]byte(imap.UIDSetNum(update.uid).String())).CRLF()
 			break

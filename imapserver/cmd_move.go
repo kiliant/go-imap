@@ -51,13 +51,19 @@ func handleMove(ctx context.Context, c *conn, command *queuedCommand) error {
 }
 
 func writeCommandExpunges(c *conn, ordered []imap.UID) error {
+	vanished := removalsUseVanished(c)
 	shadow := slices.Clone(c.state.selected.uids)
 	for _, uid := range ordered {
 		at, ok := slices.BinarySearch(shadow, uid)
 		if !ok {
 			continue
 		}
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(at + 1)).SP().Atom("EXPUNGE").CRLF()
+		if vanished {
+			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
+				RawValue([]byte(imap.UIDSetNum(uid).String())).CRLF()
+		} else {
+			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(at + 1)).SP().Atom("EXPUNGE").CRLF()
+		}
 		shadow = slices.Delete(shadow, at, at+1)
 	}
 	return c.encoder.Flush()

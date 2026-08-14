@@ -134,11 +134,23 @@ func parseQResyncSeqMatch(decoder *imapwire.Decoder, params *QResyncSelect) erro
 	})
 }
 
-// qresyncEnabled reports whether removals must be reported as VANISHED rather
-// than as EXPUNGE. RFC 7162 section 3.2.7 makes this a property of the session,
-// not of the command.
-func qresyncEnabled(c *conn) bool {
-	return c.state.enabledCapability("QRESYNC")
+// removalsUseVanished reports whether removals must be reported as VANISHED
+// rather than as a sequence-numbered EXPUNGE.
+//
+// Two separate rules land on the same answer. RFC 7162 section 3.2.7 makes
+// VANISHED mandatory once QRESYNC is enabled, as a property of the session
+// rather than of the command; RFC 9586 section 3.3 makes it the only removal
+// report available under UIDONLY, because an untagged EXPUNGE carries a sequence
+// number and UIDONLY forbids those outright.
+//
+// Every site that reports a removal asks this one question. They previously each
+// tested UIDONLY alone, so a QRESYNC client that had done nothing but ENABLE
+// received `* n EXPUNGE` — which it is entitled to treat as a protocol error,
+// and which no test noticed because the QRESYNC tests all select with the
+// resynchronisation parameter, where VANISHED (EARLIER) comes from a different
+// path.
+func removalsUseVanished(c *conn) bool {
+	return c.state.enabledCapability("QRESYNC") || uidOnlyEnabled(c)
 }
 
 // writeVanished writes an untagged VANISHED response.

@@ -56,9 +56,9 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 			return fmt.Errorf("imapserver: backend EXPUNGE returned unknown UID %d", uid)
 		}
 		if !silent {
-			// UIDONLY forbids the sequence-numbered EXPUNGE form.
-			// See ext_d_uidonly.go.
-			if uidOnlyRequiresUIDResponses(c) {
+			// QRESYNC mandates VANISHED and UIDONLY forbids the
+			// sequence-numbered form. See ext_b_qresync.go.
+			if removalsUseVanished(c) {
 				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
 					RawValue([]byte(imap.UIDSetNum(uid).String())).CRLF()
 			} else {
