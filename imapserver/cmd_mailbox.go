@@ -54,6 +54,41 @@ func parseRename(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, int64(len(args.oldName) + len(args.newName)), nil
 }
 
+// statusReply narrows a backend's STATUS data to the items the client asked
+// for.
+//
+// RFC 3501 section 6.3.10 defines the untagged STATUS response as the answer to
+// the request, not as everything the server happens to know. A backend that
+// fills its whole StatusData for convenience — the obvious way to write one —
+// would otherwise make the server volunteer items the client never named, and
+// the client has no way to tell a volunteered item from one it forgot it asked
+// for.
+//
+// The backend's value is not modified: it may be shared, cached, or reused.
+//
+// An item that is not a bare keyword is passed through untouched. StatusItem is
+// an open interface — that is rule 1 applied to the STATUS list — so a future
+// RFC may add an item carrying arguments, and narrowing must not be the thing
+// that silently drops it.
+func statusReply(data *imap.StatusData, items []imap.StatusItem) *imap.StatusData {
+	if data == nil || len(data.Values) == 0 {
+		return data
+	}
+	values := make(map[imap.StatusItemKeyword]any, len(items))
+	for _, item := range items {
+		keyword, ok := item.(imap.StatusItemKeyword)
+		if !ok {
+			continue
+		}
+		if value, ok := data.Values[keyword]; ok {
+			values[keyword] = value
+		}
+	}
+	narrowed := *data
+	narrowed.Values = values
+	return &narrowed
+}
+
 func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*statusArgs)
 	if args == nil {
@@ -63,7 +98,7 @@ func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, "STATUS", err)
 	}
-	if err := imapcodec.WriteStatusResponse(c.encoder, data); err != nil {
+	if err := imapcodec.WriteStatusResponse(c.encoder, statusReply(data, args.items)); err != nil {
 		return writeBackendError(c, command.tag, "STATUS", err)
 	}
 	if err := c.encoder.Flush(); err != nil {
