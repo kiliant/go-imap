@@ -42,6 +42,21 @@ type NativeServer struct {
 	_    struct{}
 }
 
+// NativeOptions configures an in-process server at start time. A nil pointer
+// selects the defaults.
+//
+// It is empty today and exists anyway. The container path already carries
+// Environment, Arguments, AdditionalPorts, ProvisionCommands and TLSPort as
+// start-time configuration, and the native path will want the analogues — the
+// first of them is a TLSConfig, without which a native profile cannot exercise
+// STARTTLS. Adding the parameter afterwards is the breaking change this
+// parameter exists to prevent; see docs/API-STABILITY.md §3.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type NativeOptions struct {
+	_ struct{}
+}
+
 // Profile describes one server in the interoperability matrix.
 // Exactly one of Image, BuildContext and Native must be set.
 //
@@ -56,7 +71,7 @@ type Profile struct {
 	//
 	// This exists because the matrix has to be able to hold our own server,
 	// which is a Go value in this process and not an image anyone publishes.
-	Native func(context.Context) (*NativeServer, error)
+	Native func(context.Context, *NativeOptions) (*NativeServer, error)
 	// FirstParty marks a profile this repository implements. A capability
 	// assertion failing against a third-party server usually means the
 	// container changed under us; against a first-party one it means our bug.

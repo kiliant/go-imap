@@ -1,3 +1,5 @@
+//go:build interop
+
 // Package interop puts this repository's own server into the interoperability
 // matrix, as a first-class entry alongside Dovecot, Stalwart and the rest.
 //
@@ -24,6 +26,14 @@
 // assumption is compiled into both halves. Running our server through the same
 // seeding, the same capability assertions and the same table as five
 // third-party servers is what makes that comparison possible.
+//
+// # Why it is behind the interop tag
+//
+// Every consumer of this package is already interop-tagged, and T25 turns
+// imapserver into a released nested module. Without the tag this test
+// scaffolding would compile into every build of that module and become part of
+// its public surface — permanently, since apidiff excludes interop paths and
+// would never report it.
 package interop
 
 import (
@@ -110,7 +120,7 @@ var Profile = definition.Profile{
 
 // start runs a server on an ephemeral loopback port, which is what the profile
 // registry wants: the harness dials it from this same process.
-func start(ctx context.Context) (*definition.NativeServer, error) {
+func start(ctx context.Context, _ *definition.NativeOptions) (*definition.NativeServer, error) {
 	return startOn(ctx, "127.0.0.1:0")
 }
 

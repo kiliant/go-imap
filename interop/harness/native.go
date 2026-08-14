@@ -25,7 +25,7 @@ import (
 // startNative runs a TierInProcess profile and applies the same readiness
 // probe the container path uses.
 func (m *Manager) startNative(ctx context.Context, profile definition.Profile) (_ *Server, err error) {
-	instance, err := profile.Native(ctx)
+	instance, err := profile.Native(ctx, &definition.NativeOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("interop: start native %s: %w", profile.Name, err)
 	}
