@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -191,5 +192,141 @@ func TestStatusResponseCarriesOnlyRequestedItems(t *testing.T) {
 	}
 	if !strings.Contains(line, "MESSAGES") {
 		t.Errorf("STATUS omitted the item that was asked for: %q", line)
+	}
+}
+
+// noWitnessSession witnesses nothing at all: no CapabilitySupport, no optional
+// interfaces. It is what a third-party backend compiled against a fixed set of
+// search keys and fetch items looks like from the framework's side.
+type noWitnessSession struct {
+	imapserver.Session
+	onSelect func(*noWitnessMailbox)
+}
+
+func (s *noWitnessSession) Select(ctx context.Context, mailbox string, updater *imapserver.Updater, options *imapserver.SelectOptions) (*imapserver.SelectResult, error) {
+	result, err := s.Session.Select(ctx, mailbox, updater, options)
+	if err != nil {
+		return nil, err
+	}
+	wrapped := &noWitnessMailbox{SelectedMailbox: result.Mailbox}
+	result.Mailbox = wrapped
+	if s.onSelect != nil {
+		s.onSelect(wrapped)
+	}
+	return result, nil
+}
+
+// noWitnessMailbox records every criterion and item it is handed, so the test
+// asserts on what actually reached the backend rather than on the wire reply.
+type noWitnessMailbox struct {
+	imapserver.SelectedMailbox
+	criteria []imap.SearchCriteria
+	items    []imap.FetchItem
+}
+
+func (m *noWitnessMailbox) Search(ctx context.Context, query *imapserver.SearchQuery, options *imapserver.SearchOptions) (*imapserver.SearchResult, error) {
+	m.criteria = append(m.criteria, query.Criteria())
+	return m.SelectedMailbox.Search(ctx, query, options)
+}
+
+func (m *noWitnessMailbox) Fetch(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, options *imapserver.FetchOptions) error {
+	if options != nil {
+		m.items = append(m.items, options.Items...)
+	}
+	return m.SelectedMailbox.Fetch(ctx, writer, uids, options)
+}
+
+// TestExtensionKeysAndItemsAreGated is the regression for the finding that an
+// extension SEARCH key or FETCH item reached the backend with no capability
+// gate at all.
+//
+// Every extension *command* handler calls requireCapability. A search key is
+// not a command and a fetch item is not a command, so both escaped it: a
+// backend witnessing nothing still received MODSEQ and FUZZY, having been
+// offered neither CONDSTORE nor SEARCH=FUZZY.
+//
+// The failure this prevents is not a crash. It is the next release of package
+// imap adding RFC 5257's ANNOTATION, every already-compiled backend receiving
+// it, and the permissive default branch such a backend reasonably wrote
+// returning a silently empty result.
+func TestExtensionKeysAndItemsAreGated(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var (
+		mu      sync.Mutex
+		mailbox *noWitnessMailbox
+	)
+	backend := &wrappingBackend{
+		inner: memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}}),
+		wrap: func(session imapserver.Session) imapserver.Session {
+			return &noWitnessSession{
+				Session: session,
+				onSelect: func(selected *noWitnessMailbox) {
+					mu.Lock()
+					defer mu.Unlock()
+					mailbox = selected
+				},
+			}
+		},
+	}
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+
+	serverSide, clientSide := net.Pipe()
+	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	writeRawCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	if _, tagged := collectUntilTag(t, reader, "A1 "); !strings.HasPrefix(tagged, "A1 OK") {
+		t.Fatalf("LOGIN failed: %q", tagged)
+	}
+	writeRawCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+	if _, tagged := collectUntilTag(t, reader, "A2 "); !strings.HasPrefix(tagged, "A2 OK") {
+		t.Fatalf("SELECT failed: %q", tagged)
+	}
+
+	for _, testCase := range []struct{ name, command string }{
+		{"search-fuzzy", "A3 SEARCH FUZZY SUBJECT \"x\""},
+		{"search-modseq", "A4 SEARCH MODSEQ 1"},
+		{"search-nested", "A5 SEARCH OR ALL MODSEQ 1"},
+		{"fetch-modseq", "A6 FETCH 1 (MODSEQ)"},
+		{"fetch-emailid", "A7 FETCH 1 (EMAILID)"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			tag := strings.SplitN(testCase.command, " ", 2)[0]
+			writeRawCommand(t, clientSide, testCase.command+"\r\n")
+			_, tagged := collectUntilTag(t, reader, tag+" ")
+			if !strings.HasPrefix(tagged, tag+" NO") {
+				t.Errorf("%s = %q, want NO: the session advertised no capability that licenses it",
+					testCase.command, tagged)
+			}
+		})
+	}
+
+	// The wire reply is the symptom. What the finding was actually about is
+	// what reached the backend, so assert on that directly — and fail if the
+	// recorder was never installed, because a nil here would otherwise make the
+	// whole check vacuous.
+	mu.Lock()
+	recorded := mailbox
+	mu.Unlock()
+	if recorded == nil {
+		t.Fatal("the recording mailbox was never installed; this test asserts nothing")
+	}
+	if len(recorded.criteria) != 0 || len(recorded.items) != 0 {
+		t.Errorf("ungated keys reached the backend: criteria=%v items=%v", recorded.criteria, recorded.items)
+	}
+
+	// A baseline search still works: the gate refuses what was never offered,
+	// not everything.
+	writeRawCommand(t, clientSide, "A8 SEARCH ALL\r\n")
+	if _, tagged := collectUntilTag(t, reader, "A8 "); !strings.HasPrefix(tagged, "A8 OK") {
+		t.Errorf("baseline SEARCH ALL was refused: %q", tagged)
+	}
+	writeRawCommand(t, clientSide, "A9 FETCH 1 (FLAGS)\r\n")
+	if _, tagged := collectUntilTag(t, reader, "A9 "); !strings.HasPrefix(tagged, "A9 OK") {
+		t.Errorf("baseline FETCH was refused: %q", tagged)
 	}
 }

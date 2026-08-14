@@ -58,7 +58,14 @@ var supportedCapabilities = map[string]bool{
 	"THREAD=ORDEREDSUBJECT": true,
 	"BINARY":                true,
 	"MULTISEARCH":           true,
-	"UTF8=APPEND":           true,
+	// SEARCH=FUZZY (RFC 6203). The shared evaluator answers FUZZY with exact
+	// matches, which RFC 6203 section 2 permits — the server chooses the
+	// algorithm, and an exact match is a fuzzy match with the confidence turned
+	// up. The token was missing while the behaviour was present, so the key
+	// parsed, evaluated and returned results from a server that never offered
+	// it. Advertising it is what makes the key legitimately usable.
+	"SEARCH=FUZZY": true,
+	"UTF8=APPEND":  true,
 	// Group E. LANGUAGE and URLAUTH witness themselves through their optional
 	// interfaces; these are the tokens that need a spoken claim.
 	"I18NLEVEL=1": true,

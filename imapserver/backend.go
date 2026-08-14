@@ -418,6 +418,10 @@ type QResyncSelect struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchOptions struct {
 	// Items are the data items requested for each matching message.
+	//
+	// Every item belongs to the IMAP4rev1 baseline or to a capability this
+	// session advertised. See [SearchQuery.Criteria] for why the framework
+	// refuses what it cannot classify rather than forwarding it.
 	Items []imap.FetchItem
 	// ChangedSince restricts the result to messages whose modification
 	// sequence is greater than this value. Zero means unrestricted.
@@ -739,6 +743,20 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 // enforces it for every command that builds a query, and
 // TestSearchCriteriaContainersAreTraversed fails if a future container key is
 // added to package imap without the traversal learning to descend into it.
+//
+// # Capability
+//
+// Every criterion in the tree belongs to the IMAP4rev1 baseline or to a
+// capability this session advertised, at every nesting depth. A backend that
+// witnesses no extension capability therefore receives baseline keys only, and
+// a criterion added by a later release of package imap cannot reach a backend
+// compiled before it existed — the framework refuses what it cannot classify
+// rather than passing it through.
+//
+// That matters more than it looks. Without it, teaching package imap a new key
+// silently widens what every already-compiled backend receives, and the
+// realistic outcome is not a crash but a permissive default branch returning an
+// empty result. See capability_keys.go, and docs/API-STABILITY.md §10.
 func (q *SearchQuery) Criteria() imap.SearchCriteria {
 	if q == nil {
 		return nil

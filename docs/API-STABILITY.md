@@ -496,6 +496,44 @@ which is the only place the advertisement has consequences.
 The general rule: **a witness that cannot answer yet abstains; it does not answer
 no.** A witness that answers no is believed in every state.
 
+### Search keys and fetch items are gated too — added by T25, 2026-08-14
+
+§10 says every extension *command* handler calls `requireCapability` before
+doing any work. That is true, and it does not cover the two lists this document
+spends the most words on. **A search key is not a command and a fetch item is
+not a command**, so both classes reached the backend with no gate at all: a
+backend witnessing nothing still received `FUZZY` and `MODSEQ`, from a server
+that advertised neither `SEARCH=FUZZY` nor `CONDSTORE`.
+
+While this repository owned both halves that was invisible and harmless. It
+stops being either the moment `imapserver/v0.1.0` exists, because then there is
+a population of backends compiled against a fixed set of criteria and items.
+Branch (b) of the rule above explicitly does not apply to `imap.SearchCriteria`
+or `imap.FetchItem`, so branch (a) is the only justification available — and
+branch (a) requires the framework to *guarantee* a new member never reaches a
+consumer that predates it, with a test enforcing it. No such mechanism existed;
+the framework had no notion of which capability a criterion belonged to.
+
+**The rule: the framework classifies every criterion and every fetch item, and
+refuses what it cannot classify.** The tables live in
+`imapserver/capability_keys.go` and are data, so RFC N+1 is a new row.
+`TestEverySearchKeyAndFetchItemIsClassified` reads the marker-method
+declarations in `package imap` and fails when one is missing from them, because
+forgetting fails *open* — an unclassified key that nobody notices is one the
+framework would hand to a backend ungated, which is the state this rule ends.
+
+Refusing rather than forwarding is the deliberate half. A key the framework
+cannot name is one it cannot gate, and RFC 5257's `ANNOTATION` — the candidate
+§10 nominates — is exactly the case: when `package imap` learns it, backends
+compiled today start receiving it having witnessed nothing, and the realistic
+failure is a permissive `default:` branch returning a silently empty result
+rather than anything anyone would notice.
+
+This also closed an advertisement gap of the T24 kind: `imapserver/memory`
+evaluated `FUZZY` through the shared evaluator but never witnessed
+`SEARCH=FUZZY`, so the key parsed, evaluated and returned results from a server
+that never offered it.
+
 ### Witness tokens are API — the THREAD rename, recorded 2026-08-14
 
 §10's witness rule makes the *token string* part of `CapabilitySupport`'s

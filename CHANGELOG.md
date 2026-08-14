@@ -128,6 +128,15 @@ previous `imapserver/v*` tag.
   from UNSELECT's deliberate lack of one. Both structs are empty today.
   `TestBackendMethodsTakeOptions` now gates the rule, which nothing did before.
 
+- **Extension SEARCH keys and FETCH items are capability-gated.** Previously a
+  backend witnessing nothing still received `FUZZY` and `MODSEQ` from a server
+  that advertised neither `SEARCH=FUZZY` nor `CONDSTORE`: every extension
+  *command* handler gated itself, but a search key is not a command and a fetch
+  item is not a command. The framework now classifies both — as data, in
+  `imapserver/capability_keys.go` — and refuses what it cannot classify.
+- `imapserver/memory` now witnesses `SEARCH=FUZZY`, which it evaluated but never
+  advertised.
+
 #### Known issues
 
 - **Untagged `EXPUNGE` can be delivered during a pipelined `FETCH`, `STORE` or

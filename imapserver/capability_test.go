@@ -6,6 +6,8 @@ import (
 	"go/printer"
 	"go/token"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -475,4 +477,121 @@ func optionsParameter(fset *token.FileSet, fn *ast.FuncType) bool {
 		return false
 	}
 	return strings.HasSuffix(rendered.String(), "Options")
+}
+
+// TestEverySearchKeyAndFetchItemIsClassified reads the declarations in package
+// imap and fails when one of them is missing from capability_keys.go.
+//
+// This is the gate that makes docs/API-STABILITY.md §10 branch (a) enforced
+// rather than promised. §10 says a criterion or item added to package imap may
+// only reach a backend if "the framework guarantees it never reaches a consumer
+// that predates it *and* a test enforces it for every path". This is that test.
+//
+// It matters because forgetting fails open. An unclassified criterion that
+// nobody notices is one the framework hands to a backend ungated — which is the
+// state the whole file was written to end — so the check cannot be "does the
+// switch compile", it has to be "does the switch mention everything that
+// exists".
+func TestEverySearchKeyAndFetchItemIsClassified(t *testing.T) {
+	root := rootPackageDir(t)
+	fset := token.NewFileSet()
+	packages, err := parser.ParseDir(fset, root, func(info fs.FileInfo) bool {
+		name := info.Name()
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, ok := packages["imap"]
+	if !ok {
+		t.Fatalf("package imap not found under %s", root)
+	}
+
+	// A type implements the marker by declaring the unexported method.
+	criteria, items := implementorsOf(pkg.Files, "searchCriteria"), implementorsOf(pkg.Files, "fetchItem")
+	if len(criteria) == 0 || len(items) == 0 {
+		t.Fatalf("found %d criteria and %d fetch items; the marker-method scan is broken",
+			len(criteria), len(items))
+	}
+
+	for _, name := range criteria {
+		if !classifiedCriterion(name) {
+			t.Errorf("imap.%s is a SearchCriteria that capability_keys.go does not classify.\n"+
+				"Unclassified means refused at the wire, so a key this framework "+
+				"supports would stop working; unlisted-and-forgotten means it reaches "+
+				"backends ungated. Add it to criterionCapability.", name)
+		}
+	}
+	for _, name := range items {
+		if !classifiedFetchItem(name) {
+			t.Errorf("imap.%s is a FetchItem that capability_keys.go does not classify. "+
+				"Add it to fetchItemCapability.", name)
+		}
+	}
+}
+
+// classifiedCriterion and classifiedFetchItem report whether the named type
+// appears in the classification source. Reading the source rather than calling
+// the function keeps the check honest for types that cannot be constructed
+// here without knowing their shape.
+func classifiedCriterion(name string) bool { return classificationMentions("imap." + name) }
+func classifiedFetchItem(name string) bool { return classificationMentions("imap." + name) }
+
+func classificationMentions(qualified string) bool {
+	source, err := os.ReadFile("capability_keys.go")
+	if err != nil {
+		return false
+	}
+	// Word boundary: imap.SearchUID must not be satisfied by imap.SearchUIDPlus.
+	for _, line := range strings.Split(string(source), "\n") {
+		for _, token := range strings.FieldsFunc(line, func(r rune) bool {
+			return r == ' ' || r == '\t' || r == ',' || r == ':' || r == '(' || r == ')' || r == '*' || r == '{'
+		}) {
+			if token == qualified {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// implementorsOf returns the exported types declaring the given marker method.
+//
+// It takes the file map rather than the enclosing package: ast.Package is
+// deprecated, and nothing here needs it.
+func implementorsOf(files map[string]*ast.File, marker string) []string {
+	var names []string
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != marker || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+			receiver := fn.Recv.List[0].Type
+			if star, ok := receiver.(*ast.StarExpr); ok {
+				receiver = star.X
+			}
+			ident, ok := receiver.(*ast.Ident)
+			if !ok || !ast.IsExported(ident.Name) {
+				continue
+			}
+			names = append(names, ident.Name)
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+// rootPackageDir locates the root module's package imap from inside the nested
+// imapserver module.
+func rootPackageDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "search.go")); err != nil {
+		t.Skipf("root package sources not present beside this module: %v", err)
+	}
+	return dir
 }
