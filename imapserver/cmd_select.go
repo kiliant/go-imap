@@ -32,6 +32,13 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 		return err
 	}
 	if err := writeSelectedMailboxList(ctx, c, mailbox); err != nil {
+		// RFC 9051 section 6.3.2: a SELECT that fails leaves no mailbox
+		// selected. This is the first failure point after the selection is
+		// installed, so answering NO without undoing it would leave the client
+		// believing nothing is selected while the server disagrees.
+		if abandonErr := abandonCurrentSelection(ctx, c); abandonErr != nil {
+			return writeBackendError(c, command.tag, command.name, abandonErr)
+		}
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	// The QRESYNC resynchronisation report follows the ordinary selection
