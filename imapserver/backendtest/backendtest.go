@@ -45,7 +45,13 @@ type Instance struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type Harness struct {
 	// New returns a fresh, isolated instance for one subtest.
-	New func() *Instance
+	//
+	// It takes a context and returns an error because a real backend's setup
+	// can block and can fail: opening a store, migrating a schema, reaching a
+	// service. Without them the only way to report a failure is to capture the
+	// subtest's *testing.T in the closure, and there is no way to cancel at all.
+	// Both are free to add now and permanent once this module is tagged v1.
+	New func(ctx context.Context) (*Instance, error)
 	_   struct{}
 }
 
@@ -300,7 +306,13 @@ func Run(t *testing.T, harness *Harness) {
 
 func newSession(t *testing.T, harness *Harness) (*Instance, imapserver.Session) {
 	t.Helper()
-	instance := harness.New()
+	instance, err := harness.New(t.Context())
+	if err != nil {
+		t.Fatalf("backendtest: harness could not construct an instance: %v", err)
+	}
+	if instance == nil {
+		t.Fatal("backendtest: harness returned no instance and no error")
+	}
 	if instance == nil || instance.Backend == nil {
 		t.Fatal("backendtest: factory returned nil instance or backend")
 	}

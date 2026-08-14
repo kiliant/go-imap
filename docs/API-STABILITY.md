@@ -553,6 +553,24 @@ breaking direction, and because the window in which it is free is exactly now:
 After `imapserver` v1.0 a rename of this kind needs the old token to keep working
 alongside the new one. Before it, they are free and should be made deliberately.
 
+### Deferred: `CapabilitySupport` takes neither context nor options — T25, 2026-08-14
+
+`SupportsCapability(name string) bool` breaks rules 2 and 3 on its face. A
+backend whose capability set lives in a database has no context to honour and no
+way to report a failure.
+
+**Deferred deliberately, with the window recorded.** Adding either parameter
+means threading a context through `deriveCapabilities`, which is called from the
+greeting, `CAPABILITY`, `ENABLE` and every `requireCapability` — a change with
+real blast radius, made at the tail of a release task, against a rule whose
+window runs to `imapserver` **v1.0** rather than to v0.1.0. `MessageLimitSession`
+already shows the established workaround for capabilities carrying a value, so
+nothing is blocked in the meantime.
+
+The same reasoning as the `MoveSupport` entry below, and the same obligation:
+this is free until `imapserver` v1.0 and permanent afterwards. Whoever cuts that
+release owns the decision.
+
 ### Exception: `MoveSupport` predates `CapabilitySupport` — recorded 2026-08-13
 
 `MoveSupport` (`SupportsMove() bool`) is a single-capability witness for atomic

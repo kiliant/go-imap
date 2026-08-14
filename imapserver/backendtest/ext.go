@@ -358,7 +358,13 @@ func runExtensions(t *testing.T, harness *Harness) {
 	})
 
 	t.Run("scram-credentials-are-derivations-not-passwords", func(t *testing.T) {
-		instance := harness.New()
+		instance, err := harness.New(t.Context())
+		if err != nil {
+			t.Fatalf("backendtest: harness could not construct an instance: %v", err)
+		}
+		if instance == nil {
+			t.Fatal("backendtest: harness returned no instance and no error")
+		}
 		if instance == nil || instance.Backend == nil {
 			t.Fatal("backendtest: factory returned nil instance or backend")
 		}

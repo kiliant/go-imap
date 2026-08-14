@@ -137,6 +137,13 @@ previous `imapserver/v*` tag.
 - `imapserver/memory` now witnesses `SEARCH=FUZZY`, which it evaluated but never
   advertised.
 
+- **BREAKING (pre-tag): `backendtest.Harness.New` takes a context and returns an
+  error**, `func(ctx context.Context) (*Instance, error)`. A real backend's setup
+  can block and can fail; without these the only way to report a failure was to
+  capture the subtest's `*testing.T` in the closure, and there was no way to
+  cancel at all. This package is a backend author's first stop, so it should not
+  be the one place that ignores rule 2.
+
 #### Known issues
 
 - **Untagged `EXPUNGE` can be delivered during a pipelined `FETCH`, `STORE` or

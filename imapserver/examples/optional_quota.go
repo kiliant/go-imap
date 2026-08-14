@@ -54,6 +54,22 @@ func (s *quotaSession) GetQuota(ctx context.Context, root string, options *imaps
 	}, nil
 }
 
+// Forward what the wrapper would otherwise hide.
+//
+// This is the other half of the trap config.go describes: the framework
+// discovers support by type-asserting the value it holds, and it holds this
+// wrapper. Everything the inner session implemented — NAMESPACE, ACL, METADATA,
+// two dozen interfaces in memory's case — disappears unless it is forwarded
+// like this. Forwarding one is the pattern; a real wrapper forwards each one it
+// means to keep.
+func (s *quotaSession) Namespace(ctx context.Context, options *imapserver.NamespaceOptions) (*imap.NamespaceData, error) {
+	inner, ok := s.Session.(imapserver.NamespaceSession)
+	if !ok {
+		return nil, &imap.Error{Type: imap.ErrorTypeNo, Text: "NAMESPACE is not supported"}
+	}
+	return inner.Namespace(ctx, options)
+}
+
 func main() {
 	backend := newWrappedBackend(
 		func(session imapserver.Session) imapserver.Session {
