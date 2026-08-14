@@ -91,9 +91,84 @@ var capabilityDescriptors = []capabilityDescriptor{
 	{Name: "LIST-EXTENDED", RequiresFramework: []frameworkComponent{frameworkListExtend}, States: stateMaskAuthenticated | stateMaskSelected},
 	{Name: "MOVE", RequiresFramework: []frameworkComponent{frameworkMove}, States: stateMaskAuthenticated | stateMaskSelected,
 		RequiresBackend: supportsAtomicMove},
-	{Name: "IMAP4REV2", RequiresFramework: []frameworkComponent{frameworkRev2, frameworkMove}, States: stateMaskAny,
-		RequiresBackend: supportsAtomicMove,
-		Enable:          func(state *sessionState) bool { return state.enable("IMAP4REV2") }},
+}
+
+// IMAP4REV2 is registered here rather than in the table above because it is the
+// only descriptor whose witness is other descriptors, and a table entry that
+// reads the table it is declared in is an initialisation cycle. Registering it
+// from init runs after the table exists. See rev2Incorporated and witnessesRev2.
+func init() {
+	registerCapabilities(capabilityDescriptor{
+		Name:              "IMAP4REV2",
+		RequiresFramework: []frameworkComponent{frameworkRev2, frameworkMove},
+		States:            stateMaskAny,
+		RequiresBackend:   witnessesRev2,
+		Enable:            func(state *sessionState) bool { return state.enable("IMAP4REV2") },
+	})
+}
+
+// rev2Incorporated names the capabilities RFC 9051 §1 folds into IMAP4rev2
+// whose behaviour only the backend can supply. SERVER-DESIGN.md §1 sets the bar:
+// IMAP4REV2 is advertised only when *every* incorporated behaviour is
+// implemented, because "advertising it otherwise is a lie the client cannot
+// detect" — the client has no way to ask which half it got.
+//
+// The rest of the incorporated set — ESEARCH, SEARCHRES, LIST-EXTENDED,
+// LIST-STATUS, ENABLE, IDLE, SASL-IR, LITERAL-, UNSELECT — is answered by the
+// framework from data the backend already returns, so a backend cannot fail to
+// support it and there is nothing to witness.
+//
+// This is a list rather than a predicate on purpose. A future revision that
+// incorporates more extensions adds a token here, which is a data change; a
+// hand-written conjunction would make it a code change, and the one thing we
+// know about the next revision is that nobody will remember to edit it.
+var rev2Incorporated = []string{
+	"CHILDREN",
+	"MOVE",
+	"NAMESPACE",
+	"SPECIAL-USE",
+	"STATUS=SIZE",
+	"UIDPLUS",
+}
+
+// witnessesRev2 asks each incorporated capability's own witness rather than
+// repeating it, so a capability cannot be witnessed one way for its own token
+// and another way for the umbrella.
+//
+// Before authentication there is no session, and a structural witness —
+// sessionImplements — has nothing to assert against and reports false for every
+// backend. So the pre-authentication greeting is derived from what the backend
+// itself can answer for, and the set is re-derived, and the token withdrawn,
+// once the session exists. That is sound because ENABLE consults the derived set
+// too: a backend that loses IMAP4REV2 on authentication can never have rev2
+// enabled against it, which is where the lie would have had consequences.
+func witnessesRev2(state *sessionState, backend Backend) bool {
+	if !supportsAtomicMove(state, backend) {
+		return false
+	}
+	if state == nil || state.session == nil {
+		return true
+	}
+	for _, name := range rev2Incorporated {
+		witness := capabilityWitness(name)
+		if witness != nil && !witness(state, backend) {
+			return false
+		}
+	}
+	return true
+}
+
+// capabilityWitness returns the named descriptor's backend witness, or nil when
+// the capability needs no backend support. It returns nil for an unknown name
+// as well; TestRev2IncorporatedResolve is what stops that being silent, because
+// a typo here would otherwise widen the gate rather than break a build.
+func capabilityWitness(name string) func(*sessionState, Backend) bool {
+	for _, descriptor := range capabilityDescriptors {
+		if descriptor.Name == name {
+			return descriptor.RequiresBackend
+		}
+	}
+	return nil
 }
 
 func hasAuthenticationBackend(_ *sessionState, backend Backend) bool { return backend != nil }

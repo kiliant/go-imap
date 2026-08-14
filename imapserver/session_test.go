@@ -52,6 +52,19 @@ type moveSupportSession struct{ stubSession }
 
 func (*moveSupportSession) SupportsMove() bool { return true }
 
+// fullRev2Session witnesses everything RFC 9051 incorporates: atomic MOVE, the
+// spoken tokens in rev2Incorporated, and NamespaceSession structurally. It is
+// the minimum a backend must be before IMAP4REV2 may be advertised for it.
+type fullRev2Session struct{ moveSupportSession }
+
+func (*fullRev2Session) SupportsCapability(name string) bool {
+	return slices.Contains(rev2Incorporated, name)
+}
+
+func (*fullRev2Session) Namespace(context.Context, *NamespaceOptions) (*imap.NamespaceData, error) {
+	return &imap.NamespaceData{}, nil
+}
+
 type noMoveSupportSession struct{ stubSession }
 
 func (*noMoveSupportSession) SupportsMove() bool { return false }
@@ -297,7 +310,7 @@ func TestMoveAndRev2RequireAtomicMoveBackend(t *testing.T) {
 		t.Fatalf("pre-auth rev2 omitted with backend witness: %v", got)
 	}
 	state.state = stateAuthenticated
-	state.session = &moveSupportSession{}
+	state.session = &fullRev2Session{}
 	if got := deriveCapabilities(&state, server); !slices.Contains(got, "MOVE") || !slices.Contains(got, "IMAP4REV2") {
 		t.Fatalf("authenticated atomic capabilities omitted: %v", got)
 	}
@@ -310,6 +323,97 @@ func TestMoveAndRev2RequireAtomicMoveBackend(t *testing.T) {
 	got := deriveCapabilities(&state, server)
 	if !slices.Contains(got, "MOVE") || !slices.Contains(got, "IMAP4REV2") {
 		t.Fatalf("atomic capabilities omitted with MoveMailbox: %v", got)
+	}
+}
+
+// partialRev2Session witnesses everything except one token, which is how a
+// backend written against an earlier revision of this framework looks: it
+// implements what it was asked for and nothing that arrived later.
+type partialRev2Session struct {
+	moveSupportSession
+	withhold string
+}
+
+func (s *partialRev2Session) SupportsCapability(name string) bool {
+	return name != s.withhold && slices.Contains(rev2Incorporated, name)
+}
+
+func (s *partialRev2Session) Namespace(context.Context, *NamespaceOptions) (*imap.NamespaceData, error) {
+	return &imap.NamespaceData{}, nil
+}
+
+// noNamespaceRev2Session speaks every token and does not implement
+// NamespaceSession. NAMESPACE is witnessed structurally, so this — not a
+// withheld token — is what a backend missing it actually looks like.
+type noNamespaceRev2Session struct{ moveSupportSession }
+
+func (*noNamespaceRev2Session) SupportsCapability(name string) bool {
+	return slices.Contains(rev2Incorporated, name)
+}
+
+// noMoveRev2Session is complete but for atomic MOVE, which is witnessed by
+// SupportsMove reporting false rather than by the method being absent.
+type noMoveRev2Session struct{ fullRev2Session }
+
+func (*noMoveRev2Session) SupportsMove() bool { return false }
+
+// TestRev2RequiresEveryIncorporatedCapability is the gate on SERVER-DESIGN.md
+// §1: IMAP4REV2 is a claim about the whole incorporated set, so withholding any
+// single member of it must withdraw the umbrella.
+//
+// Before this test the umbrella was gated on atomic MOVE alone, so a backend
+// witnessing MOVE and nothing else advertised rev2 and was then held to
+// UID EXPUNGE, APPENDUID, COPYUID, NAMESPACE and an untagged LIST on SELECT it
+// had never agreed to produce.
+func TestRev2RequiresEveryIncorporatedCapability(t *testing.T) {
+	server := New(moveSupportBackend{}, nil)
+	server.framework[frameworkMove] = true
+	server.framework[frameworkRev2] = true
+
+	for _, withhold := range rev2Incorporated {
+		t.Run(withhold, func(t *testing.T) {
+			state := newSessionState(true)
+			state.state = stateAuthenticated
+			// Each capability has to be withheld the way its own witness reads
+			// it. Dropping the NAMESPACE token from a session that still has the
+			// method withholds nothing, because the method is the witness.
+			switch withhold {
+			case "MOVE":
+				state.session = &noMoveRev2Session{}
+			case "NAMESPACE":
+				state.session = &noNamespaceRev2Session{}
+			default:
+				state.session = &partialRev2Session{withhold: withhold}
+			}
+			if got := deriveCapabilities(&state, server); slices.Contains(got, "IMAP4REV2") {
+				t.Fatalf("IMAP4REV2 advertised without %s: %v", withhold, got)
+			}
+		})
+	}
+
+	// The T23-era backend the guardian probed with: atomic MOVE and nothing
+	// else. It advertised IMAP4REV2 before this gate existed.
+	state := newSessionState(true)
+	state.state = stateAuthenticated
+	state.session = &moveSupportSession{}
+	if got := deriveCapabilities(&state, server); slices.Contains(got, "IMAP4REV2") {
+		t.Fatalf("IMAP4REV2 advertised for a MOVE-only session: %v", got)
+	}
+}
+
+// TestRev2IncorporatedNamesResolve stops a typo in rev2Incorporated widening the
+// gate silently. capabilityWitness returns nil for an unknown name, which reads
+// as "needs no backend support" — the failure direction that advertises more,
+// not less, and the one no other test would notice.
+func TestRev2IncorporatedNamesResolve(t *testing.T) {
+	for _, name := range rev2Incorporated {
+		if !slices.ContainsFunc(capabilityDescriptors, func(d capabilityDescriptor) bool { return d.Name == name }) {
+			t.Errorf("rev2Incorporated names %q, which has no capability descriptor", name)
+			continue
+		}
+		if capabilityWitness(name) == nil {
+			t.Errorf("%s has no backend witness, so requiring it for IMAP4REV2 asserts nothing", name)
+		}
 	}
 }
 
