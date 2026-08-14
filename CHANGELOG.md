@@ -15,10 +15,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   *Changed* or *Removed* marked `BREAKING`, with the reason. After v1.0 the
   policy hardens: additive only, and a removal needs two minor releases of
   deprecation and does not land before a major.
+- **Entries name their module.** Since T25 the repository holds two modules with
+  independent version lines: the root module at `v1.x` and `imapserver` at
+  `v0.x`, tagged `imapserver/v0.a.b`. They make different promises, so an entry
+  that does not say which module it belongs to does not say whether it was
+  allowed. See `docs/RELEASING.md`.
 
 ## [Unreleased]
 
-### Added
+### Root module — `github.com/kiliant/go-imap`
+
+#### Added
 
 - `imap.Envelope.RawDate`, allowing servers to reproduce malformed or unusually
   spelled message Date headers when encoding ENVELOPE data.
@@ -27,7 +34,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `internal/imapcodec`, and streaming message analysis/SEARCH evaluation in
   `internal/imapmessage`.
 
-### Changed
+#### Changed
 
 - `imapclient` now uses the shared semantic codec for FETCH, SEARCH, ENVELOPE
   and BODYSTRUCTURE without changing its exported API or interoperability
@@ -44,6 +51,79 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   cannot drift apart again, and a test requires the two constant sets to stay
   one-for-one. `imapclient`'s exported API is unchanged; `apidiff`
   reports no difference for it.
+
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Not yet released. This is the content of the first `imapserver/v0.1.0` tag.
+
+**This module does not carry the root module's v1 compatibility promise.** It is
+v0.x deliberately: the backend contract has had one round of real backend
+authors and no more, and freezing it on that evidence is how the library this
+project exists to replace ended up in beta for years. Breaks between minors are
+allowed, will be named here, and are caught by `apidiff` running against the
+previous `imapserver/v*` tag.
+
+#### Added
+
+- **The server framework.** Exported API: `Server`, `New`, `Serve`, `Options`,
+  `Limits`, `ConnInfo`, `Credentials` and the connection lifecycle around them.
+  Protocol framing, connection state, capability negotiation, sequence-number
+  translation and update delivery are the framework's; accounts and stored mail
+  are the backend's.
+- **The backend contract.** Exported API: `Backend`, `Session`,
+  `SelectedMailbox` — the mandatory IMAP4rev1 baseline, frozen by design — plus
+  the writer types they stream through: `ListWriter`, `FetchWriter`,
+  `ExpungeWriter`, `Updater`. A future extension adds an optional interface or
+  a guarded option field, never a method to one of these.
+- **Update delivery.** Exported API: the `Update` interface and its variants,
+  plus `UpdateBatch` and `ChangeToken`. A backend publishes changes; the
+  framework decides what each connection may see and when, which is what keeps a
+  command from being told about a change it must not observe yet.
+- **Twenty-four optional capability interfaces**, discovered by type assertion:
+  `MoveMailbox`, `CondStoreMailbox`, `QResyncMailbox`, `ReplaceMailbox`,
+  `SortMailbox`, `ThreadMailbox`, `MultiSearchSession`, `CatenateSession`,
+  `ACLSession`, `ACLSetSession`, `QuotaSession`, `QuotaSetSession`,
+  `MetadataSession`, `NamespaceSession`, `NotifySession`, `FilterSession`,
+  `ComparatorSession`, `LanguageSession`, `URLAuthSession`,
+  `MessageLimitSession`, `UnauthenticateSession`, `SCRAMCredentials`, and the
+  `MoveSupport` / `CapabilitySupport` witnesses. Adding a capability is a new
+  interface or a new witness token, not a change to an existing type.
+- **~55 capabilities across RFC groups A–E**, listed per RFC in
+  `docs/RFC-COVERAGE.md`. Everything in scope is implemented except UTF8=ALL and
+  UTF8=USER (deprecated by RFC 9755) and UTF8=ONLY (asserts a deployment policy
+  the framework does not enforce), each recorded with its reason.
+- **`imapserver/memory`** — a supported in-memory backend implementing every
+  optional interface, not a toy: it is what this project's own conformance and
+  interoperability suites run against.
+- **`imapserver/backendtest`** — a reusable conformance suite a third-party
+  backend can point at itself. It exercises the mandatory contract and every
+  optional interface implemented, skipping the rest. A backend author's first
+  stop, ahead of the interface list.
+- **Runnable examples** under `imapserver/examples/`: a minimal server, a TLS
+  one, and one per optional-interface witness style.
+
+#### Notes for backend authors
+
+- **A session wrapper hides every optional interface it wraps.** The framework
+  discovers support by type-asserting the value it holds. Wrap a session that
+  implements two dozen optional interfaces in a type implementing one, and the
+  server supports one. `imapserver/examples/config.go` documents the pattern
+  and the trap together.
+- **`IMAP4REV2` is an umbrella and is witnessed by its members.** A backend is
+  offered it only when it witnesses the whole set RFC 9051 §1 incorporates —
+  CHILDREN, MOVE, NAMESPACE, SPECIAL-USE, STATUS=SIZE and UIDPLUS. Witnessing
+  only some of them and being held to all of them was a real defect, caught in
+  review before the first tag; see `docs/API-STABILITY.md` §10.
+
+#### Known issues
+
+- **Untagged `EXPUNGE` can be delivered during a pipelined `FETCH`, `STORE` or
+  `SEARCH`**, which RFC 3501 §7.4.1 forbids because it desynchronises sequence
+  numbers. Expunges are already deferred past a command's tagged completion;
+  pipelining defeats that, because "after the tagged OK of command *n*" is
+  "while command *n+1* is in flight". Found by Dovecot's `imaptest` and
+  recorded in its triaged table, so the suite fails on anything new.
+- **A keyword created by `STORE` is not re-announced in `FLAGS`.**
 
 ## [1.0.0] - 2026-08-06
 
