@@ -124,11 +124,12 @@ Fixtures live in `interop/harness/fixtures.go` and are installed over IMAP
 `APPEND` after the server starts, not baked into images — otherwise each new
 server needs its own mailbox-format tooling.
 
-## Testing our own server — planned, milestone M6
+## Testing our own server — milestone M6
 
-No `imapserver` code exists yet; this section is the runbook the server work
-(T24) implements against, recorded now so the design in `docs/SERVER-DESIGN.md`
-§6 is committed to something concrete rather than a good intention.
+Written as a runbook before `imapserver` existed, so the design in
+`docs/SERVER-DESIGN.md` §6 was committed to something concrete rather than a
+good intention. T24 has since implemented it; each section below records what
+landed where.
 
 The client's rule — verified against at least two independent implementations
 before a capability is `verified` — has an obvious problem in the other
@@ -144,9 +145,15 @@ proves nothing about RFC conformance.
 
 ### 2. The matrix, pointed at ourselves — highest value per unit of work
 
-`imapserver` + the in-memory backend becomes an entry in
-`interop/servers/goimap/`, exactly like Dovecot and Stalwart: a `profile.go`
-declaring expected capabilities, registered in `interop/harness/registry.go`.
+`imapserver` + the in-memory backend is an entry with a `profile.go` declaring
+expected capabilities, exactly like Dovecot and Stalwart.
+
+It lives in `imapserver/interop/` rather than the `interop/servers/goimap/` this
+section originally planned. The reason is a module cycle: a profile for our own
+server has to import `imapserver`, and `interop/harness`'s registry imports
+every profile, so putting it under `interop/servers/` would make the harness a
+dependency of the thing it tests. The profile is passed to `harness.Run`
+explicitly instead — see `imapserver/interop/main_test.go`.
 
 Everything in this document then applies unchanged — same fixtures installed over
 `APPEND`, same skip/assert distinction, same per-capability table. The result is
@@ -165,18 +172,137 @@ the harness must not assume every profile has a container.
 ### 3. `imaptest` — the external check that matters
 
 Dovecot's `imaptest` is the de-facto IMAP server conformance and stress tool,
-written by people who have fielded every client bug there is. Run it against our
-server in a container, as a Tier 2 entry.
+written by people who have fielded every client bug there is.
 
 This is the highest-value single external check available, and the one thing on
 this list that can find a conformance bug our own code is blind to.
 
+Landed in `imapserver/interop/imaptest_test.go`, behind `-tags=interop`, with
+the image in `imapserver/interop/testdata/imaptest/`. Two invocations: the
+scripted transcript corpus, which is the nearest thing IMAP has to an executable
+conformance suite, and a bounded randomised stress run with concurrent clients,
+which is where selection teardown and update delivery race.
+
+**Dovecot is built from source in that image, and that is not gold-plating.**
+`imaptest` compiles against Dovecot's *internal* headers, which carry no
+stability promise across releases, so the distribution packages cannot be used
+in either Debian release available:
+
+| Base | Ships | Result |
+|---|---|---|
+| trixie | Dovecot 2.4 | `imaptest` main fails on changed `iostream-rawlog.h` signatures |
+| bookworm | Dovecot 2.3.19.1 | patched `imap_parser_create` takes an argument no `imaptest` branch passes |
+
+Building upstream Dovecot 2.3.21 and pointing `--with-dovecot` at its source
+tree is what upstream documents, and it is the only combination that is a
+matched pair by construction rather than by luck. **The Dovecot version and the
+`imaptest` commit move together or neither moves.**
+
 ### 4. Real client software
 
-`mbsync`/`isync` and `offlineimap`, scripted against our server. They exercise
-long-tail sequencing — UIDVALIDITY changes mid-sync, partial fetches resumed,
-CONDSTORE replay — that no suite written alongside the server thinks to
-exercise.
+`mbsync`/`isync`, scripted against our server. Real clients exercise long-tail
+sequencing — UIDVALIDITY handling, resumed partial fetches, a second pass that
+must recognise its own prior state — that no suite written alongside the server
+thinks to exercise.
+
+Landed in `imapserver/interop/mbsync_test.go`, with the image in
+`imapserver/interop/testdata/mbsync/`. It runs a full sync and then a resync in
+one container, so the second pass sees the first's Maildir and sync state. The
+resync is the half that matters: a first pass only proves the server can be
+read, while the second proves UIDVALIDITY, UIDNEXT and per-message UIDs were
+reported consistently enough that a synchroniser recognises its own state
+instead of re-downloading — the bug class that makes a server unusable with real
+clients while every unit test still passes.
+
+`offlineimap` is deliberately not a second entry. It would exercise the same
+protocol surface as `mbsync` for a second Python runtime's worth of image build,
+and the acceptance criterion asks for at least one real client completing a
+sync/resync cycle. Add it if a bug is ever found that `mbsync` cannot express.
+
+#### What imaptest found, and what is still open
+
+It paid for itself on the first run that reached the server. All three are
+things every test in this repository passed, because every test here was
+written by the people who wrote the server.
+
+**Fixed — `STORE` rejected the unparenthesised flag list.** RFC 3501 §9 and RFC
+9051 §9 both define
+
+```
+store-att-flags = (["+" / "-"] "FLAGS" [".SILENT"]) SP
+                  (flag-list / (flag *(SP flag)))
+```
+
+so `STORE 1 +FLAGS \Deleted` is as valid as `STORE 1 +FLAGS (\Deleted)`. Only
+the parenthesised form was accepted, so imaptest — and any other client using
+the bare form — could not set a flag at all. Nothing in this repository ever
+generated the bare form, which is exactly why no test caught it. Fixed in
+`cmd_store.go`, pinned by `cmd_store_test.go`.
+
+**Open — `EXPUNGE` is delivered while a pipelined `FETCH`/`STORE`/`SEARCH` is
+still in progress.** RFC 3501 §7.4.1 (RFC 9051 §7.5.1):
+
+> An EXPUNGE response MUST NOT be sent when no command is in progress, nor
+> while responding to a FETCH, STORE, or SEARCH command. This rule is necessary
+> to prevent a loss of synchronization of message sequence numbers between
+> client and server.
+
+Every command handler calls `drainUpdates` *after* writing its tagged response.
+With a client that does not pipeline, that lands between commands and looks
+correct. With a pipelining client it does not, because "after the tagged OK of
+command *n*" is simultaneously "while command *n+1* is in progress". A captured
+transcript of one session:
+
+```
+[5] S> 5.5 OK FETCH completed
+[5] S> * 4 EXPUNGE          <- 5.6 FETCH is outstanding here
+[5] S> * 3 EXPUNGE
+[5] S> 5.6 OK FETCH completed
+```
+
+imaptest reports the consequence the RFC predicts — `Referenced message
+expunged seq=4 uid=0` — and eventually asserts internally once its view has
+desynchronised. The fix is a change to update-delivery ordering: withhold
+expunges until the server is responding to a command that permits them, rather
+than flushing after each tagged response. That is shared machinery owned by the
+server-core tasks, wants its own loopback regression tests, and is deliberately
+not being landed at the tail of T24.
+
+**Open — a keyword created by `STORE` is never re-announced in `FLAGS`.** The
+server reports `$Label1` in a `FETCH FLAGS` response although no untagged
+`FLAGS` response ever listed it for the mailbox. RFC 3501 §7.2.6 makes the
+untagged `FLAGS` response the mailbox's applicable flag set, and a server
+whose set changes is expected to send a new one.
+
+Both open findings are recorded in `imaptest_test.go`'s `triaged` table, so the
+stress test stays green for them and fails on anything new. Deleting an entry
+from that table when the bug is fixed is the intended lifecycle.
+
+The scripted corpus is a third, different case: it never ran at all. imaptest's
+script runner aborts with `FIXME: Add support for sync literals` unless the
+server advertises `LITERAL+`, and this server advertises `LITERAL-` (RFC 7888),
+capping unsolicited non-synchronising literals at 4096 octets. That is a
+limitation of the tool, not a finding about the server, and the test skips
+loudly rather than silently — an earlier version reported PASS on that abort,
+because a tool refusing to start is indistinguishable from a tool finding
+nothing wrong unless you check.
+
+#### Both of these invert the harness
+
+Every profile in `interop/harness` is a *server*, usually in a container, dialled
+from the test process. `imaptest` and `mbsync` are the other way round: the
+client is in the container and the server is a value in this process. That does
+not fit `definition.Profile`, so these tests do not go through the registry.
+
+They keep its two standing rules. Absent tooling — no `podman`, no network for a
+base image, a build that fails — **skips**, because a permanently red matrix is
+a matrix nobody reads. A protocol failure once the client is actually running
+**fails**, because unlike a third-party server container we control both halves.
+
+The server is reached at `host.containers.internal`, so its listener binds every
+interface rather than loopback; `startOn` in `profile.go` exists for exactly
+that, and both shapes construct the same server the capability matrix measures
+rather than a second one configured by hand.
 
 ### 5. Server-side fuzzing
 
@@ -185,3 +311,23 @@ The mirror of T13, and non-optional. The command parser faces hostile input from
 hostile-server case. Bar unchanged: no panic, no hang, no unbounded allocation.
 The corpus starts from real client traffic captured here and from `imaptest`,
 not from invention.
+
+The corpus rule is honoured literally: `imapserver/interop/capture_test.go` runs
+the third-party clients through a recording proxy and writes their sessions into
+`imapserver/testdata/fuzz/FuzzServeConnPreAuth/`. Capture is opt-in behind
+`GOIMAP_CAPTURE_CORPUS`, because a test that rewrote checked-in corpus files on
+every run would make the corpus a function of who last ran the interop suite.
+
+That is not ceremony. A 45-second campaign over the enriched corpus found 84 new
+interesting inputs, because captured traffic reaches command shapes nobody here
+would have thought to write down — which is the entire argument against
+hand-written seeds.
+
+No separate runner was needed. `.github/scripts/fuzz.sh` **discovers** targets
+rather than listing them — that is T13's standing policy, and the reason is that
+a hand-maintained list is precisely how `FuzzParseSeqSet` went uncampaigned and
+how extension groups C, D and E once shipped with no targets at all. Nothing
+failed; the list simply did not mention them. So the server's targets joined the
+nightly campaign the moment they existed, and `imapserver`'s whole-connection
+targets (`FuzzServeConnPreAuth`, `FuzzServeConnAuthenticated`) cover command
+decoding end to end rather than only the parser in isolation.

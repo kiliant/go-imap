@@ -55,24 +55,22 @@ const (
 // extensions other entries are compared on never silently disappear.
 //
 // The list holds what this server advertises to an authenticated session, which
-// is the state the harness measures. Four things a reader might expect are
-// absent, and none of them is absent by oversight:
+// is the state the harness measures. What a reader might expect and not find is
+// absent for a reason, not by oversight:
 //
 //   - AUTH=PLAIN and STARTTLS are pre-authentication capabilities. They are in
 //     the greeting and gone from the post-LOGIN set, which is correct.
 //     STARTTLS additionally needs a TLSConfig this profile does not set.
-//   - UIDPLUS (RFC 4315) is never advertised. The server emits APPENDUID and
-//     COPYUID response codes, but UID EXPUNGE is not in the UID subcommand
-//     table, so the capability would be a false claim. RFC-COVERAGE.md records
-//     the server side as done; that overstates it. Reported by T24.
-//   - IMAP4REV2 is never advertised: frameworkRev2 is hardcoded false and
-//     nothing sets it, so no client can ENABLE the rev2 behaviour the rest of
-//     the package implements. Reported by T24.
+//   - THREAD=ORDEREDSUBJECT is the only threading algorithm listed, because it
+//     is the only one the reference backend witnesses; REFERENCES needs a
+//     Message-ID graph it does not retain. RFC 5256 spells the capability per
+//     algorithm and defines no bare THREAD token.
 //
-// THREAD is listed under the bare token the server actually sends. RFC 5256
-// defines the capability as THREAD=<algorithm> and has no bare form, so this
-// entry is pinning a known-wrong string on purpose: changing it belongs with
-// the fix, and until then the profile must describe what is really on the wire.
+// IMAP4REV2 is listed. It was gated off entirely until T24, because the
+// advertisement is a claim that every behaviour RFC 9051 incorporates is
+// implemented; UIDPLUS was the last one missing. Both the advertisement and the
+// behaviours behind it are asserted directly in imapserver/rev2_test.go, which
+// is what keeps this entry honest rather than aspirational.
 var Profile = definition.Profile{
 	Name:       "goimap",
 	Tier:       definition.TierInProcess,
@@ -80,6 +78,8 @@ var Profile = definition.Profile{
 	Native:     start,
 	ExpectedCapabilities: []string{
 		"IMAP4rev1",
+		"IMAP4REV2",
+		"UIDPLUS",
 		"NAMESPACE",
 		"UNSELECT",
 		"ESEARCH",
@@ -94,7 +94,7 @@ var Profile = definition.Profile{
 		"IDLE",
 		"ENABLE",
 		"SORT",
-		"THREAD",
+		"THREAD=ORDEREDSUBJECT",
 		"QUOTA",
 		"ACL",
 		"METADATA",
@@ -108,8 +108,18 @@ var Profile = definition.Profile{
 	},
 }
 
-// start runs a server on an ephemeral loopback port.
+// start runs a server on an ephemeral loopback port, which is what the profile
+// registry wants: the harness dials it from this same process.
 func start(ctx context.Context) (*definition.NativeServer, error) {
+	return startOn(ctx, "127.0.0.1:0")
+}
+
+// startOn runs a server on address. It is split out from start for the
+// third-party client tests, which need the listener reachable from inside a
+// container and so must bind every interface rather than loopback. Keeping one
+// server construction means those clients meet the same server the capability
+// matrix measures, not a second one configured by hand.
+func startOn(ctx context.Context, address string) (*definition.NativeServer, error) {
 	backend := memory.New(&memory.Options{
 		Users: map[string]string{interopUser: interopPassword},
 	})
@@ -128,7 +138,7 @@ func start(ctx context.Context) (*definition.NativeServer, error) {
 		},
 	})
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("listen: %w", err)
 	}

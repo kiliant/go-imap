@@ -66,7 +66,16 @@ func fuzzServerLimits() imapserver.Limits {
 func driveServer(t *testing.T, prologue, input []byte) {
 	t.Helper()
 
-	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	// The second account is not a duplicate. Part of this corpus is captured
+	// traffic from real clients driven against the interop server
+	// (imapserver/interop/capture_test.go), and those sessions carry that
+	// server's credentials. Without the account here every captured seed would
+	// stop at a failed LOGIN, and the authenticated command surface they exist
+	// to reach would never be entered.
+	backend := memory.New(&memory.Options{Users: map[string]string{
+		"alice":                "secret",
+		"interop@example.test": "interop-pw",
+	}})
 	server := imapserver.New(backend, &imapserver.Options{
 		AllowInsecureAuth: true,
 		Limits:            fuzzServerLimits(),

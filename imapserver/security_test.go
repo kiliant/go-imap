@@ -245,6 +245,48 @@ func TestSlowReaderDuringLargeFetch(t *testing.T) {
 	h.requireServeReturns()
 }
 
+// TestSlowWriterDuringLargeAppend is the mirror of the slow reader, and the
+// cheaper attack of the two: the client announces a large literal, is granted
+// the continuation, and then trickles the payload — or stops entirely. Until
+// the literal completes the server is holding a partially assembled message and
+// cannot act on the connection, so a handful of these pins server memory for as
+// long as the attacker is willing to wait.
+//
+// ReadTimeout is the bound that has to fire. It is set short here for the same
+// reason the slow-reader test sets WriteTimeout short: that is configuration of
+// the limit under test, not a relaxation of it — the payload stays well inside
+// MaxLiteralBytes, so nothing but the timeout can end this connection.
+//
+// WriteTimeout is set for a reason particular to this test rather than to the
+// attack. A peer that has stopped writing has generally stopped reading too,
+// and the harness runs over net.Pipe, which is unbuffered: once ReadTimeout
+// fires, the server's closing BYE blocks against the silent peer, so without a
+// write bound the connection would hang after the read bound did its job. Both
+// halves of the stall are the realistic case anyway.
+func TestSlowWriterDuringLargeAppend(t *testing.T) {
+	h := newSecurityHarness(t, imapserver.Limits{
+		MaxLiteralBytes: 1 << 20,
+		ReadTimeout:     2 * time.Second,
+		WriteTimeout:    2 * time.Second,
+	})
+	h.login()
+
+	body := strings.Repeat("abcdefgh", 64<<10) // 512 KiB
+	message := "Subject: slow\r\n\r\n" + body
+	h.write(fmt.Sprintf("b APPEND INBOX {%d}\r\n", len(message)))
+	if line, err := h.reader.ReadString('\n'); err != nil || !strings.HasPrefix(line, "+") {
+		t.Fatalf("continuation = %q, %v", line, err)
+	}
+	// A first sliver, so the server is genuinely mid-literal rather than still
+	// waiting for the first byte, and then nothing at all.
+	h.write(message[:64])
+
+	// The connection must come apart on its own. Without the read deadline this
+	// blocks until the test's own timeout, which is the failure being tested.
+	h.requireServeReturns()
+	_ = h.client.Close()
+}
+
 // TestRepeatedFailedAuthentication checks that a connection cannot be used as
 // an unbounded password-guessing channel. MaxCommands is the bound that applies
 // before authentication, so the connection must be closed rather than serving
