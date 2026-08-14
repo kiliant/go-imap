@@ -69,13 +69,30 @@ func TestLoopbackThread(t *testing.T) {
 // An algorithm the backend cannot compute is refused rather than answered with
 // a different algorithm's results, which would silently mis-thread the client's
 // view.
+//
+// The refusal is a tagged BAD from the capability gate, not a NO from the
+// backend. Since RFC 5256's capability is per-algorithm, an unwitnessed
+// algorithm is now an unadvertised capability, and the framework rejects it
+// before the backend is reached — the same answer every other unadvertised
+// capability gets. The stronger property is asserted alongside it: the client
+// could have known, because the token is absent from CAPABILITY.
 func TestLoopbackThreadRefusesUnsupportedAlgorithm(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, clientSide, reader := newGroupARawSession(t, ctx)
 
-	writeRawCommand(t, clientSide, "C1 THREAD REFERENCES UTF-8 ALL\r\n")
-	if _, tagged := collectUntilTag(t, reader, "C1 "); !strings.HasPrefix(tagged, "C1 NO") {
+	writeRawCommand(t, clientSide, "C1 CAPABILITY\r\n")
+	untagged, _ := collectUntilTag(t, reader, "C1 ")
+	line := findResponse(t, untagged, "* CAPABILITY")
+	if strings.Contains(line, "THREAD=REFERENCES") {
+		t.Errorf("THREAD=REFERENCES advertised by a backend that cannot compute it: %q", line)
+	}
+	if !strings.Contains(line, "THREAD=ORDEREDSUBJECT") {
+		t.Errorf("THREAD=ORDEREDSUBJECT not advertised: %q", line)
+	}
+
+	writeRawCommand(t, clientSide, "C2 THREAD REFERENCES UTF-8 ALL\r\n")
+	if _, tagged := collectUntilTag(t, reader, "C2 "); !strings.HasPrefix(tagged, "C2 BAD") {
 		t.Errorf("REFERENCES threading was not refused: %q", tagged)
 	}
 }
@@ -89,7 +106,7 @@ func TestGroupCCapabilitiesRequireBackendWitness(t *testing.T) {
 	writeRawCommand(t, clientSide, "C1 CAPABILITY\r\n")
 	untagged, _ := collectUntilTag(t, reader, "C1 ")
 	line := findResponse(t, untagged, "* CAPABILITY")
-	for _, witnessed := range []string{"SORT", "SORT=DISPLAY", "THREAD", "SEARCH=FUZZY"} {
+	for _, witnessed := range []string{"SORT", "SORT=DISPLAY", "THREAD=ORDEREDSUBJECT", "SEARCH=FUZZY"} {
 		if strings.Contains(line, " "+witnessed) {
 			t.Errorf("%s advertised without a backend witness: %q", witnessed, line)
 		}

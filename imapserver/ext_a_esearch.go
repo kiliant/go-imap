@@ -111,12 +111,20 @@ func validateSearchReturnOptions(c *conn, args *searchArgs) error {
 }
 
 // writeSearchResponse renders one SEARCH result in whichever of the two shapes
-// the command asked for, and applies SEARCHRES's SAVE as a side effect.
+// the session calls for, and applies SEARCHRES's SAVE as a side effect.
 //
 // uids are the matching UIDs, already sorted, deduplicated and filtered to
 // messages still present in the selection. numbers are the same messages in the
 // number space the response must use — UIDs for UID SEARCH, sequence numbers
 // otherwise.
+//
+// Which shape applies is a function of the session, not of the command alone.
+// A RETURN clause always selects ESEARCH, but RFC 9051 appendix E also removes
+// the untagged SEARCH response outright, so a rev2 session answers with ESEARCH
+// even for a bare SEARCH. That is not a stylistic preference: rev2 folds RFC
+// 4731 in, and a strict rev2 client has no production for "* SEARCH" at all.
+// The rev1 shape is kept for rev1 sessions, which is the whole reason the
+// revision is per-connection state.
 func writeSearchResponse(c *conn, command *queuedCommand, args *searchArgs, uids []imap.UID, numbers []uint32) error {
 	if args.extended {
 		saveSearchResult(c, args, uids)
@@ -124,6 +132,13 @@ func writeSearchResponse(c *conn, command *queuedCommand, args *searchArgs, uids
 		if tag, ok := searchContextTag(command, args.returnOptions); ok {
 			registerSearchContext(c, tag, uids, commandUsesUIDs(command))
 		}
+		return writeESearchResponse(c, command, args, numbers)
+	}
+	if c.state.revision == revisionIMAP4rev2 {
+		// No RETURN clause, so no SAVE and no CONTEXT tag to register — only
+		// the shape changes. searchReturnSet resolves the empty option list to
+		// ALL, which is what RFC 9051 section 6.4.4 specifies for a SEARCH that
+		// names no return options.
 		return writeESearchResponse(c, command, args, numbers)
 	}
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("SEARCH")

@@ -65,7 +65,10 @@ func init() {
 			return advertised["SORT"]
 		}},
 		featureDescriptor{ID: featureThread, Active: func(_ *sessionState, advertised map[string]bool) bool {
-			return advertised["THREAD"]
+			// Any advertised algorithm activates the feature: the THREAD
+			// vocabulary is shared, and which algorithms are available is
+			// settled per command by requireCapability below.
+			return advertised["THREAD=ORDEREDSUBJECT"] || advertised["THREAD=REFERENCES"]
 		}},
 	)
 	registerCapabilities(
@@ -83,10 +86,27 @@ func init() {
 			Depends:         []string{"SORT"},
 			RequiresBackend: backendSupportsCapability("SORT=DISPLAY"),
 		},
+		// RFC 5256 section 1 spells the capability "THREAD=" thread-alg, and
+		// defines no bare "THREAD" token. The distinction is not cosmetic: the
+		// algorithms produce different trees from the same mailbox, so a client
+		// has to know which one it will get before it can use the result. A
+		// server advertising the bare form tells it nothing, and a client
+		// looking for THREAD=ORDEREDSUBJECT never finds this server at all.
+		//
+		// One descriptor per algorithm, each witnessed by its own token, is
+		// also what lets a backend implement one and not the other — which the
+		// reference backend does, refusing REFERENCES rather than answering it
+		// with ORDEREDSUBJECT results and silently mis-threading the client's
+		// view. Found by the goimap interop entry (T24).
 		capabilityDescriptor{
-			Name:            "THREAD",
+			Name:            "THREAD=ORDEREDSUBJECT",
 			States:          stateMaskAuthenticated | stateMaskSelected,
-			RequiresBackend: selectedImplements[ThreadMailbox]("THREAD"),
+			RequiresBackend: selectedImplements[ThreadMailbox]("THREAD=ORDEREDSUBJECT"),
+		},
+		capabilityDescriptor{
+			Name:            "THREAD=REFERENCES",
+			States:          stateMaskAuthenticated | stateMaskSelected,
+			RequiresBackend: selectedImplements[ThreadMailbox]("THREAD=REFERENCES"),
 		},
 		// SEARCH=FUZZY (RFC 6203) adds the FUZZY search modifier. It reaches
 		// the backend through the open criteria tree with no framework
@@ -319,7 +339,11 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid THREAD arguments")
 	}
-	if err := requireCapability(c, "THREAD"); err != nil {
+	// Gate on the algorithm the client actually asked for. The old bare-THREAD
+	// gate let a request for an unimplemented algorithm through to the backend,
+	// which could only answer with an error the client had no way to anticipate
+	// from the capability list.
+	if err := requireCapability(c, "THREAD="+strings.ToUpper(string(args.algorithm))); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	mailbox, ok := c.state.selected.mailbox.(ThreadMailbox)

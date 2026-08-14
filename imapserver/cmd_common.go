@@ -35,6 +35,10 @@ var uidCommandDescriptors = map[string]*commandDescriptor{
 	"SEARCH": {name: "SEARCH", states: stateMaskSelected, parse: parseSearch, handle: handleSearch},
 	"COPY":   {name: "COPY", states: stateMaskSelected, parse: parseCopy, handle: handleCopy},
 	"MOVE":   {name: "MOVE", states: stateMaskSelected, parse: parseCopy, handle: handleMove},
+	// UID EXPUNGE is the third part of UIDPLUS (RFC 4315). Unlike its
+	// neighbours here it is not the UID form of a sequence-numbered command:
+	// plain EXPUNGE takes no arguments, so this entry has a parser of its own.
+	"EXPUNGE": {name: "EXPUNGE", states: stateMaskSelected, parse: parseUIDExpunge, handle: handleUIDExpunge},
 }
 
 func init() {

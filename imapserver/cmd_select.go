@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -30,6 +31,9 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := writeSelectSnapshot(c, snapshot); err != nil {
 		return err
 	}
+	if err := writeSelectedMailboxList(ctx, c, mailbox); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	// The QRESYNC resynchronisation report follows the ordinary selection
 	// responses, so the client has UIDVALIDITY and HIGHESTMODSEQ before it is
 	// told what vanished. See ext_b_qresync.go.
@@ -47,6 +51,52 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 		return fmt.Errorf("imapserver: SELECT installed no selected state")
 	}
 	return writeTaggedCondition(c, command.tag, "OK", imap.ResponseCode(status), "", command.name+" completed")
+}
+
+// writeSelectedMailboxList emits the untagged LIST response that RFC 9051
+// section 6.3.2 adds to SELECT and EXAMINE. It is new in rev2 — RFC 3501 has no
+// such response — so a rev1 session gets nothing, and the check is on the
+// enabled revision rather than on a capability token, because rev2 incorporates
+// the behaviour without one.
+//
+// The data comes from the backend's own List rather than from a new field on
+// SelectSnapshot. That keeps the backend contract unchanged, and it guarantees
+// the attributes and delimiter agree with what a LIST command would report for
+// the same mailbox, which is the entire point of the response: the client is
+// meant to be able to skip that round trip.
+//
+// The selected name is passed as the pattern, so a name containing a wildcard
+// can match siblings; results are filtered back down to the one mailbox. If the
+// backend lists nothing under its own name, no response is written rather than
+// a fabricated one.
+func writeSelectedMailboxList(ctx context.Context, c *conn, mailbox string) error {
+	if c.state.revision != revisionIMAP4rev2 {
+		return nil
+	}
+	options := &ListOptions{}
+	args := &listArgs{}
+	written := false
+	writer := newListWriter(func(_ context.Context, data *imap.ListData) error {
+		if written || data == nil || !mailboxNamesEqual(data.Mailbox, mailbox) {
+			return nil
+		}
+		written = true
+		return writeListData(c, "LIST", listResultAttrs(args, options, data.Attrs), data)
+	})
+	err := c.state.session.List(ctx, writer, "", []string{mailbox}, options)
+	writer.core.close()
+	return err
+}
+
+// mailboxNamesEqual compares two mailbox names as the protocol does: exactly,
+// except that INBOX is case-insensitive per RFC 3501 section 5.1 and RFC 9051
+// section 5.1. It exists so a SELECT of "inbox" still recognises the backend's
+// canonical "INBOX" in its own listing.
+func mailboxNamesEqual(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return strings.EqualFold(a, "INBOX") && strings.EqualFold(b, "INBOX")
 }
 
 func abandonCurrentSelection(ctx context.Context, c *conn) error {

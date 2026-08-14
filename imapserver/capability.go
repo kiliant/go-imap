@@ -52,6 +52,19 @@ var capabilityDescriptors = []capabilityDescriptor{
 		}},
 	{Name: "ENABLE", RequiresFramework: []frameworkComponent{frameworkEnable}, States: stateMaskAny},
 	{Name: "ID", RequiresFramework: []frameworkComponent{frameworkCore}, States: stateMaskAny},
+	// UIDPLUS (RFC 4315) is three things: the APPENDUID and COPYUID response
+	// codes, and the UID EXPUNGE command. Until T24 the server emitted the two
+	// codes and implemented neither the command nor the advertisement, so no
+	// conforming client could act on any of it.
+	//
+	// Witnessed rather than framework-only. UID EXPUNGE works for any backend —
+	// the Expunge contract has always carried the UID-set filter — but the two
+	// response codes exist only if the backend returns UIDs in AppendData and
+	// CopyData, and RFC 4315 section 3 requires a UIDPLUS server to send them.
+	// A backend that cannot must not have the claim made on its behalf.
+	{Name: "UIDPLUS", RequiresFramework: []frameworkComponent{frameworkCore},
+		States:          stateMaskAuthenticated | stateMaskSelected,
+		RequiresBackend: backendSupportsCapability("UIDPLUS")},
 	{Name: "LITERAL-", RequiresFramework: []frameworkComponent{frameworkCore}, States: stateMaskAny},
 	{Name: "SASL-IR", RequiresFramework: []frameworkComponent{frameworkAuth}, States: stateMaskNotAuthenticated,
 		RequiresBackend: hasAuthenticationBackend},
@@ -116,7 +129,7 @@ func compiledFrameworkSupport() map[frameworkComponent]bool {
 		frameworkIdle:     true,
 		frameworkCompress: true,
 		frameworkMove:     true,
-		frameworkRev2:     false,
+		frameworkRev2:     true,
 		// LIST-EXTENDED's selection, return and multi-pattern handling is
 		// compiled in as of T23's group A. See ext_a_list.go.
 		frameworkListExtend: true,
