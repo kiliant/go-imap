@@ -77,12 +77,12 @@ Dependencies point downward only. `package imap` must not import `imapclient`,
 and must not perform I/O — it is the shared vocabulary, which is what lets the
 future server framework reuse it without an API break.
 
-The server framework design is **approved**: `docs/SERVER-DESIGN.md` (milestone
-M5 design, M6 implementation). v1.0 was tagged on 2026-08-06 after T17's
-bidirectional audit; T18/T21 added the internal foundation on 2026-08-12, and
-the `imapserver` core remains next. The root `imap` and `imapclient` APIs are
-frozen, while `imapserver` will use the approved nested-module v0.x versioning
-model.
+The server framework is **implemented**: `docs/SERVER-DESIGN.md` (milestone M5
+design, M6 implementation). v1.0 was tagged on 2026-08-06 after T17's
+bidirectional audit; T18–T24 built the codec, the framework, the base command
+set, the extensions and the conformance/interop coverage between 2026-08-12 and
+2026-08-14. The root `imap` and `imapclient` APIs are frozen; `imapserver` is a
+nested module on the approved v0.x line — see "Two modules" below.
 
 ## Zero external dependencies
 
@@ -91,9 +91,31 @@ control. This applies to SASL, DEFLATE and charset decoding — all are reachabl
 with stdlib. Test-only dependencies are also disallowed; the interop harness
 shells out to `podman`.
 
+## Two modules
+
+Since T25 the repository holds two modules with independent version lines:
+
+| Module | Path | Line | Promise |
+|---|---|---|---|
+| root | `github.com/kiliant/go-imap` | `v1.x.y` | frozen; an incompatible change fails CI |
+| server | `github.com/kiliant/go-imap/imapserver` | `imapserver/v0.a.b` | may break between minors, deliberately |
+
+A committed `go.work` covers both, so ordinary work needs no `replace`
+directive. **`./...` stops at the module boundary**, which is the one thing to
+remember: a command run at the repository root does not touch `imapserver`.
+`.github/scripts/modules.sh` prints the module directories, and every CI job
+loops over it rather than naming them.
+
+`imapserver/go.mod` requiring the root module is the single sanctioned
+exception to the zero-dependency rule below. It is not licence for another one.
+See `docs/RELEASING.md`, which also documents why the root module must be
+tagged before the server module can be.
+
 ## Testing
 
-- `go test ./...` — unit tests, no network, must stay fast.
+- `go test ./...` in **each module** — unit tests, no network, must stay fast.
+  `for dir in $(.github/scripts/modules.sh); do (cd "$dir" && go test ./...); done`
+  is the whole of it, and is what CI runs.
 - Run `go test -count=1 -race -tags=interop ./imapclient`, then separately run
   `go test -count=1 -race -tags=interop ./interop/...`, then separately run
   `go test -count=1 -race -tags=interop ./imapserver/interop/...` — the first two
