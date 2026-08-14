@@ -66,6 +66,28 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 			// is reported as itself.
 			var protocolErr *imap.Error
 			if errors.As(err, &protocolErr) {
+				// collectAppendPayload read every part, but the command
+				// terminator is consumed here, and skipping it leaves the
+				// trailing CRLF — and any further messages — to be re-parsed as
+				// commands. That is what produced a spurious untagged BAD after
+				// each refusal.
+				for {
+					next, drainErr := readAppendContinuation(ctx, c, false)
+					if drainErr != nil {
+						return c.writeBad(command.tag, "invalid APPEND payload")
+					}
+					if next.step == appendStepDone {
+						break
+					}
+					discard, collectErr := c.collectAppendPayload(ctx, &next.message)
+					if collectErr != nil {
+						// A later message failed too. One refusal is reported;
+						// the wire still has to be emptied.
+						continue
+					}
+					discard.drain()
+					discard.close()
+				}
 				return writeBackendError(c, command.tag, "APPEND", err)
 			}
 			// Anything else means the wire is out of step, and there is nothing
@@ -130,6 +152,10 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 	session, _ := c.state.session.(CatenateSession)
 	payload := &appendPayload{}
 	parts := message.catenate
+	// The first failure is remembered and the command is read to its end anyway.
+	// Every remaining part must come off the wire before a response is written,
+	// or the leftovers are parsed as commands.
+	var failure error
 	for {
 		for _, part := range parts {
 			if part.literal != nil {
@@ -141,26 +167,32 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 				continue
 			}
 			if session == nil {
-				return nil, fmt.Errorf("imapserver: CATENATE is not implemented by this backend")
+				if failure == nil {
+					failure = fmt.Errorf("imapserver: CATENATE is not implemented by this backend")
+				}
+				continue
 			}
 			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)
 			if err != nil || resolved == nil {
 				// RFC 4469 section 3 answers an unresolvable URL with
 				// NO [BADURL <url>], naming the offending URL so a client
-				// catenating several parts learns which one failed. Flattening
-				// this to a generic error discarded both the code and the URL,
-				// and response codes are the sanctioned extension point — see
-				// API-STABILITY rule 5.
+				// catenating several parts learns which one failed.
 				//
-				// A URL part consumes no literal, so failing here leaves the wire
-				// at a part boundary and the connection stays usable; that is
-				// verified by TestLoopbackCatenateBadURL.
-				return nil, &imap.Error{
-					Type:     imap.ErrorTypeNo,
-					Code:     imap.CodeBadURL,
-					CodeArgs: part.url,
-					Text:     "CATENATE URL did not resolve",
+				// Recorded rather than returned: the rest of the command is still
+				// on the wire, and abandoning it there leaves the remainder to be
+				// re-parsed as commands. That produced a spurious untagged
+				// "* BAD invalid command syntax" after every refusal — harmless
+				// only because the decoder is literal-aware, and invisible to a
+				// test that stops reading at the tagged response.
+				if failure == nil {
+					failure = &imap.Error{
+						Type:     imap.ErrorTypeNo,
+						Code:     imap.CodeBadURL,
+						CodeArgs: part.url,
+						Text:     "CATENATE URL did not resolve",
+					}
 				}
+				continue
 			}
 			staged, err := io.ReadAll(resolved)
 			_ = resolved.Close()
@@ -177,6 +209,9 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 			break
 		}
 		parts = next.message.catenate
+	}
+	if failure != nil {
+		return nil, failure
 	}
 	readers := make([]io.Reader, 0, len(payload.parts))
 	for _, part := range payload.parts {

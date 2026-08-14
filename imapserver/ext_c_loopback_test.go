@@ -277,10 +277,13 @@ func expectContinuation(t *testing.T, reader *bufio.Reader) {
 // several URLs can report which one failed and retry without it, while a BAD
 // says only that the whole command was malformed.
 //
-// The second half matters as much as the first. A URL part consumes no literal,
-// so the wire is left at a part boundary and the connection must remain usable —
-// if it did not, reporting a recoverable error rather than a fatal one would be
-// a lie.
+// The second half matters as much as the first, and the first version of this
+// test could not see it. Answering the URL while the rest of the command is
+// still on the wire leaves the remainder — `)` CRLF, further parts, further
+// messages — to be re-parsed as commands, which emitted a spurious untagged
+// "* BAD invalid command syntax" after every refusal. It arrives *after* the
+// tagged response, so a test that stops reading at the tag never sees it. This
+// one keeps reading.
 func TestLoopbackCatenateBadURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -300,7 +303,47 @@ func TestLoopbackCatenateBadURL(t *testing.T) {
 	}
 
 	writeRawCommand(t, clientSide, "C2 NOOP\r\n")
-	if _, tagged := collectUntilTag(t, reader, "C2 "); !strings.HasPrefix(tagged, "C2 OK") {
+	untagged, tagged := collectUntilTag(t, reader, "C2 ")
+	if !strings.HasPrefix(tagged, "C2 OK") {
 		t.Fatalf("connection unusable after a refused CATENATE URL: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.Contains(line, "BAD") {
+			t.Errorf("leftover command bytes were parsed as a command: %q", strings.TrimSpace(line))
+		}
+	}
+
+	// The same with parts on both sides of the failing URL, and a literal after
+	// it — the shape where an unconsumed remainder does the most damage.
+	writeRawCommand(t, clientSide, "C3 APPEND INBOX CATENATE (TEXT {5+}\r\nfirst URL \""+badURL+"\" TEXT {6+}\r\nsecond)\r\n")
+	if _, tagged := collectUntilTag(t, reader, "C3 "); !strings.Contains(tagged, "BADURL") {
+		t.Errorf("mixed CATENATE parts = %q, want BADURL", tagged)
+	}
+	writeRawCommand(t, clientSide, "C4 NOOP\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "C4 ")
+	if !strings.HasPrefix(tagged, "C4 OK") {
+		t.Fatalf("connection unusable after a refused mixed CATENATE: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.Contains(line, "BAD") {
+			t.Errorf("leftover bytes after a mixed CATENATE were parsed as a command: %q", strings.TrimSpace(line))
+		}
+	}
+
+	// MULTIAPPEND: a whole further message follows the failing one and must also
+	// come off the wire before the response is written.
+	writeRawCommand(t, clientSide, "C5 APPEND INBOX CATENATE (URL \""+badURL+"\") {6+}\r\nsecond\r\n")
+	if _, tagged := collectUntilTag(t, reader, "C5 "); !strings.Contains(tagged, "BADURL") {
+		t.Errorf("MULTIAPPEND with a bad CATENATE URL = %q, want BADURL", tagged)
+	}
+	writeRawCommand(t, clientSide, "C6 NOOP\r\n")
+	untagged, tagged = collectUntilTag(t, reader, "C6 ")
+	if !strings.HasPrefix(tagged, "C6 OK") {
+		t.Fatalf("connection unusable after a refused MULTIAPPEND: %q", tagged)
+	}
+	for _, line := range untagged {
+		if strings.Contains(line, "BAD") {
+			t.Errorf("leftover bytes after a refused MULTIAPPEND were parsed as a command: %q", strings.TrimSpace(line))
+		}
 	}
 }
