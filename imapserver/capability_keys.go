@@ -91,11 +91,17 @@ var baselineSearchKeywords = map[imap.SearchKeyword]bool{
 	imap.SearchUnflagged: true, imap.SearchUnseen: true,
 }
 
-// searchKeywordCapabilities are argument-less keys an extension adds.
-var searchKeywordCapabilities = map[imap.SearchKeyword]string{
+// searchKeywordGates are argument-less keys an extension adds.
+//
+// Gates rather than token names, like every other classification here: the day
+// a revision incorporates one of these into the baseline, the row changes from
+// requiresToken to requiresFeature and nothing else moves. A map of strings
+// would have forced a type change instead — a new code path rather than a new
+// row, which is what this file exists to avoid.
+var searchKeywordGates = map[imap.SearchKeyword]keyGate{
 	// RFC 8514 section 3: SAVEDATESUPPORTED asks whether the mailbox records
 	// save dates at all.
-	imap.SearchSaveDateSupported: "SAVEDATE",
+	imap.SearchSaveDateSupported: requiresToken("SAVEDATE"),
 }
 
 // baselineSearchStringKeys are the string-argument keys of the baseline.
@@ -122,8 +128,8 @@ func criterionCapability(criterion imap.SearchCriteria) (keyGate, bool) {
 		if baselineSearchKeywords[criterion] {
 			return keyGate(baselineKey), true
 		}
-		if capability, ok := searchKeywordCapabilities[criterion]; ok {
-			return requiresToken(capability), true
+		if gate, ok := searchKeywordGates[criterion]; ok {
+			return gate, true
 		}
 		return nil, false
 	case imap.SearchString:
@@ -143,6 +149,11 @@ func criterionCapability(criterion imap.SearchCriteria) (keyGate, bool) {
 	case imap.SearchFuzzy:
 		return requiresToken("SEARCH=FUZZY"), true
 	case imap.SearchSavedResult:
+		// Always satisfied in practice: SEARCHRES's descriptor is
+		// framework-only, with no backend witness, so it is advertised to every
+		// authenticated or selected session. The gate is written anyway — the
+		// token is what the client sees, and a future descriptor change should
+		// flow through here rather than around it.
 		return requiresToken("SEARCHRES"), true
 	case imap.SearchFilter:
 		return requiresToken("FILTERS"), true
@@ -151,12 +162,13 @@ func criterionCapability(criterion imap.SearchCriteria) (keyGate, bool) {
 	}
 }
 
-// fetchItemKeywordCapabilities are bare fetch-item names an extension adds.
-var fetchItemKeywordCapabilities = map[imap.FetchItemKeyword]string{
-	imap.FetchItemModSeq:   "CONDSTORE",
-	imap.FetchItemEmailID:  "OBJECTID",
-	imap.FetchItemThreadID: "OBJECTID",
-	imap.FetchItemSaveDate: "SAVEDATE",
+// fetchItemKeywordGates are bare fetch-item names an extension adds. See
+// searchKeywordGates for why these are gates and not token names.
+var fetchItemKeywordGates = map[imap.FetchItemKeyword]keyGate{
+	imap.FetchItemModSeq:   requiresToken("CONDSTORE"),
+	imap.FetchItemEmailID:  requiresToken("OBJECTID"),
+	imap.FetchItemThreadID: requiresToken("OBJECTID"),
+	imap.FetchItemSaveDate: requiresToken("SAVEDATE"),
 }
 
 // baselineFetchItemKeywords are the bare item names of the baseline.
@@ -173,8 +185,8 @@ func fetchItemCapability(item imap.FetchItem) (keyGate, bool) {
 		if baselineFetchItemKeywords[item] {
 			return keyGate(baselineKey), true
 		}
-		if capability, ok := fetchItemKeywordCapabilities[item]; ok {
-			return requiresToken(capability), true
+		if gate, ok := fetchItemKeywordGates[item]; ok {
+			return gate, true
 		}
 		return nil, false
 	case *imap.FetchItemBodySection, *imap.FetchItemBodyStructure:
@@ -208,14 +220,14 @@ func requireCriteriaCapabilities(c *conn, criteria imap.SearchCriteria) error {
 		return &imap.Error{
 			Type: imap.ErrorTypeNo,
 			Code: imap.CodeCannot,
-			Text: fmt.Sprintf("unsupported search key %T", criteria),
+			Text: fmt.Sprintf("unsupported search key %s", describeCriterion(criteria)),
 		}
 	}
 	if !gate(&c.state, advertisedCapabilities(c)) {
 		return &imap.Error{
 			Type: imap.ErrorTypeNo,
 			Code: imap.CodeCannot,
-			Text: fmt.Sprintf("search key %T is not available in this session", criteria),
+			Text: fmt.Sprintf("search key %s is not available in this session", describeCriterion(criteria)),
 		}
 	}
 	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
@@ -241,16 +253,42 @@ func requireFetchItemCapabilities(c *conn, items []imap.FetchItem) error {
 			return &imap.Error{
 				Type: imap.ErrorTypeNo,
 				Code: imap.CodeCannot,
-				Text: fmt.Sprintf("unsupported fetch item %T", item),
+				Text: fmt.Sprintf("unsupported fetch item %s", describeFetchItem(item)),
 			}
 		}
 		if !gate(&c.state, advertised) {
 			return &imap.Error{
 				Type: imap.ErrorTypeNo,
 				Code: imap.CodeCannot,
-				Text: fmt.Sprintf("fetch item %T is not available in this session", item),
+				Text: fmt.Sprintf("fetch item %s is not available in this session", describeFetchItem(item)),
 			}
 		}
 	}
 	return nil
+}
+
+// describeCriterion and describeFetchItem name a key the way the client spelled
+// it where that is knowable, and fall back to the Go type where it is not.
+// %T alone reports "imap.FetchItemKeyword" for MODSEQ, EMAILID and SAVEDATE
+// alike, which tells the client nothing it can act on.
+func describeCriterion(criterion imap.SearchCriteria) string {
+	switch criterion := criterion.(type) {
+	case imap.SearchKeyword:
+		return string(criterion)
+	case imap.SearchString:
+		return string(criterion.Key)
+	case imap.SearchWithin:
+		return string(criterion.Key)
+	case imap.SearchObjectID:
+		return string(criterion.Key)
+	default:
+		return fmt.Sprintf("%T", criterion)
+	}
+}
+
+func describeFetchItem(item imap.FetchItem) string {
+	if keyword, ok := item.(imap.FetchItemKeyword); ok {
+		return string(keyword)
+	}
+	return fmt.Sprintf("%T", item)
 }

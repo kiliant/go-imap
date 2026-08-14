@@ -282,17 +282,30 @@ func (c *conn) readCommands() error {
 			command.bytes = int64(len(tag) + len(name) + 2)
 			command.parseErr = fmt.Errorf("command payload exceeds queue byte limit")
 		}
-		// Published after the whole command line has been consumed and before
-		// the command is queued. Both halves matter: read it earlier and the
-		// command's own unparsed arguments count as pipelined input, so it is
-		// always true; publish it later and the event loop can see the command
-		// without seeing that more follows, which is the race that lets an
-		// expunge into a pipeline.
-		c.inputPending.Store(decoder.Buffered() > 0)
-
+		// Raised before the command is queued and settled after, so the
+		// interval in between is always covered by one of the two signals.
+		// Queueing can block — on the byte budget, or on a full command
+		// channel — and in that window the command is not yet in c.commands;
+		// without the pessimistic raise the event loop would see neither it nor
+		// any sign that more input follows, which is the original bug.
+		//
+		// The settled value is read after the whole command line is consumed:
+		// reading it earlier counts the command's own unparsed arguments as
+		// pipelined input. A literal-bearing command still over-reports, since
+		// the payload is buffered behind the line — that direction is safe and
+		// self-correcting at the next parse.
+		//
+		// The count is taken *before* queueing, because queueing is the moment
+		// the decoder stops being exclusively ours: a command carrying a
+		// literal has its payload read by the handler, on the event loop, from
+		// this same bufio.Reader. Reading Buffered() afterwards is a data race,
+		// which is exactly what the race detector said the first time.
+		c.inputPending.Store(true)
+		pending := decoder.Buffered() > 0
 		if err := c.queueCommand(command); err != nil {
 			return err
 		}
+		c.inputPending.Store(pending)
 		if descriptor != nil && descriptor.barrier {
 			if err := c.waitBarrier(decoder, command); err != nil {
 				return err
@@ -312,6 +325,13 @@ func (c *conn) readCommands() error {
 }
 
 func (c *conn) waitBarrier(decoder *imapwire.Decoder, command *queuedCommand) error {
+	// The reader is about to park until this command completes, so it will not
+	// refresh inputPending again in the meantime. Leaving it raised freezes
+	// every unsolicited update for the whole of the command — and IDLE is a
+	// barrier, so the client most in need of updates is the one that would
+	// never get them. Lowering it here is safe: anything genuinely pipelined
+	// behind the barrier is read after it, and re-raises the flag then.
+	c.inputPending.Store(false)
 	for {
 		select {
 		case <-command.done:

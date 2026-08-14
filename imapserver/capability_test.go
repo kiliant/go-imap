@@ -600,3 +600,87 @@ func rootPackageDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// TestEveryKeyGateResolves checks that every featureID named by a key gate in
+// capability_keys.go is a feature the framework actually declares.
+//
+// requiresFeature returns a deny-all gate for an id it cannot resolve. A typo,
+// or a descriptor later removed from featureDescriptors, therefore silently
+// withdraws a key the framework supports — from a rev2 session, which is the
+// BINARY defect re-created in the direction nobody notices, because the wire
+// symptom is a NO rather than a wrong answer.
+//
+// capability_keys.go cited this test before it existed. That is worse than
+// citing nothing: a comment naming a gate reads as coverage, and the reviewer
+// who checks is the only reason it is here now.
+func TestEveryKeyGateResolves(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "capability_keys.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := make(map[string]bool)
+	for _, name := range featureIDConstantNames(t) {
+		declared[name] = true
+	}
+
+	found := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := call.Fun.(*ast.Ident)
+		if !ok || ident.Name != "requiresFeature" || len(call.Args) != 1 {
+			return true
+		}
+		arg, ok := call.Args[0].(*ast.Ident)
+		if !ok {
+			t.Errorf("%s: requiresFeature takes a featureID constant, so this gate cannot be checked",
+				fset.Position(call.Pos()))
+			return true
+		}
+		found++
+		if !declared[arg.Name] {
+			t.Errorf("%s: requiresFeature(%s) names no entry in featureDescriptors, so the gate "+
+				"denies every session — silently, because the symptom is a NO rather than a wrong answer",
+				fset.Position(call.Pos()), arg.Name)
+		}
+		return true
+	})
+	if found == 0 {
+		t.Error("no requiresFeature call found; either the gates stopped using features " +
+			"or this scan no longer matches them, and both make this test vacuous")
+	}
+}
+
+// featureIDConstantNames returns the featureID constants declared with a
+// descriptor in featureDescriptors, read from the source rather than from a
+// list here.
+func featureIDConstantNames(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "capability.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok || key.Name != "ID" {
+			return true
+		}
+		if value, ok := kv.Value.(*ast.Ident); ok {
+			names = append(names, value.Name)
+		}
+		return true
+	})
+	if len(names) == 0 {
+		t.Fatal("no featureDescriptors entries found; the scan is broken")
+	}
+	return names
+}

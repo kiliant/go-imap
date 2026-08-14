@@ -41,6 +41,14 @@ type Instance struct {
 	_        struct{}
 }
 
+// InstanceOptions configures one conformance instance. A nil pointer selects
+// the defaults.
+//
+// Empty today, deliberately. See Harness.New.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type InstanceOptions struct{ _ struct{} }
+
 // Harness constructs independent backend instances for conformance subtests.
 // Construct with keyed fields only; fields may be added in a future release.
 type Harness struct {
@@ -50,8 +58,17 @@ type Harness struct {
 	// can block and can fail: opening a store, migrating a schema, reaching a
 	// service. Without them the only way to report a failure is to capture the
 	// subtest's *testing.T in the closure, and there is no way to cancel at all.
-	// Both are free to add now and permanent once this module is tagged v1.
-	New func(ctx context.Context) (*Instance, error)
+	//
+	// The options struct is rule 3, and it is here for the reason
+	// docs/API-STABILITY.md §3 records against interop/definition.Profile.Native,
+	// which is the identical shape: a caller-supplied constructor callback in a
+	// test-support package. The package doc now tells every backend author to
+	// start here, so day-one adopters write closures against this signature and
+	// a later parameter breaks all of them. The pressures are concrete —
+	// provisioning an implicit-TLS instance (RFC 8314), a second identity to
+	// test ACL rights against (RFC 4314), an instance that must survive a
+	// reconnect (RFC 7162 QRESYNC) — and each is a new parameter today.
+	New func(ctx context.Context, options *InstanceOptions) (*Instance, error)
 	_   struct{}
 }
 
@@ -306,7 +323,7 @@ func Run(t *testing.T, harness *Harness) {
 
 func newSession(t *testing.T, harness *Harness) (*Instance, imapserver.Session) {
 	t.Helper()
-	instance, err := harness.New(t.Context())
+	instance, err := harness.New(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("backendtest: harness could not construct an instance: %v", err)
 	}

@@ -137,12 +137,22 @@ previous `imapserver/v*` tag.
 - `imapserver/memory` now witnesses `SEARCH=FUZZY`, which it evaluated but never
   advertised.
 
-- **BREAKING (pre-tag): `backendtest.Harness.New` takes a context and returns an
-  error**, `func(ctx context.Context) (*Instance, error)`. A real backend's setup
+- **BREAKING (pre-tag): `backendtest.Harness.New` takes a context, an options
+  struct and returns an error**, `func(ctx context.Context, options *InstanceOptions) (*Instance, error)`. A real backend's setup
   can block and can fail; without these the only way to report a failure was to
   capture the subtest's `*testing.T` in the closure, and there was no way to
-  cancel at all. This package is a backend author's first stop, so it should not
-  be the one place that ignores rule 2.
+  cancel at all. `InstanceOptions` is empty today and exists for rule 3: this
+  package is a backend author's documented first stop, so day-one adopters write
+  closures against this signature, and provisioning an implicit-TLS instance
+  (RFC 8314), a second identity for ACL rights (RFC 4314) or an instance that
+  survives a reconnect (RFC 7162) would each be a new parameter otherwise.
+
+- **Deferred updates and the queue bound.** Because unsolicited updates now wait
+  for a pipeline to drain, a client that keeps a deep pipeline full during heavy
+  concurrent mailbox churn can reach the update-queue bound where the previous
+  code would have drained between commands. The outcome is a `BYE` and a closed
+  connection rather than a desynchronised one, which is the direction to fail
+  in, but it is a behaviour change worth knowing about.
 
 #### Fixed
 

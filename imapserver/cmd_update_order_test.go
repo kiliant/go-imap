@@ -12,19 +12,32 @@ import (
 	"github.com/kiliant/go-imap"
 )
 
-type expungeOrderBackend struct{}
+type expungeOrderBackend struct {
+	// selected receives the mailbox handed to the connection, so a test can
+	// publish an update at a moment of its own choosing rather than only from
+	// inside a command. The IDLE starvation case needs exactly that.
+	selected chan *expungeOrderMailbox
+}
 
-func (*expungeOrderBackend) Authenticate(context.Context, *ConnInfo, *Credentials, *AuthenticateOptions) (Session, error) {
-	return &expungeOrderSession{}, nil
+func (b *expungeOrderBackend) Authenticate(context.Context, *ConnInfo, *Credentials, *AuthenticateOptions) (Session, error) {
+	return &expungeOrderSession{backend: b}, nil
 }
 
 type expungeOrderSession struct {
 	stubSession
+	backend *expungeOrderBackend
 }
 
 func (s *expungeOrderSession) Select(_ context.Context, _ string, updater *Updater, _ *SelectOptions) (*SelectResult, error) {
+	mailbox := &expungeOrderMailbox{updater: updater}
+	if s.backend != nil && s.backend.selected != nil {
+		select {
+		case s.backend.selected <- mailbox:
+		default:
+		}
+	}
 	return &SelectResult{
-		Mailbox: &expungeOrderMailbox{updater: updater},
+		Mailbox: mailbox,
 		Snapshot: SelectSnapshot{
 			UIDs: []imap.UID{1, 2},
 			Status: imap.MailboxStatus{
@@ -228,6 +241,83 @@ func TestExpungeUpdateWaitsForPipelinedCommands(t *testing.T) {
 
 	writeUpdateOrderCommand(t, clientSide, "A5 LOGOUT\r\n")
 	readUpdateOrderTag(t, reader, "A5 OK ")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestIdleReceivesUpdatesAfterPartialInput is the liveness half of the expunge
+// deferral, and it covers a starvation the first version of that deferral had.
+//
+// inputPending is refreshed only when the reader parses another command line.
+// The reader parks for the whole of a barrier command, and IDLE is a barrier —
+// so an IDLE whose line arrived with trailing bytes that are not yet a complete
+// line froze the flag at true for the entire IDLE, and every unsolicited update
+// was withheld from the one client that is idling precisely to receive them.
+// Nothing retries, and the client will not complete the line because it is
+// waiting: it ends at teardown, with the queue meanwhile filling toward
+// overflow.
+//
+// The trailing "DON" is the reproduction: a real client sending DONE in two
+// writes, or any client whose framing lands mid-token.
+func TestIdleReceivesUpdatesAfterPartialInput(t *testing.T) {
+	backend := &expungeOrderBackend{selected: make(chan *expungeOrderMailbox, 1)}
+	server := New(backend, &Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+	if err := clientSide.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUpdateOrderTag(t, reader, "A1 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+	readUpdateOrderTag(t, reader, "A2 OK ")
+
+	var mailbox *expungeOrderMailbox
+	select {
+	case mailbox = <-backend.selected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the backend never handed out a selected mailbox")
+	}
+
+	// IDLE arrives with a trailing fragment: the client has begun DONE but the
+	// line is not complete. This is what froze inputPending, because the reader
+	// parks for the whole of a barrier command and never refreshes it.
+	writeUpdateOrderCommand(t, clientSide, "A3 IDLE\r\nDON")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(line, "+ ") {
+		t.Fatalf("IDLE continuation = %q", line)
+	}
+
+	// Publish while the client is idling. This is the whole point: an idling
+	// client is idling in order to be told.
+	if err := mailbox.pushExpunge(); err != nil {
+		t.Fatal(err)
+	}
+	line, err = reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("no unsolicited update reached the idling client: %v", err)
+	}
+	if !strings.Contains(line, "EXPUNGE") {
+		t.Fatalf("response during IDLE = %q, want EXPUNGE", line)
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "E\r\n")
+	readUpdateOrderTag(t, reader, "A3 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A4 LOGOUT\r\n")
+	readUpdateOrderTag(t, reader, "A4 OK ")
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}

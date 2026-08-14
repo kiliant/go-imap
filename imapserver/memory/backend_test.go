@@ -12,7 +12,7 @@ import (
 )
 
 func TestBackendConformance(t *testing.T) {
-	backendtest.Run(t, &backendtest.Harness{New: func(context.Context) (*backendtest.Instance, error) {
+	backendtest.Run(t, &backendtest.Harness{New: func(context.Context, *backendtest.InstanceOptions) (*backendtest.Instance, error) {
 		backend := New(&Options{Users: map[string]string{"alice": "secret"}})
 		return &backendtest.Instance{
 			Backend: backend,

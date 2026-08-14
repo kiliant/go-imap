@@ -432,6 +432,12 @@ func TestParseAdmitsImpliesGateAdmits(t *testing.T) {
 			if !strings.HasPrefix(tagged, "A4 "+testCase.want) {
 				t.Errorf("FETCH BINARY[] = %q, want %s", tagged, testCase.want)
 			}
+			// A refusal must be *this* refusal. Asserting the NO prefix alone
+			// would pass on an unrelated failure and quietly stop testing the
+			// gate.
+			if testCase.want == "NO" && !strings.Contains(tagged, "[CANNOT]") {
+				t.Errorf("FETCH BINARY[] refused without the CANNOT code: %q", tagged)
+			}
 		})
 	}
 }

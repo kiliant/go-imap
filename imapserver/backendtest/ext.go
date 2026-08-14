@@ -358,7 +358,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	})
 
 	t.Run("scram-credentials-are-derivations-not-passwords", func(t *testing.T) {
-		instance, err := harness.New(t.Context())
+		instance, err := harness.New(t.Context(), nil)
 		if err != nil {
 			t.Fatalf("backendtest: harness could not construct an instance: %v", err)
 		}
