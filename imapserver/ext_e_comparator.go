@@ -140,7 +140,7 @@ func handleComparator(ctx context.Context, c *conn, command *queuedCommand) erro
 			// RFC 5255 section 4.7 uses BADCOMPARATOR for a request naming
 			// nothing the server can serve, so the client can distinguish it
 			// from an ordinary failure and fall back.
-			return writeTaggedCondition(c, command.tag, "NO", imap.ResponseCode("BADCOMPARATOR"), "",
+			return writeTaggedCondition(c, command.tag, "NO", imap.CodeBadComparator, "",
 				"no requested comparator is available")
 		}
 	}

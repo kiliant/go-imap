@@ -237,6 +237,12 @@ func (s *session) SetComparator(ctx context.Context, order []string, _ *imapserv
 var filters = map[string]imap.SearchCriteria{
 	"unseen":  imap.SearchNot{Criteria: imap.SearchFlagKeyword{Flag: imap.FlagSeen}},
 	"flagged": imap.SearchFlagKeyword{Flag: imap.FlagFlagged},
+	// A filter is stored criteria, so nothing stops it holding a sequence
+	// number. It exists to be composed with the framework's normalisation: the
+	// number has to survive substitution and then be resolved or refused like
+	// any other, rather than slipping past because it arrived by expansion
+	// instead of off the wire.
+	"firstmessage": imap.SearchSeqNum{Set: imap.SeqSetNum(1)},
 }
 
 // Filter implements [imapserver.FilterSession]. A name it does not know returns

@@ -71,6 +71,12 @@ const (
 // vocabularies drifted apart in the first place. A later RFC registering an
 // event adds it here and every consumer sees it.
 //
+// This is a registry, not a validity test. [NotifyEventName] is open by design,
+// so a name absent from this list is legal and may simply be newer than this
+// release. Reject an event because you cannot serve it — which is a statement
+// about your backend — never because it is missing here, or upgrading the
+// library will silently start accepting events nothing implements.
+//
 // The returned slice is a copy; callers may modify it.
 func NotifyEventNames() []NotifyEventName {
 	return []NotifyEventName{
@@ -86,7 +92,7 @@ func NotifyEventNames() []NotifyEventName {
 
 // NotifyMailboxSpecifiers returns every NOTIFY mailbox specifier this library
 // knows. See [NotifyEventNames] for why this is a function rather than a list
-// each consumer keeps.
+// each consumer keeps, and for why it is a registry rather than a validity test.
 //
 // The returned slice is a copy; callers may modify it.
 func NotifyMailboxSpecifiers() []NotifyMailboxSpecifier {

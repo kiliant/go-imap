@@ -31,10 +31,12 @@ import (
 // The criteria carry the same guarantee as [SearchQuery.Criteria], at every
 // nesting depth: no [imap.SearchFilter] reaches the backend, because the
 // framework substitutes it for the criteria it names first, and no
-// [imap.SearchSeqNum] reaches it either. Where the source is the selected
-// mailbox, sequence numbers are resolved to UIDs; where an IN clause names other
-// mailboxes there is nothing to resolve against, and the command is refused
-// rather than passed on meaning nothing.
+// [imap.SearchSeqNum] reaches it either. With no IN clause the source is the
+// selection, so sequence numbers are resolved to UIDs; with an IN clause the
+// command is refused. The refusal covers an IN clause naming the selected
+// mailbox too — the framework compares no names, because a number that resolved
+// for one spelling of a mailbox and not another would be worse than a uniform
+// refusal.
 type MultiSearchSession interface {
 	MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)
 }

@@ -266,19 +266,19 @@ type SelectOptions struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type QResyncSelect struct {
 	// UIDValidity is the UIDVALIDITY the client last observed.
-	UIDValidity uint32
+	UIDValidity uint32 `imapfeature:"qresync"`
 	// ModSeq is the modification sequence the client last observed.
-	ModSeq uint64
+	ModSeq uint64 `imapfeature:"qresync"`
 	// KnownUIDs optionally restricts the report to these UIDs. An empty set
 	// means the client did not restrict it.
-	KnownUIDs imap.UIDSet
+	KnownUIDs imap.UIDSet `imapfeature:"qresync"`
 	// SeqMatchSeqNums and SeqMatchUIDs are the optional sequence match data of
 	// RFC 7162 section 3.2.5.2, letting a backend detect a stale client view
 	// without reporting every UID. Both are empty when absent, and have equal
 	// length when present.
-	SeqMatchSeqNums imap.SeqSet
+	SeqMatchSeqNums imap.SeqSet `imapfeature:"qresync"`
 	// SeqMatchUIDs pairs positionally with SeqMatchSeqNums.
-	SeqMatchUIDs imap.UIDSet
+	SeqMatchUIDs imap.UIDSet `imapfeature:"qresync"`
 	_            struct{}
 }
 
@@ -597,10 +597,10 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 // implementations without breaking backends compiled against an earlier
 // version. See docs/API-STABILITY.md section 10.
 //
-// The sequence-number half of this applies to queries, so it does not extend to
-// [MultiSearchSession.MultiSearch], which takes criteria directly because
-// RFC 7377 has no single selection to resolve against. The SearchFilter half
-// applies there too.
+// The same guarantee holds for [MultiSearchSession.MultiSearch], which takes
+// criteria directly rather than a query: with no IN clause sequence numbers
+// resolve against the selection, and with one the command is refused, so a
+// backend never receives an unresolvable number there either.
 //
 // A criterion outside that guarantee reaching a backend is a framework bug, not
 // a case for the backend to interpret. TestSearchQueryNormalisationGuarantee

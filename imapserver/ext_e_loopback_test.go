@@ -447,6 +447,13 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 			// top of the tree.
 			"ESEARCH IN (\"INBOX\") NOT 1",
 			"ESEARCH IN (\"INBOX\") FUZZY 1",
+			// Arriving by filter expansion rather than off the wire. This is the
+			// one composition of the two halves — substitution then
+			// normalisation — and it is only safe because substitution runs
+			// first; if the order were reversed the number would appear after
+			// the check had already passed.
+			"ESEARCH IN (\"INBOX\") FILTER \"firstmessage\"",
+			"ESEARCH IN (\"INBOX\") NOT FILTER \"firstmessage\"",
 		} {
 			writeRawCommand(t, clientSide, "NS3 "+command+"\r\n")
 			_, tagged := collectUntilTag(t, reader, "NS3 ")

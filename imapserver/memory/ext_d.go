@@ -433,6 +433,22 @@ var notifySupportedEvents = []imap.NotifyEventName{
 	imap.NotifyEventSubscriptionChange,
 }
 
+// notifyServedSpecifiers are the watch groups notifyWatchesLocked can actually
+// match. It is a local list rather than [imap.NotifyMailboxSpecifiers] on
+// purpose: the registry says what the *grammar* allows, and a specifier added to
+// it by a later RFC would otherwise be accepted here the day this library is
+// upgraded, before anything implements it — a watch that never fires, which the
+// client reads as a quiet mailbox.
+var notifyServedSpecifiers = []imap.NotifyMailboxSpecifier{
+	imap.NotifySelected,
+	imap.NotifySelectedDelayed,
+	imap.NotifyPersonal,
+	imap.NotifySubscribed,
+	imap.NotifyInboxes,
+	imap.NotifySubtree,
+	imap.NotifyMailboxes,
+}
+
 // validateNotifyWatches refuses a registration this backend cannot honour.
 //
 // Accepting an unknown specifier or event and then never delivering it is the
@@ -446,28 +462,33 @@ func validateNotifyWatches(config *imapserver.NotifyConfig) error {
 		return nil
 	}
 	for _, watch := range config.Watches {
-		// The registry rather than a local list. A hand-written copy here would
-		// reject a newly registered specifier the client had already learned to
-		// send, with a green build on both sides — the same drift the shared
-		// vocabulary exists to prevent. A backend that implements only some of
-		// them should list those instead, and say so.
+		// Two separate questions, and the client needs different answers.
+		//
+		// Is the specifier in the grammar at all? RFC 5465 section 6 enumerates
+		// them, so one this library has never heard of is a malformed command:
+		// BAD, and the client should stop sending that syntax.
 		if !slices.Contains(imap.NotifyMailboxSpecifiers(), watch.Specifier) {
-			// BAD, not NO [BADEVENT]. RFC 5465 section 6 enumerates the mailbox
-			// specifiers in the grammar, so an unrecognised one is a malformed
-			// command rather than a request for something the server declines to
-			// do. BADEVENT is defined for the event list, which is an extensible
-			// registry — the distinction tells a client whether to retry with a
-			// smaller request or to stop sending that syntax at all.
 			return &imap.Error{
 				Type: imap.ErrorTypeBad,
 				Text: "unknown NOTIFY mailbox specifier " + string(watch.Specifier),
+			}
+		}
+		// Is it one *this* backend serves? A specifier can be perfectly legal and
+		// still unimplemented here, which is a refusal rather than a syntax
+		// error: NO [BADEVENT], and the client should retry with a smaller
+		// request.
+		if !slices.Contains(notifyServedSpecifiers, watch.Specifier) {
+			return &imap.Error{
+				Type: imap.ErrorTypeNo,
+				Code: imap.CodeBadEvent,
+				Text: "unsupported NOTIFY mailbox specifier " + string(watch.Specifier),
 			}
 		}
 		for _, event := range watch.Events {
 			if !slices.Contains(notifySupportedEvents, event) {
 				return &imap.Error{
 					Type: imap.ErrorTypeNo,
-					Code: imap.ResponseCode("BADEVENT"),
+					Code: imap.CodeBadEvent,
 					Text: "unsupported NOTIFY event " + string(event),
 				}
 			}

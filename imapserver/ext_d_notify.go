@@ -114,10 +114,10 @@ type NotifyOptions struct{ _ struct{} }
 // Construct with keyed fields only; fields may be added in a future release.
 type NotifyConfig struct {
 	// Watches are the watch groups, in the order the client listed them.
-	Watches []NotifyWatch
+	Watches []NotifyWatch `imapfeature:"notify"`
 	// StatusOnSet asks for an immediate STATUS of every watched mailbox, from
 	// the STATUS parameter of RFC 5465 section 6.
-	StatusOnSet bool
+	StatusOnSet bool `imapfeature:"notify"`
 	_           struct{}
 }
 
@@ -136,16 +136,16 @@ type NotifyWatch struct {
 	// registers further specifiers and a closed set would break on the next one.
 	//
 	// A specifier the backend does not recognise must be refused, not ignored.
-	Specifier imap.NotifyMailboxSpecifier
+	Specifier imap.NotifyMailboxSpecifier `imapfeature:"notify"`
 	// Names lists the mailboxes for SUBTREE and MAILBOXES, and is empty
 	// otherwise.
-	Names []string
+	Names []string `imapfeature:"notify"`
 	// Events are the event names wanted for this group. An empty list means
 	// the client asked for none, which RFC 5465 section 6 allows as a way to
 	// silence a group without removing it.
 	//
 	// An event the backend cannot serve must be refused, not ignored.
-	Events []imap.NotifyEventName
+	Events []imap.NotifyEventName `imapfeature:"notify"`
 	_      struct{}
 }
 
@@ -290,7 +290,15 @@ func (q *sessionUpdateQueue) close() {
 	q.mu.Unlock()
 }
 
+const featureNotify featureID = "notify"
+
 func init() {
+	registerFeatures(featureDescriptor{
+		ID: featureNotify,
+		Active: func(_ *sessionState, advertised map[string]bool) bool {
+			return advertised["NOTIFY"]
+		},
+	})
 	registerCapabilities(
 		capabilityDescriptor{
 			Name:            "NOTIFY",
@@ -481,7 +489,7 @@ func (c *conn) drainNotify() error {
 		// The client is told rather than left believing it saw everything. A
 		// silently truncated notification stream is worse than none, because
 		// the client stops polling on the strength of it.
-		writeUntaggedOK(c, imap.ResponseCode("NOTIFICATIONOVERFLOW"), "", "some notifications were dropped")
+		writeUntaggedOK(c, imap.CodeNotificationOverflow, "", "some notifications were dropped")
 		if err := c.encoder.Flush(); err != nil {
 			return err
 		}

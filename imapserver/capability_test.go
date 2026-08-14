@@ -195,6 +195,34 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 	}
 }
 
+// frameworkRequestStruct reports whether a struct carries a client's request
+// into a backend, and therefore needs every field bound to a feature.
+//
+// The `*Options` suffix covers almost all of them, and covering only those was a
+// loophole: a field on a struct named otherwise needed no binding at all.
+// NotifyConfig is the live example — the framework fills it from the wire, hands
+// it to NotifySession, and it grew a field without tripping this gate. A
+// successor RFC adding a registration parameter would land there for the same
+// reason, and an older backend would ignore it silently while the server went on
+// advertising the capability.
+//
+// The extras are listed rather than detected because "struct the framework
+// populates for a backend" has no syntactic signature. A list is a judgement
+// call, so it is kept short and each entry names the interface it reaches.
+func frameworkRequestStruct(name string) bool {
+	if strings.HasSuffix(name, "Options") {
+		return true
+	}
+	switch name {
+	case "NotifyConfig", // -> NotifySession.Notify
+		"NotifyWatch",   // -> NotifyConfig.Watches
+		"QResyncSelect", // -> QResyncMailbox.Resync
+		"StoreFlags":    // -> SelectedMailbox.Store, CondStoreMailbox.StoreCondStore
+		return true
+	}
+	return false
+}
+
 func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 	baseline := map[string]bool{
 		"MutationOptions.Origin":         true,
@@ -219,6 +247,10 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 		"Options.Greeting":               true,
 		"Options.ServerID":               true,
 		"Options.Limits":                 true,
+		// STORE's operation and flag list are the rev1 command itself, not an
+		// extension of it.
+		"StoreFlags.Op":    true,
+		"StoreFlags.Flags": true,
 	}
 	knownFeatures := make(map[string]bool)
 	for _, descriptor := range featureDescriptors {
@@ -238,7 +270,7 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 			}
 			for _, spec := range general.Specs {
 				typeSpec := spec.(*ast.TypeSpec)
-				if !strings.HasSuffix(typeSpec.Name.Name, "Options") {
+				if !frameworkRequestStruct(typeSpec.Name.Name) {
 					continue
 				}
 				structure, ok := typeSpec.Type.(*ast.StructType)

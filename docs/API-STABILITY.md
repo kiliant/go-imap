@@ -496,13 +496,23 @@ type-switches over — is unconditionally additive. The condition applies to
 implementations of open marker interfaces, which are the ones consumers discover
 by type assertion.
 
-**Branch (b) does not apply to `imap.SearchCriteria`.** It has exhaustive
-in-repo consumers — every `imapserver` backend, and `internal/imapmessage` — so a
-new `SearchCriteria` implementation may only be justified under (a). This is
-stated by name because (b) is otherwise self-satisfying: the `# Consumers`
-paragraph on `SearchCriteria` already documents the unrecognised case, so an
-agent could cite (b), write no framework code and no test, and pass the rule that
-was written to stop exactly that.
+**Branch (b) does not apply to `imap.SearchCriteria`, `imap.FetchItem`, or
+STATUS items.** Each has exhaustive in-repo consumers — every `imapserver`
+backend, and for search keys `internal/imapmessage` too — so a new
+implementation of one may only be justified under (a). `SearchCriteria` is the
+one the framework narrows: no `SearchFilter` and no `SearchSeqNum` reaches a
+backend, at any nesting depth, on any command. `FetchItem` gets no such
+narrowing, because a fetch item requests data only the backend holds; its
+`# Consumers` paragraph therefore carries the whole contract, and an
+unrecognised item must be an error rather than a silently omitted field.
+
+This is stated by name because (b) is otherwise self-satisfying: the
+`# Consumers` paragraph on `SearchCriteria` already documents the unrecognised
+case, so an agent could cite (b), write no framework code and no test, and pass
+the rule that was written to stop exactly that.
+
+RFC 5257 (ANNOTATE) is the live test of this: it adds an `ANNOTATION` search key
+*and* an `ANNOTATION` fetch item, so it stresses both lists at once.
 
 Where (b) does apply, the documented fallback must have shipped in the release
 the consumer surface froze in. A fallback documented after the fact protects
@@ -607,13 +617,47 @@ This is a compile-time constant, so the two definitions cannot drift in *value*.
 `TestNotifyVocabularyMirrorsRootPackage` covers the other axis — a later RFC
 registering an event would otherwise add a constant to `package imap` and leave
 `imapclient` silently without one, with a green build. And
-`apidiff` reports no change to `imapclient` at all. The divergence that caused
-the bug is gone; only the redundant type identity remains, and nothing needs to
-bridge it — the client writes NOTIFY commands and the server parses them, so a
-value never crosses from one package's type to the other's in a single program.
+`apidiff` reports no change to `imapclient` at all. The divergence that caused the bug is gone; only the redundant type identity
+remains.
+
+An earlier draft justified that by claiming a value never crosses from one
+package's type to the other's in a single program. That is false, and worth
+correcting rather than quietly deleting: a proxy or a migration tool built on
+both halves of this module — a shape the nested-module design invites — parses a
+client's NOTIFY with `imapserver` and reissues it upstream with `imapclient`,
+crossing the two types in one call chain. The real justification is smaller and
+holds: both are string-backed, so the crossing costs one conversion and loses
+nothing.
 
 Collapsing the identities is an `imapclient` v2 change. It is not urgent, because
 the values can no longer diverge.
+
+#### Registry accessors — a precedent, with a limit
+
+`imap.NotifyEventNames()` and `imap.NotifyMailboxSpecifiers()` were added
+alongside the vocabulary. They are the first package-level "known values"
+accessors in the root package, and the first new *functions* added to it after
+v1.0, so the precedent needs stating rather than inferring.
+
+They earn their place: three consumers each kept a hand-written copy of the same
+list, which is how the two vocabularies drifted apart to begin with. A later RFC
+registering an event adds it once.
+
+**The limit is that a registry is not a validity test.** These sets are open by
+declaration, so absence from the list means "not known to this release", never
+"invalid". A consumer that rejects a name for being absent starts *accepting* it
+the day the library is upgraded, before anything implements it — which for NOTIFY
+is a watch that never fires and reads to the client as a quiet mailbox. Reject a
+name because you cannot serve it, which is a statement about your own code.
+`imapserver/memory` shows the split: it consults the registry to decide whether a
+specifier is in the grammar at all (a syntax error if not) and its own list to
+decide whether it serves it (`NO [BADEVENT]` if not).
+
+An accessor is therefore justified only where a *shared spelling* is the thing
+being protected. It is not a licence for `imap.FetchItems()` or
+`imap.CapabilityNames()`: those sets are open precisely so that callers may name
+what this library does not model, and a list of them invites the membership test
+that rule 1 exists to prevent.
 
 The general rule: **a string-backed name set that both the client and the server
 must spell identically goes in `package imap` from the start**, not in whichever

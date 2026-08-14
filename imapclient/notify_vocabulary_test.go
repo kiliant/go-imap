@@ -48,6 +48,18 @@ func TestNotifyVocabularyMirrorsRootPackage(t *testing.T) {
 //
 // Names are compared rather than values because the values are already pinned by
 // constant conversion — this gate covers the axis that mechanism leaves open.
+// notifyConstantNames collects exported constants whose name begins with
+// "Notify".
+//
+// The prefix is the whole selector, and that is an assumption worth naming
+// before it misfires in either direction. A root constant named for NOTIFY but
+// not part of the wire vocabulary — a tuning threshold, say — would be demanded
+// of imapclient by this gate, and its failure message tells the next agent to
+// add a constant to a frozen package, which is permanent. Conversely an event
+// constant not spelled Notify* would escape the mirror entirely.
+//
+// Neither has happened; both are cheap to spot if this test ever fails in a way
+// that reads as absurd. Prefer renaming the new constant to widening the gate.
 func notifyConstantNames(t *testing.T, directory string) map[string]bool {
 	t.Helper()
 	fileSet := token.NewFileSet()
