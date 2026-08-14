@@ -23,7 +23,12 @@ import (
 // RFC 5464 gives them the same syntax and the same entry tree; a backend that
 // serves only one returns nothing for the other.
 type MetadataSession interface {
+	// GetMetadata reads the named entries. An entry that does not exist is
+	// omitted from the result rather than reported as an error: RFC 5464
+	// section 4.2.2 makes absence a nil value, not a failure.
 	GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *MetadataOptions) (*imap.MailboxMetadata, error)
+	// SetMetadata writes entries. An entry carrying a nil value is a deletion,
+	// which RFC 5464 section 4.3 defines as the only way to remove one.
 	SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *MetadataOptions) error
 }
 
