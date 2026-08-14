@@ -184,22 +184,25 @@ var triaged = []struct {
 	pattern *regexp.Regexp
 	finding string
 }{
-	{
-		regexp.MustCompile(`Invalid untagged input: \* \d+ EXPUNGE|Referenced message expunged`),
-		"EXPUNGE delivered while a pipelined FETCH/STORE/SEARCH is still in " +
-			"progress, which RFC 3501 section 7.4.1 forbids",
-	},
+	// The pipelined-EXPUNGE entry that used to head this table was removed
+	// when T25 fixed it: expunges now wait for the connection's backlog to
+	// drain, not merely for the current command's tagged response. Removing the
+	// entry rather than leaving it is the point — a triaged finding that stays
+	// after the bug is gone turns this filter into a permanent blindfold, and
+	// the regression is pinned by TestExpungeUpdateWaitsForPipelinedCommands.
 	{
 		regexp.MustCompile(`Keyword used without being in FLAGS`),
 		"a keyword created by STORE is reported in FETCH without the mailbox's " +
 			"FLAGS set having been re-announced",
 	},
 	{
-		// imaptest asserts internally once its own view of the mailbox has
-		// desynchronised, which is downstream of the first finding rather than
-		// a separate one.
+		// Kept, narrowly: imaptest asserts internally once its own view has
+		// desynchronised. That was downstream of the EXPUNGE finding, so this
+		// may now be unreachable — but proving that needs a full imaptest run
+		// under podman, which is an interop-tagged job rather than something to
+		// assume here. If it stays quiet across a matrix run, remove it.
 		regexp.MustCompile(`Raw backtrace|Panic:`),
-		"imaptest's own assertion failure, downstream of the EXPUNGE finding",
+		"imaptest's own assertion failure after its view desynchronised",
 	},
 }
 

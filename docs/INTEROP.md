@@ -239,8 +239,8 @@ the bare form — could not set a flag at all. Nothing in this repository ever
 generated the bare form, which is exactly why no test caught it. Fixed in
 `cmd_store.go`, pinned by `cmd_store_test.go`.
 
-**Open — `EXPUNGE` is delivered while a pipelined `FETCH`/`STORE`/`SEARCH` is
-still in progress.** RFC 3501 §7.4.1 (RFC 9051 §7.5.1):
+**Fixed (T25) — `EXPUNGE` was delivered while a pipelined
+`FETCH`/`STORE`/`SEARCH` was still in progress.** RFC 3501 §7.4.1 (RFC 9051 §7.5.1):
 
 > An EXPUNGE response MUST NOT be sent when no command is in progress, nor
 > while responding to a FETCH, STORE, or SEARCH command. This rule is necessary
@@ -274,6 +274,17 @@ the pipeline queue into account, instead of flushing after each tagged response.
 `cmd_update_order_test.go` is the right place to extend, with a pipelined case
 alongside its existing one-at-a-time cases. That is shared machinery owned by
 the server-core tasks and is deliberately not being landed at the tail of T24.
+
+**Resolved in T25.** The condition became the connection's own backlog rather
+than the command that just finished: an unsolicited renumbering waits while a
+command is queued, while input has been read but not yet parsed, and across the
+pre-command drain of a sequence-sensitive command. Nothing is popped from the
+update queue while deferred, so the framework's sequence view never runs ahead
+of the client's — popping and withholding the responses would produce exactly
+the desynchronisation being prevented. Pinned by
+`TestExpungeUpdateWaitsForPipelinedCommands`, and the entry was removed from
+`imaptest_test.go`'s triaged table rather than left behind, since a triaged
+finding that outlives its bug is a permanent blindfold.
 
 **Open — a keyword created by `STORE` is never re-announced in `FLAGS`.** The
 server reports `$Label1` in a `FETCH FLAGS` response although no untagged
