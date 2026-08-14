@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Compare the exported API of the working tree against the previous git tag.
+# Compare each module's exported API against that module's previous git tag.
 #
 # Why this exists at all: the reference implementation in this ecosystem stayed
 # in beta for years because every new extension forced a breaking change to the
@@ -17,6 +17,17 @@
 # The switch is the previous tag's major version, so the flip happens by tagging
 # v1.0.0 and needs no workflow edit. APIDIFF_ENFORCE=1/0 overrides it for a
 # deliberate one-off.
+#
+# Since T25 the repository holds two modules with two different promises: the
+# root module is v1.x and frozen, imapserver is v0.x and not. The mode is
+# therefore decided per module from that module's own baseline tag, which is
+# also why each module's tags are matched by prefix — Go's convention tags a
+# nested module `imapserver/v0.1.0`, and a plain `git describe` would happily
+# compare the root module against it.
+#
+# A v0.x module may break between minors by definition. Reporting mode is not
+# indifference: the gate is there to catch the *unintended* break, which is the
+# common case, and CHANGELOG.md is where a deliberate one gets named.
 #
 # Zero-dependency note: apidiff is a CI tool, never a module requirement.
 # `go install pkg@version` runs in module-aware mode ignoring any go.mod in the
@@ -40,30 +51,6 @@ mkdir -p "$OUT"
 REPORT="$OUT/report.md"
 : > "$REPORT"
 
-previous_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-if [ -z "$previous_tag" ]; then
-  {
-    echo "### apidiff"
-    echo
-    echo "No previous tag in this repository, so there is no baseline to compare"
-    echo "against. This is the expected state before the first release tag; the"
-    echo "gate becomes meaningful with the first \`v0.x\` tag and enforcing with"
-    echo "\`v1.0.0\`."
-  } > "$REPORT"
-  cat "$REPORT"
-  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
-  exit 0
-fi
-
-# Enforcing mode is decided by the baseline tag's major version.
-if [ -n "${APIDIFF_ENFORCE:-}" ]; then
-  enforce="$APIDIFF_ENFORCE"
-elif [[ "$previous_tag" =~ ^v([0-9]+)\. ]] && [ "${BASH_REMATCH[1]}" -ge 1 ]; then
-  enforce=1
-else
-  enforce=0
-fi
-
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
@@ -75,19 +62,13 @@ echo "installing apidiff@${APIDIFF_VERSION}" >&2
 APIDIFF="$(go env GOPATH)/bin/apidiff"
 [ -x "$APIDIFF" ] || { echo "apidiff not found at $APIDIFF" >&2; exit 1; }
 
-# The tool must not have touched the module files.
+# The tool must not have touched the root module's files. The nested module has
+# a go.sum by design, so it is checked for drift by ci.yml rather than for
+# existence here.
 if ! git diff --quiet -- go.mod || [ -s go.sum ]; then
   echo "FAIL: installing apidiff modified go.mod or created a go.sum" >&2
   exit 1
 fi
-
-old_tree="$scratch/old"
-git worktree add --detach "$old_tree" "$previous_tag" >/dev/null 2>&1 || {
-  echo "failed to check out $previous_tag" >&2
-  exit 1
-}
-cleanup() { git worktree remove --force "$old_tree" >/dev/null 2>&1; rm -rf "$scratch"; }
-trap cleanup EXIT
 
 # Exported packages only. `internal/` is unreachable by consumers by
 # construction (API rule 6) and `interop/` is test scaffolding, so a change in
@@ -98,88 +79,150 @@ list_packages() {
       | grep -v '/interop' )
 }
 
-old_pkgs="$(list_packages "$old_tree")"
-new_pkgs="$(list_packages "$ROOT")"
-all_pkgs="$(printf '%s\n%s\n' "$old_pkgs" "$new_pkgs" | sort -u)"
+overall_status=0
 
-incompatible=0
-{
-  echo "### apidiff vs \`${previous_tag}\`"
-  echo
-  if [ "$enforce" = "1" ]; then
-    echo "Mode: **enforcing** — an incompatible change fails this build."
+# diff_module <module dir> <tag prefix>
+#
+# Tags are matched by prefix and ordered with `sort -V`, not `git describe`:
+# describe walks history and would return whichever module's tag is nearest,
+# which across two tag namespaces is the wrong module's baseline about half the
+# time.
+diff_module() {
+  local dir="$1" prefix="$2"
+  local module_label="${dir#./}"
+  [ "$module_label" = "." ] && module_label="$(GOWORK=off go list -m)"
+
+  local previous_tag
+  previous_tag="$(git tag -l "${prefix}*" | sort -V | tail -1)"
+
+  if [ -z "$previous_tag" ]; then
+    {
+      echo "### apidiff — \`${module_label}\`"
+      echo
+      echo "No \`${prefix}*\` tag yet, so there is no baseline for this module."
+      echo "This is the expected state before its first release tag; the gate"
+      echo "becomes meaningful with the first one and enforcing at \`v1.0.0\`."
+      echo
+    } >> "$REPORT"
+    return 0
+  fi
+
+  local enforce version
+  version="${previous_tag#"$prefix"}"
+  if [ -n "${APIDIFF_ENFORCE:-}" ]; then
+    enforce="$APIDIFF_ENFORCE"
+  elif [[ "$version" =~ ^([0-9]+)\. ]] && [ "${BASH_REMATCH[1]}" -ge 1 ]; then
+    enforce=1
   else
-    echo "Mode: **reporting** (pre-v1.0) — breaks are allowed but must be"
-    echo "deliberate. Anything listed as incompatible below needs a line in"
-    echo "\`CHANGELOG.md\` saying so."
-  fi
-  echo
-} >> "$REPORT"
-
-for pkg in $all_pkgs; do
-  in_old=0; in_new=0
-  printf '%s\n' "$old_pkgs" | grep -qx "$pkg" && in_old=1
-  printf '%s\n' "$new_pkgs" | grep -qx "$pkg" && in_new=1
-
-  if [ "$in_old" = "1" ] && [ "$in_new" = "0" ]; then
-    echo "- \`$pkg\`: **package removed** (incompatible)" >> "$REPORT"
-    incompatible=1
-    continue
-  fi
-  if [ "$in_old" = "0" ]; then
-    echo "- \`$pkg\`: new package (compatible)" >> "$REPORT"
-    continue
+    enforce=0
   fi
 
-  safe="$(echo "$pkg" | tr '/.' '__')"
-  ( cd "$old_tree" && "$APIDIFF" -w "$OUT/${safe}.old" "$pkg" ) >/dev/null 2>"$OUT/${safe}.olderr" || {
-    echo "- \`$pkg\`: could not read the baseline API (see log)" >> "$REPORT"
-    cat "$OUT/${safe}.olderr" >&2
-    continue
+  local old_tree="$scratch/old-$(echo "$module_label" | tr '/.' '__')"
+  git worktree add --detach "$old_tree" "$previous_tag" >/dev/null 2>&1 || {
+    echo "failed to check out $previous_tag" >&2
+    return 1
   }
 
-  diff_text="$("$APIDIFF" "$OUT/${safe}.old" "$pkg" 2>&1)"
-  if [ -z "$diff_text" ]; then
-    echo "- \`$pkg\`: no exported API change" >> "$REPORT"
-    continue
-  fi
+  local old_pkgs new_pkgs all_pkgs
+  old_pkgs="$(list_packages "$old_tree/$dir")"
+  new_pkgs="$(list_packages "$ROOT/$dir")"
+  all_pkgs="$(printf '%s\n%s\n' "$old_pkgs" "$new_pkgs" | sort -u)"
 
-  # apidiff groups its output under "Incompatible changes:" and
-  # "Compatible changes:" headings.
-  if printf '%s' "$diff_text" | grep -q 'Incompatible changes:'; then
-    incompatible=1
-  fi
+  local incompatible=0
   {
-    echo
-    echo "<details><summary><code>$pkg</code></summary>"
-    echo
-    echo '```'
-    printf '%s\n' "$diff_text"
-    echo '```'
-    echo
-    echo "</details>"
-  } >> "$REPORT"
-done
-
-if [ "$incompatible" = "1" ]; then
-  {
+    echo "### apidiff — \`${module_label}\` vs \`${previous_tag}\`"
     echo
     if [ "$enforce" = "1" ]; then
-      echo "**Incompatible changes present.** Post-v1.0 this fails the build."
-      echo "Overriding it requires an explicit human decision recorded in this"
-      echo "pull request, plus a \`CHANGELOG.md\` entry naming the symbols."
+      echo "Mode: **enforcing** — an incompatible change fails this build."
     else
-      echo "**Incompatible changes present.** Allowed before v1.0, but they must"
-      echo "be deliberate: name the affected exported symbols in \`CHANGELOG.md\`"
-      echo "and, if the change sets a precedent, in \`docs/API-STABILITY.md\`."
+      echo "Mode: **reporting** (pre-v1.0) — breaks are allowed but must be"
+      echo "deliberate. Anything listed as incompatible below needs a line in"
+      echo "\`CHANGELOG.md\` saying so."
     fi
+    echo
   } >> "$REPORT"
-fi
+
+  local pkg in_old in_new safe diff_text
+  for pkg in $all_pkgs; do
+    in_old=0; in_new=0
+    printf '%s\n' "$old_pkgs" | grep -qx "$pkg" && in_old=1
+    printf '%s\n' "$new_pkgs" | grep -qx "$pkg" && in_new=1
+
+    if [ "$in_old" = "1" ] && [ "$in_new" = "0" ]; then
+      echo "- \`$pkg\`: **package removed** (incompatible)" >> "$REPORT"
+      incompatible=1
+      continue
+    fi
+    if [ "$in_old" = "0" ]; then
+      echo "- \`$pkg\`: new package (compatible)" >> "$REPORT"
+      continue
+    fi
+
+    safe="$(echo "$pkg" | tr '/.' '__')"
+    ( cd "$old_tree/$dir" && "$APIDIFF" -w "$OUT/${safe}.old" "$pkg" ) >/dev/null 2>"$OUT/${safe}.olderr" || {
+      echo "- \`$pkg\`: could not read the baseline API (see log)" >> "$REPORT"
+      cat "$OUT/${safe}.olderr" >&2
+      continue
+    }
+
+    diff_text="$( cd "$ROOT/$dir" && "$APIDIFF" "$OUT/${safe}.old" "$pkg" 2>&1 )"
+    if [ -z "$diff_text" ]; then
+      echo "- \`$pkg\`: no exported API change" >> "$REPORT"
+      continue
+    fi
+
+    # apidiff groups its output under "Incompatible changes:" and
+    # "Compatible changes:" headings.
+    if printf '%s' "$diff_text" | grep -q 'Incompatible changes:'; then
+      incompatible=1
+    fi
+    {
+      echo
+      echo "<details><summary><code>$pkg</code></summary>"
+      echo
+      echo '```'
+      printf '%s\n' "$diff_text"
+      echo '```'
+      echo
+      echo "</details>"
+    } >> "$REPORT"
+  done
+
+  if [ "$incompatible" = "1" ]; then
+    {
+      echo
+      if [ "$enforce" = "1" ]; then
+        echo "**Incompatible changes present.** Post-v1.0 this fails the build."
+        echo "Overriding it requires an explicit human decision recorded in this"
+        echo "pull request, plus a \`CHANGELOG.md\` entry naming the symbols."
+      else
+        echo "**Incompatible changes present.** Allowed before v1.0, but they must"
+        echo "be deliberate: name the affected exported symbols in \`CHANGELOG.md\`"
+        echo "and, if the change sets a precedent, in \`docs/API-STABILITY.md\`."
+      fi
+    } >> "$REPORT"
+  fi
+  echo >> "$REPORT"
+
+  git worktree remove --force "$old_tree" >/dev/null 2>&1
+
+  if [ "$enforce" = "1" ] && [ "$incompatible" = "1" ]; then
+    return 1
+  fi
+  return 0
+}
+
+for dir in $(.github/scripts/modules.sh); do
+  if [ "$dir" = "." ]; then
+    prefix="v"
+  else
+    # Go's own convention for a nested module's tags: imapserver/v0.1.0.
+    prefix="${dir#./}/v"
+  fi
+  diff_module "$dir" "$prefix" || overall_status=1
+done
 
 cat "$REPORT"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
 
-if [ "$enforce" = "1" ] && [ "$incompatible" = "1" ]; then
-  exit 1
-fi
-exit 0
+exit "$overall_status"
