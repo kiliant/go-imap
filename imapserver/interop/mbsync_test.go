@@ -22,7 +22,7 @@ const mbsyncImage = "go-imap-mbsync:local"
 // no TLSConfig — and Debian's isync is built without TLS support, so the
 // keyword is not merely unnecessary but unrecognised. Transport is not what
 // this test is about; synchronisation behaviour is.
-func mbsyncConfig(port string) string {
+func mbsyncConfig(host, port string) string {
 	return fmt.Sprintf(`IMAPAccount goimap
 Host %s
 Port %s
@@ -45,7 +45,7 @@ Patterns *
 Create Both
 Expunge Both
 SyncState *
-`, containerHost, port, interopUser, interopPassword)
+`, host, port, interopUser, interopPassword)
 }
 
 // TestMbsyncFullSyncAndResync is T24's "at least one real third-party client
@@ -57,7 +57,8 @@ SyncState *
 // prior state instead of re-downloading, which is the bug class that makes a
 // server unusable with real clients while every unit test still passes.
 func TestMbsyncFullSyncAndResync(t *testing.T) {
-	buildImage(t, mbsyncImage, "testdata/mbsync")
+	runtime := runtimeForTests(t)
+	buildImage(t, runtime, mbsyncImage, "testdata/mbsync")
 	port := serverForClients(t)
 	const seeded = 12
 	seed(t, port, "INBOX", seeded)
@@ -85,9 +86,9 @@ echo "=== pass 2: resync ==="
 mbsync -c /tmp/mbsyncrc -V -a
 echo "COUNT2=$(find /maildir/INBOX/cur /maildir/INBOX/new -type f 2>/dev/null | wc -l | tr -d ' ')"
 echo "=== done ==="
-`, mbsyncConfig(port))
+`, mbsyncConfig(runtime.hostAlias, port))
 
-	out, err := runInImage(t, mbsyncImage, script, 5*time.Minute)
+	out, err := runInImage(t, runtime, mbsyncImage, script, 5*time.Minute)
 	t.Logf("mbsync output:\n%s", out)
 	if err != nil {
 		t.Fatalf("mbsync did not complete a sync/resync cycle against our server: %v", err)

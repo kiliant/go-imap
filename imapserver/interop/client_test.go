@@ -27,16 +27,60 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiliant/go-imap/interop/harness"
 )
 
-// containerHost is the name podman resolves to the host from inside a
-// container. The server under test runs in this process, not in a container, so
-// every client here has to reach back out.
-const containerHost = "host.containers.internal"
+// containerRuntime is the engine these tests drive and, more importantly, how a
+// container reaches back out to the host. The server under test runs in this
+// process rather than in a container, so every client here has to dial the
+// host, and the two engines spell that differently.
+type containerRuntime struct {
+	binary string
+	// hostAlias resolves to the host from inside a container.
+	hostAlias string
+	// runArgs are engine-specific arguments needed for hostAlias to resolve.
+	runArgs []string
+}
+
+// runtimeForTests resolves the container engine the same way interop/harness
+// does — the IMAP_INTEROP_ENGINE override first, then podman, then docker — so
+// these tests and the matrix cannot end up driving different engines on the
+// same machine. The resolution is duplicated rather than shared because the
+// harness keeps it unexported, and widening an exported API to serve a test is
+// the wrong trade in a repository whose deliverable is API stability.
+func runtimeForTests(t *testing.T) containerRuntime {
+	t.Helper()
+	candidates := []string{"podman", "docker"}
+	if override := os.Getenv(harness.EngineEnv); override != "" {
+		candidates = []string{override}
+	}
+	for _, candidate := range candidates {
+		binary, err := exec.LookPath(candidate)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(filepath.Base(candidate), "docker") {
+			// Docker resolves the host under a different name, and on Linux
+			// only when the mapping is asked for explicitly.
+			return containerRuntime{
+				binary:    binary,
+				hostAlias: "host.docker.internal",
+				runArgs:   []string{"--add-host", "host.docker.internal:host-gateway"},
+			}
+		}
+		return containerRuntime{binary: binary, hostAlias: "host.containers.internal"}
+	}
+	t.Skipf("no container engine on PATH (looked for %s); set %s to pin one",
+		strings.Join(candidates, ", "), harness.EngineEnv)
+	return containerRuntime{}
+}
 
 // serverForClients starts the same server the capability matrix measures, bound
 // so a container can reach it, and returns the port. Binding every interface
@@ -61,21 +105,18 @@ func serverForClients(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("server address %q: %v", server.Address, err)
 	}
-	t.Logf("server listening on %s (%s:%s from a container)", server.Address, containerHost, port)
+	t.Logf("server listening on %s (port %s from a container)", server.Address, port)
 	return port
 }
 
 // buildImage builds one client image, skipping the test when it cannot. A build
-// needs a working podman and network access to a base image; neither is a
+// needs a working engine and network access to a base image; neither is a
 // property of the server under test, so neither may turn the suite red.
-func buildImage(t *testing.T, tag, dir string) {
+func buildImage(t *testing.T, runtime containerRuntime, tag, dir string) {
 	t.Helper()
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skipf("podman is not installed: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, "podman", "build", "-t", tag,
+	command := exec.CommandContext(ctx, runtime.binary, "build", "-t", tag,
 		"-f", dir+"/Containerfile", dir)
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Skipf("building %s failed, skipping rather than reporting our server red:\n%s", tag, out)
@@ -87,14 +128,16 @@ func buildImage(t *testing.T, tag, dir string) {
 // podman on macOS runs in a VM, so which host paths are mountable is a property
 // of the developer's machine, and a test that depends on it fails for reasons
 // having nothing to do with IMAP.
-func runInImage(t *testing.T, tag, script string, timeout time.Duration) (string, error) {
+func runInImage(t *testing.T, runtime containerRuntime, tag, script string, timeout time.Duration) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	encoded := base64.StdEncoding.EncodeToString([]byte(script))
-	command := exec.CommandContext(ctx, "podman", "run", "--rm",
-		"--entrypoint", "/bin/sh", tag, "-c",
+	args := []string{"run", "--rm", "--entrypoint", "/bin/sh"}
+	args = append(args, runtime.runArgs...)
+	args = append(args, tag, "-c",
 		"echo "+encoded+" | base64 -d > /tmp/script.sh && sh /tmp/script.sh")
+	command := exec.CommandContext(ctx, runtime.binary, args...)
 	out, err := command.CombinedOutput()
 	if ctx.Err() != nil {
 		return string(out), fmt.Errorf("timed out after %s: %w", timeout, ctx.Err())

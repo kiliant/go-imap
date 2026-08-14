@@ -24,9 +24,9 @@ import (
 const imaptestImage = "go-imap-imaptest:local"
 
 // imaptestArgs is the connection half of every invocation below.
-func imaptestArgs(port string) string {
+func imaptestArgs(host, port string) string {
 	return fmt.Sprintf("host=%s port=%s user=%s pass=%s",
-		containerHost, port, interopUser, interopPassword)
+		host, port, interopUser, interopPassword)
 }
 
 // mboxFixture is the message source imaptest's stress mode appends from. It
@@ -74,7 +74,8 @@ func mboxFixture(count int) string {
 // test reported PASS on that very abort, because a tool refusing to start looks
 // identical to a tool finding nothing wrong.
 func TestImaptestScriptedConformance(t *testing.T) {
-	buildImage(t, imaptestImage, "testdata/imaptest")
+	runtime := runtimeForTests(t)
+	buildImage(t, runtime, imaptestImage, "testdata/imaptest")
 	port := serverForClients(t)
 
 	// imaptest wants an empty account: the scripts append their own messages
@@ -88,9 +89,9 @@ if [ -z "$tests" ]; then echo "NOTESTS"; exit 0; fi
 echo "TESTDIR=$tests"
 imaptest %s test="$tests" || true
 echo "=== done ==="
-`, imaptestArgs(port))
+`, imaptestArgs(runtime.hostAlias, port))
 
-	out, err := runInImage(t, imaptestImage, script, 15*time.Minute)
+	out, err := runInImage(t, runtime, imaptestImage, script, 15*time.Minute)
 	t.Logf("imaptest scripted output:\n%s", out)
 	if err != nil {
 		t.Fatalf("running imaptest: %v", err)
@@ -116,7 +117,8 @@ echo "=== done ==="
 // bar is the fuzz targets' — no crash, no hang, no protocol complaint — rather
 // than a pass count.
 func TestImaptestStress(t *testing.T) {
-	buildImage(t, imaptestImage, "testdata/imaptest")
+	runtime := runtimeForTests(t)
+	buildImage(t, runtime, imaptestImage, "testdata/imaptest")
 	port := serverForClients(t)
 
 	// Recorded, so imaptest's command mix seeds the fuzz corpus too. It reaches
@@ -131,9 +133,9 @@ cat > /tmp/mbox <<'MBOXEOF'
 MBOXEOF
 imaptest %s mbox=/tmp/mbox clients=4 secs=20 || true
 echo "=== done ==="
-`, mboxFixture(8), imaptestArgs(recorded.port()))
+`, mboxFixture(8), imaptestArgs(runtime.hostAlias, recorded.port()))
 
-	out, err := runInImage(t, imaptestImage, script, 10*time.Minute)
+	out, err := runInImage(t, runtime, imaptestImage, script, 10*time.Minute)
 	t.Logf("imaptest stress output:\n%s", out)
 	if err != nil {
 		t.Fatalf("running imaptest: %v", err)

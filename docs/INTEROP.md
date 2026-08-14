@@ -287,6 +287,24 @@ loudly rather than silently — an earlier version reported PASS on that abort,
 because a tool refusing to start is indistinguishable from a tool finding
 nothing wrong unless you check.
 
+#### Where these run
+
+`.github/scripts/run-interop.sh` drives three suites sequentially, and
+`./imapserver/interop/...` is the third: `imapclient`, then `interop`, then
+`imapserver`. Sequential for the reason the other two already were — one test
+process per package, each owning an independent container lifecycle — and last
+because it is the slowest and because a failure there is our bug rather than a
+container's, which reads better at the end of a log than buried mid-run.
+
+That puts `imaptest`, `mbsync` and the `goimap` capability table on the same
+nightly-and-push-to-main schedule as the client matrix, not on a developer's
+memory. The native job's timeout went to 120 minutes to absorb the Dovecot
+source build.
+
+They are deliberately not a pull-request gate, for the reason the header of
+`interop.yml` already gives about the rest of the matrix: starting images makes
+the gate an order of magnitude slower than the review it gates.
+
 #### Both of these invert the harness
 
 Every profile in `interop/harness` is a *server*, usually in a container, dialled
