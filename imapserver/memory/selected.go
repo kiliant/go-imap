@@ -311,7 +311,7 @@ func (s *selected) Expunge(ctx context.Context, writer *imapserver.ExpungeWriter
 	return nil
 }
 
-func (s *selected) Unselect(ctx context.Context) error {
+func (s *selected) Unselect(ctx context.Context, _ *imapserver.UnselectOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -660,12 +660,12 @@ func (c *conn) cleanupBackend() {
 	if selected := c.state.unselect(); selected != nil {
 		selected.close()
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
-		_ = selected.mailbox.Unselect(ctx)
+		_ = selected.mailbox.Unselect(ctx, nil)
 		cancel()
 	}
 	if session := c.state.session; session != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
-		_ = session.Close(ctx)
+		_ = session.Close(ctx, nil)
 		cancel()
 		c.state.session = nil
 	}

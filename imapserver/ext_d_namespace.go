@@ -148,7 +148,7 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	// connection's teardown closes it a second time — which a backend that
 	// releases a pooled handle or decrements a refcount in Close experiences as
 	// a double release, on an error path, where it is hardest to find.
-	closeErr := c.state.session.Close(ctx)
+	closeErr := c.state.session.Close(ctx, nil)
 	c.state.unauthenticate()
 	if closeErr != nil {
 		return writeBackendError(c, command.tag, command.name, closeErr)

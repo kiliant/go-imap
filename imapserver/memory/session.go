@@ -301,7 +301,7 @@ func (s *session) Select(ctx context.Context, name string, updater *imapserver.U
 	return &imapserver.SelectResult{Mailbox: selected, Snapshot: snapshot}, nil
 }
 
-func (s *session) Close(ctx context.Context) error {
+func (s *session) Close(ctx context.Context, _ *imapserver.SessionCloseOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

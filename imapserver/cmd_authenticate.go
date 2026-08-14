@@ -179,7 +179,7 @@ func authenticateBackend(ctx context.Context, c *conn, tag string, credentials *
 		return writeTaggedCondition(c, tag, "NO", imap.CodeServerBug, "", "authentication returned no session")
 	}
 	if !c.state.authenticate(session) {
-		_ = session.Close(ctx)
+		_ = session.Close(ctx, nil)
 		return writeTaggedCondition(c, tag, "NO", imap.CodeServerBug, "", "authentication state transition failed")
 	}
 	// RFC 9738's advertised limits are resolved once, here, rather than during

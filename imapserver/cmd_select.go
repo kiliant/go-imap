@@ -112,7 +112,7 @@ func abandonCurrentSelection(ctx context.Context, c *conn) error {
 		return nil
 	}
 	selected.close()
-	return selected.mailbox.Unselect(ctx)
+	return selected.mailbox.Unselect(ctx, nil)
 }
 
 func selectAtomic(ctx context.Context, c *conn, mailbox string, options *SelectOptions) (selected *selectedState, snapshot *SelectSnapshot, err error) {

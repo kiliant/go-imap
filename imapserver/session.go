@@ -493,7 +493,7 @@ func closeRejectedMailbox(mailbox SelectedMailbox, timeout time.Duration) {
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	_ = mailbox.Unselect(ctx)
+	_ = mailbox.Unselect(ctx, nil)
 	cancel()
 }
 

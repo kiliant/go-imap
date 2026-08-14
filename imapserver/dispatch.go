@@ -241,7 +241,7 @@ func handleUnselect(ctx context.Context, c *conn, command *queuedCommand) error 
 		return c.writeTagged(command.tag, "BAD", "no mailbox is selected")
 	}
 	selected.close()
-	err := selected.mailbox.Unselect(ctx)
+	err := selected.mailbox.Unselect(ctx, nil)
 	if err != nil {
 		if writeErr := c.writeTagged(command.tag, "NO", "UNSELECT failed"); writeErr != nil {
 			return writeErr

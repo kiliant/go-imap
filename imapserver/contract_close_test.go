@@ -35,9 +35,9 @@ type countingSession struct {
 	backend *countingBackend
 }
 
-func (s *countingSession) Close(ctx context.Context) error {
+func (s *countingSession) Close(ctx context.Context, _ *imapserver.SessionCloseOptions) error {
 	s.backend.closes.Add(1)
-	_ = s.Session.Close(ctx)
+	_ = s.Session.Close(ctx, nil)
 	return s.backend.failure
 }
 

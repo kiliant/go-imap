@@ -115,6 +115,19 @@ previous `imapserver/v*` tag.
   only some of them and being held to all of them was a real defect, caught in
   review before the first tag; see `docs/API-STABILITY.md` §10.
 
+#### Changed before the first tag
+
+- **BREAKING (pre-tag): `Session.Close` and `SelectedMailbox.Unselect` now take
+  an options struct**, `*SessionCloseOptions` and `*UnselectOptions`. They were
+  the only two methods on the whole backend surface without one, on the two
+  frozen mandatory interfaces, whose own doc promises "an option field, not a
+  method here" as the extension route — a promise that was false for exactly
+  those two. RFC 6785 (IMAPSIEVE) is the concrete pressure: a session ending
+  because the connection closed is a different event from one ending because
+  UNAUTHENTICATE reclaimed it, and CLOSE's implicit expunge is a different event
+  from UNSELECT's deliberate lack of one. Both structs are empty today.
+  `TestBackendMethodsTakeOptions` now gates the rule, which nothing did before.
+
 #### Known issues
 
 - **Untagged `EXPUNGE` can be delivered during a pipelined `FETCH`, `STORE` or

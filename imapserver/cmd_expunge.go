@@ -77,7 +77,7 @@ func closeSelected(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, "no mailbox is selected")
 	}
 	selected.close()
-	if err := selected.mailbox.Unselect(ctx); err != nil {
+	if err := selected.mailbox.Unselect(ctx, nil); err != nil {
 		return writeBackendError(c, command.tag, "CLOSE", err)
 	}
 	return c.writeTagged(command.tag, "OK", "CLOSE completed")

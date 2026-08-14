@@ -65,7 +65,7 @@ func Run(t *testing.T, harness *Harness) {
 		mailbox := populate(t, session, "snapshot")
 		result := selectMailbox(t, session, mailbox, &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }})
 		validateSnapshot(t, result.Snapshot)
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		closeSession(t, instance, session)
@@ -103,7 +103,7 @@ func Run(t *testing.T, harness *Harness) {
 		if !batchAddsUID(got[0], first.UID) || !batchAddsUID(got[1], second.UID) {
 			t.Fatalf("update batches omit appended UIDs %d and %d", first.UID, second.UID)
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		closeSession(t, instance, selecting)
@@ -182,7 +182,7 @@ func Run(t *testing.T, harness *Harness) {
 			if updateCount == 1 && (len(batches) == 0 || batches[0].Before != selectResult.result.Snapshot.Revision) {
 				t.Fatalf("iteration %d: first update does not start at snapshot revision %q", i, selectResult.result.Snapshot.Revision)
 			}
-			if err := selectResult.result.Mailbox.Unselect(context.Background()); err != nil {
+			if err := selectResult.result.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatalf("Unselect iteration %d: %v", i, err)
 			}
 		}
@@ -252,7 +252,7 @@ func Run(t *testing.T, harness *Harness) {
 				t.Fatalf("source status after MOVE = %#v, %v", status, err)
 			}
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		closeSession(t, instance, session)
@@ -263,7 +263,7 @@ func Run(t *testing.T, harness *Harness) {
 		mailbox := populate(t, session, "pathological")
 		if instance.Controls.ForceUIDValidityChange != nil {
 			before := selectMailbox(t, session, mailbox, &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }})
-			if err := before.Mailbox.Unselect(context.Background()); err != nil {
+			if err := before.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatal(err)
 			}
 			if err := instance.Controls.ForceUIDValidityChange(context.Background(), mailbox); err != nil {
@@ -273,7 +273,7 @@ func Run(t *testing.T, harness *Harness) {
 			if before.Snapshot.Status.UIDValidity == after.Snapshot.Status.UIDValidity {
 				t.Fatal("forced UIDVALIDITY change was not observed")
 			}
-			if err := after.Mailbox.Unselect(context.Background()); err != nil {
+			if err := after.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -459,7 +459,7 @@ func cloneBatch(batch *imapserver.UpdateBatch) *imapserver.UpdateBatch {
 
 func closeSession(t *testing.T, _ *Instance, session imapserver.Session) {
 	t.Helper()
-	if err := session.Close(context.Background()); err != nil {
+	if err := session.Close(context.Background(), nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 }

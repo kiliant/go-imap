@@ -99,11 +99,11 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"Search(ctx context.Context, query *SearchQuery, options *SearchOptions) (*SearchResult, error)",
 			"Status(ctx context.Context, options *StatusOptions) (*imap.MailboxStatus, error)",
 			"Store(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) error",
-			"Unselect(ctx context.Context) error",
+			"Unselect(ctx context.Context, options *UnselectOptions) error",
 		},
 		"Session": {
 			"Append(ctx context.Context, mailbox string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error)",
-			"Close(ctx context.Context) error",
+			"Close(ctx context.Context, options *SessionCloseOptions) error",
 			"Create(ctx context.Context, mailbox string, options *CreateOptions) error",
 			"Delete(ctx context.Context, mailbox string, options *DeleteOptions) error",
 			"List(ctx context.Context, writer *ListWriter, reference string, patterns []string, options *ListOptions) error",
@@ -390,4 +390,89 @@ func hasSentinelField(structure *ast.StructType) bool {
 		}
 	}
 	return false
+}
+
+// TestBackendMethodsTakeOptions is rule 3 applied to the backend surface: every
+// blocking backend method ends in a pointer to an options struct, so a future
+// RFC adds a field rather than a parameter.
+//
+// The client half of this has been gated since T14 (TestAPISurfaceOptionsStruct
+// in the root module). The server half had no gate, and shipped Session.Close
+// and SelectedMailbox.Unselect without options — the two methods on the frozen
+// mandatory interfaces, whose own doc comment promises "an option field, not a
+// method here" as the extension route. That promise was false for exactly the
+// two methods nothing checked.
+//
+// docs/API-STABILITY.md section 3 records the same defect one layer down: three
+// imapclient methods shipped without options and were caught only at the v1.0
+// freeze review. This is the gate that stops it being a third time.
+func TestBackendMethodsTakeOptions(t *testing.T) {
+	// Witnesses and markers are not blocking calls: they answer from state the
+	// backend already holds, take no context, and write nothing to the wire.
+	// Each exemption is a decision, so each is named rather than pattern-matched.
+	exempt := map[string]bool{
+		"MoveSupport.SupportsMove":             true,
+		"CapabilitySupport.SupportsCapability": true,
+		"Update.update":                        true,
+	}
+
+	fset := token.NewFileSet()
+	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
+		name := info.Name()
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range packages["imapserver"].Files {
+		for _, declaration := range file.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range general.Specs {
+				typeSpec := spec.(*ast.TypeSpec)
+				iface, ok := typeSpec.Type.(*ast.InterfaceType)
+				if !ok || !ast.IsExported(typeSpec.Name.Name) {
+					continue
+				}
+				for _, method := range iface.Methods.List {
+					fn, ok := method.Type.(*ast.FuncType)
+					if !ok {
+						continue
+					}
+					for _, name := range method.Names {
+						qualified := typeSpec.Name.Name + "." + name.Name
+						if exempt[qualified] {
+							continue
+						}
+						if optionsParameter(fset, fn) {
+							continue
+						}
+						t.Errorf("%s does not end in a pointer to an options struct.\n"+
+							"A new RFC must be able to add a field; adding a parameter breaks every backend. "+
+							"If this method genuinely cannot block or grow, add it to the exempt list above "+
+							"with a reason.", qualified)
+					}
+				}
+			}
+		}
+	}
+}
+
+// optionsParameter reports whether fn's last parameter is a *…Options pointer.
+func optionsParameter(fset *token.FileSet, fn *ast.FuncType) bool {
+	if fn.Params == nil || len(fn.Params.List) == 0 {
+		return false
+	}
+	last := fn.Params.List[len(fn.Params.List)-1]
+	star, ok := last.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	var rendered strings.Builder
+	if err := printer.Fprint(&rendered, fset, star.X); err != nil {
+		return false
+	}
+	return strings.HasSuffix(rendered.String(), "Options")
 }

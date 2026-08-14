@@ -108,9 +108,24 @@ type Session interface {
 	Select(ctx context.Context, mailbox string, updater *Updater, options *SelectOptions) (*SelectResult, error)
 	// Close releases everything the session holds. The framework calls it once,
 	// when the connection ends, including after an error and after
-	// UNAUTHENTICATE. No other method is called afterwards.
-	Close(ctx context.Context) error
+	// UNAUTHENTICATE. No other method is called afterwards, and the session is
+	// discarded even if Close returns an error.
+	Close(ctx context.Context, options *SessionCloseOptions) error
 }
+
+// SessionCloseOptions configures the end of a session. A nil pointer selects
+// the defaults.
+//
+// It is empty and exists anyway, because the alternative is that the mandatory
+// interface's promise — "a future extension adds an optional interface or an
+// option field, not a method here" — is false for this method. RFC 6785
+// (IMAPSIEVE) is the concrete pressure: it fires backend-side scripts on IMAP
+// events, and a session ending because the connection closed is a different
+// event from one ending because UNAUTHENTICATE reclaimed the connection for
+// another identity. Today the backend cannot tell them apart.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type SessionCloseOptions struct{ _ struct{} }
 
 // SelectedMailbox is a backend's per-connection handle for one selection. The
 // framework, not this value, owns the UID/sequence-number map, enabled features,
@@ -167,8 +182,20 @@ type SelectedMailbox interface {
 	// Unselect releases the selection. The framework calls it once per
 	// selection — on CLOSE, UNSELECT, a replacing SELECT, or connection
 	// teardown — after which this handle is not used again.
-	Unselect(ctx context.Context) error
+	Unselect(ctx context.Context, options *UnselectOptions) error
 }
+
+// UnselectOptions configures the end of a selection. A nil pointer selects the
+// defaults.
+//
+// Empty for the same reason as [SessionCloseOptions], and with a sharper
+// example: RFC 3501 CLOSE performs an implicit expunge and RFC 3691 UNSELECT
+// deliberately does not, yet both arrive here identically. A backend that has
+// to distinguish them — for RFC 6785 event scripts, or for an audit log — has
+// nowhere to learn which happened.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type UnselectOptions struct{ _ struct{} }
 
 // MoveMailbox is the optional atomic MOVE operation. The framework never
 // synthesises MOVE from COPY, STORE and EXPUNGE; advertisement requires a

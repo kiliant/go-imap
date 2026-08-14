@@ -35,7 +35,7 @@ func (*stubSelectedMailbox) Copy(context.Context, imap.UIDSet, string, *CopyOpti
 func (*stubSelectedMailbox) Expunge(context.Context, *ExpungeWriter, *imap.UIDSet, *ExpungeOptions) error {
 	return nil
 }
-func (*stubSelectedMailbox) Unselect(context.Context) error { return nil }
+func (*stubSelectedMailbox) Unselect(context.Context, *UnselectOptions) error { return nil }
 func (*stubSelectedMailbox) Move(context.Context, imap.UIDSet, string, *MoveOptions) (*imap.CopyData, error) {
 	return &imap.CopyData{}, nil
 }
@@ -531,7 +531,7 @@ type trackedSelectedMailbox struct {
 	unselected int
 }
 
-func (m *trackedSelectedMailbox) Unselect(context.Context) error {
+func (m *trackedSelectedMailbox) Unselect(context.Context, *UnselectOptions) error {
 	m.unselected++
 	return nil
 }
@@ -826,6 +826,6 @@ func (*stubSession) Append(context.Context, string, io.Reader, *AppendOptions) (
 func (*stubSession) Select(context.Context, string, *Updater, *SelectOptions) (*SelectResult, error) {
 	return nil, nil
 }
-func (*stubSession) Close(context.Context) error { return nil }
+func (*stubSession) Close(context.Context, *SessionCloseOptions) error { return nil }
 
 var _ Session = (*stubSession)(nil)
