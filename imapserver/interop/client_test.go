@@ -144,9 +144,18 @@ func buildImage(t *testing.T, runtime containerRuntime, tag, dir string) {
 	defer cancel()
 	if ref, ok := overriddenImage(tag); ok {
 		t.Logf("using prebuilt %s in place of a build from %s (%s)", ref, dir, imageOverrideEnv)
-		pull := exec.CommandContext(ctx, runtime.binary, "pull", ref)
-		if out, err := pull.CombinedOutput(); err != nil {
-			t.Skipf("pulling %s failed:\n%s", ref, out)
+		// Only pull what is not already here, and give the pull minutes rather
+		// than the build's 40. The point of this path is a fast edit-run loop;
+		// inheriting a timeout sized for compiling Dovecot means a registry
+		// having a bad minute stalls the run instead of failing it, which cost
+		// one debugging cycle before the timeout was separated out.
+		if !imagePresent(ctx, runtime, ref) {
+			pullCtx, cancelPull := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancelPull()
+			pull := exec.CommandContext(pullCtx, runtime.binary, "pull", ref)
+			if out, err := pull.CombinedOutput(); err != nil {
+				t.Skipf("pulling %s failed:\n%s", ref, out)
+			}
 		}
 		retag := exec.CommandContext(ctx, runtime.binary, "tag", ref, tag)
 		if out, err := retag.CombinedOutput(); err != nil {
@@ -245,4 +254,13 @@ func seed(t *testing.T, port, mailbox string, count int) {
 		}
 	}
 	send("o", "LOGOUT")
+}
+
+// imagePresent reports whether an image reference is already in local storage.
+func imagePresent(ctx context.Context, runtime containerRuntime, ref string) bool {
+	lookCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// image inspect is shared by Docker and Podman; Podman's image exists is
+	// convenient but would make the Docker path pull on every run.
+	return exec.CommandContext(lookCtx, runtime.binary, "image", "inspect", ref).Run() == nil
 }
