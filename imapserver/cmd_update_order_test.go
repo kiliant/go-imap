@@ -3,6 +3,7 @@ package imapserver
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -321,4 +322,96 @@ func TestIdleReceivesUpdatesAfterPartialInput(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestExpungeUpdateWaitsForACommandToBeInProgress is the clause the pipelined
+// fix left open, and the one Dovecot's imaptest kept reporting after it landed.
+//
+// RFC 3501 §7.4.1 opens with "An EXPUNGE response MUST NOT be sent when no
+// command is in progress", and the first version of this rule modelled only the
+// half that follows it — not while responding to FETCH, STORE or SEARCH. So
+// between commands the event loop delivered on its own update signal, and the
+// three deferral conditions were all false because there was genuinely nothing
+// to see: no queued command, and no buffered input, because the client's next
+// command was still on the wire. inputPending cannot observe that, which is why
+// "is a command in progress" has to be asked instead of inferred.
+//
+// Both halves are asserted. Holding the update forever would also pass an
+// assertion that only checked the gap, and would be a worse bug than the one
+// being fixed — the client would never learn the message was gone.
+func TestExpungeUpdateWaitsForACommandToBeInProgress(t *testing.T) {
+	backend := &expungeOrderBackend{selected: make(chan *expungeOrderMailbox, 1)}
+	server := New(backend, &Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
+	reader := bufio.NewReader(clientSide)
+	if err := clientSide.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	writeUpdateOrderCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUpdateOrderTag(t, reader, "A1 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+	readUpdateOrderTag(t, reader, "A2 OK ")
+
+	// Published from the test rather than from inside a command handler: that
+	// is what makes this the unsolicited case, another session's expunge
+	// arriving while this connection sits between commands.
+	mailbox := <-backend.selected
+	if err := mailbox.pushExpunge(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := clientSide.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	switch line, err := reader.ReadString('\n'); {
+	case err == nil:
+		t.Fatalf("server sent %q with no command in progress", strings.TrimSpace(line))
+	case !isTimeout(err):
+		t.Fatalf("reading while idle: %v", err)
+	}
+	if err := clientSide.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// NOOP carries no sequence numbers, so it is the first legal moment: the
+	// client sees the EXPUNGE before the tagged response, and everything it
+	// sends afterwards is numbered against the new view.
+	writeUpdateOrderCommand(t, clientSide, "A3 NOOP\r\n")
+	sawExpunge := false
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, "EXPUNGE") {
+			sawExpunge = true
+			continue
+		}
+		if strings.HasPrefix(line, "A3 ") {
+			break
+		}
+	}
+	if !sawExpunge {
+		t.Fatal("NOOP completed without the expunge the server had been holding; " +
+			"deferring it forever loses the update instead of ordering it")
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A4 LOGOUT\r\n")
+	readUpdateOrderTag(t, reader, "A4 OK ")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func isTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

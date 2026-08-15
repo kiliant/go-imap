@@ -103,7 +103,10 @@ type conn struct {
 	// executingSeqSensitive is event-loop owned, like state: it is set and
 	// cleared inside execute and read only from drainUpdates.
 	executingSeqSensitive bool
-	logout                bool
+	// commandInProgress is the other half of RFC 3501 §7.4.1, and is event-loop
+	// owned for the same reason. See expungeDeliveryDeferred.
+	commandInProgress bool
+	logout            bool
 
 	fatalMu sync.Mutex
 	fatal   error
@@ -580,6 +583,11 @@ func (c *conn) eventLoop() (retErr error) {
 }
 
 func (c *conn) execute(command *queuedCommand) error {
+	// A command is in progress for the whole of this call, which is what makes
+	// every drain below a legal moment to deliver an expunge. Set before the
+	// early returns so a BAD is not a window either.
+	c.commandInProgress = true
+	defer func() { c.commandInProgress = false }()
 	if command.parseErr != nil {
 		return c.writeBad(command.tag, "invalid command syntax")
 	}
@@ -741,14 +749,30 @@ func (c *conn) updateSignal() <-chan struct{} {
 // the numbers it carries. Waiting until the connection has caught up is the
 // only point at which the two views are known to agree.
 //
-// Deferral is for *unsolicited* updates only. A drain carrying an origin or an
-// effect is accounting for changes this command caused, and it must run: that
-// is what suppresses the duplicate responses the command already wrote itself.
-// Those changes are also ones the client asked for, so they are not a surprise
-// to it.
-func (c *conn) expungeDeliveryDeferred(accounting updateAccounting) bool {
-	if accounting.origin != 0 || accounting.effect != effectNone {
-		return false
+// Deferral is for *unsolicited* removals only, and that exemption is decided
+// per batch by the caller rather than here. It used to be decided per drain: a
+// drain carrying any origin or effect returned early, which disabled every
+// condition below for the whole queue. STORE's own drain then delivered
+// unrelated sessions' expunges while responding to STORE with two commands
+// pipelined behind it — §7.4.1's forbidden window, reached through the
+// exemption meant for the command's own changes. See drainUpdates.
+func (c *conn) expungeDeliveryDeferred() bool {
+	// §7.4.1 opens with the condition this missed for a release: "An EXPUNGE
+	// response MUST NOT be sent when no command is in progress". Between
+	// commands the server knows nothing about what the client has already put on
+	// the wire — inputPending sees bytes the reader has buffered, never a
+	// command still in flight — so the gap is exactly where a client numbering
+	// against the pre-expunge view cannot be detected. Delivering while a
+	// command is in progress is what closes it: the client sees the EXPUNGE
+	// before that command's tagged response, so anything it sends afterwards is
+	// numbered against the new view, and anything it pipelined beforehand is
+	// caught by the two conditions below.
+	//
+	// IDLE is not an exception to this, it is an instance of it: the IDLE
+	// command is in progress for as long as the client is idling, which is why
+	// the extension can deliver expunges at all.
+	if !c.commandInProgress {
+		return true
 	}
 	// Three ways to still be behind the client: a command parsed and waiting,
 	// bytes read but not yet parsed, or the command running right now being one
@@ -776,17 +800,38 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 	if selected == nil || selected.queue == nil {
 		return nil
 	}
-	// Left queued, deliberately: nothing is popped, so the framework's sequence
-	// view does not advance past the client's either. Popping and withholding
-	// the responses would produce exactly the desynchronisation this prevents.
-	if c.expungeDeliveryDeferred(accounting) {
+	// Left queued, deliberately: what is not popped does not advance the
+	// framework's sequence view past the client's either. Popping and
+	// withholding the responses would produce exactly the desynchronisation
+	// this prevents.
+	//
+	// The prefix is the whole of the subtlety. Batches are ordered, and applying
+	// a later one without its predecessor would move the sequence view across a
+	// change the client was never told about — so one batch that must wait stops
+	// every batch behind it, whatever those contain.
+	deferred := c.expungeDeliveryDeferred()
+	batches := selected.queue.popWhile(func(batch *UpdateBatch) bool {
+		if !deferred {
+			return true
+		}
+		// This command's own changes still go out: the client caused them and
+		// has already been told, and this drain is what suppresses the duplicate.
+		if batch.Origin != 0 && batch.Origin == accounting.origin {
+			return true
+		}
+		// Only removals are forbidden here. EXISTS and FLAGS may be sent at any
+		// time, and holding them behind an unrelated expunge would delay every
+		// new-message notification the client is waiting for.
+		return !batchRemovesMessages(batch)
+	})
+	if len(batches) == 0 {
 		return nil
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
 	// which of their matches went away. See ext_e_context.go.
 	var removed []imap.UID
 	var pending []deliveredUpdate
-	for _, batch := range selected.queue.popAll() {
+	for _, batch := range batches {
 		updates, err := selected.applyBatch(batch, accounting)
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
