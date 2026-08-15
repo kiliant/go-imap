@@ -3,7 +3,6 @@ package imapserver
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -95,19 +94,28 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	if selected.readOnly {
 		return false, writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
+	// EXPUNGE may emit EXPUNGE (§7.4.1), so catch the selected snapshot up even
+	// when a later pipelined command would otherwise keep an older removal
+	// deferred. ADDs stuck behind that removal are invisible to selected.uids
+	// until then; rejecting them from WriteExpunge was the SERVERBUG imaptest
+	// stress hit once between-commands delivery stopped clearing the queue.
+	if err := c.drainUpdatesAllowingRemovals(updateAccounting{}); err != nil {
+		return false, err
+	}
 	origin := nextCommandOrigin()
-	// Shadow tracks UIDs the writer has already accepted so a duplicate report
-	// fails closed. Wire responses and CONTEXT notifications come from
-	// drainUpdatesThrough after every preceding revision is applied in order —
-	// converting a UID against the pre-drain snapshot can invent a sequence
-	// number the client cannot have.
-	shadow := slices.Clone(selected.uids)
+	// The writer no longer converts UIDs to sequence numbers — drainUpdatesThrough
+	// does, after every preceding revision is applied. Track duplicates only:
+	// requiring membership in selected.uids races concurrent APPENDs whose ADD
+	// batch lands in the queue after this snapshot is taken.
+	seen := make(map[imap.UID]struct{})
 	writer := newExpungeWriter(func(_ context.Context, uid imap.UID) error {
-		at, ok := slices.BinarySearch(shadow, uid)
-		if !ok {
-			return fmt.Errorf("imapserver: backend EXPUNGE returned unknown UID %d", uid)
+		if uid == 0 {
+			return fmt.Errorf("imapserver: backend EXPUNGE returned UID 0")
 		}
-		shadow = slices.Delete(shadow, at, at+1)
+		if _, ok := seen[uid]; ok {
+			return fmt.Errorf("imapserver: backend EXPUNGE returned duplicate UID %d", uid)
+		}
+		seen[uid] = struct{}{}
 		return nil
 	})
 	err := selected.mailbox.Expunge(ctx, writer, uids, &ExpungeOptions{MutationOptions: MutationOptions{Origin: origin}})
