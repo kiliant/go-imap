@@ -58,6 +58,69 @@ type expungeOrderMailbox struct {
 	pushed  bool
 }
 
+// deferredAccountingBackend reproduces the ordering imaptest reached: an
+// unrelated removal is queued first, then EXPUNGE publishes its own removal
+// behind it while another command is already pipelined.
+type deferredAccountingBackend struct {
+	selected chan *deferredAccountingMailbox
+}
+
+func (b *deferredAccountingBackend) Authenticate(context.Context, *ConnInfo, *Credentials, *AuthenticateOptions) (Session, error) {
+	return &deferredAccountingSession{backend: b}, nil
+}
+
+type deferredAccountingSession struct {
+	stubSession
+	backend *deferredAccountingBackend
+}
+
+func (s *deferredAccountingSession) Select(_ context.Context, _ string, updater *Updater, _ *SelectOptions) (*SelectResult, error) {
+	mailbox := &deferredAccountingMailbox{updater: updater}
+	s.backend.selected <- mailbox
+	return &SelectResult{
+		Mailbox: mailbox,
+		Snapshot: SelectSnapshot{
+			UIDs: []imap.UID{1, 2, 3},
+			Status: imap.MailboxStatus{
+				NumMessages: 3,
+				UIDValidity: 1,
+				UIDNext:     4,
+			},
+			NoModSeq: true,
+			Revision: "r1",
+		},
+	}, nil
+}
+
+type deferredAccountingMailbox struct {
+	stubSelectedMailbox
+	updater *Updater
+}
+
+func (m *deferredAccountingMailbox) pushUnrelatedExpunge() error {
+	return m.updater.Push(&UpdateBatch{
+		Before:  "r1",
+		After:   "r2",
+		Changes: []Update{&UpdateExpunge{UID: 1}},
+	})
+}
+
+func (m *deferredAccountingMailbox) Expunge(ctx context.Context, writer *ExpungeWriter, _ *imap.UIDSet, options *ExpungeOptions) error {
+	if err := writer.WriteExpunge(ctx, 3, nil); err != nil {
+		return err
+	}
+	var origin ChangeToken
+	if options != nil {
+		origin = options.Origin
+	}
+	return m.updater.Push(&UpdateBatch{
+		Before:  "r2",
+		After:   "r3",
+		Origin:  origin,
+		Changes: []Update{&UpdateExpunge{UID: 3}},
+	})
+}
+
 // pushExpunge publishes the same removal at most once. The revision chain is
 // r1→r2, so pushing it twice — which the pipelined test does, since both of its
 // commands call this — is a genuine revision mismatch and would fail the
@@ -238,6 +301,66 @@ func TestExpungeUpdateWaitsForPipelinedCommands(t *testing.T) {
 	}
 	if line != "* 1 EXPUNGE\r\n" {
 		t.Fatalf("response after the pipeline drained = %q, want EXPUNGE", line)
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A5 LOGOUT\r\n")
+	readUpdateOrderTag(t, reader, "A5 OK ")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDeferredCommandUpdateKeepsItsAccounting pins the second desynchronisation
+// imaptest exposed after the pipelined-EXPUNGE fix. If an earlier unsolicited
+// removal blocks the batch produced by EXPUNGE, the command has already sent
+// that batch's response from its ExpungeWriter. Applying the batch during a
+// later command without preserving revision order sends sequence numbers from
+// two different mailbox views and leaves every following one too high.
+func TestDeferredCommandUpdateKeepsItsAccounting(t *testing.T) {
+	backend := &deferredAccountingBackend{selected: make(chan *deferredAccountingMailbox, 1)}
+	server := New(backend, &Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+	if err := clientSide.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUpdateOrderTag(t, reader, "A1 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+	readUpdateOrderTag(t, reader, "A2 OK ")
+	mailbox := <-backend.selected
+	if err := mailbox.pushUnrelatedExpunge(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A4 keeps the unrelated removal deferred until A3's backend publishes its
+	// own batch. The two removals must then be emitted in revision order, rather
+	// than mapping A3's UID through the stale pre-removal view first.
+	writeUpdateOrderCommand(t, clientSide, "A3 EXPUNGE\r\nA4 NOOP\r\n")
+	var expunges []string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasSuffix(line, " EXPUNGE\r\n") {
+			expunges = append(expunges, line)
+		}
+		if strings.HasPrefix(line, "A4 OK ") {
+			break
+		}
+	}
+	if len(expunges) != 2 || expunges[0] != "* 1 EXPUNGE\r\n" || expunges[1] != "* 2 EXPUNGE\r\n" {
+		t.Fatalf("EXPUNGE responses = %q, want the queued revision prefix exactly once", expunges)
 	}
 
 	writeUpdateOrderCommand(t, clientSide, "A5 LOGOUT\r\n")

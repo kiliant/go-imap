@@ -164,20 +164,30 @@ previous `imapserver/v*` tag.
 
 #### Fixed
 
-- **Untagged `EXPUNGE` is no longer delivered while a pipelined `FETCH`,
-  `STORE` or `SEARCH` is outstanding**, which RFC 3501 §7.4.1 forbids because it
-  desynchronises message sequence numbers. Expunges were already deferred past a
-  command's tagged completion, and pipelining defeated that: "after the tagged
-  OK of command *n*" is simultaneously "while command *n+1* is in flight", so
-  the update left one forbidden window and entered the next. Found by Dovecot's
-  `imaptest`, which reported the consequence the RFC predicts —
-  `Referenced message expunged seq=4 uid=0`.
+- **Untagged `EXPUNGE` obeys both halves of RFC 3501 §7.4.1.** The first half —
+  no delivery while a pipelined `FETCH`, `STORE` or `SEARCH` is outstanding —
+  was already deferred past a command's tagged completion, and pipelining
+  defeated that: "after the tagged OK of command *n*" is simultaneously "while
+  command *n+1* is in flight". The condition is now the connection's own
+  backlog. The second half — "MUST NOT be sent when no command is in progress"
+  — was not modelled at all, so the event loop delivered between commands on its
+  own update signal. Delivery now requires a command in progress; the exemption
+  for a command's own changes is per batch rather than per drain, so STORE can
+  no longer flush unrelated sessions' removals through that exemption.
 
-  The condition is now the connection's own backlog rather than the command that
-  just finished: an unsolicited renumbering waits while a command is queued,
-  while input has been read but not yet parsed, and across the pre-command drain
-  of a sequence-sensitive command. Nothing is popped from the update queue while
-  deferred, so the framework's sequence view never runs ahead of the client's.
+- **Removal commands apply the queued revision prefix before reporting sequence
+  numbers.** EXPUNGE and MOVE used to convert the backend's returned UIDs
+  against the selected snapshot immediately. When an earlier unsolicited removal
+  was still deferred, that snapshot was one revision behind the UIDs, so the
+  sequence numbers belonged to a mailbox view the client had never been told
+  about (`seq too high` under Dovecot's `imaptest`). `drainUpdatesThrough` now
+  pops every batch through the command's own origin as one ordered unit;
+  EXPUNGE/MOVE no longer write sequence numbers themselves.
+
+  Found by `imaptest` stress. Pinned by
+  `TestExpungeUpdateWaitsForPipelinedCommands`,
+  `TestExpungeUpdateWaitsForACommandToBeInProgress` and
+  `TestDeferredCommandUpdateKeepsItsAccounting`.
 
 - **BINARY fetch items are gated on the framework's feature rather than on the
   `BINARY` token.** RFC 9051 incorporates RFC 3516's fetch half, so `BINARY[]`
@@ -188,6 +198,8 @@ previous `imapserver/v*` tag.
 #### Known issues
 
 - ~~Untagged `EXPUNGE` during a pipelined `FETCH`/`STORE`/`SEARCH`~~ — **fixed**.
+  See *Fixed* above.
+- ~~`EXPUNGE` between commands / revision-skewed sequence numbers~~ — **fixed**.
   See *Fixed* above.
 - **A keyword created by `STORE` is not re-announced in `FLAGS`.**
 

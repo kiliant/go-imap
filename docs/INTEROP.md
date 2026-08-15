@@ -281,10 +281,17 @@ command is queued, while input has been read but not yet parsed, and across the
 pre-command drain of a sequence-sensitive command. Nothing is popped from the
 update queue while deferred, so the framework's sequence view never runs ahead
 of the client's — popping and withholding the responses would produce exactly
-the desynchronisation being prevented. Pinned by
-`TestExpungeUpdateWaitsForPipelinedCommands`, and the entry was removed from
-`imaptest_test.go`'s triaged table rather than left behind, since a triaged
-finding that outlives its bug is a permanent blindfold.
+the desynchronisation being prevented. The complementary clause — no EXPUNGE
+when no command is in progress — is modelled the same way, and removal commands
+themselves apply the queued revision prefix through `drainUpdatesThrough`
+before any sequence number is written, so an EXPUNGE or MOVE cannot map UIDs
+through a snapshot that still trails a deferred older removal. Pinned by
+`TestExpungeUpdateWaitsForPipelinedCommands`,
+`TestExpungeUpdateWaitsForACommandToBeInProgress` and
+`TestDeferredCommandUpdateKeepsItsAccounting`. The matching entries were
+removed from `imaptest_test.go`'s triaged table rather than left behind, since a
+triaged finding that outlives its bug is a permanent blindfold.
+`TestImaptestStress` completes the full workload under that design.
 
 **Open — a keyword created by `STORE` is never re-announced in `FLAGS`.** The
 server reports `$Label1` in a `FETCH FLAGS` response although no untagged

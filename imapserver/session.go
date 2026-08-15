@@ -406,6 +406,48 @@ func (q *updateQueue) popWhile(keep func(*UpdateBatch) bool) []*UpdateBatch {
 	return items
 }
 
+// popThroughOrigin removes the prefix ending at the last batch carrying
+// origin. A removal command uses this after its backend call: older revisions
+// and the command's own removals must be applied as one ordered unit before the
+// command can report sequence numbers. Batches published later stay queued.
+func (q *updateQueue) popThroughOrigin(origin ChangeToken) []*UpdateBatch {
+	if origin == 0 {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	last := -1
+	for i, batch := range q.items {
+		if batch != nil && batch.Origin == origin {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	items := q.items[:last+1]
+	q.items = append([]*UpdateBatch(nil), q.items[last+1:]...)
+	for _, batch := range items {
+		q.bytes -= updateBatchSize(batch)
+	}
+	return items
+}
+
+// origins returns the non-zero command origins still waiting in the queue.
+// drainUpdates uses this to retain response accounting across a deferred
+// prefix without keeping one map entry for every command forever.
+func (q *updateQueue) origins() map[ChangeToken]struct{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	origins := make(map[ChangeToken]struct{})
+	for _, batch := range q.items {
+		if batch != nil && batch.Origin != 0 {
+			origins[batch.Origin] = struct{}{}
+		}
+	}
+	return origins
+}
+
 // batchRemovesMessages reports whether a batch renumbers the mailbox by taking
 // messages out of it, which is the only thing RFC 3501 §7.4.1 restricts.
 func batchRemovesMessages(batch *UpdateBatch) bool {
