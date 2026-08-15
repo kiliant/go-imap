@@ -18,11 +18,17 @@ func handleMove(ctx context.Context, c *conn, command *queuedCommand) error {
 	if !ok || !supportsAtomicMove(&c.state, c.server.backend) {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "atomic MOVE is unavailable")
 	}
+	origin := nextCommandOrigin()
+	// MOVE may emit EXPUNGE (§7.4.1 / RFC 6851). Catch the selected snapshot up
+	// before resolving the set and asking the backend, for the same reason
+	// EXPUNGE does: a deferred older removal parks every ADD behind it.
+	if err := c.drainUpdatesAllowingRemovals(updateAccounting{}); err != nil {
+		return err
+	}
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, commandUsesUIDs(command))
 	if err != nil {
 		return c.writeBad(command.tag, "invalid MOVE message set")
 	}
-	origin := nextCommandOrigin()
 	data, err := mover.Move(ctx, uids, args.destination, &MoveOptions{MutationOptions: MutationOptions{Origin: origin}})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)

@@ -370,6 +370,134 @@ func TestDeferredCommandUpdateKeepsItsAccounting(t *testing.T) {
 	}
 }
 
+// TestExpungeAppliesQueuedAddsBeforeBackendCall pins the SERVERBUG imaptest
+// stress hit once between-commands delivery stopped clearing the queue. A
+// deferred unsolicited removal parks every ADD behind it; EXPUNGE with another
+// command pipelined would otherwise ask the backend to remove a UID that is not
+// yet in selected.uids and reject it from WriteExpunge.
+func TestExpungeAppliesQueuedAddsBeforeBackendCall(t *testing.T) {
+	backend := &staleAddExpungeBackend{selected: make(chan *staleAddExpungeMailbox, 1)}
+	server := New(backend, &Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+	if err := clientSide.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUpdateOrderTag(t, reader, "A1 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+	readUpdateOrderTag(t, reader, "A2 OK ")
+	mailbox := <-backend.selected
+	if err := mailbox.pushUnrelatedExpungeThenAdd(); err != nil {
+		t.Fatal(err)
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A3 EXPUNGE\r\nA4 NOOP\r\n")
+	var sawA3OK bool
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(line, "A3 NO ") {
+			t.Fatalf("EXPUNGE failed against a UID only present behind a deferred removal: %q", line)
+		}
+		if strings.HasPrefix(line, "A3 OK ") {
+			sawA3OK = true
+		}
+		if strings.HasPrefix(line, "A4 OK ") {
+			break
+		}
+	}
+	if !sawA3OK {
+		t.Fatal("EXPUNGE never completed")
+	}
+
+	writeUpdateOrderCommand(t, clientSide, "A5 LOGOUT\r\n")
+	readUpdateOrderTag(t, reader, "A5 OK ")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type staleAddExpungeBackend struct {
+	selected chan *staleAddExpungeMailbox
+}
+
+func (b *staleAddExpungeBackend) Authenticate(context.Context, *ConnInfo, *Credentials, *AuthenticateOptions) (Session, error) {
+	return &staleAddExpungeSession{backend: b}, nil
+}
+
+type staleAddExpungeSession struct {
+	stubSession
+	backend *staleAddExpungeBackend
+}
+
+func (s *staleAddExpungeSession) Select(_ context.Context, _ string, updater *Updater, _ *SelectOptions) (*SelectResult, error) {
+	mailbox := &staleAddExpungeMailbox{updater: updater}
+	s.backend.selected <- mailbox
+	return &SelectResult{
+		Mailbox: mailbox,
+		Snapshot: SelectSnapshot{
+			UIDs: []imap.UID{1, 2, 3},
+			Status: imap.MailboxStatus{
+				NumMessages: 3,
+				UIDValidity: 1,
+				UIDNext:     4,
+			},
+			NoModSeq: true,
+			Revision: "r1",
+		},
+	}, nil
+}
+
+type staleAddExpungeMailbox struct {
+	stubSelectedMailbox
+	updater *Updater
+}
+
+func (m *staleAddExpungeMailbox) pushUnrelatedExpungeThenAdd() error {
+	if err := m.updater.Push(&UpdateBatch{
+		Before:  "r1",
+		After:   "r2",
+		Changes: []Update{&UpdateExpunge{UID: 1}},
+	}); err != nil {
+		return err
+	}
+	return m.updater.Push(&UpdateBatch{
+		Before:  "r2",
+		After:   "r3",
+		Changes: []Update{&UpdateAdd{UIDs: []imap.UID{4}}},
+	})
+}
+
+func (m *staleAddExpungeMailbox) Expunge(ctx context.Context, writer *ExpungeWriter, _ *imap.UIDSet, options *ExpungeOptions) error {
+	// UID 4 exists only via the ADD parked behind the deferred removal. Without
+	// draining that prefix first, the old WriteExpunge check rejected it.
+	if err := writer.WriteExpunge(ctx, 4, nil); err != nil {
+		return err
+	}
+	var origin ChangeToken
+	if options != nil {
+		origin = options.Origin
+	}
+	return m.updater.Push(&UpdateBatch{
+		Before:  "r3",
+		After:   "r4",
+		Origin:  origin,
+		Changes: []Update{&UpdateExpunge{UID: 4}},
+	})
+}
+
 // TestIdleReceivesUpdatesAfterPartialInput is the liveness half of the expunge
 // deferral, and it covers a starvation the first version of that deferral had.
 //

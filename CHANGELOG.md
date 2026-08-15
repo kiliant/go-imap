@@ -182,12 +182,16 @@ previous `imapserver/v*` tag.
   sequence numbers belonged to a mailbox view the client had never been told
   about (`seq too high` under Dovecot's `imaptest`). `drainUpdatesThrough` now
   pops every batch through the command's own origin as one ordered unit;
-  EXPUNGE/MOVE no longer write sequence numbers themselves.
+  EXPUNGE/MOVE no longer write sequence numbers themselves. They also drain the
+  whole current queue first: a deferred removal parks every ADD behind it, and
+  rejecting those UIDs from `WriteExpunge` was the intermittent
+  `NO [SERVERBUG] EXPUNGE failed` under stress.
 
   Found by `imaptest` stress. Pinned by
   `TestExpungeUpdateWaitsForPipelinedCommands`,
-  `TestExpungeUpdateWaitsForACommandToBeInProgress` and
-  `TestDeferredCommandUpdateKeepsItsAccounting`.
+  `TestExpungeUpdateWaitsForACommandToBeInProgress`,
+  `TestDeferredCommandUpdateKeepsItsAccounting` and
+  `TestExpungeAppliesQueuedAddsBeforeBackendCall`.
 
 - **BINARY fetch items are gated on the framework's feature rather than on the
   `BINARY` token.** RFC 9051 incorporates RFC 3516's fetch half, so `BINARY[]`

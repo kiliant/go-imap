@@ -800,8 +800,23 @@ var sequenceSensitiveCommands = map[string]bool{
 	"UID":    true,
 }
 
+type updateDrainMode int
+
+const (
+	// drainModeDeferred honours RFC 3501 §7.4.1: unsolicited removals wait.
+	drainModeDeferred updateDrainMode = iota
+	// drainModeThroughOrigin applies the prefix ending at the command's own
+	// batch, including otherwise-deferred removals ahead of it.
+	drainModeThroughOrigin
+	// drainModeAllowRemovals applies every currently queued batch. EXPUNGE and
+	// MOVE may send EXPUNGE responses, so a later pipelined command must not
+	// keep an older removal (and every ADD stuck behind it) deferred across
+	// those handlers.
+	drainModeAllowRemovals
+)
+
 func (c *conn) drainUpdates(accounting updateAccounting) error {
-	return c.drainUpdatesInternal(accounting, false)
+	return c.drainUpdatesInternal(accounting, drainModeDeferred)
 }
 
 // drainUpdatesThrough applies the revision prefix through accounting.origin,
@@ -810,10 +825,16 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 // reports UIDs from the current backend revision, and only the ordered batches
 // can convert those removals to the client's sequence-number view correctly.
 func (c *conn) drainUpdatesThrough(accounting updateAccounting) error {
-	return c.drainUpdatesInternal(accounting, true)
+	return c.drainUpdatesInternal(accounting, drainModeThroughOrigin)
 }
 
-func (c *conn) drainUpdatesInternal(accounting updateAccounting, throughOrigin bool) error {
+// drainUpdatesAllowingRemovals applies the whole current queue. Callers must
+// already be in a command that §7.4.1 permits to emit EXPUNGE.
+func (c *conn) drainUpdatesAllowingRemovals(accounting updateAccounting) error {
+	return c.drainUpdatesInternal(accounting, drainModeAllowRemovals)
+}
+
+func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrainMode) error {
 	selected := c.state.selected
 	if selected == nil || selected.queue == nil {
 		return nil
@@ -834,9 +855,12 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, throughOrigin b
 	// change the client was never told about — so one batch that must wait stops
 	// every batch behind it, whatever those contain.
 	var batches []*UpdateBatch
-	if throughOrigin {
+	switch mode {
+	case drainModeThroughOrigin:
 		batches = selected.queue.popThroughOrigin(accounting.origin)
-	} else {
+	case drainModeAllowRemovals:
+		batches = selected.queue.popWhile(func(*UpdateBatch) bool { return true })
+	default:
 		deferred := c.expungeDeliveryDeferred()
 		batches = selected.queue.popWhile(func(batch *UpdateBatch) bool {
 			if !deferred {
