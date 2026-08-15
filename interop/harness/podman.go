@@ -91,7 +91,6 @@ type Server struct {
 
 var containerSequence atomic.Uint64
 
-// Start builds (when needed), starts, and greeting-polls a profile.
 // ErrImageUnavailable reports that a profile's image could not be obtained.
 //
 // It is deliberately distinct from every other start failure. Acquiring an
@@ -125,6 +124,7 @@ func (m *Manager) buildImage(ctx context.Context, image, buildContext string) er
 	return fmt.Errorf("%w: %s: %w", ErrImageUnavailable, image, err)
 }
 
+// Start builds (when needed), starts, and greeting-polls a profile.
 func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Server, err error) {
 	if err := validateProfile(profile); err != nil {
 		return nil, err

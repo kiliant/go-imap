@@ -447,6 +447,10 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 	// while this comment claimed to cover "the backend surface". Server.Close
 	// takes a context and so is not io.Closer; the root module's Close exemption
 	// does not reach it.
+	// seen records every method the walk considered and whether it already takes
+	// options, so the exemptions can be checked in both directions below.
+	seen := make(map[string]bool)
+
 	for _, file := range packages["imapserver"].Files {
 		for _, declaration := range file.Decls {
 			if fn, ok := declaration.(*ast.FuncDecl); ok {
@@ -455,7 +459,8 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 					continue
 				}
 				qualified := receiver + "." + fn.Name.Name
-				if exempt[qualified] || optionsParameter(fset, fn.Type) {
+				seen[qualified] = optionsParameter(fset, fn.Type)
+				if exempt[qualified] || seen[qualified] {
 					continue
 				}
 				t.Errorf("%s does not end in a pointer to an options struct.\n"+
@@ -481,10 +486,8 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 					}
 					for _, name := range method.Names {
 						qualified := typeSpec.Name.Name + "." + name.Name
-						if exempt[qualified] {
-							continue
-						}
-						if optionsParameter(fset, fn) {
+						seen[qualified] = optionsParameter(fset, fn)
+						if exempt[qualified] || seen[qualified] {
 							continue
 						}
 						t.Errorf("%s does not end in a pointer to an options struct.\n"+
@@ -494,6 +497,22 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+
+	// Checked in both directions, like unguardedByDesign above. An exemption
+	// that outlives its method, or one whose method has since gained options,
+	// stops being a recorded decision and starts being a hole: the next method
+	// that lands under that name inherits the pass without anyone deciding it
+	// should.
+	for name := range exempt {
+		hasOptions, found := seen[name]
+		switch {
+		case !found:
+			t.Errorf("exempt names %s, which no longer exists", name)
+		case hasOptions:
+			t.Errorf("exempt names %s, which now takes an options struct; drop the exemption "+
+				"rather than leaving it to mask the next method that should have had one", name)
 		}
 	}
 }

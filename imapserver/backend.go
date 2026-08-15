@@ -837,9 +837,17 @@ type ExpungeWriter struct {
 // Empty today, and the reason this writer has one while its siblings do not:
 // [ListWriter.WriteList], [FetchWriter.WriteMessage] and [Updater.Push] all
 // carry a growable struct as their payload, so a new RFC adds a field there.
-// A UID is a scalar with nowhere to grow. RFC 7162 is the pressure — VANISHED
-// (EARLIER) distinguishes a removal the client already knew about from one it
-// did not, which is a property of the write and not of the UID.
+// A UID is a scalar with nowhere to grow, which leaves this the only streaming
+// method on the mandatory contract where nothing could ever be said about an
+// individual write.
+//
+// No current RFC stresses it, and this deliberately names none. RFC 7162's
+// VANISHED (EARLIER) is the near miss and is worth recording as excluded rather
+// than left for the next reader to reach for: section 3.2.10 confines EARLIER
+// to the QRESYNC resynchronisation response and to UID FETCH (VANISHED), and
+// forbids it when VANISHED results from EXPUNGE or UID EXPUNGE — which is the
+// only path that constructs an [ExpungeWriter]. That distinction already lives
+// on [UpdateVanished] and QResyncResult, neither of which routes through here.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type WriteExpungeOptions struct{ _ struct{} }
