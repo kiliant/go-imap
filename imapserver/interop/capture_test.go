@@ -21,6 +21,7 @@ package interop
 // fuzz corpus a function of who last ran the interop suite.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -106,14 +107,30 @@ func (r *recorder) proxy(client net.Conn) {
 
 	var captured capturedWriter
 	done := make(chan struct{}, 2)
+	var trace *os.File
+	if dir := os.Getenv("GOIMAP_TRACE_DIR"); dir != "" {
+		trace, _ = os.CreateTemp(dir, "session-*.log")
+		if trace != nil {
+			defer trace.Close()
+		}
+	}
+	traceMu := &sync.Mutex{}
 	go func() {
 		defer func() { done <- struct{}{} }()
-		_, _ = io.Copy(server, io.TeeReader(client, &captured))
+		var capture io.Writer = &captured
+		if trace != nil {
+			capture = io.MultiWriter(&captured, &directionWriter{mu: traceMu, file: trace, prefix: "C: "})
+		}
+		_, _ = io.Copy(server, io.TeeReader(client, capture))
 		halfClose(server)
 	}()
 	go func() {
 		defer func() { done <- struct{}{} }()
-		_, _ = io.Copy(client, server)
+		var destination io.Writer = client
+		if trace != nil {
+			destination = io.MultiWriter(client, &directionWriter{mu: traceMu, file: trace, prefix: "S: "})
+		}
+		_, _ = io.Copy(destination, server)
 		halfClose(client)
 	}()
 	<-done
@@ -124,6 +141,29 @@ func (r *recorder) proxy(client net.Conn) {
 		r.sessions = append(r.sessions, buffer)
 		r.mu.Unlock()
 	}
+}
+
+type directionWriter struct {
+	mu      *sync.Mutex
+	file    *os.File
+	prefix  string
+	partial []byte
+}
+
+func (w *directionWriter) Write(p []byte) (int, error) {
+	w.partial = append(w.partial, p...)
+	for {
+		index := bytes.IndexByte(w.partial, '\n')
+		if index < 0 {
+			break
+		}
+		line := bytes.TrimRight(w.partial[:index], "\r")
+		w.mu.Lock()
+		_, _ = fmt.Fprintf(w.file, "%s%s\n", w.prefix, line)
+		w.mu.Unlock()
+		w.partial = w.partial[index+1:]
+	}
+	return len(p), nil
 }
 
 // halfClose shuts down the write half of a TCP connection, so the peer reads
