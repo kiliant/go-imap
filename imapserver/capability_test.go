@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -601,18 +602,27 @@ func rootPackageDir(t *testing.T) string {
 	return dir
 }
 
-// TestEveryKeyGateResolves checks that every featureID named by a key gate in
-// capability_keys.go is a feature the framework actually declares.
+// TestEveryKeyGateResolves checks that every gate in capability_keys.go names
+// something the framework actually declares — a featureID for requiresFeature,
+// a capability descriptor for requiresToken.
 //
-// requiresFeature returns a deny-all gate for an id it cannot resolve. A typo,
-// or a descriptor later removed from featureDescriptors, therefore silently
-// withdraws a key the framework supports — from a rev2 session, which is the
-// BINARY defect re-created in the direction nobody notices, because the wire
-// symptom is a NO rather than a wrong answer.
+// Both constructors fail in the same direction. requiresFeature returns a
+// deny-all gate for an id it cannot resolve; requiresToken reads
+// advertised[name], which is false forever for a name matching no descriptor.
+// A typo, or a descriptor later renamed, therefore silently withdraws a key the
+// framework supports — the BINARY defect re-created in the direction nobody
+// notices, because the wire symptom is a NO rather than a wrong answer.
 //
-// capability_keys.go cited this test before it existed. That is worse than
-// citing nothing: a comment naming a gate reads as coverage, and the reviewer
-// who checks is the only reason it is here now.
+// The token half is the one that will actually be hit. RFC 5257 spells its
+// search key and fetch item ANNOTATION while the capability token is
+// ANNOTATE-EXPERIMENT-1, so whoever adds that row will reach for the spelling
+// in front of them and gate on a token no backend can ever witness.
+//
+// The first version of this test covered only requiresFeature, leaving eight of
+// the ten non-baseline gates unchecked. Before that, capability_keys.go cited
+// the test while it did not exist at all. Both times the reviewer who checked
+// is the only reason the gap closed, which is the argument for the scan being
+// over the source rather than over a list maintained here.
 func TestEveryKeyGateResolves(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "capability_keys.go", nil, 0)
@@ -624,33 +634,66 @@ func TestEveryKeyGateResolves(t *testing.T) {
 		declared[name] = true
 	}
 
-	found := 0
+	// Capability names come from the registry itself rather than from a second
+	// scan for Name: fields. registerCapabilities has run by the time a test
+	// does, so capabilityDescriptors is the same set CAPABILITY is derived
+	// from — comparing a gate against anything else would just be a third
+	// spelling to keep in step.
+	advertisable := make(map[string]bool, len(capabilityDescriptors))
+	for _, descriptor := range capabilityDescriptors {
+		advertisable[descriptor.Name] = true
+	}
+
+	features, tokens := 0, 0
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || ident.Name != "requiresFeature" || len(call.Args) != 1 {
+		if !ok || len(call.Args) != 1 {
 			return true
 		}
-		arg, ok := call.Args[0].(*ast.Ident)
-		if !ok {
-			t.Errorf("%s: requiresFeature takes a featureID constant, so this gate cannot be checked",
-				fset.Position(call.Pos()))
-			return true
-		}
-		found++
-		if !declared[arg.Name] {
-			t.Errorf("%s: requiresFeature(%s) names no entry in featureDescriptors, so the gate "+
-				"denies every session — silently, because the symptom is a NO rather than a wrong answer",
-				fset.Position(call.Pos()), arg.Name)
+		switch ident.Name {
+		case "requiresFeature":
+			arg, ok := call.Args[0].(*ast.Ident)
+			if !ok {
+				t.Errorf("%s: requiresFeature takes a featureID constant, so this gate cannot be checked",
+					fset.Position(call.Pos()))
+				return true
+			}
+			features++
+			if !declared[arg.Name] {
+				t.Errorf("%s: requiresFeature(%s) names no entry in featureDescriptors, so the gate "+
+					"denies every session — silently, because the symptom is a NO rather than a wrong answer",
+					fset.Position(call.Pos()), arg.Name)
+			}
+		case "requiresToken":
+			arg, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || arg.Kind != token.STRING {
+				t.Errorf("%s: requiresToken takes a literal capability name, so this gate cannot be checked",
+					fset.Position(call.Pos()))
+				return true
+			}
+			name, err := strconv.Unquote(arg.Value)
+			if err != nil {
+				t.Errorf("%s: %v", fset.Position(call.Pos()), err)
+				return true
+			}
+			tokens++
+			if !advertisable[name] {
+				t.Errorf("%s: requiresToken(%q) names no capability descriptor, so no backend can "+
+					"ever satisfy it and the key is refused to every session — silently, because the "+
+					"symptom is a NO rather than a wrong answer",
+					fset.Position(call.Pos()), name)
+			}
 		}
 		return true
 	})
-	if found == 0 {
-		t.Error("no requiresFeature call found; either the gates stopped using features " +
-			"or this scan no longer matches them, and both make this test vacuous")
+	if features == 0 || tokens == 0 {
+		t.Errorf("gates found: %d by feature, %d by token; a zero means either the gates stopped "+
+			"using that constructor or this scan no longer matches it, and both make the test vacuous",
+			features, tokens)
 	}
 }
 

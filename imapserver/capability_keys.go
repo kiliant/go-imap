@@ -59,6 +59,17 @@ type keyGate func(state *sessionState, advertised map[string]bool) bool
 func baselineKey(*sessionState, map[string]bool) bool { return true }
 
 // requiresToken gates on a capability the backend witnesses by name.
+//
+// The name must be a literal naming a capabilityDescriptor, because a name that
+// matches no descriptor is never in the advertised set and so refuses the key to
+// every session, forever, with only a NO to show for it. TestEveryKeyGateResolves
+// checks the argument of every call below against the registry, which is the
+// only thing keeping this file's spellings and capability.go's from drifting.
+//
+// The gate reads the advertised set rather than calling the descriptor's own
+// predicate. That set is already derived from those predicates for this
+// session, so asking again would evaluate the same rule twice; the spelling is
+// the only part not single-sourced, and the test is what sources it.
 func requiresToken(name string) keyGate {
 	return func(_ *sessionState, advertised map[string]bool) bool { return advertised[name] }
 }

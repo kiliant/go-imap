@@ -291,6 +291,84 @@ func containsMailbox(data []*imap.ListData, name string) bool {
 	return false
 }
 
+// TestTokenGatedSearchKeysAreAdmittedWhenWitnessed covers the admit direction of
+// the two gates in capability_keys.go that no other test reaches: WITHIN's
+// YOUNGER/OLDER and SAVEDATE's SAVEDATESUPPORTED.
+//
+// TestEveryKeyGateResolves proves each gate names a capability that exists.
+// This proves the pairing is not merely spellable but usable: gating either key
+// on a real capability the session does not hold — the failure mode that leaves
+// no trace but a NO — refuses it here.
+//
+// What it does not prove is that the pairing is the correct one. The memory
+// backend witnesses both capabilities, so swapping WITHIN and SAVEDATE between
+// these two rows passes; catching that needs a backend that witnesses one and
+// not the other, which nothing in this package has. Verified by making both
+// substitutions, rather than assumed. Saying so is the point: this file has
+// twice carried a comment claiming coverage it did not have.
+func TestTokenGatedSearchKeysAreAdmittedWhenWitnessed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	writeRawCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUntilTag(t, reader, "A1 OK ")
+	// Read the untagged CAPABILITY line rather than only the tagged OK, so a
+	// failure below separates "the gate names the wrong capability" from "this
+	// backend never witnessed it".
+	writeRawCommand(t, clientSide, "A2 CAPABILITY\r\n")
+	var advertised string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(line, "* CAPABILITY ") {
+			advertised = line
+		}
+		if strings.HasPrefix(line, "A2 ") {
+			break
+		}
+	}
+	witnessed := strings.Fields(advertised)
+	for _, capability := range []string{"WITHIN", "SAVEDATE"} {
+		if !slices.Contains(witnessed, capability) {
+			t.Fatalf("the memory backend stopped witnessing %s, so this test no longer "+
+				"exercises the admit direction: %q", capability, advertised)
+		}
+	}
+	writeRawCommand(t, clientSide, "A3 SELECT INBOX\r\n")
+	readUntilTag(t, reader, "A3 OK ")
+
+	for _, testCase := range []struct {
+		tag, command, capability string
+	}{
+		{"A4", "SEARCH YOUNGER 3600", "WITHIN"},
+		{"A5", "SEARCH OLDER 3600", "WITHIN"},
+		{"A6", "SEARCH SAVEDATESUPPORTED", "SAVEDATE"},
+	} {
+		writeRawCommand(t, clientSide, testCase.tag+" "+testCase.command+"\r\n")
+		line := readUntilTag(t, reader, testCase.tag+" ")
+		if !strings.HasPrefix(line, testCase.tag+" OK ") {
+			t.Errorf("%s was refused to a session whose backend witnesses %s: %q",
+				testCase.command, testCase.capability, line)
+		}
+	}
+
+	writeRawCommand(t, clientSide, "A7 LOGOUT\r\n")
+	readUntilTag(t, reader, "A7 OK ")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeRawCommand(t *testing.T, conn net.Conn, command string) {
 	t.Helper()
 	if _, err := io.WriteString(conn, command); err != nil {
