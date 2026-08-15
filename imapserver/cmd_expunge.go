@@ -96,30 +96,18 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 		return false, writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
 	origin := nextCommandOrigin()
+	// Shadow tracks UIDs the writer has already accepted so a duplicate report
+	// fails closed. Wire responses and CONTEXT notifications come from
+	// drainUpdatesThrough after every preceding revision is applied in order —
+	// converting a UID against the pre-drain snapshot can invent a sequence
+	// number the client cannot have.
 	shadow := slices.Clone(selected.uids)
-	// Collected for the CONTEXT registrations, which the command's own
-	// responses bypass. See ext_e_context.go.
-	var removed []imap.UID
 	writer := newExpungeWriter(func(_ context.Context, uid imap.UID) error {
 		at, ok := slices.BinarySearch(shadow, uid)
 		if !ok {
 			return fmt.Errorf("imapserver: backend EXPUNGE returned unknown UID %d", uid)
 		}
-		if !silent {
-			// QRESYNC mandates VANISHED and UIDONLY forbids the
-			// sequence-numbered form. See ext_b_qresync.go.
-			if removalsUseVanished(c) {
-				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
-					RawValue([]byte(imap.UIDSetNum(uid).String())).CRLF()
-			} else {
-				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(at + 1)).SP().Atom("EXPUNGE").CRLF()
-			}
-			if err := c.encoder.Flush(); err != nil {
-				return err
-			}
-		}
 		shadow = slices.Delete(shadow, at, at+1)
-		removed = append(removed, uid)
 		return nil
 	})
 	err := selected.mailbox.Expunge(ctx, writer, uids, &ExpungeOptions{MutationOptions: MutationOptions{Origin: origin}})
@@ -127,10 +115,11 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	if err != nil {
 		return false, writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.drainUpdates(updateAccounting{origin: origin, effect: effectExpunge}); err != nil {
-		return false, err
+	effect := effectNone
+	if silent {
+		effect = effectExpunge
 	}
-	if err := notifySearchContexts(c, removed); err != nil {
+	if err := c.drainUpdatesThrough(updateAccounting{origin: origin, effect: effect}); err != nil {
 		return false, err
 	}
 	if silent {

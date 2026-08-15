@@ -106,7 +106,12 @@ type conn struct {
 	// commandInProgress is the other half of RFC 3501 §7.4.1, and is event-loop
 	// owned for the same reason. See expungeDeliveryDeferred.
 	commandInProgress bool
-	logout            bool
+	// updateEffects remembers command-side responses whose matching update
+	// batch could not yet be applied because an earlier unsolicited removal
+	// remains deferred. It is event-loop owned. When that batch is eventually
+	// applied, its original accounting still suppresses the duplicate response.
+	updateEffects map[ChangeToken]commandEffect
+	logout        bool
 
 	fatalMu sync.Mutex
 	fatal   error
@@ -796,9 +801,28 @@ var sequenceSensitiveCommands = map[string]bool{
 }
 
 func (c *conn) drainUpdates(accounting updateAccounting) error {
+	return c.drainUpdatesInternal(accounting, false)
+}
+
+// drainUpdatesThrough applies the revision prefix through accounting.origin,
+// even when unsolicited removals would otherwise be deferred. Commands that
+// themselves remove messages need that prefix atomically: their backend writer
+// reports UIDs from the current backend revision, and only the ordered batches
+// can convert those removals to the client's sequence-number view correctly.
+func (c *conn) drainUpdatesThrough(accounting updateAccounting) error {
+	return c.drainUpdatesInternal(accounting, true)
+}
+
+func (c *conn) drainUpdatesInternal(accounting updateAccounting, throughOrigin bool) error {
 	selected := c.state.selected
 	if selected == nil || selected.queue == nil {
 		return nil
+	}
+	if accounting.origin != 0 && accounting.effect != effectNone {
+		if c.updateEffects == nil {
+			c.updateEffects = make(map[ChangeToken]commandEffect)
+		}
+		c.updateEffects[accounting.origin] = accounting.effect
 	}
 	// Left queued, deliberately: what is not popped does not advance the
 	// framework's sequence view past the client's either. Popping and
@@ -809,21 +833,37 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 	// a later one without its predecessor would move the sequence view across a
 	// change the client was never told about — so one batch that must wait stops
 	// every batch behind it, whatever those contain.
-	deferred := c.expungeDeliveryDeferred()
-	batches := selected.queue.popWhile(func(batch *UpdateBatch) bool {
-		if !deferred {
-			return true
+	var batches []*UpdateBatch
+	if throughOrigin {
+		batches = selected.queue.popThroughOrigin(accounting.origin)
+	} else {
+		deferred := c.expungeDeliveryDeferred()
+		batches = selected.queue.popWhile(func(batch *UpdateBatch) bool {
+			if !deferred {
+				return true
+			}
+			// This command's own changes still go out: the client caused them and
+			// has already been told, and this drain is what suppresses the duplicate.
+			if batch.Origin != 0 && batch.Origin == accounting.origin {
+				return true
+			}
+			// Only removals are forbidden here. EXISTS and FLAGS may be sent at any
+			// time, and holding them behind an unrelated expunge would delay every
+			// new-message notification the client is waiting for.
+			return !batchRemovesMessages(batch)
+		})
+	}
+	// A command may publish no batch at all. Conversely, its batch may still be
+	// behind the deferred prefix. Keep accounting only for origins that remain
+	// queued; applied origins and no-op commands are finished.
+	queuedOrigins := selected.queue.origins()
+	defer func() {
+		for origin := range c.updateEffects {
+			if _, queued := queuedOrigins[origin]; !queued {
+				delete(c.updateEffects, origin)
+			}
 		}
-		// This command's own changes still go out: the client caused them and
-		// has already been told, and this drain is what suppresses the duplicate.
-		if batch.Origin != 0 && batch.Origin == accounting.origin {
-			return true
-		}
-		// Only removals are forbidden here. EXISTS and FLAGS may be sent at any
-		// time, and holding them behind an unrelated expunge would delay every
-		// new-message notification the client is waiting for.
-		return !batchRemovesMessages(batch)
-	})
+	}()
 	if len(batches) == 0 {
 		return nil
 	}
@@ -832,7 +872,14 @@ func (c *conn) drainUpdates(accounting updateAccounting) error {
 	var removed []imap.UID
 	var pending []deliveredUpdate
 	for _, batch := range batches {
-		updates, err := selected.applyBatch(batch, accounting)
+		batchAccounting := updateAccounting{
+			origin: batch.Origin,
+			effect: c.updateEffects[batch.Origin],
+		}
+		if batch.Origin != 0 && batch.Origin == accounting.origin {
+			batchAccounting = accounting
+		}
+		updates, err := selected.applyBatch(batch, batchAccounting)
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
 			// knows the selected mailbox's sequence view. Continuing would risk
