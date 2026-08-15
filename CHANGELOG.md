@@ -65,8 +65,14 @@ previous `imapserver/v*` tag.
 
 #### Added
 
-- **The server framework.** Exported API: `Server`, `New`, `Serve`, `Options`,
-  `Limits`, `ConnInfo`, `Credentials` and the connection lifecycle around them.
+- **The server framework.** Exported API: `Server`, `New`, `Serve`, `ServeConn`,
+  `Close`, `Options`, `Limits`, `ConnInfo`, `Credentials` and the connection
+  lifecycle around them. The three entry points take an options struct each —
+  `ServeOptions`, `ServeConnOptions`, `ServerCloseOptions`, all empty and all
+  accepting nil — so that per-listener settings can arrive without a break. RFC
+  8314 implicit TLS on 993 alongside RFC 2595 `LOGINDISABLED` on cleartext 143
+  is the case: it needs `RequireTLS` and `AllowInsecureAuth` to differ per
+  listener, and today they are server-wide.
   Protocol framing, connection state, capability negotiation, sequence-number
   translation and update delivery are the framework's; accounts and stored mail
   are the backend's.
@@ -74,7 +80,9 @@ previous `imapserver/v*` tag.
   `SelectedMailbox` — the mandatory IMAP4rev1 baseline, frozen by design — plus
   the writer types they stream through: `ListWriter`, `FetchWriter`,
   `ExpungeWriter`, `Updater`. A future extension adds an optional interface or
-  a guarded option field, never a method to one of these.
+  a guarded option field, never a method to one of these. `WriteExpunge` takes
+  `*WriteExpungeOptions` because its payload is a bare `imap.UID`; the other
+  writers carry a growable struct already, which is the same guarantee.
 - **Update delivery.** Exported API: the `Update` interface and its variants,
   plus `UpdateBatch` and `ChangeToken`. A backend publishes changes; the
   framework decides what each connection may see and when, which is what keeps a

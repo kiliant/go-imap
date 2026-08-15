@@ -411,7 +411,7 @@ func TestLoopbackNotifyVocabulary(t *testing.T) {
 func newRawSessionOn(t *testing.T, ctx context.Context, server *imapserver.Server) (*imapserver.Server, net.Conn, *bufio.Reader) {
 	t.Helper()
 	serverSide, clientSide := net.Pipe()
-	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	go func() { _ = server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

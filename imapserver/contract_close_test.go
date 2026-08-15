@@ -82,7 +82,7 @@ func TestUnauthenticateClosesSessionOnce(t *testing.T) {
 
 			serverSide, clientSide := net.Pipe()
 			serveDone := make(chan struct{})
-			go func() { defer close(serveDone); _ = server.ServeConn(ctx, serverSide) }()
+			go func() { defer close(serveDone); _ = server.ServeConn(ctx, serverSide, nil) }()
 			reader := bufio.NewReader(clientSide)
 			if _, err := reader.ReadString('\n'); err != nil {
 				t.Fatal(err)
@@ -194,7 +194,7 @@ func TestStatusResponseCarriesOnlyRequestedItems(t *testing.T) {
 	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
 
 	serverSide, clientSide := net.Pipe()
-	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	go func() { _ = server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -299,7 +299,7 @@ func TestExtensionKeysAndItemsAreGated(t *testing.T) {
 	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
 
 	serverSide, clientSide := net.Pipe()
-	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	go func() { _ = server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -397,7 +397,7 @@ func TestParseAdmitsImpliesGateAdmits(t *testing.T) {
 			server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
 
 			serverSide, clientSide := net.Pipe()
-			go func() { _ = server.ServeConn(ctx, serverSide) }()
+			go func() { _ = server.ServeConn(ctx, serverSide, nil) }()
 			reader := bufio.NewReader(clientSide)
 			if _, err := reader.ReadString('\n'); err != nil {
 				t.Fatal(err)

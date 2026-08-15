@@ -191,10 +191,47 @@ func New(backend Backend, options *Options) *Server {
 	}
 }
 
+// ServeOptions configures one listener. A nil pointer selects the defaults,
+// which are the server-wide [Options].
+//
+// Empty today, and present because per-listener settings are the shape this
+// grows into. RFC 8314 wants implicit TLS on 993 while RFC 2595 wants
+// LOGINDISABLED on cleartext 143, so a server listening on both needs
+// RequireTLS and AllowInsecureAuth to differ per listener; today they are
+// server-wide and cannot. Adding the parameter after imapserver v1.0 would
+// break every caller, so it is here before there is one.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ServeOptions struct{ _ struct{} }
+
+// ServeConnOptions configures one already-accepted connection. A nil pointer
+// selects the defaults, which are the server-wide [Options].
+//
+// Separate from [ServeOptions] because the two answer different questions. A
+// caller doing its own accept loop already knows things the framework cannot
+// infer — that a connection arrived on an implicit-TLS port, or the original
+// client address behind a PROXY-protocol header (RFC 7239) — and that is
+// per-connection, not per-listener.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ServeConnOptions struct{ _ struct{} }
+
+// ServerCloseOptions configures shutdown. A nil pointer selects the defaults.
+//
+// Empty today. Graceful drain — stop accepting, let existing sessions finish,
+// bounded by the context — is the field this exists to be able to add without
+// a break. Note that [Server.Close] takes a context and so is deliberately not
+// [io.Closer]; the root module's Close exemption does not reach it.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ServerCloseOptions struct{ _ struct{} }
+
 // Serve accepts connections until ctx is cancelled, listener is closed, or a
 // permanent accept error occurs. Each accepted connection is closed by the
 // server after its session ends.
-func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
+//
+// options may be nil.
+func (s *Server) Serve(ctx context.Context, listener net.Listener, options *ServeOptions) error {
 	if s == nil || listener == nil {
 		return fmt.Errorf("imapserver: nil server or listener")
 	}
@@ -239,7 +276,9 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 
 // ServeConn runs one already-accepted connection until logout, disconnect,
 // cancellation or a fatal protocol error. It always closes netConn.
-func (s *Server) ServeConn(ctx context.Context, netConn net.Conn) error {
+//
+// options may be nil.
+func (s *Server) ServeConn(ctx context.Context, netConn net.Conn, options *ServeConnOptions) error {
 	if s == nil || netConn == nil {
 		return fmt.Errorf("imapserver: nil server or connection")
 	}
@@ -319,7 +358,9 @@ func sourceAddress(addr net.Addr) string {
 // Close terminates active connections and waits for all ServeConn calls to
 // return. It does not close listeners passed to Serve; cancel the corresponding
 // Serve context or close the listener as well.
-func (s *Server) Close(ctx context.Context) error {
+//
+// options may be nil.
+func (s *Server) Close(ctx context.Context, options *ServerCloseOptions) error {
 	if s == nil {
 		return nil
 	}

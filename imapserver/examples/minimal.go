@@ -55,7 +55,7 @@ func main() {
 
 	// Serve returns when ctx is cancelled or the listener fails permanently.
 	// A cancelled context is the ordinary way to stop, not an error.
-	if err := server.Serve(ctx, listener); err != nil && ctx.Err() == nil {
+	if err := server.Serve(ctx, listener, nil); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(os.Stderr, "serve:", err)
 		os.Exit(1)
 	}

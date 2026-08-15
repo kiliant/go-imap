@@ -83,7 +83,7 @@ func driveServer(t *testing.T, prologue, input []byte) {
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), fuzzPipeTimeout)
 		defer cancel()
-		_ = server.Close(closeCtx)
+		_ = server.Close(closeCtx, nil)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), fuzzPipeTimeout)
@@ -96,7 +96,7 @@ func driveServer(t *testing.T, prologue, input []byte) {
 	_ = clientConn.SetDeadline(time.Now().Add(fuzzPipeTimeout))
 
 	served := make(chan error, 1)
-	go func() { served <- server.ServeConn(ctx, serverConn) }()
+	go func() { served <- server.ServeConn(ctx, serverConn, nil) }()
 
 	// Drain concurrently with the write. The server emits its greeting before
 	// reading anything, so a harness that wrote first would deadlock against
@@ -137,7 +137,7 @@ func TestAppendWithoutLiteralIsRejected(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	_ = clientConn.SetDeadline(time.Now().Add(15 * time.Second))
 	served := make(chan error, 1)
-	go func() { served <- server.ServeConn(ctx, serverConn) }()
+	go func() { served <- server.ServeConn(ctx, serverConn, nil) }()
 
 	reader := bufio.NewReader(clientConn)
 	if _, err := reader.ReadString('\n'); err != nil { // greeting

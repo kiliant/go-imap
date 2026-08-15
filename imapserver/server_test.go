@@ -28,7 +28,7 @@ func TestLoopbackFrameworkLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.ServeConn(ctx, serverSide) }()
+	go func() { serverDone <- server.ServeConn(ctx, serverSide, nil) }()
 
 	client := imapclient.NewClient(clientSide, nil)
 	if err := client.WaitGreeting(ctx, nil); err != nil {
@@ -75,7 +75,7 @@ func TestLoopbackStartTLSRefreshesCapabilities(t *testing.T) {
 	defer cancel()
 	serverSide, clientSide := net.Pipe()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.ServeConn(ctx, serverSide) }()
+	go func() { serverDone <- server.ServeConn(ctx, serverSide, nil) }()
 
 	clearReader := bufio.NewReader(clientSide)
 	if line, err := clearReader.ReadString('\n'); err != nil || !strings.HasPrefix(line, "* OK ") {
@@ -135,7 +135,7 @@ func TestImplicitTLSHandshakeUsesPreAuthTimeout(t *testing.T) {
 	defer clientSide.Close() // deliberately never starts a TLS handshake
 	done := make(chan error, 1)
 	go func() {
-		done <- server.ServeConn(context.Background(), tls.Server(serverSide, serverTLSConfig(t, certificate)))
+		done <- server.ServeConn(context.Background(), tls.Server(serverSide, serverTLSConfig(t, certificate)), nil)
 	}()
 	select {
 	case err := <-done:
@@ -162,7 +162,7 @@ func TestStartTLSDiscardsBufferedPlaintextCommands(t *testing.T) {
 	defer cancel()
 	serverSide, clientSide := net.Pipe()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.ServeConn(ctx, serverSide) }()
+	go func() { serverDone <- server.ServeConn(ctx, serverSide, nil) }()
 
 	clearReader := bufio.NewReader(clientSide)
 	if _, err := clearReader.ReadString('\n'); err != nil {
@@ -211,7 +211,7 @@ func TestSynchronisingCommandLiteralsAreCoordinated(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.ServeConn(ctx, serverSide) }()
+	go func() { serverDone <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -254,7 +254,7 @@ func TestUnknownNonSynchronisingLiteralRecoversNextCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.ServeConn(ctx, serverSide) }()
+	go func() { serverDone <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -317,7 +317,7 @@ func TestServeAppliesConnectionLimitBeforeSpawning(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(ctx, listener) }()
+	go func() { serveDone <- server.Serve(ctx, listener, nil) }()
 
 	serverOne, clientOne := net.Pipe()
 	defer clientOne.Close()

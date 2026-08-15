@@ -221,7 +221,7 @@ func TestMoveRefusedWithoutCapabilityWitnessOrSelectedInterface(t *testing.T) {
 	server := imapserver.New(&withoutMoveBackend{inner: inner}, &imapserver.Options{AllowInsecureAuth: true})
 	serverSide, clientSide := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	greeting, err := reader.ReadString('\n')
 	if err != nil {
@@ -274,7 +274,7 @@ func openLoopbackClient(t *testing.T, ctx context.Context, server *imapserver.Se
 	t.Helper()
 	serverSide, clientSide := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	client := imapclient.NewClient(clientSide, options)
 	if err := client.WaitGreeting(ctx, nil); err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestTokenGatedSearchKeysAreAdmittedWhenWitnessed(t *testing.T) {
 	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
 	serverSide, clientSide := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

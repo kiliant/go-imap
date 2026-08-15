@@ -164,7 +164,7 @@ func startOn(ctx context.Context, address string) (*definition.NativeServer, err
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := server.Serve(serveCtx, listener); err != nil {
+		if err := server.Serve(serveCtx, listener, nil); err != nil {
 			mu.Lock()
 			serveErr = err
 			mu.Unlock()
@@ -174,7 +174,7 @@ func startOn(ctx context.Context, address string) (*definition.NativeServer, err
 	stop := func(stopCtx context.Context) error {
 		cancelServe()
 		_ = listener.Close()
-		err := server.Close(stopCtx)
+		err := server.Close(stopCtx, nil)
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):

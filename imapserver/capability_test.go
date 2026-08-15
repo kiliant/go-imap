@@ -417,6 +417,20 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 		"MoveSupport.SupportsMove":             true,
 		"CapabilitySupport.SupportsCapability": true,
 		"Update.update":                        true,
+
+		// Accessor over state the caller already handed us: no context, no
+		// wire, nothing to configure.
+		"SearchQuery.Criteria": true,
+
+		// The payload is itself a growable struct, which is the same guarantee
+		// an options struct gives: a new RFC adds a field to imap.ListData,
+		// imap.FetchMessageData, UpdateBatch or SessionUpdate. Contrast
+		// ExpungeWriter.WriteExpunge, whose payload is a bare imap.UID with
+		// nowhere to grow — that one takes options for exactly this reason.
+		"ListWriter.WriteList":     true,
+		"FetchWriter.WriteMessage": true,
+		"Updater.Push":             true,
+		"SessionUpdater.Push":      true,
 	}
 
 	fset := token.NewFileSet()
@@ -427,8 +441,29 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Exported methods on exported concrete types, not only interface methods.
+	// The three a user actually calls — Serve, ServeConn, Close — are methods on
+	// *Server, so an interface-only walk left the entry points outside the gate
+	// while this comment claimed to cover "the backend surface". Server.Close
+	// takes a context and so is not io.Closer; the root module's Close exemption
+	// does not reach it.
 	for _, file := range packages["imapserver"].Files {
 		for _, declaration := range file.Decls {
+			if fn, ok := declaration.(*ast.FuncDecl); ok {
+				receiver, isMethod := receiverTypeName(fn)
+				if !isMethod || !ast.IsExported(receiver) || !ast.IsExported(fn.Name.Name) {
+					continue
+				}
+				qualified := receiver + "." + fn.Name.Name
+				if exempt[qualified] || optionsParameter(fset, fn.Type) {
+					continue
+				}
+				t.Errorf("%s does not end in a pointer to an options struct.\n"+
+					"A new RFC must be able to add a field; adding a parameter breaks every caller. "+
+					"If this method genuinely cannot block or grow, add it to the exempt list above "+
+					"with a reason.", qualified)
+				continue
+			}
 			general, ok := declaration.(*ast.GenDecl)
 			if !ok || general.Tok != token.TYPE {
 				continue
@@ -461,6 +496,26 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 			}
 		}
 	}
+}
+
+// receiverTypeName returns the type a method is declared on, without its
+// pointer star, and whether the declaration is a method at all.
+func receiverTypeName(fn *ast.FuncDecl) (string, bool) {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return "", false
+	}
+	expr := fn.Recv.List[0].Type
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	if index, ok := expr.(*ast.IndexExpr); ok { // generic receiver
+		expr = index.X
+	}
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	return ident.Name, true
 }
 
 // optionsParameter reports whether fn's last parameter is a *…Options pointer.

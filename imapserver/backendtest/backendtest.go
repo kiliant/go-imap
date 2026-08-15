@@ -243,7 +243,7 @@ func Run(t *testing.T, harness *Harness) {
 			t.Fatal(err)
 		}
 		var expunged []imap.UID
-		if err := result.Mailbox.Expunge(context.Background(), &imapserver.ExpungeWriter{WriteFunc: func(_ context.Context, uid imap.UID) error {
+		if err := result.Mailbox.Expunge(context.Background(), &imapserver.ExpungeWriter{WriteFunc: func(_ context.Context, uid imap.UID, _ *imapserver.WriteExpungeOptions) error {
 			expunged = append(expunged, uid)
 			return nil
 		}}, nil, nil); err != nil {

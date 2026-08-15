@@ -393,7 +393,7 @@ func newGroupARawSessionIn(t *testing.T, ctx context.Context, authenticatedOnly 
 	}
 
 	serverSide, clientSide := net.Pipe()
-	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	go func() { _ = server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

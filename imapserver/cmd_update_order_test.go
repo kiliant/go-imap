@@ -108,7 +108,7 @@ func TestExpungeUpdateWaitsForCommandCompletion(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { done <- server.ServeConn(ctx, serverSide) }()
+			go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 			reader := bufio.NewReader(clientSide)
 			if _, err := reader.ReadString('\n'); err != nil {
 				t.Fatal(err)
@@ -188,7 +188,7 @@ func TestExpungeUpdateWaitsForPipelinedCommands(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestIdleReceivesUpdatesAfterPartialInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

@@ -84,8 +84,8 @@ func main() {
 	fmt.Println("STARTTLS on", plain.Addr(), "— implicit TLS on", implicit.Addr())
 
 	errs := make(chan error, 2)
-	go func() { errs <- server.Serve(ctx, plain) }()
-	go func() { errs <- server.Serve(ctx, implicit) }()
+	go func() { errs <- server.Serve(ctx, plain, nil) }()
+	go func() { errs <- server.Serve(ctx, implicit, nil) }()
 
 	// Either listener failing takes the server down: a deployment that silently
 	// loses its TLS port and keeps the plain one is worse than one that stops.

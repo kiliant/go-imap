@@ -108,7 +108,7 @@ func serveExample(backend imapserver.Backend, what string) {
 	}
 	fmt.Printf("listening on %s as %s — demonstrating %s\n", listener.Addr(), serverUser(), what)
 
-	if err := server.Serve(ctx, listener); err != nil && ctx.Err() == nil {
+	if err := server.Serve(ctx, listener, nil); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(os.Stderr, "serve:", err)
 		os.Exit(1)
 	}

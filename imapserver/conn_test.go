@@ -42,7 +42,7 @@ func TestReaderCancelsBlockedEventLoopOnDisconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestAuthenticationStopsWholeConnectionPreAuthDeadline(t *testing.T) {
 	serverSide, clientSide := net.Pipe()
 	server := New(nil, &Options{Limits: Limits{PreAuthTimeout: 40 * time.Millisecond}})
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(context.Background(), serverSide) }()
+	go func() { done <- server.ServeConn(context.Background(), serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestBarrierContinuationUsesReaderAndPreservesBufferedCommands(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestSASLContinuationExchange(t *testing.T) {
 	serverSide, clientSide := net.Pipe()
 	server := New(nil, nil)
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(context.Background(), serverSide) }()
+	go func() { done <- server.ServeConn(context.Background(), serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -439,7 +439,7 @@ func TestServerCloseWaitsForDirectServeConn(t *testing.T) {
 	serverSide, clientSide := net.Pipe()
 	server := New(nil, nil)
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.ServeConn(context.Background(), serverSide) }()
+	go func() { serveDone <- server.ServeConn(context.Background(), serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
@@ -447,7 +447,7 @@ func TestServerCloseWaitsForDirectServeConn(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := server.Close(ctx); err != nil {
+	if err := server.Close(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -490,7 +490,7 @@ func TestSyntaxErrorDoesNotLoseNextCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

@@ -827,13 +827,28 @@ type ExpungeWriter struct {
 	// WriteFunc receives streamed removals when the writer is constructed by an
 	// adapter such as backendtest. Ordinary backends call WriteExpunge and leave
 	// this field unset on framework-provided writers.
-	WriteFunc func(context.Context, imap.UID) error
+	WriteFunc func(context.Context, imap.UID, *WriteExpungeOptions) error
 	core      *writerCore[imap.UID]
 }
 
+// WriteExpungeOptions configures one streamed removal. A nil pointer selects
+// the defaults.
+//
+// Empty today, and the reason this writer has one while its siblings do not:
+// [ListWriter.WriteList], [FetchWriter.WriteMessage] and [Updater.Push] all
+// carry a growable struct as their payload, so a new RFC adds a field there.
+// A UID is a scalar with nowhere to grow. RFC 7162 is the pressure — VANISHED
+// (EARLIER) distinguishes a removal the client already knew about from one it
+// did not, which is a property of the write and not of the UID.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type WriteExpungeOptions struct{ _ struct{} }
+
 // WriteExpunge writes one removed UID. The framework converts it to the
 // sequence number current at this exact point in the response.
-func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID) error {
+//
+// options may be nil.
+func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID, options *WriteExpungeOptions) error {
 	if w == nil {
 		return ErrWriterClosed
 	}
@@ -841,7 +856,7 @@ func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID) error {
 		return w.core.writeValue(ctx, uid)
 	}
 	if w.WriteFunc != nil {
-		return w.WriteFunc(ctx, uid)
+		return w.WriteFunc(ctx, uid, options)
 	}
 	return ErrWriterClosed
 }

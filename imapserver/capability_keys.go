@@ -76,6 +76,15 @@ func requiresToken(name string) keyGate {
 
 // requiresFeature gates on a framework feature, which may be activated by a
 // token or by a protocol revision. See featureDescriptors in capability.go.
+//
+// Call this from a function body, never from a package-level var literal.
+// featureDescriptors is a base literal that eight init() functions in ext_*.go
+// append to via registerFeatures, and Go finishes all var initialisation before
+// any init() runs — so a gate constructed in a var literal resolves against an
+// incomplete table and silently deny-alls. That is why the two gate maps below
+// hold requiresToken, whose lookup happens at call time, and why the one
+// requiresFeature gate lives inside fetchItemCapability. The same applies to
+// capabilityDescriptors, which registerCapabilities appends to the same way.
 func requiresFeature(id featureID) keyGate {
 	for _, descriptor := range featureDescriptors {
 		if descriptor.ID == id {
