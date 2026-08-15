@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -114,21 +115,38 @@ func startProfiles(ctx context.Context, manager *Manager, profiles []definition.
 			results <- startResult{index: index, server: server, err: err}
 		}()
 	}
-	servers := make([]*Server, len(profiles))
+	started := make([]*Server, len(profiles))
 	var firstErr error
 	for range profiles {
 		result := <-results
 		if result.err != nil {
+			// An image we could not obtain is not a server that failed its
+			// profile. Drop it and carry on with the rest of the matrix rather
+			// than reporting go-imap red for a registry or storage problem;
+			// ErrImageUnavailable already survived a retry by this point.
+			if errors.Is(result.err, ErrImageUnavailable) {
+				fmt.Fprintf(os.Stderr, "interop: skipping %s: %v\n",
+					profiles[result.index].Name, result.err)
+				continue
+			}
 			if firstErr == nil {
 				firstErr = result.err
 				cancel()
 			}
 			continue
 		}
-		servers[result.index] = result.server
+		started[result.index] = result.server
 	}
 	if firstErr != nil {
 		return nil, firstErr
+	}
+	// Compact rather than return a slice with holes: every caller ranges over
+	// this and would otherwise dereference a nil Server for a skipped profile.
+	servers := make([]*Server, 0, len(started))
+	for _, server := range started {
+		if server != nil {
+			servers = append(servers, server)
+		}
 	}
 	return servers, nil
 }
