@@ -15,10 +15,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   *Changed* or *Removed* marked `BREAKING`, with the reason. After v1.0 the
   policy hardens: additive only, and a removal needs two minor releases of
   deprecation and does not land before a major.
+- **Entries name their module.** Since T25 the repository holds two modules with
+  independent version lines: the root module at `v1.x` and `imapserver` at
+  `v0.x`, tagged `imapserver/v0.a.b`. They make different promises, so an entry
+  that does not say which module it belongs to does not say whether it was
+  allowed. See `docs/RELEASING.md`.
 
 ## [Unreleased]
 
-### Added
+### Root module — `github.com/kiliant/go-imap`
+
+#### Added
 
 - `imap.Envelope.RawDate`, allowing servers to reproduce malformed or unusually
   spelled message Date headers when encoding ENVELOPE data.
@@ -27,7 +34,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `internal/imapcodec`, and streaming message analysis/SEARCH evaluation in
   `internal/imapmessage`.
 
-### Changed
+#### Changed
 
 - `imapclient` now uses the shared semantic codec for FETCH, SEARCH, ENVELOPE
   and BODYSTRUCTURE without changing its exported API or interoperability
@@ -44,6 +51,161 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   cannot drift apart again, and a test requires the two constant sets to stay
   one-for-one. `imapclient`'s exported API is unchanged; `apidiff`
   reports no difference for it.
+
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Not yet released. This is the content of the first `imapserver/v0.1.0` tag.
+
+**This module does not carry the root module's v1 compatibility promise.** It is
+v0.x deliberately: the backend contract has had one round of real backend
+authors and no more, and freezing it on that evidence is how the library this
+project exists to replace ended up in beta for years. Breaks between minors are
+allowed, will be named here, and are caught by `apidiff` running against the
+previous `imapserver/v*` tag.
+
+#### Added
+
+- **The server framework.** Exported API: `Server`, `New`, `Serve`, `ServeConn`,
+  `Close`, `Options`, `Limits`, `ConnInfo`, `Credentials` and the connection
+  lifecycle around them. The three entry points take an options struct each —
+  `ServeOptions`, `ServeConnOptions`, `ServerCloseOptions`, all empty and all
+  accepting nil — so that per-listener settings can arrive without a break. RFC
+  8314 implicit TLS on 993 alongside RFC 2595 `LOGINDISABLED` on cleartext 143
+  is the case: it needs `RequireTLS` and `AllowInsecureAuth` to differ per
+  listener, and today they are server-wide.
+  Protocol framing, connection state, capability negotiation, sequence-number
+  translation and update delivery are the framework's; accounts and stored mail
+  are the backend's.
+- **The backend contract.** Exported API: `Backend`, `Session`,
+  `SelectedMailbox` — the mandatory IMAP4rev1 baseline, frozen by design — plus
+  the writer types they stream through: `ListWriter`, `FetchWriter`,
+  `ExpungeWriter`, `Updater`. A future extension adds an optional interface or
+  a guarded option field, never a method to one of these. `WriteExpunge` takes
+  `*WriteExpungeOptions` because its payload is a bare `imap.UID`; the other
+  writers carry a growable struct already, which is the same guarantee.
+- **Update delivery.** Exported API: the `Update` interface and its variants,
+  plus `UpdateBatch` and `ChangeToken`. A backend publishes changes; the
+  framework decides what each connection may see and when, which is what keeps a
+  command from being told about a change it must not observe yet.
+- **Twenty-four optional capability interfaces**, discovered by type assertion:
+  `MoveMailbox`, `CondStoreMailbox`, `QResyncMailbox`, `ReplaceMailbox`,
+  `SortMailbox`, `ThreadMailbox`, `MultiSearchSession`, `CatenateSession`,
+  `ACLSession`, `ACLSetSession`, `QuotaSession`, `QuotaSetSession`,
+  `MetadataSession`, `NamespaceSession`, `NotifySession`, `FilterSession`,
+  `ComparatorSession`, `LanguageSession`, `URLAuthSession`,
+  `MessageLimitSession`, `UnauthenticateSession`, `SCRAMCredentials`, and the
+  `MoveSupport` / `CapabilitySupport` witnesses. Adding a capability is a new
+  interface or a new witness token, not a change to an existing type.
+- **~55 capabilities across RFC groups A–E**, listed per RFC in
+  `docs/RFC-COVERAGE.md`. Everything in scope is implemented except UTF8=ALL and
+  UTF8=USER (deprecated by RFC 9755) and UTF8=ONLY (asserts a deployment policy
+  the framework does not enforce), each recorded with its reason.
+- **`imapserver/memory`** — a supported in-memory backend implementing every
+  optional interface, not a toy: it is what this project's own conformance and
+  interoperability suites run against.
+- **`imapserver/backendtest`** — a reusable conformance suite a third-party
+  backend can point at itself. It exercises the mandatory contract and every
+  optional interface implemented, skipping the rest. A backend author's first
+  stop, ahead of the interface list.
+- **Runnable examples** under `imapserver/examples/`: a minimal server, a TLS
+  one, and one per optional-interface witness style.
+
+#### Notes for backend authors
+
+- **A session wrapper hides every optional interface it wraps.** The framework
+  discovers support by type-asserting the value it holds. Wrap a session that
+  implements two dozen optional interfaces in a type implementing one, and the
+  server supports one. `imapserver/examples/config.go` documents the pattern
+  and the trap together.
+- **`IMAP4REV2` is an umbrella and is witnessed by its members.** A backend is
+  offered it only when it witnesses the whole set RFC 9051 §1 incorporates —
+  CHILDREN, MOVE, NAMESPACE, SPECIAL-USE, STATUS=SIZE and UIDPLUS. Witnessing
+  only some of them and being held to all of them was a real defect, caught in
+  review before the first tag; see `docs/API-STABILITY.md` §10.
+
+#### Changed before the first tag
+
+- **BREAKING (pre-tag): `Session.Close` and `SelectedMailbox.Unselect` now take
+  an options struct**, `*SessionCloseOptions` and `*UnselectOptions`. They were
+  the only two methods on the whole backend surface without one, on the two
+  frozen mandatory interfaces, whose own doc promises "an option field, not a
+  method here" as the extension route — a promise that was false for exactly
+  those two. RFC 6785 (IMAPSIEVE) is the concrete pressure: a session ending
+  because the connection closed is a different event from one ending because
+  UNAUTHENTICATE reclaimed it, and CLOSE's implicit expunge is a different event
+  from UNSELECT's deliberate lack of one. Both structs are empty today.
+  `TestBackendMethodsTakeOptions` now gates the rule, which nothing did before.
+
+- **Extension SEARCH keys and FETCH items are capability-gated.** Previously a
+  backend witnessing nothing still received `FUZZY` and `MODSEQ` from a server
+  that advertised neither `SEARCH=FUZZY` nor `CONDSTORE`: every extension
+  *command* handler gated itself, but a search key is not a command and a fetch
+  item is not a command. The framework now classifies both — as data, in
+  `imapserver/capability_keys.go` — and refuses what it cannot classify.
+- `imapserver/memory` now witnesses `SEARCH=FUZZY`, which it evaluated but never
+  advertised.
+
+- **BREAKING (pre-tag): `backendtest.Harness.New` takes a context, an options
+  struct and returns an error**, `func(ctx context.Context, options *InstanceOptions) (*Instance, error)`. A real backend's setup
+  can block and can fail; without these the only way to report a failure was to
+  capture the subtest's `*testing.T` in the closure, and there was no way to
+  cancel at all. `InstanceOptions` is empty today and exists for rule 3: this
+  package is a backend author's documented first stop, so day-one adopters write
+  closures against this signature, and provisioning an implicit-TLS instance
+  (RFC 8314), a second identity for ACL rights (RFC 4314) or an instance that
+  survives a reconnect (RFC 7162) would each be a new parameter otherwise.
+
+- **Deferred updates and the queue bound.** Because unsolicited updates now wait
+  for a pipeline to drain, a client that keeps a deep pipeline full during heavy
+  concurrent mailbox churn can reach the update-queue bound where the previous
+  code would have drained between commands. The outcome is a `BYE` and a closed
+  connection rather than a desynchronised one, which is the direction to fail
+  in, but it is a behaviour change worth knowing about.
+
+#### Fixed
+
+- **Untagged `EXPUNGE` obeys both halves of RFC 3501 §7.4.1.** The first half —
+  no delivery while a pipelined `FETCH`, `STORE` or `SEARCH` is outstanding —
+  was already deferred past a command's tagged completion, and pipelining
+  defeated that: "after the tagged OK of command *n*" is simultaneously "while
+  command *n+1* is in flight". The condition is now the connection's own
+  backlog. The second half — "MUST NOT be sent when no command is in progress"
+  — was not modelled at all, so the event loop delivered between commands on its
+  own update signal. Delivery now requires a command in progress; the exemption
+  for a command's own changes is per batch rather than per drain, so STORE can
+  no longer flush unrelated sessions' removals through that exemption.
+
+- **Removal commands apply the queued revision prefix before reporting sequence
+  numbers.** EXPUNGE and MOVE used to convert the backend's returned UIDs
+  against the selected snapshot immediately. When an earlier unsolicited removal
+  was still deferred, that snapshot was one revision behind the UIDs, so the
+  sequence numbers belonged to a mailbox view the client had never been told
+  about (`seq too high` under Dovecot's `imaptest`). `drainUpdatesThrough` now
+  pops every batch through the command's own origin as one ordered unit;
+  EXPUNGE/MOVE no longer write sequence numbers themselves. They also drain the
+  whole current queue first: a deferred removal parks every ADD behind it, and
+  rejecting those UIDs from `WriteExpunge` was the intermittent
+  `NO [SERVERBUG] EXPUNGE failed` under stress.
+
+  Found by `imaptest` stress. Pinned by
+  `TestExpungeUpdateWaitsForPipelinedCommands`,
+  `TestExpungeUpdateWaitsForACommandToBeInProgress`,
+  `TestDeferredCommandUpdateKeepsItsAccounting` and
+  `TestExpungeAppliesQueuedAddsBeforeBackendCall`.
+
+- **BINARY fetch items are gated on the framework's feature rather than on the
+  `BINARY` token.** RFC 9051 incorporates RFC 3516's fetch half, so `BINARY[]`
+  is legal for a session that enabled IMAP4rev2 whether or not the token — which
+  additionally claims the APPEND half rev2 did not incorporate — was ever
+  advertised.
+
+#### Known issues
+
+- ~~Untagged `EXPUNGE` during a pipelined `FETCH`/`STORE`/`SEARCH`~~ — **fixed**.
+  See *Fixed* above.
+- ~~`EXPUNGE` between commands / revision-skewed sequence numbers~~ — **fixed**.
+  See *Fixed* above.
+- **A keyword created by `STORE` is not re-announced in `FLAGS`.**
 
 ## [1.0.0] - 2026-08-06
 

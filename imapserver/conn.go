@@ -86,17 +86,32 @@ type conn struct {
 	readerRequests  chan readerRequest
 	budgetFreed     chan struct{}
 	queuedBytes     atomic.Int64
-	utf8Accept      atomic.Bool
-	resetDecoder    atomic.Bool
-	ready           chan struct{}
+	// inputPending reports that the reader has bytes it has not yet turned into
+	// a command — that the client is pipelining. Written by the reader
+	// goroutine, read by the event loop, which is why it is atomic.
+	inputPending atomic.Bool
+	utf8Accept   atomic.Bool
+	resetDecoder atomic.Bool
+	ready        chan struct{}
 
 	// notifyQueue and notifyUpdater are the session-scoped NOTIFY channel,
 	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
 	notifyQueue   *sessionUpdateQueue
 	notifyUpdater *SessionUpdater
 
-	state  sessionState // event-loop owned
-	logout bool
+	state sessionState // event-loop owned
+	// executingSeqSensitive is event-loop owned, like state: it is set and
+	// cleared inside execute and read only from drainUpdates.
+	executingSeqSensitive bool
+	// commandInProgress is the other half of RFC 3501 §7.4.1, and is event-loop
+	// owned for the same reason. See expungeDeliveryDeferred.
+	commandInProgress bool
+	// updateEffects remembers command-side responses whose matching update
+	// batch could not yet be applied because an earlier unsolicited removal
+	// remains deferred. It is event-loop owned. When that batch is eventually
+	// applied, its original accounting still suppresses the duplicate response.
+	updateEffects map[ChangeToken]commandEffect
+	logout        bool
 
 	fatalMu sync.Mutex
 	fatal   error
@@ -275,9 +290,30 @@ func (c *conn) readCommands() error {
 			command.bytes = int64(len(tag) + len(name) + 2)
 			command.parseErr = fmt.Errorf("command payload exceeds queue byte limit")
 		}
+		// Raised before the command is queued and settled after, so the
+		// interval in between is always covered by one of the two signals.
+		// Queueing can block — on the byte budget, or on a full command
+		// channel — and in that window the command is not yet in c.commands;
+		// without the pessimistic raise the event loop would see neither it nor
+		// any sign that more input follows, which is the original bug.
+		//
+		// The settled value is read after the whole command line is consumed:
+		// reading it earlier counts the command's own unparsed arguments as
+		// pipelined input. A literal-bearing command still over-reports, since
+		// the payload is buffered behind the line — that direction is safe and
+		// self-correcting at the next parse.
+		//
+		// The count is taken *before* queueing, because queueing is the moment
+		// the decoder stops being exclusively ours: a command carrying a
+		// literal has its payload read by the handler, on the event loop, from
+		// this same bufio.Reader. Reading Buffered() afterwards is a data race,
+		// which is exactly what the race detector said the first time.
+		c.inputPending.Store(true)
+		pending := decoder.Buffered() > 0
 		if err := c.queueCommand(command); err != nil {
 			return err
 		}
+		c.inputPending.Store(pending)
 		if descriptor != nil && descriptor.barrier {
 			if err := c.waitBarrier(decoder, command); err != nil {
 				return err
@@ -297,6 +333,13 @@ func (c *conn) readCommands() error {
 }
 
 func (c *conn) waitBarrier(decoder *imapwire.Decoder, command *queuedCommand) error {
+	// The reader is about to park until this command completes, so it will not
+	// refresh inputPending again in the meantime. Leaving it raised freezes
+	// every unsolicited update for the whole of the command — and IDLE is a
+	// barrier, so the client most in need of updates is the one that would
+	// never get them. Lowering it here is safe: anything genuinely pipelined
+	// behind the barrier is read after it, and re-raises the flag then.
+	c.inputPending.Store(false)
 	for {
 		select {
 		case <-command.done:
@@ -545,6 +588,11 @@ func (c *conn) eventLoop() (retErr error) {
 }
 
 func (c *conn) execute(command *queuedCommand) error {
+	// A command is in progress for the whole of this call, which is what makes
+	// every drain below a legal moment to deliver an expunge. Set before the
+	// early returns so a BAD is not a window either.
+	c.commandInProgress = true
+	defer func() { c.commandInProgress = false }()
 	if command.parseErr != nil {
 		return c.writeBad(command.tag, "invalid command syntax")
 	}
@@ -554,7 +602,17 @@ func (c *conn) execute(command *queuedCommand) error {
 	if !c.state.allows(command.descriptor.states) {
 		return c.writeBad(command.tag, "command is not valid in this state")
 	}
-	if err := c.drainUpdates(updateAccounting{}); err != nil {
+	// Scoped to the pre-command drain alone. For a sequence-sensitive command
+	// that arrived in a pipeline, delivering here is as unsafe as delivering
+	// mid-command: the client composed this command against the numbering it
+	// has now. The handler's own drain, after its tagged response, is the point
+	// at which delivery becomes correct — so the flag is cleared before the
+	// handler runs, or that drain would defer forever and the update would
+	// never be sent at all.
+	c.executingSeqSensitive = sequenceSensitiveCommands[command.name]
+	err := c.drainUpdates(updateAccounting{})
+	c.executingSeqSensitive = false
+	if err != nil {
 		return err
 	}
 	ctx := c.ctx
@@ -660,12 +718,12 @@ func (c *conn) cleanupBackend() {
 	if selected := c.state.unselect(); selected != nil {
 		selected.close()
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
-		_ = selected.mailbox.Unselect(ctx)
+		_ = selected.mailbox.Unselect(ctx, nil)
 		cancel()
 	}
 	if session := c.state.session; session != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
-		_ = session.Close(ctx)
+		_ = session.Close(ctx, nil)
 		cancel()
 		c.state.session = nil
 	}
@@ -678,17 +736,174 @@ func (c *conn) updateSignal() <-chan struct{} {
 	return c.state.selected.queue.signal
 }
 
+// expungeDeliveryDeferred reports whether unsolicited updates must wait.
+//
+// RFC 3501 §7.4.1: an EXPUNGE response must not be sent while responding to a
+// FETCH, STORE or SEARCH, "to prevent a loss of synchronization of message
+// sequence numbers between client and server".
+//
+// Deferring past a command's tagged completion satisfies that for a client that
+// waits, and Dovecot's imaptest showed it does not for a client that pipelines:
+// "after the tagged OK of command n" is simultaneously "while command n+1 is in
+// flight", so the expunge moves out of one forbidden window and into the next.
+// The captured transcript is in docs/INTEROP.md.
+//
+// The condition is therefore the queue, not the command that just finished. A
+// command already read but not yet executed was composed by the client against
+// the sequence view as it stands now; renumbering before it runs invalidates
+// the numbers it carries. Waiting until the connection has caught up is the
+// only point at which the two views are known to agree.
+//
+// Deferral is for *unsolicited* removals only, and that exemption is decided
+// per batch by the caller rather than here. It used to be decided per drain: a
+// drain carrying any origin or effect returned early, which disabled every
+// condition below for the whole queue. STORE's own drain then delivered
+// unrelated sessions' expunges while responding to STORE with two commands
+// pipelined behind it — §7.4.1's forbidden window, reached through the
+// exemption meant for the command's own changes. See drainUpdates.
+func (c *conn) expungeDeliveryDeferred() bool {
+	// §7.4.1 opens with the condition this missed for a release: "An EXPUNGE
+	// response MUST NOT be sent when no command is in progress". Between
+	// commands the server knows nothing about what the client has already put on
+	// the wire — inputPending sees bytes the reader has buffered, never a
+	// command still in flight — so the gap is exactly where a client numbering
+	// against the pre-expunge view cannot be detected. Delivering while a
+	// command is in progress is what closes it: the client sees the EXPUNGE
+	// before that command's tagged response, so anything it sends afterwards is
+	// numbered against the new view, and anything it pipelined beforehand is
+	// caught by the two conditions below.
+	//
+	// IDLE is not an exception to this, it is an instance of it: the IDLE
+	// command is in progress for as long as the client is idling, which is why
+	// the extension can deliver expunges at all.
+	if !c.commandInProgress {
+		return true
+	}
+	// Three ways to still be behind the client: a command parsed and waiting,
+	// bytes read but not yet parsed, or the command running right now being one
+	// whose numbering the client is relying on. The last is what makes the
+	// *final* command of a pipeline safe — its own completion drain is the
+	// first moment both views are known to agree.
+	return len(c.commands) > 0 || c.inputPending.Load() || c.executingSeqSensitive
+}
+
+// sequenceSensitiveCommands are the commands whose arguments or responses carry
+// message sequence numbers, and therefore the ones RFC 3501 §7.4.1 protects.
+// UID covers UID FETCH, UID STORE and UID SEARCH, whose untagged responses
+// still carry sequence numbers even though their arguments do not.
+var sequenceSensitiveCommands = map[string]bool{
+	"FETCH":  true,
+	"STORE":  true,
+	"SEARCH": true,
+	"SORT":   true,
+	"THREAD": true,
+	"UID":    true,
+}
+
+type updateDrainMode int
+
+const (
+	// drainModeDeferred honours RFC 3501 §7.4.1: unsolicited removals wait.
+	drainModeDeferred updateDrainMode = iota
+	// drainModeThroughOrigin applies the prefix ending at the command's own
+	// batch, including otherwise-deferred removals ahead of it.
+	drainModeThroughOrigin
+	// drainModeAllowRemovals applies every currently queued batch. EXPUNGE and
+	// MOVE may send EXPUNGE responses, so a later pipelined command must not
+	// keep an older removal (and every ADD stuck behind it) deferred across
+	// those handlers.
+	drainModeAllowRemovals
+)
+
 func (c *conn) drainUpdates(accounting updateAccounting) error {
+	return c.drainUpdatesInternal(accounting, drainModeDeferred)
+}
+
+// drainUpdatesThrough applies the revision prefix through accounting.origin,
+// even when unsolicited removals would otherwise be deferred. Commands that
+// themselves remove messages need that prefix atomically: their backend writer
+// reports UIDs from the current backend revision, and only the ordered batches
+// can convert those removals to the client's sequence-number view correctly.
+func (c *conn) drainUpdatesThrough(accounting updateAccounting) error {
+	return c.drainUpdatesInternal(accounting, drainModeThroughOrigin)
+}
+
+// drainUpdatesAllowingRemovals applies the whole current queue. Callers must
+// already be in a command that §7.4.1 permits to emit EXPUNGE.
+func (c *conn) drainUpdatesAllowingRemovals(accounting updateAccounting) error {
+	return c.drainUpdatesInternal(accounting, drainModeAllowRemovals)
+}
+
+func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrainMode) error {
 	selected := c.state.selected
 	if selected == nil || selected.queue == nil {
+		return nil
+	}
+	if accounting.origin != 0 && accounting.effect != effectNone {
+		if c.updateEffects == nil {
+			c.updateEffects = make(map[ChangeToken]commandEffect)
+		}
+		c.updateEffects[accounting.origin] = accounting.effect
+	}
+	// Left queued, deliberately: what is not popped does not advance the
+	// framework's sequence view past the client's either. Popping and
+	// withholding the responses would produce exactly the desynchronisation
+	// this prevents.
+	//
+	// The prefix is the whole of the subtlety. Batches are ordered, and applying
+	// a later one without its predecessor would move the sequence view across a
+	// change the client was never told about — so one batch that must wait stops
+	// every batch behind it, whatever those contain.
+	var batches []*UpdateBatch
+	switch mode {
+	case drainModeThroughOrigin:
+		batches = selected.queue.popThroughOrigin(accounting.origin)
+	case drainModeAllowRemovals:
+		batches = selected.queue.popWhile(func(*UpdateBatch) bool { return true })
+	default:
+		deferred := c.expungeDeliveryDeferred()
+		batches = selected.queue.popWhile(func(batch *UpdateBatch) bool {
+			if !deferred {
+				return true
+			}
+			// This command's own changes still go out: the client caused them and
+			// has already been told, and this drain is what suppresses the duplicate.
+			if batch.Origin != 0 && batch.Origin == accounting.origin {
+				return true
+			}
+			// Only removals are forbidden here. EXISTS and FLAGS may be sent at any
+			// time, and holding them behind an unrelated expunge would delay every
+			// new-message notification the client is waiting for.
+			return !batchRemovesMessages(batch)
+		})
+	}
+	// A command may publish no batch at all. Conversely, its batch may still be
+	// behind the deferred prefix. Keep accounting only for origins that remain
+	// queued; applied origins and no-op commands are finished.
+	queuedOrigins := selected.queue.origins()
+	defer func() {
+		for origin := range c.updateEffects {
+			if _, queued := queuedOrigins[origin]; !queued {
+				delete(c.updateEffects, origin)
+			}
+		}
+	}()
+	if len(batches) == 0 {
 		return nil
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
 	// which of their matches went away. See ext_e_context.go.
 	var removed []imap.UID
 	var pending []deliveredUpdate
-	for _, batch := range selected.queue.popAll() {
-		updates, err := selected.applyBatch(batch, accounting)
+	for _, batch := range batches {
+		batchAccounting := updateAccounting{
+			origin: batch.Origin,
+			effect: c.updateEffects[batch.Origin],
+		}
+		if batch.Origin != 0 && batch.Origin == accounting.origin {
+			batchAccounting = accounting
+		}
+		updates, err := selected.applyBatch(batch, batchAccounting)
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
 			// knows the selected mailbox's sequence view. Continuing would risk

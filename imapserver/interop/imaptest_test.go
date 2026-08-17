@@ -184,22 +184,16 @@ var triaged = []struct {
 	pattern *regexp.Regexp
 	finding string
 }{
-	{
-		regexp.MustCompile(`Invalid untagged input: \* \d+ EXPUNGE|Referenced message expunged`),
-		"EXPUNGE delivered while a pipelined FETCH/STORE/SEARCH is still in " +
-			"progress, which RFC 3501 section 7.4.1 forbids",
-	},
+	// The pipelined-EXPUNGE entry that used to head this table was removed
+	// when T25 fixed it: expunges now wait for the connection's backlog to
+	// drain, not merely for the current command's tagged response. Removing the
+	// entry rather than leaving it is the point — a triaged finding that stays
+	// after the bug is gone turns this filter into a permanent blindfold, and
+	// the regression is pinned by TestExpungeUpdateWaitsForPipelinedCommands.
 	{
 		regexp.MustCompile(`Keyword used without being in FLAGS`),
 		"a keyword created by STORE is reported in FETCH without the mailbox's " +
 			"FLAGS set having been re-announced",
-	},
-	{
-		// imaptest asserts internally once its own view of the mailbox has
-		// desynchronised, which is downstream of the first finding rather than
-		// a separate one.
-		regexp.MustCompile(`Raw backtrace|Panic:`),
-		"imaptest's own assertion failure, downstream of the EXPUNGE finding",
 	},
 }
 
@@ -220,7 +214,17 @@ func assertNoImaptestFailures(t *testing.T, out string) {
 		if line == "" || !imaptestError.MatchString(line) {
 			continue
 		}
-		if finding, ok := matchTriaged(line); ok {
+		// Only a line that opens a complaint is one. imaptest quotes the
+		// offending response back, and a quoted FETCH carrying a literal spans
+		// lines — every continuation still says "Error:" because imaptest
+		// prefixes the whole quotation, and none of them match a triage pattern,
+		// so counting them made one real finding read as hundreds. A run that
+		// reported 1619 problems had twelve.
+		rest, ok := complaintBody(line)
+		if !ok {
+			continue
+		}
+		if finding, ok := matchTriaged(rest); ok {
 			seen[finding]++
 			continue
 		}
@@ -238,6 +242,63 @@ func assertNoImaptestFailures(t *testing.T, out string) {
 		if failed > 0 {
 			t.Errorf("%d of %d imaptest scripts failed", failed, total)
 		}
+	}
+}
+
+// complaintHeader matches the opening line of an imaptest complaint, which
+// names the account and the simulated client that hit it:
+//
+//	Error: interop@example.test[40]: Referenced message expunged seq=7 uid=0: …
+//
+// Anything else carrying "Error:" is the quoted server response the complaint is
+// about, continued across lines.
+var complaintHeader = regexp.MustCompile(`(?i)^(error|panic|fatal)[^:]*:\s*\S+\[\d+\]:\s*(.*)$`)
+
+// complaintBody returns the message of a complaint, and whether the line opens
+// one at all.
+func complaintBody(line string) (string, bool) {
+	match := complaintHeader.FindStringSubmatch(line)
+	if match == nil {
+		return "", false
+	}
+	return match[2], true
+}
+
+func TestComplaintBody(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		body string
+		ok   bool
+	}{
+		{
+			name: "complaint",
+			line: "Error: interop@example.test[40]: Referenced message expunged seq=7 uid=0: * 7 EXPUNGE",
+			body: "Referenced message expunged seq=7 uid=0: * 7 EXPUNGE",
+			ok:   true,
+		},
+		{
+			name: "case insensitive",
+			line: "FATAL: interop@example.test[3]: connection lost",
+			body: "connection lost",
+			ok:   true,
+		},
+		{
+			name: "quoted response continuation",
+			line: `Error: Message-ID: <fixture-3@example.test>`,
+		},
+		{
+			name: "summary text",
+			line: "2 / 4 tests failed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, ok := complaintBody(tt.line)
+			if body != tt.body || ok != tt.ok {
+				t.Fatalf("complaintBody(%q) = %q, %v; want %q, %v", tt.line, body, ok, tt.body, tt.ok)
+			}
+		})
 	}
 }
 

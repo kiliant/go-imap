@@ -85,7 +85,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if conditional == nil || conditional.Modified.IsEmpty() {
 			t.Errorf("conditional store did not report the rejected message: %#v", conditional)
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -116,7 +116,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 				}
 			}
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -146,7 +146,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if data.UID == replaced {
 			t.Error("the replacement reused the replaced UID, so the two are indistinguishable")
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		// One message out, one in: the count is the invariant that separates a
@@ -161,7 +161,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !slices.Contains(after.Snapshot.UIDs, data.UID) {
 			t.Errorf("the replacement UID %d is not present", data.UID)
 		}
-		if err := after.Mailbox.Unselect(context.Background()); err != nil {
+		if err := after.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -189,7 +189,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !slices.Equal(expected, got) {
 			t.Errorf("Sort is not a permutation of the mailbox: got %v, want the same set as %v", got, expected)
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -224,7 +224,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 				t.Errorf("UID %d appears %d times in the thread forest", uid, count)
 			}
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -358,7 +358,13 @@ func runExtensions(t *testing.T, harness *Harness) {
 	})
 
 	t.Run("scram-credentials-are-derivations-not-passwords", func(t *testing.T) {
-		instance := harness.New()
+		instance, err := harness.New(t.Context(), nil)
+		if err != nil {
+			t.Fatalf("backendtest: harness could not construct an instance: %v", err)
+		}
+		if instance == nil {
+			t.Fatal("backendtest: harness returned no instance and no error")
+		}
 		if instance == nil || instance.Backend == nil {
 			t.Fatal("backendtest: factory returned nil instance or backend")
 		}

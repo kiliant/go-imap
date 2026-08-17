@@ -302,6 +302,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	if err := requireCriteriaCapabilities(c, criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	query := newSearchQuery(criteria, c.state.selected.uids)
 	uids, err := mailbox.Sort(ctx, query, args.keys, &SortOptions{Charset: args.charset})
 	if err != nil {
@@ -352,6 +355,9 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	criteria, err := applySearchFilters(ctx, c, args.criteria)
 	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids)

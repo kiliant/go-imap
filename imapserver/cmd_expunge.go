@@ -3,7 +3,6 @@ package imapserver
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -77,7 +76,7 @@ func closeSelected(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, "no mailbox is selected")
 	}
 	selected.close()
-	if err := selected.mailbox.Unselect(ctx); err != nil {
+	if err := selected.mailbox.Unselect(ctx, nil); err != nil {
 		return writeBackendError(c, command.tag, "CLOSE", err)
 	}
 	return c.writeTagged(command.tag, "OK", "CLOSE completed")
@@ -95,31 +94,28 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	if selected.readOnly {
 		return false, writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
+	// EXPUNGE may emit EXPUNGE (§7.4.1), so catch the selected snapshot up even
+	// when a later pipelined command would otherwise keep an older removal
+	// deferred. ADDs stuck behind that removal are invisible to selected.uids
+	// until then; rejecting them from WriteExpunge was the SERVERBUG imaptest
+	// stress hit once between-commands delivery stopped clearing the queue.
+	if err := c.drainUpdatesAllowingRemovals(updateAccounting{}); err != nil {
+		return false, err
+	}
 	origin := nextCommandOrigin()
-	shadow := slices.Clone(selected.uids)
-	// Collected for the CONTEXT registrations, which the command's own
-	// responses bypass. See ext_e_context.go.
-	var removed []imap.UID
+	// The writer no longer converts UIDs to sequence numbers — drainUpdatesThrough
+	// does, after every preceding revision is applied. Track duplicates only:
+	// requiring membership in selected.uids races concurrent APPENDs whose ADD
+	// batch lands in the queue after this snapshot is taken.
+	seen := make(map[imap.UID]struct{})
 	writer := newExpungeWriter(func(_ context.Context, uid imap.UID) error {
-		at, ok := slices.BinarySearch(shadow, uid)
-		if !ok {
-			return fmt.Errorf("imapserver: backend EXPUNGE returned unknown UID %d", uid)
+		if uid == 0 {
+			return fmt.Errorf("imapserver: backend EXPUNGE returned UID 0")
 		}
-		if !silent {
-			// QRESYNC mandates VANISHED and UIDONLY forbids the
-			// sequence-numbered form. See ext_b_qresync.go.
-			if removalsUseVanished(c) {
-				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("VANISHED").SP().
-					RawValue([]byte(imap.UIDSetNum(uid).String())).CRLF()
-			} else {
-				c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(at + 1)).SP().Atom("EXPUNGE").CRLF()
-			}
-			if err := c.encoder.Flush(); err != nil {
-				return err
-			}
+		if _, ok := seen[uid]; ok {
+			return fmt.Errorf("imapserver: backend EXPUNGE returned duplicate UID %d", uid)
 		}
-		shadow = slices.Delete(shadow, at, at+1)
-		removed = append(removed, uid)
+		seen[uid] = struct{}{}
 		return nil
 	})
 	err := selected.mailbox.Expunge(ctx, writer, uids, &ExpungeOptions{MutationOptions: MutationOptions{Origin: origin}})
@@ -127,10 +123,11 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	if err != nil {
 		return false, writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.drainUpdates(updateAccounting{origin: origin, effect: effectExpunge}); err != nil {
-		return false, err
+	effect := effectNone
+	if silent {
+		effect = effectExpunge
 	}
-	if err := notifySearchContexts(c, removed); err != nil {
+	if err := c.drainUpdatesThrough(updateAccounting{origin: origin, effect: effect}); err != nil {
 		return false, err
 	}
 	if silent {

@@ -53,8 +53,28 @@ mkdir -p "$OUT/logs"
 : > "$OUT/deferred.txt"
 
 # --- discovery -------------------------------------------------------------
+#
+# A repository may hold more than one module — a nested module under a released
+# root, say. `go list ./...` sees only the module it runs from, so a second
+# module's targets would not fail, they would simply never be mentioned: the
+# silent omission this whole script exists to prevent, one level up from the
+# hand-maintained list it replaced.
+#
+# Discover the modules the same way, from the workspace file rather than a list
+# here. Only the *listing* needs the per-module directory; a package path is
+# resolvable from the repository root once a workspace is in play, so the run
+# phase below is unchanged.
+module_dirs=(".")
+if [ -f go.work ]; then
+  module_dirs=()
+  while IFS= read -r dir; do
+    [ -n "$dir" ] && module_dirs+=("$dir")
+  done < <(go work edit -json | sed -n 's/^[[:space:]]*"DiskPath": "\(.*\)".*/\1/p')
+  [ "${#module_dirs[@]}" -eq 0 ] && module_dirs=(".")
+fi
+
 all=()
-for pkg in $(go list "${tagargs[@]}" ./... 2>/dev/null); do
+for pkg in $(for dir in "${module_dirs[@]}"; do (cd "$dir" && go list "${tagargs[@]}" ./... 2>/dev/null); done); do
   names=$(go test "${tagargs[@]}" -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
   for name in $names; do
     all+=("${pkg}:${name}")

@@ -142,9 +142,16 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	if err := session.Unauthenticate(ctx, nil); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.state.session.Close(ctx); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
-	}
+	// The session is discarded whether or not Close succeeded, and the state
+	// transition happens before the error is reported. An error from Close does
+	// not mean the session is still usable, and leaving it attached means the
+	// connection's teardown closes it a second time — which a backend that
+	// releases a pooled handle or decrements a refcount in Close experiences as
+	// a double release, on an error path, where it is hardest to find.
+	closeErr := c.state.session.Close(ctx, nil)
 	c.state.unauthenticate()
+	if closeErr != nil {
+		return writeBackendError(c, command.tag, command.name, closeErr)
+	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }

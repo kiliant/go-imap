@@ -65,14 +65,27 @@ jobs:
           # No dependencies means no module cache worth restoring, and a cache
           # miss on a dependency-free module is pure latency.
           cache: false
+      # Per module, not `./...` from the root: `./...` stops at the module
+      # boundary, so once imapserver became its own module a root-only run
+      # covered none of it and still reported success.
       - name: go build
-        run: go build ./...
+        run: |
+          for dir in $(.github/scripts/modules.sh); do
+            echo "::group::go build $dir"
+            (cd "$dir" && go build ./...)
+            echo "::endgroup::"
+          done
       - name: go test -race
         # Not -short: the examples/ compile gate and the API surface walk in
         # api_surface_test.go both skip under -short, and the examples are the
         # only thing that compiles examples/**, whose files all carry
         # `//go:build ignore` and are therefore invisible to `go build ./...`.
-        run: go test -race -count=1 ./...
+        run: |
+          for dir in $(.github/scripts/modules.sh); do
+            echo "::group::go test $dir"
+            (cd "$dir" && go test -race -count=1 ./...)
+            echo "::endgroup::"
+          done
 
   vet:
     name: vet, staticcheck, gofmt
@@ -95,7 +108,12 @@ jobs:
           echo "gofmt: clean"
 
       - name: go vet
-        run: go vet ./...
+        run: |
+          for dir in $(.github/scripts/modules.sh); do
+            echo "::group::go vet $dir"
+            (cd "$dir" && go vet ./...)
+            echo "::endgroup::"
+          done
 
       # The tagged variants are the point of this job, not an extra. Interop
       # test files are excluded from an untagged `go vet ./...`, so a vet job
@@ -103,10 +121,20 @@ jobs:
       # which is exactly how a `testing.Output requires go1.25` violation
       # survived unnoticed. Type-checking only; no container runtime needed.
       - name: go vet -tags=interop
-        run: go vet -tags=interop ./...
+        run: |
+          for dir in $(.github/scripts/modules.sh); do
+            echo "::group::go vet -tags=interop $dir"
+            (cd "$dir" && go vet -tags=interop ./...)
+            echo "::endgroup::"
+          done
 
       - name: go vet -tags='interop interop_emulated'
-        run: go vet -tags='interop interop_emulated' ./...
+        run: |
+          for dir in $(.github/scripts/modules.sh); do
+            echo "::group::go vet -tags='interop interop_emulated' $dir"
+            (cd "$dir" && go vet -tags='interop interop_emulated' ./...)
+            echo "::endgroup::"
+          done
 
       - name: install staticcheck (${{ env.STATICCHECK_VERSION }})
         # From a scratch directory: `go install pkg@version` is module-aware and
@@ -119,12 +147,24 @@ jobs:
 
       - name: staticcheck
         run: |
-          "$(go env GOPATH)/bin/staticcheck" ./...
-          "$(go env GOPATH)/bin/staticcheck" -tags=interop ./...
-          "$(go env GOPATH)/bin/staticcheck" -tags='interop interop_emulated' ./...
+          for dir in $(.github/scripts/modules.sh); do
+            echo "::group::staticcheck $dir"
+            (
+              cd "$dir"
+              "$(go env GOPATH)/bin/staticcheck" ./...
+              "$(go env GOPATH)/bin/staticcheck" -tags=interop ./...
+              "$(go env GOPATH)/bin/staticcheck" -tags='interop interop_emulated' ./...
+            )
+            echo "::endgroup::"
+          done
 
-      - name: tools left go.mod alone
-        run: git diff --exit-code -- go.mod go.sum
+      # go.work is in the list because a stray `go work use` is exactly as
+      # capable of changing what gets built as an edit to a go.mod is.
+      - name: tools left the module files alone
+        run: |
+          git diff --exit-code -- go.mod go.sum go.work go.work.sum \
+            $(.github/scripts/modules.sh | sed 's:$:/go.mod:;s:^\./::' ) \
+            $(.github/scripts/modules.sh | sed 's:$:/go.sum:;s:^\./::' )
 
   supply-chain:
     # The zero-dependency policy, mechanised. Without this assertion the policy

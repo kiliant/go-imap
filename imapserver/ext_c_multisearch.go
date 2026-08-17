@@ -210,6 +210,9 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 		}
 		criteria = normalizeSearchCriteria(criteria, c.state.selected.uids)
 	}
+	if err := requireCriteriaCapabilities(c, criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	results, err := session.MultiSearch(ctx, mailboxes, criteria, &MultiSearchOptions{Charset: args.charset})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)

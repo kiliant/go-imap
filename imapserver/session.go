@@ -379,6 +379,90 @@ func (q *updateQueue) popAll() []*UpdateBatch {
 	return items
 }
 
+// popWhile removes and returns the longest *prefix* of queued batches that
+// keep accepts, leaving the rest in order.
+//
+// A prefix rather than a filter, because batches chain: applyBatch rejects one
+// whose Before does not match the current revision, and a batch skipped now
+// would strand every later one permanently. So the first batch that must wait
+// blocks the queue behind it, which is the conservative direction — a delayed
+// update is a client that finds out later, a reordered one is a client whose
+// sequence numbers are wrong.
+func (q *updateQueue) popWhile(keep func(*UpdateBatch) bool) []*UpdateBatch {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	taken := 0
+	for taken < len(q.items) && keep(q.items[taken]) {
+		taken++
+	}
+	if taken == 0 {
+		return nil
+	}
+	items := q.items[:taken]
+	q.items = append([]*UpdateBatch(nil), q.items[taken:]...)
+	for _, batch := range items {
+		q.bytes -= updateBatchSize(batch)
+	}
+	return items
+}
+
+// popThroughOrigin removes the prefix ending at the last batch carrying
+// origin. A removal command uses this after its backend call: older revisions
+// and the command's own removals must be applied as one ordered unit before the
+// command can report sequence numbers. Batches published later stay queued.
+func (q *updateQueue) popThroughOrigin(origin ChangeToken) []*UpdateBatch {
+	if origin == 0 {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	last := -1
+	for i, batch := range q.items {
+		if batch != nil && batch.Origin == origin {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	items := q.items[:last+1]
+	q.items = append([]*UpdateBatch(nil), q.items[last+1:]...)
+	for _, batch := range items {
+		q.bytes -= updateBatchSize(batch)
+	}
+	return items
+}
+
+// origins returns the non-zero command origins still waiting in the queue.
+// drainUpdates uses this to retain response accounting across a deferred
+// prefix without keeping one map entry for every command forever.
+func (q *updateQueue) origins() map[ChangeToken]struct{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	origins := make(map[ChangeToken]struct{})
+	for _, batch := range q.items {
+		if batch != nil && batch.Origin != 0 {
+			origins[batch.Origin] = struct{}{}
+		}
+	}
+	return origins
+}
+
+// batchRemovesMessages reports whether a batch renumbers the mailbox by taking
+// messages out of it, which is the only thing RFC 3501 §7.4.1 restricts.
+func batchRemovesMessages(batch *UpdateBatch) bool {
+	if batch == nil {
+		return false
+	}
+	for _, change := range batch.Changes {
+		switch change.(type) {
+		case *UpdateExpunge, *UpdateVanished:
+			return true
+		}
+	}
+	return false
+}
+
 func (q *updateQueue) close() {
 	if q == nil {
 		return
@@ -493,7 +577,7 @@ func closeRejectedMailbox(mailbox SelectedMailbox, timeout time.Duration) {
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	_ = mailbox.Unselect(ctx)
+	_ = mailbox.Unselect(ctx, nil)
 	cancel()
 }
 

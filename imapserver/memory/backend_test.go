@@ -12,7 +12,7 @@ import (
 )
 
 func TestBackendConformance(t *testing.T) {
-	backendtest.Run(t, &backendtest.Harness{New: func() *backendtest.Instance {
+	backendtest.Run(t, &backendtest.Harness{New: func(context.Context, *backendtest.InstanceOptions) (*backendtest.Instance, error) {
 		backend := New(&Options{Users: map[string]string{"alice": "secret"}})
 		return &backendtest.Instance{
 			Backend: backend,
@@ -29,7 +29,7 @@ func TestBackendConformance(t *testing.T) {
 					return backend.forceSelectFailure(ctx, "alice", mailbox, enabled)
 				},
 			},
-		}
+		}, nil
 	}})
 }
 
@@ -119,10 +119,10 @@ func TestFetchSeenAndLegacySections(t *testing.T) {
 	assertLiteral(t, fetched.Items["BODY[]"], raw)
 	assertLiteral(t, fetched.Items[imap.FetchDataKey(imap.FetchItemRFC822Header)], []byte("From: sender@example.com\r\nSubject: fetch\r\n\r\n"))
 	assertLiteral(t, fetched.Items[imap.FetchDataKey(imap.FetchItemRFC822Text)], []byte("body\r\n"))
-	if err := selected.Mailbox.Unselect(context.Background()); err != nil {
+	if err := selected.Mailbox.Unselect(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Close(context.Background()); err != nil {
+	if err := session.Close(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -17,11 +17,17 @@ const mbsyncImage = "go-imap-mbsync:local"
 // mbsyncConfig is a channel between our server and a local Maildir. Far/Near is
 // the isync 1.4 spelling; bookworm ships 1.4.4.
 //
-// There is deliberately no TLSType line. The profile's server is the same
+// SSLType None is required, not decorative. The profile's server is the same
 // cleartext listener every other entry in the matrix is measured on — it sets
-// no TLSConfig — and Debian's isync is built without TLS support, so the
-// keyword is not merely unnecessary but unrecognised. Transport is not what
-// this test is about; synchronisation behaviour is.
+// no TLSConfig — and isync's default is to want STARTTLS, so omitting the line
+// makes the run depend on how the local isync resolves that default: the arm64
+// bookworm build downgrades to cleartext with a warning, the amd64 build of the
+// same 1.4.4 package fails the channel outright with "IMAP error: SSL support
+// not available". Transport is not what this test is about, so it is pinned
+// rather than inherited.
+//
+// The keyword is SSLType, not TLSType. isync renamed it in 1.5; 1.4.4 rejects
+// the new spelling with "keyword 'TLSType' is not recognized".
 func mbsyncConfig(host, port string) string {
 	return fmt.Sprintf(`IMAPAccount goimap
 Host %s
@@ -29,6 +35,7 @@ Port %s
 User %s
 Pass %s
 AuthMechs LOGIN
+SSLType None
 
 IMAPStore goimap-remote
 Account goimap

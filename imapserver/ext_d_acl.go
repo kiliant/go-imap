@@ -23,6 +23,10 @@ import (
 type ACLSession interface {
 	GetACL(ctx context.Context, mailbox string, options *ACLOptions) (*imap.ACLData, error)
 	MyRights(ctx context.Context, mailbox string, options *ACLOptions) (imap.ACLRights, error)
+	// ListRights answers which rights an identifier *may* be granted on a
+	// mailbox, not which it currently holds — that is GetACL. RFC 4314
+	// section 3.7 splits the answer into rights always granted together with
+	// the identifier and rights that may be granted individually.
 	ListRights(ctx context.Context, mailbox, identifier string, options *ACLOptions) (*imap.ListRightsData, error)
 }
 

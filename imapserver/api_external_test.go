@@ -51,7 +51,7 @@ func (*externalSession) Select(context.Context, string, *imapserver.Updater, *im
 		},
 	}, nil
 }
-func (*externalSession) Close(context.Context) error { return nil }
+func (*externalSession) Close(context.Context, *imapserver.SessionCloseOptions) error { return nil }
 
 type externalSelectedMailbox struct{}
 
@@ -73,7 +73,9 @@ func (*externalSelectedMailbox) Copy(context.Context, imap.UIDSet, string, *imap
 func (*externalSelectedMailbox) Expunge(context.Context, *imapserver.ExpungeWriter, *imap.UIDSet, *imapserver.ExpungeOptions) error {
 	return nil
 }
-func (*externalSelectedMailbox) Unselect(context.Context) error { return nil }
+func (*externalSelectedMailbox) Unselect(context.Context, *imapserver.UnselectOptions) error {
+	return nil
+}
 func (*externalSelectedMailbox) Move(context.Context, imap.UIDSet, string, *imapserver.MoveOptions) (*imap.CopyData, error) {
 	return &imap.CopyData{}, nil
 }

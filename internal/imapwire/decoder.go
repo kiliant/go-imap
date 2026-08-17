@@ -150,6 +150,17 @@ func (d *Decoder) Options() Options { return d.opts }
 // Err returns the sticky error, or nil.
 func (d *Decoder) Err() error { return d.err }
 
+// Buffered reports how many bytes have already been read from the connection
+// but not yet consumed. A non-zero count means the client sent more than the
+// command just parsed — that it is pipelining — which the server needs to know
+// before it renumbers anything. See imapserver's expunge deferral.
+func (d *Decoder) Buffered() int {
+	if d.r == nil {
+		return 0
+	}
+	return d.r.Buffered()
+}
+
 // Fatal reports whether the sticky error left the stream desynchronised.
 func (d *Decoder) Fatal() bool { return IsFatal(d.err) }
 

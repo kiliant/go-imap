@@ -384,7 +384,7 @@ func newUnwitnessedRawSession(t *testing.T, ctx context.Context) (net.Conn, *buf
 	}
 
 	serverSide, clientSide := net.Pipe()
-	go func() { _ = server.ServeConn(ctx, serverSide) }()
+	go func() { _ = server.ServeConn(ctx, serverSide, nil) }()
 	reader := bufio.NewReader(clientSide)
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

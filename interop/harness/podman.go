@@ -91,6 +91,39 @@ type Server struct {
 
 var containerSequence atomic.Uint64
 
+// ErrImageUnavailable reports that a profile's image could not be obtained.
+//
+// It is deliberately distinct from every other start failure. Acquiring an
+// image needs a working container engine, a reachable registry and intact local
+// storage, and none of those is a property of the IMAP server under test — so a
+// matrix that goes red for one is a matrix that goes red for something go-imap
+// did not do, and "a permanently red matrix is a matrix nobody reads" is the
+// rule this project already applies on the server side (see buildImage in
+// imapserver/interop, which skips for the same reason).
+var ErrImageUnavailable = errors.New("interop: image unavailable")
+
+// imageBuildAttempts is 2 because the observed failure was a podman storage
+// race — "rename ... tar-split.gz: no such file or directory" while unpacking a
+// layer into a per-attempt temporary directory, which a second attempt does not
+// inherit. A registry outage survives the retry and is then skipped, not failed.
+const imageBuildAttempts = 2
+
+func (m *Manager) buildImage(ctx context.Context, image, buildContext string) error {
+	var err error
+	for attempt := 1; attempt <= imageBuildAttempts; attempt++ {
+		if _, err = m.runner.Run(ctx, "build", "--tag", image, buildContext); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		if attempt < imageBuildAttempts {
+			fmt.Fprintf(os.Stderr, "interop: building %s failed, retrying once: %v\n", image, err)
+		}
+	}
+	return fmt.Errorf("%w: %s: %w", ErrImageUnavailable, image, err)
+}
+
 // Start builds (when needed), starts, and greeting-polls a profile.
 func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Server, err error) {
 	if err := validateProfile(profile); err != nil {
@@ -110,7 +143,7 @@ func (m *Manager) Start(ctx context.Context, profile definition.Profile) (_ *Ser
 		if !filepath.IsAbs(buildContext) {
 			buildContext = filepath.Join(m.interopRoot, buildContext)
 		}
-		if _, err := m.runner.Run(ctx, "build", "--tag", image, buildContext); err != nil {
+		if err := m.buildImage(ctx, image, buildContext); err != nil {
 			return nil, err
 		}
 	}

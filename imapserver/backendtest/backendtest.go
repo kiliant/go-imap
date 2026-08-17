@@ -41,11 +41,34 @@ type Instance struct {
 	_        struct{}
 }
 
+// InstanceOptions configures one conformance instance. A nil pointer selects
+// the defaults.
+//
+// Empty today, deliberately. See Harness.New.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type InstanceOptions struct{ _ struct{} }
+
 // Harness constructs independent backend instances for conformance subtests.
 // Construct with keyed fields only; fields may be added in a future release.
 type Harness struct {
 	// New returns a fresh, isolated instance for one subtest.
-	New func() *Instance
+	//
+	// It takes a context and returns an error because a real backend's setup
+	// can block and can fail: opening a store, migrating a schema, reaching a
+	// service. Without them the only way to report a failure is to capture the
+	// subtest's *testing.T in the closure, and there is no way to cancel at all.
+	//
+	// The options struct is rule 3, and it is here for the reason
+	// docs/API-STABILITY.md §3 records against interop/definition.Profile.Native,
+	// which is the identical shape: a caller-supplied constructor callback in a
+	// test-support package. The package doc now tells every backend author to
+	// start here, so day-one adopters write closures against this signature and
+	// a later parameter breaks all of them. The pressures are concrete —
+	// provisioning an implicit-TLS instance (RFC 8314), a second identity to
+	// test ACL rights against (RFC 4314), an instance that must survive a
+	// reconnect (RFC 7162 QRESYNC) — and each is a new parameter today.
+	New func(ctx context.Context, options *InstanceOptions) (*Instance, error)
 	_   struct{}
 }
 
@@ -65,7 +88,7 @@ func Run(t *testing.T, harness *Harness) {
 		mailbox := populate(t, session, "snapshot")
 		result := selectMailbox(t, session, mailbox, &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }})
 		validateSnapshot(t, result.Snapshot)
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		closeSession(t, instance, session)
@@ -103,7 +126,7 @@ func Run(t *testing.T, harness *Harness) {
 		if !batchAddsUID(got[0], first.UID) || !batchAddsUID(got[1], second.UID) {
 			t.Fatalf("update batches omit appended UIDs %d and %d", first.UID, second.UID)
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		closeSession(t, instance, selecting)
@@ -182,7 +205,7 @@ func Run(t *testing.T, harness *Harness) {
 			if updateCount == 1 && (len(batches) == 0 || batches[0].Before != selectResult.result.Snapshot.Revision) {
 				t.Fatalf("iteration %d: first update does not start at snapshot revision %q", i, selectResult.result.Snapshot.Revision)
 			}
-			if err := selectResult.result.Mailbox.Unselect(context.Background()); err != nil {
+			if err := selectResult.result.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatalf("Unselect iteration %d: %v", i, err)
 			}
 		}
@@ -220,7 +243,7 @@ func Run(t *testing.T, harness *Harness) {
 			t.Fatal(err)
 		}
 		var expunged []imap.UID
-		if err := result.Mailbox.Expunge(context.Background(), &imapserver.ExpungeWriter{WriteFunc: func(_ context.Context, uid imap.UID) error {
+		if err := result.Mailbox.Expunge(context.Background(), &imapserver.ExpungeWriter{WriteFunc: func(_ context.Context, uid imap.UID, _ *imapserver.WriteExpungeOptions) error {
 			expunged = append(expunged, uid)
 			return nil
 		}}, nil, nil); err != nil {
@@ -252,7 +275,7 @@ func Run(t *testing.T, harness *Harness) {
 				t.Fatalf("source status after MOVE = %#v, %v", status, err)
 			}
 		}
-		if err := result.Mailbox.Unselect(context.Background()); err != nil {
+		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		closeSession(t, instance, session)
@@ -263,7 +286,7 @@ func Run(t *testing.T, harness *Harness) {
 		mailbox := populate(t, session, "pathological")
 		if instance.Controls.ForceUIDValidityChange != nil {
 			before := selectMailbox(t, session, mailbox, &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }})
-			if err := before.Mailbox.Unselect(context.Background()); err != nil {
+			if err := before.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatal(err)
 			}
 			if err := instance.Controls.ForceUIDValidityChange(context.Background(), mailbox); err != nil {
@@ -273,7 +296,7 @@ func Run(t *testing.T, harness *Harness) {
 			if before.Snapshot.Status.UIDValidity == after.Snapshot.Status.UIDValidity {
 				t.Fatal("forced UIDVALIDITY change was not observed")
 			}
-			if err := after.Mailbox.Unselect(context.Background()); err != nil {
+			if err := after.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -300,7 +323,13 @@ func Run(t *testing.T, harness *Harness) {
 
 func newSession(t *testing.T, harness *Harness) (*Instance, imapserver.Session) {
 	t.Helper()
-	instance := harness.New()
+	instance, err := harness.New(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("backendtest: harness could not construct an instance: %v", err)
+	}
+	if instance == nil {
+		t.Fatal("backendtest: harness returned no instance and no error")
+	}
 	if instance == nil || instance.Backend == nil {
 		t.Fatal("backendtest: factory returned nil instance or backend")
 	}
@@ -459,7 +488,7 @@ func cloneBatch(batch *imapserver.UpdateBatch) *imapserver.UpdateBatch {
 
 func closeSession(t *testing.T, _ *Instance, session imapserver.Session) {
 	t.Helper()
-	if err := session.Close(context.Background()); err != nil {
+	if err := session.Close(context.Background(), nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 }

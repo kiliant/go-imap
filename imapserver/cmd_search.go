@@ -64,6 +64,11 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	// After substitution, not before: a FILTERS expansion can itself contain an
+	// extension key, and gating the unexpanded tree would miss it.
+	if err := requireCriteriaCapabilities(c, criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	query := newSearchQuery(criteria, c.state.selected.uids)
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
 	if err != nil {

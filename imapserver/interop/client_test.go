@@ -109,6 +109,32 @@ func serverForClients(t *testing.T) string {
 	return port
 }
 
+// imageOverrideEnv names a prebuilt image to use instead of building one, as
+// TAG=REF pairs: "go-imap-imaptest:local=docker.io/dovecot/imaptest@sha256:…".
+//
+// For local troubleshooting only, and deliberately not the default. The imaptest
+// image builds Dovecot from source — see its Containerfile for why no
+// distribution package can substitute — which costs minutes natively and far
+// more under emulation, and that turnaround is the difference between iterating
+// on a race and guessing at it. CI keeps building from source, because the
+// version pair the Containerfile pins is the thing the matrix is supposed to
+// assert against, and dovecot/imaptest publishes only a moving :latest.
+//
+// Pin by digest when using this. A moving tag makes a run that passed
+// unreproducible, which is the property the whole harness exists to have.
+const imageOverrideEnv = "GO_IMAP_INTEROP_IMAGES"
+
+// overriddenImage returns the replacement for tag, if one was named.
+func overriddenImage(tag string) (string, bool) {
+	for _, pair := range strings.Split(os.Getenv(imageOverrideEnv), ",") {
+		name, ref, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if ok && strings.TrimSpace(name) == tag {
+			return strings.TrimSpace(ref), true
+		}
+	}
+	return "", false
+}
+
 // buildImage builds one client image, skipping the test when it cannot. A build
 // needs a working engine and network access to a base image; neither is a
 // property of the server under test, so neither may turn the suite red.
@@ -116,6 +142,27 @@ func buildImage(t *testing.T, runtime containerRuntime, tag, dir string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
+	if ref, ok := overriddenImage(tag); ok {
+		t.Logf("using prebuilt %s in place of a build from %s (%s)", ref, dir, imageOverrideEnv)
+		// Only pull what is not already here, and give the pull minutes rather
+		// than the build's 40. The point of this path is a fast edit-run loop;
+		// inheriting a timeout sized for compiling Dovecot means a registry
+		// having a bad minute stalls the run instead of failing it, which cost
+		// one debugging cycle before the timeout was separated out.
+		if !imagePresent(ctx, runtime, ref) {
+			pullCtx, cancelPull := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancelPull()
+			pull := exec.CommandContext(pullCtx, runtime.binary, "pull", ref)
+			if out, err := pull.CombinedOutput(); err != nil {
+				t.Skipf("pulling %s failed:\n%s", ref, out)
+			}
+		}
+		retag := exec.CommandContext(ctx, runtime.binary, "tag", ref, tag)
+		if out, err := retag.CombinedOutput(); err != nil {
+			t.Skipf("tagging %s as %s failed:\n%s", ref, tag, out)
+		}
+		return
+	}
 	command := exec.CommandContext(ctx, runtime.binary, "build", "-t", tag,
 		"-f", dir+"/Containerfile", dir)
 	if out, err := command.CombinedOutput(); err != nil {
@@ -207,4 +254,13 @@ func seed(t *testing.T, port, mailbox string, count int) {
 		}
 	}
 	send("o", "LOGOUT")
+}
+
+// imagePresent reports whether an image reference is already in local storage.
+func imagePresent(ctx context.Context, runtime containerRuntime, ref string) bool {
+	lookCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// image inspect is shared by Docker and Podman; Podman's image exists is
+	// convenient but would make the Docker path pull on every run.
+	return exec.CommandContext(lookCtx, runtime.binary, "image", "inspect", ref).Run() == nil
 }

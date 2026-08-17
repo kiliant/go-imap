@@ -304,14 +304,14 @@ func (s *selected) Expunge(ctx context.Context, writer *imapserver.ExpungeWriter
 	}
 	s.session.account.mu.Unlock()
 	for _, uid := range removed {
-		if err := writer.WriteExpunge(ctx, uid); err != nil {
+		if err := writer.WriteExpunge(ctx, uid, nil); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *selected) Unselect(ctx context.Context) error {
+func (s *selected) Unselect(ctx context.Context, _ *imapserver.UnselectOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

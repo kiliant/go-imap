@@ -5,6 +5,32 @@
 // stored mail. The mandatory interfaces in this file are the fixed rev1
 // baseline; later extensions add optional interfaces or guarded option fields,
 // never methods to an existing interface.
+//
+// # Stability
+//
+// This is a separate module from github.com/kiliant/go-imap, versioned v0.x,
+// and it does not carry that module's v1 compatibility promise. The root module
+// is frozen: an incompatible change there fails CI. This one may break between
+// minor versions, deliberately — the server contract has had one round of real
+// backend authors and no more, and freezing it on that evidence is how the
+// library this one exists to replace ended up in beta for years.
+//
+// Breaks will be deliberate and named in CHANGELOG.md, never silent: apidiff
+// runs against the previous imapserver/v* tag on every pull request. See
+// docs/RELEASING.md for the two-module scheme and docs/API-STABILITY.md §10 for
+// the rules this package is held to in the meantime.
+//
+// # Writing a backend
+//
+// Start with [github.com/kiliant/go-imap/imapserver/backendtest], not with the
+// interface list below. It is a reusable conformance suite: point it at your
+// Backend and it exercises the mandatory contract and every optional interface
+// you implement, skipping the ones you do not. The interfaces say what the
+// methods are; backendtest says whether you got them right.
+//
+// [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
+// and is supported, not a toy — it is the backend this project's own conformance
+// and interoperability suites run against.
 package imapserver
 
 import (
@@ -40,18 +66,66 @@ type Session interface {
 	// requires, with the selection already installed. An error returned from
 	// that call fails the SELECT.
 	List(ctx context.Context, writer *ListWriter, reference string, patterns []string, options *ListOptions) error
+	// Status answers STATUS for a mailbox that is not selected. Only the items
+	// options requests need be populated; the framework writes what it asked
+	// for and nothing else.
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
+	// Create makes a mailbox. Creating one that exists is an error, and
+	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
+	// client to act on.
 	Create(ctx context.Context, mailbox string, options *CreateOptions) error
+	// Delete removes a mailbox and the messages in it. RFC 3501 §6.3.4 forbids
+	// deleting INBOX, and refusing it here is the backend's job: the framework
+	// does not know which name is the inbox in a given namespace.
 	Delete(ctx context.Context, mailbox string, options *DeleteOptions) error
+	// Rename moves a mailbox, and by RFC 3501 §6.3.5 its inferiors with it.
+	// Renaming INBOX is the documented special case: its messages move to the
+	// new name and INBOX itself remains.
 	Rename(ctx context.Context, oldName, newName string, options *RenameOptions) error
+	// Subscribe adds a mailbox to the subscription list. RFC 3501 §6.3.6 allows
+	// subscribing to a name that does not exist, so this is not required to
+	// validate existence.
 	Subscribe(ctx context.Context, mailbox string, options *SubscribeOptions) error
+	// Unsubscribe removes a mailbox from the subscription list. Unsubscribing
+	// from a name that is not subscribed is not an error.
 	Unsubscribe(ctx context.Context, mailbox string, options *UnsubscribeOptions) error
+	// Append stores a message read from literal.
+	//
+	// literal is a stream, valid only for the duration of the call: read it,
+	// do not retain it. The framework drains whatever is left afterwards — the
+	// rest of the command cannot be parsed until the message's bytes are off
+	// the wire — so returning early is safe for the connection. It is not safe
+	// for memory: reading the whole literal into a buffer before storing it
+	// makes the server's footprint a function of what the client chose to send.
+	//
+	// The returned AppendData carries the new UID and UIDVALIDITY when the
+	// backend can supply them, which is what RFC 4315's APPENDUID response code
+	// is made of. Returning nil is allowed and simply means no code is sent —
+	// but a backend that witnesses UIDPLUS has claimed it will supply them.
 	Append(ctx context.Context, mailbox string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error)
 	// Select captures Snapshot and attaches updater to that exact state atomically.
 	// If it attaches updater and then fails, it must detach before returning.
 	Select(ctx context.Context, mailbox string, updater *Updater, options *SelectOptions) (*SelectResult, error)
-	Close(ctx context.Context) error
+	// Close releases everything the session holds. The framework calls it once,
+	// when the connection ends, including after an error and after
+	// UNAUTHENTICATE. No other method is called afterwards, and the session is
+	// discarded even if Close returns an error.
+	Close(ctx context.Context, options *SessionCloseOptions) error
 }
+
+// SessionCloseOptions configures the end of a session. A nil pointer selects
+// the defaults.
+//
+// It is empty and exists anyway, because the alternative is that the mandatory
+// interface's promise — "a future extension adds an optional interface or an
+// option field, not a method here" — is false for this method. RFC 6785
+// (IMAPSIEVE) is the concrete pressure: it fires backend-side scripts on IMAP
+// events, and a session ending because the connection closed is a different
+// event from one ending because UNAUTHENTICATE reclaimed the connection for
+// another identity. Today the backend cannot tell them apart.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type SessionCloseOptions struct{ _ struct{} }
 
 // SelectedMailbox is a backend's per-connection handle for one selection. The
 // framework, not this value, owns the UID/sequence-number map, enabled features,
@@ -60,14 +134,68 @@ type Session interface {
 // Backends receive UIDs only. Sequence numbers are resolved by the framework
 // before any method here is called.
 type SelectedMailbox interface {
+	// Status answers STATUS for this selection, which a client may ask for even
+	// while the mailbox is selected.
 	Status(ctx context.Context, options *StatusOptions) (*imap.MailboxStatus, error)
+	// Fetch streams the requested items through writer, one message at a time.
+	//
+	// Streaming is the contract, not an optimisation: a backend that buffers a
+	// mailbox of large messages before writing has made the server's memory
+	// use a function of the client's request. writer is valid only during the
+	// call.
+	//
+	// A UID in uids that no longer exists is skipped, not an error — RFC 3501
+	// §6.4.8 makes a UID FETCH of a vanished message an empty result.
 	Fetch(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, options *FetchOptions) error
+	// Search evaluates query and returns the matching UIDs.
+	//
+	// The criteria tree arrives UID-normalised: the framework has already
+	// resolved every sequence number in it, so a backend never sees one and
+	// never needs the sequence view to answer. See [SearchQuery].
 	Search(ctx context.Context, query *SearchQuery, options *SearchOptions) (*SearchResult, error)
+	// Store applies a flag mutation and streams the resulting flags through
+	// writer, unless options.Silent suppresses the responses — which suppresses
+	// only the responses, never the mutation or the updates other sessions see.
+	//
+	// A conditional store (UNCHANGEDSINCE) does not arrive here; it goes to
+	// [CondStoreMailbox.StoreCondStore], so this method never implements the
+	// modification-sequence comparison.
 	Store(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) error
+	// Copy copies messages to another mailbox. The returned CopyData carries
+	// the source and destination UIDs when the backend can supply them, which
+	// is what RFC 4315's COPYUID response code is made of; see Append for what
+	// returning nil means.
+	//
+	// A destination that does not exist is the one error with a required
+	// response code: RFC 3501 §6.4.7 obliges TRYCREATE, and a client uses it to
+	// decide whether to create the mailbox and retry.
 	Copy(ctx context.Context, uids imap.UIDSet, destination string, options *CopyOptions) (*imap.CopyData, error)
+	// Expunge permanently removes messages flagged \Deleted, reporting each
+	// removed UID through writer.
+	//
+	// uids is the filter RFC 4315's UID EXPUNGE supplies: nil means every
+	// \Deleted message, and non-nil restricts the removal to that set. A
+	// backend that ignores it deletes messages the client asked to keep, which
+	// is why the parameter is a pointer rather than an empty-means-all set —
+	// the two cases had to be impossible to confuse.
 	Expunge(ctx context.Context, writer *ExpungeWriter, uids *imap.UIDSet, options *ExpungeOptions) error
-	Unselect(ctx context.Context) error
+	// Unselect releases the selection. The framework calls it once per
+	// selection — on CLOSE, UNSELECT, a replacing SELECT, or connection
+	// teardown — after which this handle is not used again.
+	Unselect(ctx context.Context, options *UnselectOptions) error
 }
+
+// UnselectOptions configures the end of a selection. A nil pointer selects the
+// defaults.
+//
+// Empty for the same reason as [SessionCloseOptions], and with a sharper
+// example: RFC 3501 CLOSE performs an implicit expunge and RFC 3691 UNSELECT
+// deliberately does not, yet both arrive here identically. A backend that has
+// to distinguish them — for RFC 6785 event scripts, or for an audit log — has
+// nowhere to learn which happened.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type UnselectOptions struct{ _ struct{} }
 
 // MoveMailbox is the optional atomic MOVE operation. The framework never
 // synthesises MOVE from COPY, STORE and EXPUNGE; advertisement requires a
@@ -290,6 +418,10 @@ type QResyncSelect struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchOptions struct {
 	// Items are the data items requested for each matching message.
+	//
+	// Every item belongs to the IMAP4rev1 baseline or to a capability this
+	// session advertised. See [SearchQuery.Criteria] for why the framework
+	// refuses what it cannot classify rather than forwarding it.
 	Items []imap.FetchItem
 	// ChangedSince restricts the result to messages whose modification
 	// sequence is greater than this value. Zero means unrestricted.
@@ -611,6 +743,20 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 // enforces it for every command that builds a query, and
 // TestSearchCriteriaContainersAreTraversed fails if a future container key is
 // added to package imap without the traversal learning to descend into it.
+//
+// # Capability
+//
+// Every criterion in the tree belongs to the IMAP4rev1 baseline or to a
+// capability this session advertised, at every nesting depth. A backend that
+// witnesses no extension capability therefore receives baseline keys only, and
+// a criterion added by a later release of package imap cannot reach a backend
+// compiled before it existed — the framework refuses what it cannot classify
+// rather than passing it through.
+//
+// That matters more than it looks. Without it, teaching package imap a new key
+// silently widens what every already-compiled backend receives, and the
+// realistic outcome is not a crash but a permissive default branch returning an
+// empty result. See capability_keys.go, and docs/API-STABILITY.md §10.
 func (q *SearchQuery) Criteria() imap.SearchCriteria {
 	if q == nil {
 		return nil
@@ -681,13 +827,36 @@ type ExpungeWriter struct {
 	// WriteFunc receives streamed removals when the writer is constructed by an
 	// adapter such as backendtest. Ordinary backends call WriteExpunge and leave
 	// this field unset on framework-provided writers.
-	WriteFunc func(context.Context, imap.UID) error
+	WriteFunc func(context.Context, imap.UID, *WriteExpungeOptions) error
 	core      *writerCore[imap.UID]
 }
 
+// WriteExpungeOptions configures one streamed removal. A nil pointer selects
+// the defaults.
+//
+// Empty today, and the reason this writer has one while its siblings do not:
+// [ListWriter.WriteList], [FetchWriter.WriteMessage] and [Updater.Push] all
+// carry a growable struct as their payload, so a new RFC adds a field there.
+// A UID is a scalar with nowhere to grow, which leaves this the only streaming
+// method on the mandatory contract where nothing could ever be said about an
+// individual write.
+//
+// No current RFC stresses it, and this deliberately names none. RFC 7162's
+// VANISHED (EARLIER) is the near miss and is worth recording as excluded rather
+// than left for the next reader to reach for: section 3.2.10 confines EARLIER
+// to the QRESYNC resynchronisation response and to UID FETCH (VANISHED), and
+// forbids it when VANISHED results from EXPUNGE or UID EXPUNGE — which is the
+// only path that constructs an [ExpungeWriter]. That distinction already lives
+// on [UpdateVanished] and QResyncResult, neither of which routes through here.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type WriteExpungeOptions struct{ _ struct{} }
+
 // WriteExpunge writes one removed UID. The framework converts it to the
 // sequence number current at this exact point in the response.
-func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID) error {
+//
+// options may be nil.
+func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID, options *WriteExpungeOptions) error {
 	if w == nil {
 		return ErrWriterClosed
 	}
@@ -695,7 +864,7 @@ func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID) error {
 		return w.core.writeValue(ctx, uid)
 	}
 	if w.WriteFunc != nil {
-		return w.WriteFunc(ctx, uid)
+		return w.WriteFunc(ctx, uid, options)
 	}
 	return ErrWriterClosed
 }

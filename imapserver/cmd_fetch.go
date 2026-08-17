@@ -72,6 +72,12 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireUIDCommand(c, command); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	// The client's items, before the framework adds its own: withFetchUID and
+	// applyCondStoreFetchItems below append UID and MODSEQ on the framework's
+	// authority, and gating after them would refuse the framework's own work.
+	if err := requireFetchItemCapabilities(c, args.items); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	uidMode := commandUsesUIDs(command)
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)
 	if err != nil {

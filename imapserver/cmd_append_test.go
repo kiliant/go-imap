@@ -73,7 +73,7 @@ func TestAppendStreamsIntoBackendBeforeClientFinishesProducing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- server.ServeConn(ctx, serverSide) }()
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
 
 	client := imapclient.NewClient(clientSide, &imapclient.Options{AllowInsecureAuth: true})
 	if err := client.WaitGreeting(ctx, nil); err != nil {

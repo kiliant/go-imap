@@ -122,7 +122,7 @@ func newSecurityHarness(t *testing.T, limits imapserver.Limits) *securityHarness
 	clientConn, serverConn := net.Pipe()
 	_ = clientConn.SetDeadline(time.Now().Add(30 * time.Second))
 	served := make(chan error, 1)
-	go func() { served <- server.ServeConn(ctx, serverConn) }()
+	go func() { served <- server.ServeConn(ctx, serverConn, nil) }()
 	h := &securityHarness{t: t, client: clientConn, reader: bufio.NewReader(clientConn), served: served, cancel: cancel}
 	t.Cleanup(func() {
 		_ = clientConn.Close()
@@ -365,7 +365,7 @@ func newRawSession(t *testing.T, ctx context.Context, server *imapserver.Server)
 	clientConn, serverConn := net.Pipe()
 	_ = clientConn.SetDeadline(time.Now().Add(30 * time.Second))
 	served := make(chan error, 1)
-	go func() { served <- server.ServeConn(ctx, serverConn) }()
+	go func() { served <- server.ServeConn(ctx, serverConn, nil) }()
 	s := &rawSession{t: t, conn: clientConn, reader: bufio.NewReader(clientConn), served: served}
 	if _, err := s.reader.ReadString('\n'); err != nil {
 		t.Fatalf("greeting: %v", err)
