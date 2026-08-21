@@ -299,9 +299,9 @@ server reports `$Label1` in a `FETCH FLAGS` response although no untagged
 untagged `FLAGS` response the mailbox's applicable flag set, and a server
 whose set changes is expected to send a new one.
 
-Both open findings are recorded in `imaptest_test.go`'s `triaged` table, so the
-stress test stays green for them and fails on anything new. Deleting an entry
-from that table when the bug is fixed is the intended lifecycle.
+The remaining open finding is recorded in `imaptest_test.go`'s `triaged` table,
+so the stress test stays green for it and fails on anything new. Deleting the
+entry when the bug is fixed is the intended lifecycle.
 
 The scripted corpus is a third, different case: it never ran at all. imaptest's
 script runner aborts with `FIXME: Add support for sync literals` unless the
