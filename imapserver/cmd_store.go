@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -103,6 +104,16 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	origin := nextCommandOrigin()
 	var responseBytes int64
+	type pendingStoreResponse struct {
+		data    *imap.FetchMessageData
+		cleanup func()
+	}
+	var responses []pendingStoreResponse
+	defer func() {
+		for _, response := range responses {
+			response.cleanup()
+		}
+	}()
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
 		if args.silent {
 			return nil
@@ -116,19 +127,18 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		if err != nil {
 			return err
 		}
-		defer cleanup()
 		wireBytes, err := fetchResponseWireSize(mapped)
 		if err != nil {
+			cleanup()
 			return err
 		}
 		if wireBytes > maxCommandFetchBytes-responseBytes {
+			cleanup()
 			return commandLimitError("STORE response byte limit exceeded")
 		}
 		responseBytes += wireBytes
-		if err := writeFetchLikeResponse(c, mapped); err != nil {
-			return err
-		}
-		return c.encoder.Flush()
+		responses = append(responses, pendingStoreResponse{data: mapped, cleanup: cleanup})
+		return nil
 	})
 	options := &StoreOptions{
 		MutationOptions:   MutationOptions{Origin: origin},
@@ -148,6 +158,31 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	writer.core.close()
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	// A keyword must appear in the mailbox's untagged FLAGS response before it
+	// first appears in a FETCH FLAGS response (RFC 3501 section 7.2.6). The
+	// backend publishes the complete value in the command's update batch; peek
+	// at that value here, while leaving the ordered batch queued for normal
+	// revision accounting and delivery to every other selected connection.
+	if mailboxFlags, ok := c.state.selected.queue.mailboxFlagsForOrigin(origin); ok &&
+		!slices.Equal(c.state.selected.flags, mailboxFlags) {
+		c.state.selected.flags = slices.Clone(mailboxFlags)
+		if err := c.writeUpdate(deliveredUpdate{kind: updateMailboxFlags, flags: mailboxFlags}); err != nil {
+			return err
+		}
+		if err := c.encoder.Flush(); err != nil {
+			return err
+		}
+	}
+	for _, response := range responses {
+		if err := writeFetchLikeResponse(c, response.data); err != nil {
+			return err
+		}
+	}
+	if len(responses) != 0 {
+		if err := c.encoder.Flush(); err != nil {
+			return err
+		}
 	}
 	// RFC 7162 section 3.1.3: rejected messages are reported on a successful
 	// tagged OK through MODIFIED, not as a command failure.

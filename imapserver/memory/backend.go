@@ -60,7 +60,12 @@ type mailbox struct {
 	uidValidity uint32
 	uidNext     imap.UID
 	revision    uint64
-	subscribed  bool
+	// flags is the mailbox's persistent registry of applicable flags. Keywords
+	// remain applicable after their last message reference disappears; treating
+	// FLAGS as a projection of current messages makes concurrent STORE commands
+	// withdraw and re-add the same keyword around FETCH responses.
+	flags      []imap.Flag
+	subscribed bool
 	// specialUse holds the RFC 6154 use attributes assigned at CREATE time.
 	// See ext_a.go.
 	specialUse []imap.MailboxAttr
@@ -116,6 +121,7 @@ func (a *account) createMailboxLocked(name string) *mailbox {
 		uidValidity: a.nextUIDValidity,
 		uidNext:     1,
 		revision:    1,
+		flags:       defaultMailboxFlags(),
 		watchers:    make(map[*selected]*imapserver.Updater),
 	}
 	a.nextUIDValidity++
@@ -163,9 +169,6 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	return s, nil
 }
 
-// SupportsMove reports that the memory backend implements atomic MOVE.
-func (*Backend) SupportsMove() bool { return true }
-
 func authenticationError() error {
 	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeAuthenticationFailed, Text: "authentication failed"}
 }
@@ -179,6 +182,6 @@ func nonexistentMailbox(name string) error {
 }
 
 var (
-	_ imapserver.Backend     = (*Backend)(nil)
-	_ imapserver.MoveSupport = (*Backend)(nil)
+	_ imapserver.Backend           = (*Backend)(nil)
+	_ imapserver.CapabilitySupport = (*Backend)(nil)
 )

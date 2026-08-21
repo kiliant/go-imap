@@ -38,7 +38,7 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"Authenticate(ctx context.Context, conn *ConnInfo, credentials *Credentials, options *AuthenticateOptions) (Session, error)",
 		},
 		"CapabilitySupport": {
-			"SupportsCapability(name string) bool",
+			"SupportsCapability(ctx context.Context, name string, options *CapabilitySupportOptions) bool",
 		},
 		"CatenateSession": {
 			"ResolveCatenateURL(ctx context.Context, url string, options *CatenateOptions) (io.ReadCloser, error)",
@@ -66,9 +66,6 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		},
 		"MoveMailbox": {
 			"Move(ctx context.Context, uids imap.UIDSet, destination string, options *MoveOptions) (*imap.CopyData, error)",
-		},
-		"MoveSupport": {
-			"SupportsMove() bool",
 		},
 		"MultiSearchSession": {
 			"MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)",
@@ -410,13 +407,10 @@ func hasSentinelField(structure *ast.StructType) bool {
 // imapclient methods shipped without options and were caught only at the v1.0
 // freeze review. This is the gate that stops it being a third time.
 func TestBackendMethodsTakeOptions(t *testing.T) {
-	// Witnesses and markers are not blocking calls: they answer from state the
-	// backend already holds, take no context, and write nothing to the wire.
-	// Each exemption is a decision, so each is named rather than pattern-matched.
+	// Markers are not blocking calls. Each exemption is a decision, so each is
+	// named rather than pattern-matched.
 	exempt := map[string]bool{
-		"MoveSupport.SupportsMove":             true,
-		"CapabilitySupport.SupportsCapability": true,
-		"Update.update":                        true,
+		"Update.update": true,
 
 		// Accessor over state the caller already handed us: no context, no
 		// wire, nothing to configure.

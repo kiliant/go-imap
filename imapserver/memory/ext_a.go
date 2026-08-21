@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 // genuinely evaluated rather than ignored. Advertising a search key a backend
 // silently drops would make every result quietly wrong.
 var supportedCapabilities = map[string]bool{
+	"MOVE": true,
 	// UIDPLUS: this backend returns UIDs in AppendData and CopyData, so the
 	// APPENDUID and COPYUID codes are real, and its Expunge honours the UID-set
 	// filter UID EXPUNGE supplies.
@@ -74,7 +76,7 @@ var supportedCapabilities = map[string]bool{
 
 // SupportsCapability implements [imapserver.CapabilitySupport]. It is declared
 // on Backend rather than on session because none of these vary by user here.
-func (b *Backend) SupportsCapability(name string) bool {
+func (b *Backend) SupportsCapability(_ context.Context, name string, _ *imapserver.CapabilitySupportOptions) bool {
 	return supportedCapabilities[strings.ToUpper(name)]
 }
 

@@ -219,7 +219,7 @@ protocol surface as `mbsync` for a second Python runtime's worth of image build,
 and the acceptance criterion asks for at least one real client completing a
 sync/resync cycle. Add it if a bug is ever found that `mbsync` cannot express.
 
-#### What imaptest found, and what is still open
+#### What imaptest found
 
 It paid for itself on the first run that reached the server. All three are
 things every test in this repository passed, because every test here was
@@ -293,15 +293,18 @@ removed from `imaptest_test.go`'s triaged table rather than left behind, since a
 triaged finding that outlives its bug is a permanent blindfold.
 `TestImaptestStress` completes the full workload under that design.
 
-**Open — a keyword created by `STORE` is never re-announced in `FLAGS`.** The
-server reports `$Label1` in a `FETCH FLAGS` response although no untagged
-`FLAGS` response ever listed it for the mailbox. RFC 3501 §7.2.6 makes the
-untagged `FLAGS` response the mailbox's applicable flag set, and a server
-whose set changes is expected to send a new one.
-
-The remaining open finding is recorded in `imaptest_test.go`'s `triaged` table,
-so the stress test stays green for it and fails on anything new. Deleting the
-entry when the bug is fixed is the intended lifecycle.
+**Fixed — a keyword created by `STORE` was not re-announced in `FLAGS`.** The
+server reported `$Label1` in a `FETCH FLAGS` response although no untagged
+`FLAGS` response had listed it for the mailbox. RFC 3501 §7.2.6 makes that
+untagged response the mailbox's applicable flag set. Backends can now publish
+the complete set through `UpdateMailboxFlags`; the framework orders it before
+the STORE's first keyword-bearing FETCH response and delivers the same ordered
+update to other selected sessions. The memory backend also keeps applicable
+keywords in a persistent mailbox registry rather than withdrawing one when its
+last current message reference disappears. `TestStoreCreatedKeywordReannouncesMailboxFlags`
+pins creation and persistence at the raw wire boundary. The matching imaptest
+triage entry was removed, and `TestImaptestStress` passes with no ignored server
+findings.
 
 The scripted corpus is a third, different case: it never ran at all. imaptest's
 script runner aborts with `FIXME: Add support for sync literals` unless the

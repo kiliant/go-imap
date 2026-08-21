@@ -262,7 +262,11 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 		uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
 		modSeq: bumpModSeqLocked(m), saveDate: time.Now(),
 	})
-	batch := advanceLocked(m, origin, []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}})
+	changes := []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}}
+	if ensureMailboxFlagsLocked(m, flags) {
+		changes = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(m)}}, changes...)
+	}
+	batch := advanceLocked(m, origin, changes)
 	publishLocked(m, batch)
 	// NOTIFY watchers hear about a mailbox they have not selected.
 	notifyMailboxLocked(s.account, m)
@@ -398,7 +402,7 @@ func snapshotLocked(m *mailbox, readOnly bool) imapserver.SelectSnapshot {
 			unseen = uint32(i + 1)
 		}
 	}
-	flags := []imap.Flag{imap.FlagSeen, imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagDraft}
+	flags := mailboxFlagsLocked(m)
 	return imapserver.SelectSnapshot{
 		UIDs: uids,
 		Status: imap.MailboxStatus{
@@ -418,6 +422,35 @@ func snapshotLocked(m *mailbox, readOnly bool) imapserver.SelectSnapshot {
 		HighestModSeq:  m.highestModSeq,
 		Revision:       revision(m.revision),
 	}
+}
+
+// mailboxFlagsLocked returns every flag currently applicable to the mailbox.
+// The caller must hold the account lock.
+func mailboxFlagsLocked(m *mailbox) []imap.Flag {
+	return slices.Clone(m.flags)
+}
+
+func defaultMailboxFlags() []imap.Flag {
+	return []imap.Flag{imap.FlagSeen, imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagDraft}
+}
+
+// ensureMailboxFlagsLocked records newly applicable keywords. The caller must
+// hold the account lock. Applicable keywords are deliberately monotonic for a
+// mailbox: removing the last current reference does not make a keyword invalid.
+func ensureMailboxFlagsLocked(m *mailbox, flags []imap.Flag) bool {
+	changed := false
+	for _, flag := range flags {
+		if !imap.ContainsFlag(m.flags, flag) {
+			m.flags = append(m.flags, flag)
+			changed = true
+		}
+	}
+	if changed {
+		slices.SortFunc(m.flags[5:], func(a, b imap.Flag) int {
+			return strings.Compare(strings.ToLower(string(a)), strings.ToLower(string(b)))
+		})
+	}
+	return changed
 }
 
 type contextReader struct {

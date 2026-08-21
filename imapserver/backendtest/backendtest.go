@@ -470,11 +470,11 @@ func waitForAddedUID(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notific
 }
 
 func supportsMove(instance *Instance, session imapserver.Session) bool {
-	if support, ok := session.(imapserver.MoveSupport); ok {
-		return support.SupportsMove()
+	if support, ok := session.(imapserver.CapabilitySupport); ok {
+		return support.SupportsCapability(context.Background(), "MOVE", nil)
 	}
-	support, ok := instance.Backend.(imapserver.MoveSupport)
-	return ok && support.SupportsMove()
+	support, ok := instance.Backend.(imapserver.CapabilitySupport)
+	return ok && support.SupportsCapability(context.Background(), "MOVE", nil)
 }
 
 func cloneBatch(batch *imapserver.UpdateBatch) *imapserver.UpdateBatch {

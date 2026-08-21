@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -209,6 +210,88 @@ func TestLoopbackBaseCommandSet(t *testing.T) {
 	if err := client.Logout(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreCreatedKeywordReannouncesMailboxFlags(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+
+	writeRawCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUntilTag(t, reader, "A1 OK ")
+	message := "Subject: keyword\r\n\r\nbody\r\n"
+	writeRawCommand(t, clientSide, fmt.Sprintf("A2 APPEND INBOX {%d}\r\n", len(message)))
+	continuation, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(continuation, "+") {
+		t.Fatalf("APPEND continuation = %q", continuation)
+	}
+	writeRawCommand(t, clientSide, message+"\r\n")
+	readUntilTag(t, reader, "A2 OK ")
+	writeRawCommand(t, clientSide, "A3 SELECT INBOX\r\n")
+	readUntilTag(t, reader, "A3 OK ")
+
+	writeRawCommand(t, clientSide, "A4 STORE 1 +FLAGS.SILENT ($Label1)\r\n")
+	var flagsLine string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(line, "* FLAGS ") {
+			flagsLine = line
+		}
+		if strings.HasPrefix(line, "A4 ") {
+			if !strings.HasPrefix(line, "A4 OK ") {
+				t.Fatalf("STORE = %q", line)
+			}
+			break
+		}
+	}
+	if !strings.Contains(flagsLine, "$Label1") {
+		t.Fatalf("STORE did not re-announce the created keyword: %q", flagsLine)
+	}
+
+	writeRawCommand(t, clientSide, "A5 STORE 1 -FLAGS.SILENT ($Label1)\r\n")
+	readUntilTag(t, reader, "A5 OK ")
+	writeRawCommand(t, clientSide, "A6 UNSELECT\r\n")
+	readUntilTag(t, reader, "A6 OK ")
+	writeRawCommand(t, clientSide, "A7 SELECT INBOX\r\n")
+	flagsLine = ""
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(line, "* FLAGS ") {
+			flagsLine = line
+		}
+		if strings.HasPrefix(line, "A7 ") {
+			if !strings.HasPrefix(line, "A7 OK ") {
+				t.Fatalf("reselect = %q", line)
+			}
+			break
+		}
+	}
+	if !strings.Contains(flagsLine, "$Label1") {
+		t.Fatalf("created keyword did not remain applicable after its last reference was removed: %q", flagsLine)
+	}
+
+	writeRawCommand(t, clientSide, "A8 LOGOUT\r\n")
+	readUntilTag(t, reader, "A8 OK ")
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}

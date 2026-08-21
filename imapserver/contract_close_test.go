@@ -146,20 +146,12 @@ type wrappingBackend struct {
 	denyAll bool
 }
 
-// SupportsMove forwards the witness memory declares on its Backend. Without
-// this the wrapper silently withholds atomic MOVE, and with it IMAP4rev2 —
-// which is the wrapper trap the examples document, met in a test.
-func (b *wrappingBackend) SupportsMove() bool {
-	inner, ok := b.inner.(imapserver.MoveSupport)
-	return ok && inner.SupportsMove()
-}
-
-func (b *wrappingBackend) SupportsCapability(name string) bool {
+func (b *wrappingBackend) SupportsCapability(ctx context.Context, name string, options *imapserver.CapabilitySupportOptions) bool {
 	if b.denyAll || b.deny[name] {
 		return false
 	}
 	if inner, ok := b.inner.(imapserver.CapabilitySupport); ok {
-		return inner.SupportsCapability(name)
+		return inner.SupportsCapability(ctx, name, options)
 	}
 	return false
 }

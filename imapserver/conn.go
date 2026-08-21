@@ -631,7 +631,7 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 	} else if max := c.server.options.Limits.MaxLiteralBytes; max >= 0 && request.info.Size > max {
 		err = fmt.Errorf("literal exceeds the connection limit")
 	} else if request.info.NonSynchronising && request.info.Size > maxLiteralMinusSize &&
-		!slices.Contains(deriveCapabilities(&c.state, c.server), "LITERAL+") {
+		!slices.Contains(deriveCapabilitiesContext(c.ctx, &c.state, c.server), "LITERAL+") {
 		err = fmt.Errorf("non-synchronising literal exceeds the LITERAL- limit")
 	} else if !request.info.NonSynchronising {
 		c.encoder.BeginResponse(imapwire.ResponseContinuation, "").ContinuationText("ready for literal").CRLF()
@@ -641,7 +641,7 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 }
 
 func (c *conn) writeGreeting() error {
-	capabilities := deriveCapabilities(&c.state, c.server)
+	capabilities := deriveCapabilitiesContext(c.ctx, &c.state, c.server)
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
 		Status: "OK",
 		Text: imapwire.RespText{
@@ -934,6 +934,10 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 	switch update.kind {
 	case updateExists:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(update.exists).SP().Atom("EXISTS").CRLF()
+	case updateMailboxFlags:
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("FLAGS").SP().List(len(update.flags), func(i int) {
+			c.encoder.Flag(string(update.flags[i]))
+		}).CRLF()
 	case updateMessageFlags:
 		data := &imap.FetchMessageData{
 			SeqNum: update.seqNum,

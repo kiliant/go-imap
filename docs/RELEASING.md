@@ -112,7 +112,7 @@ matches baselines by that prefix for the same reason.
   `imapserver/v*` tag. A break is allowed and must be deliberate: name the
   affected exported symbols in `CHANGELOG.md`.
 
-`API-STABILITY.md` §10 records the changes that are free only until
-`imapserver` v1.0 — the `MoveSupport`/`CapabilitySupport` collapse and the
-THREAD witness-token rename. They are cheap now and permanent afterwards, so
-they belong in a v0.x release rather than after one.
+`API-STABILITY.md` §10 records changes that are free only until `imapserver`
+v1.0. The `MoveSupport`/`CapabilitySupport` collapse and the context/options
+upgrade landed after v0.1.0; any remaining entry there must be resolved in a
+v0.x release rather than postponed beyond v1.0.

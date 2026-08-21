@@ -199,27 +199,9 @@ type UnselectOptions struct{ _ struct{} }
 
 // MoveMailbox is the optional atomic MOVE operation. The framework never
 // synthesises MOVE from COPY, STORE and EXPUNGE; advertisement requires a
-// [MoveSupport] witness and, once selected, this interface.
+// [CapabilitySupport] witness for "MOVE" and, once selected, this interface.
 type MoveMailbox interface {
 	Move(ctx context.Context, uids imap.UIDSet, destination string, options *MoveOptions) (*imap.CopyData, error)
-}
-
-// MoveSupport is the optional capability witness for atomic MOVE. A Backend
-// may implement it to describe support before authentication; a Session may
-// implement it when support varies by authenticated user. When SupportsMove
-// returns true, every selected mailbox on which MOVE is available must also
-// implement [MoveMailbox].
-//
-// Backend implementations must make SupportsMove safe for concurrent use.
-//
-// Deprecated in intent, not yet in fact: [CapabilitySupport] expresses the same
-// thing keyed by wire token, and this interface exists only because it predates
-// it. It is kept because MOVE's witness also gates IMAP4rev2 advertisement, so
-// collapsing it is a behavioural change rather than a rename. See
-// docs/API-STABILITY.md section 10; the window to collapse it closes at
-// imapserver v1.0.
-type MoveSupport interface {
-	SupportsMove() bool
 }
 
 // CapabilitySupport is the open witness by which a Backend or Session declares
@@ -235,13 +217,18 @@ type MoveSupport interface {
 //
 // This witness is deliberately keyed by an open string rather than by one
 // interface per capability: a future RFC is then a new token, which is a data
-// change, not a type change. Atomic MOVE predates it and keeps its own
-// [MoveSupport] witness.
+// change, not a type change.
 //
 // Backend implementations must make SupportsCapability safe for concurrent use.
 type CapabilitySupport interface {
-	SupportsCapability(name string) bool
+	SupportsCapability(ctx context.Context, name string, options *CapabilitySupportOptions) bool
 }
+
+// CapabilitySupportOptions configures a capability-support query. A nil
+// pointer selects the defaults.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type CapabilitySupportOptions struct{ _ struct{} }
 
 // ConnInfo describes the transport presented to Backend.Authenticate.
 // Construct with keyed fields only; fields may be added in a future release.
@@ -597,6 +584,18 @@ type UpdateFlags struct {
 }
 
 func (*UpdateFlags) update() {}
+
+// UpdateMailboxFlags replaces the selected mailbox's complete set of applicable
+// flags. A backend must publish this update before reporting a newly created
+// keyword in [UpdateFlags], so the framework can satisfy RFC 3501 section 7.2.6.
+// Construct with keyed fields only; fields may be added in a future release.
+type UpdateMailboxFlags struct {
+	// Flags is the mailbox's complete new set of applicable flags.
+	Flags []imap.Flag
+	_     struct{}
+}
+
+func (*UpdateMailboxFlags) update() {}
 
 // UpdateExpunge removes one UID. EXPUNGE updates remain individually ordered.
 // Construct with keyed fields only; fields may be added in a future release.

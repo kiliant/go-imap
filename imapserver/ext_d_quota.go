@@ -221,8 +221,8 @@ func writeQuota(c *conn, data *imap.QuotaData) error {
 // directly: all of them are authenticated-or-selected, and deriveCapabilities
 // checks the state mask before the witness. It matters only to witnessesRev2,
 // which consults these witnesses from a descriptor advertised in every state.
-func sessionImplements[T any]() func(*sessionState, Backend) bool {
-	return func(state *sessionState, _ Backend) bool {
+func sessionImplements[T any]() func(context.Context, *sessionState, Backend) bool {
+	return func(_ context.Context, state *sessionState, _ Backend) bool {
 		if state == nil || state.session == nil {
 			return true
 		}

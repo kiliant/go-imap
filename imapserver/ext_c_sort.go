@@ -167,10 +167,10 @@ func requireAnyCapability(c *conn, names ...string) error {
 // interface must actually be there. This mirrors how MOVE is gated, and it
 // matters for the same reason: a capability advertised in the authenticated
 // state must not vanish or appear on selection for arbitrary reasons.
-func selectedImplements[T any](name string) func(*sessionState, Backend) bool {
+func selectedImplements[T any](name string) func(context.Context, *sessionState, Backend) bool {
 	spoken := backendSupportsCapability(name)
-	return func(state *sessionState, backend Backend) bool {
-		if !spoken(state, backend) {
+	return func(ctx context.Context, state *sessionState, backend Backend) bool {
+		if !spoken(ctx, state, backend) {
 			return false
 		}
 		if state == nil || state.selected == nil {

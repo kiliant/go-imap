@@ -167,10 +167,9 @@ func requireImaptestRan(t *testing.T, out string) {
 // status alone proves nothing.
 var imaptestError = regexp.MustCompile(`(?i)\b(error|failed|mismatch|invalid|unexpected|bug|fatal)\b`)
 
-// triaged are the complaints imaptest currently makes that are known, recorded
-// findings rather than regressions. Each one is a real defect in this server,
-// not a tool quirk, and each is written up in docs/INTEROP.md with the
-// transcript evidence that identifies it.
+// triaged is reserved for complaints imaptest makes that are known, recorded
+// findings rather than regressions. It is intentionally empty: all server
+// findings currently reported by the stress workload are fixed.
 //
 // They are listed rather than filtered away wholesale because the point of this
 // test is to catch the *next* finding. A blanket "ignore errors" would make the
@@ -190,11 +189,6 @@ var triaged = []struct {
 	// entry rather than leaving it is the point — a triaged finding that stays
 	// after the bug is gone turns this filter into a permanent blindfold, and
 	// the regression is pinned by TestExpungeUpdateWaitsForPipelinedCommands.
-	{
-		regexp.MustCompile(`Keyword used without being in FLAGS`),
-		"a keyword created by STORE is reported in FETCH without the mailbox's " +
-			"FLAGS set having been re-announced",
-	},
 }
 
 // assertNoImaptestFailures fails the test on any complaint imaptest made that

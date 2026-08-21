@@ -85,7 +85,7 @@ spec.
 ### 3. Optional capability interfaces
 
 Land only an optional interface whose operation is already exact enough to
-freeze here. T20 validates `MoveMailbox` and its pre-selection `MoveSupport`
+freeze here. T20 validates `MoveMailbox` and its pre-selection `CapabilitySupport("MOVE")`
 witness because §2 settles both signatures and T22 consumes them directly.
 CONDSTORE/QRESYNC, SCRAM, NOTIFY and NAMESPACE are named design requirements but
 their method signatures are deliberately left to T23, which owns both their

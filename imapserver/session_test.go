@@ -46,18 +46,22 @@ var _ io.Reader = (*zeroReader)(nil)
 
 type moveSupportBackend struct{ Backend }
 
-func (moveSupportBackend) SupportsMove() bool { return true }
+func (moveSupportBackend) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
+	return name == "MOVE"
+}
 
 type moveSupportSession struct{ stubSession }
 
-func (*moveSupportSession) SupportsMove() bool { return true }
+func (*moveSupportSession) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
+	return name == "MOVE"
+}
 
 // fullRev2Session witnesses everything RFC 9051 incorporates: atomic MOVE, the
 // spoken tokens in rev2Incorporated, and NamespaceSession structurally. It is
 // the minimum a backend must be before IMAP4REV2 may be advertised for it.
 type fullRev2Session struct{ moveSupportSession }
 
-func (*fullRev2Session) SupportsCapability(name string) bool {
+func (*fullRev2Session) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
 	return slices.Contains(rev2Incorporated, name)
 }
 
@@ -67,7 +71,9 @@ func (*fullRev2Session) Namespace(context.Context, *NamespaceOptions) (*imap.Nam
 
 type noMoveSupportSession struct{ stubSession }
 
-func (*noMoveSupportSession) SupportsMove() bool { return false }
+func (*noMoveSupportSession) SupportsCapability(context.Context, string, *CapabilitySupportOptions) bool {
+	return false
+}
 
 type zeroReader struct{}
 
@@ -337,7 +343,7 @@ type partialRev2Session struct {
 	withhold string
 }
 
-func (s *partialRev2Session) SupportsCapability(name string) bool {
+func (s *partialRev2Session) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
 	return name != s.withhold && slices.Contains(rev2Incorporated, name)
 }
 
@@ -350,15 +356,17 @@ func (s *partialRev2Session) Namespace(context.Context, *NamespaceOptions) (*ima
 // withheld token — is what a backend missing it actually looks like.
 type noNamespaceRev2Session struct{ moveSupportSession }
 
-func (*noNamespaceRev2Session) SupportsCapability(name string) bool {
+func (*noNamespaceRev2Session) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
 	return slices.Contains(rev2Incorporated, name)
 }
 
-// noMoveRev2Session is complete but for atomic MOVE, which is witnessed by
-// SupportsMove reporting false rather than by the method being absent.
+// noMoveRev2Session is complete but for atomic MOVE, which is withheld through
+// the shared capability witness.
 type noMoveRev2Session struct{ fullRev2Session }
 
-func (*noMoveRev2Session) SupportsMove() bool { return false }
+func (s *noMoveRev2Session) SupportsCapability(ctx context.Context, name string, options *CapabilitySupportOptions) bool {
+	return name != "MOVE" && s.fullRev2Session.SupportsCapability(ctx, name, options)
+}
 
 // TestRev2RequiresEveryIncorporatedCapability is the gate on SERVER-DESIGN.md
 // §1: IMAP4REV2 is a claim about the whole incorporated set, so withholding any
@@ -409,8 +417,9 @@ func TestRev2RequiresEveryIncorporatedCapability(t *testing.T) {
 // respect: a witness that can answer before authentication must be believed.
 type refusingBackend struct{ Backend }
 
-func (refusingBackend) SupportsMove() bool             { return true }
-func (refusingBackend) SupportsCapability(string) bool { return false }
+func (refusingBackend) SupportsCapability(context.Context, string, *CapabilitySupportOptions) bool {
+	return false
+}
 
 // TestRev2GreetingBelievesWitnessesThatCanAnswer covers the pre-authentication
 // path, which had no test at all — and so let witnessesRev2 short-circuit past
@@ -440,8 +449,7 @@ func TestRev2GreetingBelievesWitnessesThatCanAnswer(t *testing.T) {
 
 type moveAndTokensBackend struct{ Backend }
 
-func (moveAndTokensBackend) SupportsMove() bool { return true }
-func (moveAndTokensBackend) SupportsCapability(name string) bool {
+func (moveAndTokensBackend) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
 	return slices.Contains(rev2Incorporated, name)
 }
 

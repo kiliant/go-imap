@@ -187,10 +187,14 @@ and executed the nested-module release sequence. GitHub-verified SSH-signed
 the resolved dependency gate, all 70 fuzz targets and a clean external import
 are green.
 
-All numbered tasks are done. M6's unqualified `imaptest` exit criterion remains
-open in one precise respect: a keyword first created by `STORE` is not
-re-announced in an untagged `FLAGS` response. It remains triaged so the stress
-suite fails on any new finding; see `INTEROP.md`.
+**Status (2026-08-21): M6 is closed.** The last imaptest finding was fixed by
+publishing mailbox-wide `FLAGS` updates before a newly created keyword appears
+in FETCH and by keeping the memory backend's applicable-keyword registry
+persistent after the last message reference is removed. The triage entry is
+gone, a raw loopback regression pins the wire ordering, and the unfiltered
+`TestImaptestStress` workload passes. All numbered tasks and every M6 exit
+criterion are complete; the scripted-corpus skip remains the documented
+imaptest `LITERAL+` runner limitation, not a server finding. See `INTEROP.md`.
 
 ## Sequencing
 
