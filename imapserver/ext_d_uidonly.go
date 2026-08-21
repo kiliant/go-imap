@@ -58,6 +58,9 @@ func requireUIDCommand(c *conn, command *queuedCommand) error {
 // already the response's subject and RFC 9586 section 3.2 makes repeating it the
 // one redundant item in the grammar.
 func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
+	if err := ensureFetchFlagsAdvertised(c, data); err != nil {
+		return err
+	}
 	if !uidOnlyEnabled(c) {
 		return imapcodec.WriteFetchResponse(c.encoder, data, fetchLiteralSize)
 	}
@@ -74,4 +77,39 @@ func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
 		trimmed.Items[key] = values
 	}
 	return imapcodec.WriteUIDFetchResponse(c.encoder, uid, &trimmed, fetchLiteralSize)
+}
+
+// ensureFetchFlagsAdvertised preserves the wire-level ordering rule even when
+// a solicited FETCH observes backend state newer than this connection's update
+// queue. That can happen when an older EXPUNGE keeps later mailbox updates
+// deferred during a sequence-sensitive command: the backend is current, while
+// the framework's per-connection revision view intentionally is not.
+//
+// Announcing the union is safe and sufficient. selected.flags is exactly the
+// applicable set already sent to this client, and every flag in this FETCH is
+// applicable by definition. The queued complete UpdateMailboxFlags value still
+// applies later in revision order and may add other keywords.
+func ensureFetchFlagsAdvertised(c *conn, data *imap.FetchMessageData) error {
+	if c == nil || data == nil || c.state.selected == nil {
+		return nil
+	}
+	flags := append([]imap.Flag(nil), c.state.selected.flags...)
+	changed := false
+	for _, value := range data.Items[imap.FetchDataKey(imap.FetchItemFlags)] {
+		fetchFlags, ok := value.(imap.FetchDataFlags)
+		if !ok {
+			continue
+		}
+		for _, flag := range fetchFlags {
+			if !imap.ContainsFlag(flags, flag) {
+				flags = append(flags, flag)
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+	c.state.selected.flags = append([]imap.Flag(nil), flags...)
+	return c.writeUpdate(deliveredUpdate{kind: updateMailboxFlags, flags: flags})
 }
