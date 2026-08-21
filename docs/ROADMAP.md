@@ -180,6 +180,18 @@ hardcoded `false`, and `SERVER-DESIGN.md` §1 sets the bar at every incorporated
 behaviour being implemented. Three gaps had to close first — UIDPLUS, a bare
 `SEARCH` answering in the rev1 shape, and `SELECT` sending no untagged `LIST`.
 
+**Status (2026-08-21): T18–T25 and both releases are complete.** T25 fixed the
+pipelined-EXPUNGE defect above, delivered the documented v0.x API and examples,
+and executed the nested-module release sequence. GitHub-verified SSH-signed
+`v1.1.0` and `imapserver/v0.1.0` tags are published; standalone server builds,
+the resolved dependency gate, all 70 fuzz targets and a clean external import
+are green.
+
+All numbered tasks are done. M6's unqualified `imaptest` exit criterion remains
+open in one precise respect: a keyword first created by `STORE` is not
+re-announced in an untagged `FLAGS` response. It remains triaged so the stress
+suite fails on any new finding; see `INTEROP.md`.
+
 ## Sequencing
 
 ```

@@ -7,13 +7,13 @@ stable v1.0 are compatible goals rather than competing ones.
 import "github.com/kiliant/go-imap/imapclient"
 ```
 
-> **Status: v1.0 released.** The exported API of `package imap` and
+> **Status: root v1.1.0 and imapserver v0.1.0 released.** The exported API of
+> `package imap` and
 > `package imapclient` is frozen under the compatibility policy in
-> `docs/API-STABILITY.md`. CI, the `apidiff` gate, the full parser-fuzz campaign,
-> and the native interoperability matrix were green for the release tagged on
-> 2026-08-06. Work now proceeds on the separately versioned server framework
-> described in `docs/SERVER-DESIGN.md`; see `docs/ROADMAP.md` and
-> `docs/tasks/BOARD.md`.
+> `docs/API-STABILITY.md`; the separately versioned server framework remains
+> deliberately v0.x. Both 2026-08-21 release tags are SSH-signed, and the server
+> release passed standalone-module, dependency-graph, full CI and clean-consumer
+> import gates. See `docs/RELEASING.md` and `docs/ROADMAP.md`.
 
 ## The design constraint
 
@@ -68,7 +68,7 @@ same reason.
 
 ## Server framework
 
-A server framework is the current milestone, M6. The core types were
+A server framework shipped as `imapserver/v0.1.0`. The core types were
 split into a shared I/O-free package from the first commit precisely so this can
 be added without an API break, and that has held up.
 
@@ -82,8 +82,10 @@ criterion. That review completed before the tag.
 
 See `docs/SERVER-DESIGN.md` — **approved on 2026-08-05**. The shared
 server-direction codec, message-analysis foundation, server core, supported
-memory backend and reusable backend conformance suite (T18–T21) completed on
-2026-08-12; the base server command set (T22) is next.
+memory backend, reusable backend conformance suite, base command set, extension
+set and conformance harness (T18–T25) are complete. One `imaptest` conformance
+finding remains recorded: a keyword first created by `STORE` is not re-announced
+in an untagged `FLAGS` response. See `docs/INTEROP.md`.
 
 ## Documentation
 

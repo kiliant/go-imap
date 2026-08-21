@@ -23,6 +23,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [1.1.0] - 2026-08-21
+
 ### Root module — `github.com/kiliant/go-imap`
 
 #### Added
@@ -52,9 +56,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   one-for-one. `imapclient`'s exported API is unchanged; `apidiff`
   reports no difference for it.
 
+## [imapserver/v0.1.0] - 2026-08-21
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
-Not yet released. This is the content of the first `imapserver/v0.1.0` tag.
+First released on 2026-08-21.
 
 **This module does not carry the root module's v1 compatibility promise.** It is
 v0.x deliberately: the backend contract has had one round of real backend
