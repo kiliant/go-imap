@@ -1,5 +1,7 @@
 package imapserver
 
+import "context"
+
 // Feature identifiers for the extension option fields declared on the shared
 // option structs in backend.go. A field there binds to one of these through its
 // imapfeature struct tag, and the framework populates the field only when the
@@ -112,15 +114,15 @@ func registerCapabilities(descriptors ...capabilityDescriptor) {
 // backendSupportsCapability reports whether the backend witnesses the named
 // capability through [CapabilitySupport]. The session's witness wins when it
 // has one, so support can vary by authenticated user.
-func backendSupportsCapability(name string) func(*sessionState, Backend) bool {
-	return func(state *sessionState, backend Backend) bool {
+func backendSupportsCapability(name string) func(context.Context, *sessionState, Backend) bool {
+	return func(ctx context.Context, state *sessionState, backend Backend) bool {
 		if state != nil && state.session != nil {
 			if support, ok := state.session.(CapabilitySupport); ok {
-				return support.SupportsCapability(name)
+				return support.SupportsCapability(ctx, name, nil)
 			}
 		}
 		if support, ok := backend.(CapabilitySupport); ok {
-			return support.SupportsCapability(name)
+			return support.SupportsCapability(ctx, name, nil)
 		}
 		return false
 	}

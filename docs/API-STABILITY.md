@@ -436,11 +436,12 @@ A capability whose behaviour the backend must implement is advertised only when
 the backend witnesses it. `imapserver` has two witness styles and the choice
 between them is not stylistic:
 
-- **`CapabilitySupport`** — `SupportsCapability(name string) bool`, keyed by the
-  wire token. Use it where support is spread across data the backend returns and
-  no type can see it: CHILDREN, SAVEDATE, WITHIN, CONDSTORE. A future RFC is then
-  a new *token*, which is a data change rather than a type change — rule 1
-  applied to the witness layer.
+- **`CapabilitySupport`** — `SupportsCapability(ctx, name, options) bool`, keyed
+  by the wire token. Use it where support is spread across data the backend
+  returns and no type can see it: CHILDREN, SAVEDATE, WITHIN, CONDSTORE. A
+  future RFC is then a new *token*, which is a data change rather than a type
+  change — rule 1 applied to the witness layer. The context is the connection
+  or command lifetime; nil options select the defaults.
 - **A structural check** that the session or selected mailbox implements the
   optional interface. Use it where the interface *is* the whole of the support:
   QUOTA, ACL, METADATA. The type system then makes it impossible to advertise
@@ -553,51 +554,26 @@ breaking direction, and because the window in which it is free is exactly now:
 After `imapserver` v1.0 a rename of this kind needs the old token to keep working
 alongside the new one. Before it, they are free and should be made deliberately.
 
-### Deferred: `CapabilitySupport` takes neither context nor options — T25, 2026-08-14
+### Resolved: `CapabilitySupport` context/options and MOVE witness — 2026-08-21
 
-`SupportsCapability(name string) bool` breaks rules 2 and 3 on its face. A
-backend whose capability set lives in a database has no context to honour and no
-way to report a failure.
+The two pre-v1 decisions recorded here were made immediately after v0.1.0,
+while the compatibility window remained open:
 
-**Deferred deliberately, with the window recorded.** Adding either parameter
-means threading a context through `deriveCapabilities`, which is called from the
-greeting, `CAPABILITY`, `ENABLE` and every `requireCapability` — a change with
-real blast radius, made at the tail of a release task, against a rule whose
-window runs to `imapserver` **v1.0** rather than to v0.1.0. `MessageLimitSession`
-already shows the established workaround for capabilities carrying a value, so
-nothing is blocked in the meantime.
+- `SupportsCapability(name string) bool` became
+  `SupportsCapability(ctx context.Context, name string, options
+  *CapabilitySupportOptions) bool`. Capability derivation now threads the
+  connection or command context through greetings, CAPABILITY, ENABLE,
+  feature gates and extension-command gates. The empty guarded options struct
+  gives future RFCs room to extend the query without another method break.
+- `MoveSupport` was removed. `CapabilitySupport("MOVE")` is now the sole spoken
+  witness for atomic MOVE, while `MoveMailbox` remains the structural witness
+  once a mailbox is selected. `witnessesRev2` still consults MOVE's own
+  descriptor, so the umbrella and standalone capability cannot drift.
 
-The same reasoning as the `MoveSupport` entry below, and the same obligation:
-this is free until `imapserver` v1.0 and permanent afterwards. Whoever cuts that
-release owns the decision.
-
-### Exception: `MoveSupport` predates `CapabilitySupport` — recorded 2026-08-13
-
-`MoveSupport` (`SupportsMove() bool`) is a single-capability witness for atomic
-MOVE, added by T19 before `CapabilitySupport` existed. It is redundant:
-`CapabilitySupport("MOVE")` expresses the same thing.
-
-It is kept rather than collapsed because MOVE's witness is also consulted for the
-IMAP4rev2 gate, so removing it is a behavioural change to rev2 advertisement
-rather than a rename — and `imapserver` is pre-1.0 but T19/T20 shipped against
-this surface. **Collapsing it is the right move and the window is open only until
-`imapserver` v1.0**; after that the second witness is permanent. Recorded here so
-the decision is deliberate, per CLAUDE.md's requirement that a deviation carry a
-written exception.
-
-**Decided at T25, 2026-08-14: kept, and this is now the permanent entry.** The
-instruction above named T25 as the point of decision, so leaving it addressed to
-a finished task would be a note nobody owns. The reasoning for keeping it is the
-one the T24 review sharpened: `witnessesRev2` consults each incorporated
-capability's own witness, and `MoveSupport` is the witness for MOVE. Collapsing
-it into `CapabilitySupport("MOVE")` is a behaviour change to rev2 advertisement
-for every backend that witnesses MOVE structurally and speaks no tokens — the
-exact population the T24 probe was built from. That is a change worth making on
-its own evidence, not as a tidying step inside a release task.
-
-The window genuinely runs to `imapserver` v1.0, not to v0.1.0, so nothing is
-lost by deferring it. What would have been lost is the record of why, which is
-this paragraph.
+Both changes are deliberately breaking in the `imapserver` v0.x module and are
+named in `CHANGELOG.md`. A backend migrating from v0.1.0 adds the context and
+options parameters to its capability witness, moves its `SupportsMove` answer
+to the `"MOVE"` token, and retains `MoveMailbox` on selected handles.
 
 ### Additive root-package growth after v1.0 — exercised 2026-08-13
 

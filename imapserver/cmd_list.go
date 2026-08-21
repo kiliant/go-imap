@@ -121,7 +121,7 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || len(args.patterns) == 0 {
 		return c.writeBad(command.tag, "invalid LIST arguments")
 	}
-	features := activeFeatures(&c.state, c.server)
+	features := activeFeaturesContext(ctx, &c.state, c.server)
 	if len(args.patterns) > 1 && !features[featureListMulti] {
 		return c.writeBad(command.tag, "multiple LIST patterns are not enabled")
 	}

@@ -23,7 +23,40 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
-No unreleased changes.
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Added
+
+- `imapserver.UpdateMailboxFlags`, allowing a backend to publish a changed
+  mailbox-wide applicable flag set before a new keyword appears in FETCH.
+- `imapserver.CapabilitySupportOptions`, the guarded extension point for
+  capability-witness queries.
+
+#### Changed
+
+- **BREAKING:** `imapserver.CapabilitySupport.SupportsCapability` now takes a
+  `context.Context` and `*imapserver.CapabilitySupportOptions`. Backends should
+  migrate `SupportsCapability(name string) bool` to
+  `SupportsCapability(ctx context.Context, name string, options
+  *imapserver.CapabilitySupportOptions) bool`; nil options select the defaults.
+  This changes `(*memory.Backend).SupportsCapability` to the same signature.
+- The memory backend now keeps a persistent mailbox registry of applicable
+  keywords and re-announces untagged `FLAGS` when STORE creates one, before any
+  FETCH response first reports it.
+
+#### Fixed
+
+- STORE-created keywords are announced in an untagged mailbox `FLAGS` response
+  before their first FETCH FLAGS appearance. The imaptest triage was removed;
+  the unfiltered stress workload and a raw loopback regression now pass.
+
+#### Removed
+
+- **BREAKING:** `imapserver.MoveSupport` was removed. Backends and sessions now
+  witness atomic MOVE solely by returning true for the `"MOVE"` token through
+  `imapserver.CapabilitySupport`; selected mailboxes must still implement
+  `imapserver.MoveMailbox`; `(*memory.Backend).SupportsMove` was removed with
+  the redundant witness.
 
 ## [1.1.0] - 2026-08-21
 
@@ -100,7 +133,7 @@ previous `imapserver/v*` tag.
   `MetadataSession`, `NamespaceSession`, `NotifySession`, `FilterSession`,
   `ComparatorSession`, `LanguageSession`, `URLAuthSession`,
   `MessageLimitSession`, `UnauthenticateSession`, `SCRAMCredentials`, and the
-  `MoveSupport` / `CapabilitySupport` witnesses. Adding a capability is a new
+  `CapabilitySupport` witness. Adding a capability is a new
   interface or a new witness token, not a change to an existing type.
 - **~55 capabilities across RFC groups A–E**, listed per RFC in
   `docs/RFC-COVERAGE.md`. Everything in scope is implemented except UTF8=ALL and

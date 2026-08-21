@@ -74,7 +74,8 @@ dependencies, and T17 depends on it. See "Why T16 moved" below.
 **T19, T20 and T22–T25 have spec files**, written after `../SERVER-DESIGN.md`
 was approved by the human on 2026-08-05. T17 completed and v1.0 was tagged on
 2026-08-06, opening the M6 implementation gate. T18–T25 are complete; root
-`v1.1.0` and server `imapserver/v0.1.0` were released on 2026-08-21.
+`v1.1.0` and server `imapserver/v0.1.0` were released on 2026-08-21. M6 closed
+the same day after the final untriaged imaptest stress run passed.
 
 T18 and T21 are the pair that never depended on the abstraction at all —
 neither's spec changed with approval, and between them they are the bulk of the

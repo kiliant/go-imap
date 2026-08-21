@@ -14,7 +14,9 @@ func (externalBackend) Authenticate(context.Context, *imapserver.ConnInfo, *imap
 	return &externalSession{}, nil
 }
 
-func (externalBackend) SupportsMove() bool { return true }
+func (externalBackend) SupportsCapability(context.Context, string, *imapserver.CapabilitySupportOptions) bool {
+	return true
+}
 
 type externalSession struct{}
 
@@ -81,11 +83,11 @@ func (*externalSelectedMailbox) Move(context.Context, imap.UIDSet, string, *imap
 }
 
 var (
-	_ imapserver.Backend         = externalBackend{}
-	_ imapserver.MoveSupport     = externalBackend{}
-	_ imapserver.Session         = (*externalSession)(nil)
-	_ imapserver.SelectedMailbox = (*externalSelectedMailbox)(nil)
-	_ imapserver.MoveMailbox     = (*externalSelectedMailbox)(nil)
+	_ imapserver.Backend           = externalBackend{}
+	_ imapserver.CapabilitySupport = externalBackend{}
+	_ imapserver.Session           = (*externalSession)(nil)
+	_ imapserver.SelectedMailbox   = (*externalSelectedMailbox)(nil)
+	_ imapserver.MoveMailbox       = (*externalSelectedMailbox)(nil)
 
 	_ = imapserver.ConnInfo{}
 	_ = imapserver.Credentials{}
@@ -96,6 +98,7 @@ var (
 		Changes: []imapserver.Update{
 			&imapserver.UpdateAdd{UIDs: []imap.UID{1}},
 			&imapserver.UpdateFlags{UID: 1},
+			&imapserver.UpdateMailboxFlags{},
 			&imapserver.UpdateExpunge{UID: 1},
 			&imapserver.UpdateVanished{UIDs: imap.UIDSetNum(1)},
 		},

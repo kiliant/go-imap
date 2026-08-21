@@ -15,7 +15,7 @@ func handleMove(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
 	mover, ok := c.state.selected.mailbox.(MoveMailbox)
-	if !ok || !supportsAtomicMove(&c.state, c.server.backend) {
+	if !ok || !supportsAtomicMove(ctx, &c.state, c.server.backend) {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "atomic MOVE is unavailable")
 	}
 	origin := nextCommandOrigin()

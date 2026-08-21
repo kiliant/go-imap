@@ -79,6 +79,7 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 	var changes []imapserver.Update
 	var results []*imap.FetchMessageData
 	var modified []imap.UID
+	beforeFlags := mailboxFlagsLocked(s.mailbox)
 	for i, msg := range s.mailbox.messages {
 		if !uids.Contains(msg.uid) {
 			continue
@@ -95,6 +96,7 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 			return nil, err
 		}
 		msg.flags = flags
+		ensureMailboxFlagsLocked(s.mailbox, flags)
 		msg.modSeq = bumpModSeqLocked(s.mailbox)
 		changes = append(changes, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(flags), ModSeq: msg.modSeq})
 		// RFC 7162 section 3.1.3: a conditional store reports the new
@@ -103,6 +105,10 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 		if !silent || hasUnchangedSince {
 			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
 		}
+	}
+	afterFlags := mailboxFlagsLocked(s.mailbox)
+	if !slices.Equal(beforeFlags, afterFlags) {
+		changes = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: afterFlags}}, changes...)
 	}
 	if len(changes) != 0 {
 		publishLocked(s.mailbox, advanceLocked(s.mailbox, origin, changes))
@@ -288,13 +294,17 @@ func (s *selected) Replace(ctx context.Context, uid imap.UID, name string, liter
 		uid: newUID, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
 		modSeq: bumpModSeqLocked(destination), saveDate: time.Now(),
 	})
+	destinationFlagsChanged := ensureMailboxFlagsLocked(destination, flags)
 
 	// Two batches when the mailboxes differ, because a batch describes one
 	// mailbox's observable change and watchers are per mailbox.
 	publishLocked(s.mailbox, advanceLocked(s.mailbox, origin,
 		[]imapserver.Update{&imapserver.UpdateExpunge{UID: uid}}))
-	publishLocked(destination, advanceLocked(destination, origin,
-		[]imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{newUID}}}))
+	destinationChanges := []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{newUID}}}
+	if destinationFlagsChanged {
+		destinationChanges = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(destination)}}, destinationChanges...)
+	}
+	publishLocked(destination, advanceLocked(destination, origin, destinationChanges))
 	return &imap.AppendData{HasUID: true, UIDValidity: destination.uidValidity, UID: newUID}, nil
 }
 

@@ -166,6 +166,7 @@ func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, ui
 	}
 	var changes []imapserver.Update
 	var results []*imap.FetchMessageData
+	beforeFlags := mailboxFlagsLocked(s.mailbox)
 	for i, msg := range s.mailbox.messages {
 		if !uids.Contains(msg.uid) {
 			continue
@@ -176,11 +177,16 @@ func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, ui
 			return err
 		}
 		msg.flags = flags
+		ensureMailboxFlagsLocked(s.mailbox, flags)
 		msg.modSeq = bumpModSeqLocked(s.mailbox)
 		changes = append(changes, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(flags), ModSeq: msg.modSeq})
 		if !silent {
 			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
 		}
+	}
+	afterFlags := mailboxFlagsLocked(s.mailbox)
+	if !slices.Equal(beforeFlags, afterFlags) {
+		changes = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: afterFlags}}, changes...)
 	}
 	if len(changes) != 0 {
 		batch := advanceLocked(s.mailbox, origin, changes)
@@ -233,6 +239,7 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 	var sources, destinations []imap.UID
 	var additions []imapserver.Update
 	var removals []imapserver.Update
+	beforeFlags := mailboxFlagsLocked(destinationMailbox)
 	original := append([]*message(nil), s.mailbox.messages...)
 	retained := make([]*message, 0, len(original))
 	for _, msg := range original {
@@ -248,6 +255,7 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		clone.uid = uid
 		clone.flags = cloneFlags(msg.flags)
 		destinationMailbox.messages = append(destinationMailbox.messages, &clone)
+		ensureMailboxFlagsLocked(destinationMailbox, clone.flags)
 		sources, destinations = append(sources, msg.uid), append(destinations, uid)
 		additions = append(additions, &imapserver.UpdateAdd{UIDs: []imap.UID{uid}})
 		if move {
@@ -255,6 +263,9 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		}
 	}
 	if len(additions) != 0 {
+		if !slices.Equal(beforeFlags, mailboxFlagsLocked(destinationMailbox)) {
+			additions = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(destinationMailbox)}}, additions...)
+		}
 		publishLocked(destinationMailbox, advanceLocked(destinationMailbox, origin, additions))
 	}
 	if move && len(removals) != 0 {

@@ -86,7 +86,7 @@ func (b *wrappedBackend) Authenticate(ctx context.Context, conn *imapserver.Conn
 // witness. A backend that does not recognise a name must return false: the
 // framework will not advertise a capability this declines, and must not
 // advertise one it has never heard of.
-func (b *wrappedBackend) SupportsCapability(name string) bool {
+func (b *wrappedBackend) SupportsCapability(_ context.Context, name string, _ *imapserver.CapabilitySupportOptions) bool {
 	return b.capabilities[name]
 }
 

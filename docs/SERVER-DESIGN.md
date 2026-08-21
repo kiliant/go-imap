@@ -304,7 +304,7 @@ So the framework refuses rather than approximates, and two advertisements depend
 on it:
 
 - `MOVE` is advertised to a rev1 client only when the backend or authenticated
-  session supplies a `MoveSupport` capability witness, and the selected handle
+  session witnesses `"MOVE"` through `CapabilitySupport`, and the selected handle
   implements `MoveMailbox` when one exists.
 - `IMAP4REV2` is advertised under the same witness and selected-handle check,
   because rev2 incorporates MOVE.
@@ -312,7 +312,7 @@ on it:
 The separate witness is necessary before a selection exists: rev2 must be
 advertisable before authentication and enable-able in authenticated state,
 while the actual MOVE operation belongs to the per-selection handle. A Backend
-may implement `MoveSupport` for server-wide support; a Session may implement it
+may implement `CapabilitySupport` for server-wide support; a Session may implement it
 when support varies by authenticated user. Claiming support and then returning
 a selected handle without `MoveMailbox` is a backend contract violation. A rev1
 session stops advertising MOVE for that selection; a session that has enabled

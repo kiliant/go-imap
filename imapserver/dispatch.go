@@ -141,8 +141,8 @@ func parseID(decoder *imapwire.Decoder) (any, int64, error) {
 	return fields, bytes, nil
 }
 
-func handleCapability(_ context.Context, c *conn, command *queuedCommand) error {
-	capabilities := deriveCapabilities(&c.state, c.server)
+func handleCapability(ctx context.Context, c *conn, command *queuedCommand) error {
+	capabilities := deriveCapabilitiesContext(ctx, &c.state, c.server)
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("CAPABILITY")
 	for _, capability := range capabilities {
 		c.encoder.SP().Atom(capability)
@@ -188,9 +188,9 @@ func handleCompress(_ context.Context, c *conn, command *queuedCommand) error {
 	return c.enableCompression()
 }
 
-func handleEnable(_ context.Context, c *conn, command *queuedCommand) error {
+func handleEnable(ctx context.Context, c *conn, command *queuedCommand) error {
 	requested, _ := command.args.([]string)
-	enabled := enableCapabilities(&c.state, c.server, requested)
+	enabled := enableCapabilities(ctx, &c.state, c.server, requested)
 	if len(enabled) > 0 {
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ENABLED")
 		for _, capability := range enabled {

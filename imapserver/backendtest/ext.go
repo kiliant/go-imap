@@ -35,15 +35,15 @@ func runExtensions(t *testing.T, harness *Harness) {
 		// after authentication. An answer that changed between those would make
 		// the advertised capability set depend on when it was sampled.
 		for _, name := range []string{"CONDSTORE", "QRESYNC", "SORT", "CHILDREN"} {
-			first := witness.SupportsCapability(name)
-			if second := witness.SupportsCapability(name); first != second {
+			first := witness.SupportsCapability(context.Background(), name, nil)
+			if second := witness.SupportsCapability(context.Background(), name, nil); first != second {
 				t.Errorf("SupportsCapability(%q) is not stable: %v then %v", name, first, second)
 			}
 		}
 		// An unrecognised token must be declined, not accepted by default. A
 		// backend that returns true for anything would have every capability
 		// this library knows advertised on its behalf.
-		if witness.SupportsCapability("NO-SUCH-CAPABILITY-9999") {
+		if witness.SupportsCapability(context.Background(), "NO-SUCH-CAPABILITY-9999", nil) {
 			t.Error("SupportsCapability returned true for an unknown token")
 		}
 	})

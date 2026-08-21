@@ -155,7 +155,7 @@ func init() {
 	}
 }
 
-func hasSCRAMCredentials(_ *sessionState, backend Backend) bool {
+func hasSCRAMCredentials(_ context.Context, _ *sessionState, backend Backend) bool {
 	_, ok := backend.(SCRAMCredentials)
 	return ok
 }
@@ -397,7 +397,7 @@ func gs2Header(bound bool, authzID string) string {
 // scramPlusAdvertised reports whether any -PLUS mechanism is offered to this
 // session, which decides whether a "y" header is a downgrade attempt.
 func scramPlusAdvertised(c *conn) bool {
-	for _, capability := range deriveCapabilities(&c.state, c.server) {
+	for _, capability := range deriveCapabilitiesContext(c.ctx, &c.state, c.server) {
 		if strings.HasPrefix(capability, "AUTH=SCRAM-") && strings.HasSuffix(capability, "-PLUS") {
 			return true
 		}

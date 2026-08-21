@@ -144,7 +144,7 @@ this is the mechanism, not merely documented policy.
   binding — the gate that makes "capability and options field ship together" an
   executed rule instead of a remembered one (§3).
 - `MOVE` / `IMAP4REV2` advertisement gated specifically on a backend/session
-  `MoveSupport` witness plus `MoveMailbox` on an existing selected handle (§2)
+  `CapabilitySupport("MOVE")` witness plus `MoveMailbox` on an existing selected handle (§2)
   — the framework must not synthesise MOVE from Copy+Store+Expunge, ever, and
   the capability table is where that refusal is enforced rather than merely
   documented.

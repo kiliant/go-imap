@@ -123,7 +123,7 @@ func parseListReturnOptions(decoder *imapwire.Decoder, args *listArgs) error {
 // activates it is active for this session, which is what keeps a field from
 // being set on a backend that never agreed to honour it.
 func applyListOptions(c *conn, args *listArgs, options *ListOptions) error {
-	features := activeFeatures(&c.state, c.server)
+	features := activeFeaturesContext(c.ctx, &c.state, c.server)
 	for _, option := range args.selection {
 		switch option {
 		case listSelectSubscribed:

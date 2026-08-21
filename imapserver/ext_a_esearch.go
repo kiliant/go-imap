@@ -282,7 +282,7 @@ func numberSetString(numbers []uint32) string {
 // session, as a set for membership tests.
 func advertisedCapabilities(c *conn) map[string]bool {
 	advertised := make(map[string]bool)
-	for _, capability := range deriveCapabilities(&c.state, c.server) {
+	for _, capability := range deriveCapabilitiesContext(c.ctx, &c.state, c.server) {
 		advertised[capability] = true
 	}
 	return advertised

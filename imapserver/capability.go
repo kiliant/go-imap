@@ -1,6 +1,7 @@
 package imapserver
 
 import (
+	"context"
 	"slices"
 	"strings"
 )
@@ -30,7 +31,7 @@ const (
 
 type capabilityDescriptor struct {
 	Name              string
-	RequiresBackend   func(*sessionState, Backend) bool
+	RequiresBackend   func(context.Context, *sessionState, Backend) bool
 	RequiresFramework []frameworkComponent
 	Depends           []string
 	States            stateMask
@@ -148,10 +149,10 @@ var rev2Incorporated = []string{
 // derived set too: a backend that loses IMAP4REV2 on authentication can never
 // have rev2 enabled against it, which is where a premature claim would have had
 // consequences.
-func witnessesRev2(state *sessionState, backend Backend) bool {
+func witnessesRev2(ctx context.Context, state *sessionState, backend Backend) bool {
 	for _, name := range rev2Incorporated {
 		witness := capabilityWitness(name)
-		if witness != nil && !witness(state, backend) {
+		if witness != nil && !witness(ctx, state, backend) {
 			return false
 		}
 	}
@@ -162,7 +163,7 @@ func witnessesRev2(state *sessionState, backend Backend) bool {
 // the capability needs no backend support. It returns nil for an unknown name
 // as well; TestRev2IncorporatedNamesResolve is what stops that being silent,
 // because a typo here would otherwise widen the gate rather than break a build.
-func capabilityWitness(name string) func(*sessionState, Backend) bool {
+func capabilityWitness(name string) func(context.Context, *sessionState, Backend) bool {
 	for _, descriptor := range capabilityDescriptors {
 		if descriptor.Name == name {
 			return descriptor.RequiresBackend
@@ -171,17 +172,12 @@ func capabilityWitness(name string) func(*sessionState, Backend) bool {
 	return nil
 }
 
-func hasAuthenticationBackend(_ *sessionState, backend Backend) bool { return backend != nil }
+func hasAuthenticationBackend(_ context.Context, _ *sessionState, backend Backend) bool {
+	return backend != nil
+}
 
-func supportsAtomicMove(state *sessionState, backend Backend) bool {
-	var support MoveSupport
-	if state != nil && state.session != nil {
-		support, _ = state.session.(MoveSupport)
-	}
-	if support == nil {
-		support, _ = backend.(MoveSupport)
-	}
-	if support == nil || !support.SupportsMove() {
+func supportsAtomicMove(ctx context.Context, state *sessionState, backend Backend) bool {
+	if !backendSupportsCapability("MOVE")(ctx, state, backend) {
 		return false
 	}
 	if state != nil && state.selected != nil {
@@ -211,7 +207,7 @@ func compiledFrameworkSupport() map[frameworkComponent]bool {
 	}
 }
 
-func deriveCapabilities(state *sessionState, server *Server) []string {
+func deriveCapabilitiesContext(ctx context.Context, state *sessionState, server *Server) []string {
 	if state == nil || server == nil {
 		return nil
 	}
@@ -228,7 +224,7 @@ func deriveCapabilities(state *sessionState, server *Server) []string {
 				break
 			}
 		}
-		if !ok || descriptor.RequiresBackend != nil && !descriptor.RequiresBackend(state, server.backend) ||
+		if !ok || descriptor.RequiresBackend != nil && !descriptor.RequiresBackend(ctx, state, server.backend) ||
 			descriptor.Available != nil && !descriptor.Available(state, server) {
 			continue
 		}
@@ -263,6 +259,10 @@ func deriveCapabilities(state *sessionState, server *Server) []string {
 	return capabilities
 }
 
+func deriveCapabilities(state *sessionState, server *Server) []string {
+	return deriveCapabilitiesContext(context.Background(), state, server)
+}
+
 func tlsMatches(active bool, requirement tlsRequirement) bool {
 	switch requirement {
 	case tlsOnly:
@@ -274,8 +274,8 @@ func tlsMatches(active bool, requirement tlsRequirement) bool {
 	}
 }
 
-func enableCapabilities(state *sessionState, server *Server, requested []string) []string {
-	advertised := deriveCapabilities(state, server)
+func enableCapabilities(ctx context.Context, state *sessionState, server *Server, requested []string) []string {
+	advertised := deriveCapabilitiesContext(ctx, state, server)
 	var enabled []string
 	seen := make(map[string]bool)
 	for _, name := range requested {
@@ -321,9 +321,9 @@ var featureDescriptors = []featureDescriptor{
 	}},
 }
 
-func activeFeatures(state *sessionState, server *Server) map[featureID]bool {
+func activeFeaturesContext(ctx context.Context, state *sessionState, server *Server) map[featureID]bool {
 	capabilities := make(map[string]bool)
-	for _, capability := range deriveCapabilities(state, server) {
+	for _, capability := range deriveCapabilitiesContext(ctx, state, server) {
 		capabilities[capability] = true
 	}
 	features := make(map[featureID]bool)
@@ -333,4 +333,8 @@ func activeFeatures(state *sessionState, server *Server) map[featureID]bool {
 		}
 	}
 	return features
+}
+
+func activeFeatures(state *sessionState, server *Server) map[featureID]bool {
+	return activeFeaturesContext(context.Background(), state, server)
 }

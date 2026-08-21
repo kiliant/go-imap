@@ -80,7 +80,7 @@ func handleAuthenticate(ctx context.Context, c *conn, command *queuedCommand) er
 		if !authenticationTransportAllowed(c, args.mechanism) {
 			return writeTaggedCondition(c, command.tag, "NO", imap.CodePrivacyRequired, "", "authentication mechanism requires transport security")
 		}
-		if !slices.Contains(deriveCapabilities(&c.state, c.server), "AUTH="+strings.ToUpper(args.mechanism)) {
+		if !slices.Contains(deriveCapabilitiesContext(ctx, &c.state, c.server), "AUTH="+strings.ToUpper(args.mechanism)) {
 			return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "authentication mechanism is not available")
 		}
 		return handleSCRAMAuthenticate(ctx, c, command, args)
@@ -96,7 +96,7 @@ func handleAuthenticate(ctx context.Context, c *conn, command *queuedCommand) er
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodePrivacyRequired, "", "authentication mechanism requires transport security")
 	}
 	capability := "AUTH=" + args.mechanism
-	if !slices.Contains(deriveCapabilities(&c.state, c.server), capability) {
+	if !slices.Contains(deriveCapabilitiesContext(ctx, &c.state, c.server), capability) {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "authentication mechanism is not available")
 	}
 

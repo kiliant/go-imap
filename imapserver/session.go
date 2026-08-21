@@ -300,6 +300,12 @@ func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
 			} else {
 				copyBatch.Changes = append(copyBatch.Changes, &UpdateFlags{UID: change.UID, Flags: slices.Clone(change.Flags), ModSeq: change.ModSeq})
 			}
+		case *UpdateMailboxFlags:
+			if change == nil {
+				copyBatch.Changes = append(copyBatch.Changes, change)
+			} else {
+				copyBatch.Changes = append(copyBatch.Changes, &UpdateMailboxFlags{Flags: slices.Clone(change.Flags)})
+			}
 		case *UpdateExpunge:
 			if change == nil {
 				copyBatch.Changes = append(copyBatch.Changes, change)
@@ -448,6 +454,31 @@ func (q *updateQueue) origins() map[ChangeToken]struct{} {
 	return origins
 }
 
+// mailboxFlagsForOrigin returns the last complete mailbox FLAGS value carried
+// by origin without removing or applying its batch. STORE uses this to announce
+// a newly created keyword before the FETCH response that first mentions it.
+func (q *updateQueue) mailboxFlagsForOrigin(origin ChangeToken) ([]imap.Flag, bool) {
+	if origin == 0 {
+		return nil, false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var flags []imap.Flag
+	found := false
+	for _, batch := range q.items {
+		if batch == nil || batch.Origin != origin {
+			continue
+		}
+		for _, change := range batch.Changes {
+			if update, ok := change.(*UpdateMailboxFlags); ok && update != nil {
+				flags = slices.Clone(update.Flags)
+				found = true
+			}
+		}
+	}
+	return flags, found
+}
+
 // batchRemovesMessages reports whether a batch renumbers the mailbox by taking
 // messages out of it, which is the only thing RFC 3501 §7.4.1 restricts.
 func batchRemovesMessages(batch *UpdateBatch) bool {
@@ -493,6 +524,13 @@ func updateBatchSize(batch *UpdateBatch) int64 {
 					size += int64(len(flag))
 				}
 			}
+		case *UpdateMailboxFlags:
+			if change != nil {
+				size += 32
+				for _, flag := range change.Flags {
+					size += int64(len(flag))
+				}
+			}
 		case *UpdateExpunge:
 			size += 24
 		case *UpdateVanished:
@@ -512,6 +550,7 @@ type selectedState struct {
 	// default search source. See ext_c_multisearch.go.
 	name     string
 	uids     []imap.UID
+	flags    []imap.Flag
 	revision MailboxRevision
 	readOnly bool
 	maxUIDs  int
@@ -601,10 +640,15 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		}
 		return nil, err
 	}
+	flags := result.Snapshot.Flags
+	if flags == nil {
+		flags = result.Snapshot.Status.Flags
+	}
 	selected := &selectedState{
 		mailbox:  result.Mailbox,
 		name:     result.Snapshot.Status.Mailbox,
 		uids:     slices.Clone(result.Snapshot.UIDs),
+		flags:    slices.Clone(flags),
 		revision: result.Snapshot.Revision,
 		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
 		maxUIDs:  limits.MaxSelectedMessages,
@@ -684,6 +728,7 @@ type updateKind uint8
 
 const (
 	updateExists updateKind = iota + 1
+	updateMailboxFlags
 	updateMessageFlags
 	updateMessageExpunge
 	updateMessageVanished
@@ -702,6 +747,8 @@ func coalesceWireUpdates(updates []deliveredUpdate) []deliveredUpdate {
 		previous := &coalesced[len(coalesced)-1]
 		switch {
 		case previous.kind == updateExists && update.kind == updateExists:
+			*previous = update
+		case previous.kind == updateMailboxFlags && update.kind == updateMailboxFlags:
 			*previous = update
 		case previous.kind == updateMessageFlags && update.kind == updateMessageFlags && previous.uid == update.uid:
 			*previous = update
@@ -745,6 +792,14 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 			}
 			if !(suppress && accounting.effect == effectStore) {
 				delivered = append(delivered, deliveredUpdate{kind: updateMessageFlags, seqNum: seq, uid: change.UID, flags: slices.Clone(change.Flags), modSeq: change.ModSeq})
+			}
+		case *UpdateMailboxFlags:
+			if change == nil {
+				return nil, fmt.Errorf("%w: nil mailbox FLAGS update", ErrRevisionMismatch)
+			}
+			if !slices.Equal(s.flags, change.Flags) {
+				s.flags = slices.Clone(change.Flags)
+				delivered = append(delivered, deliveredUpdate{kind: updateMailboxFlags, flags: slices.Clone(change.Flags)})
 			}
 		case *UpdateExpunge:
 			if change == nil {
