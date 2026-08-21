@@ -47,8 +47,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 #### Fixed
 
 - STORE-created keywords are announced in an untagged mailbox `FLAGS` response
-  before their first FETCH FLAGS appearance. The imaptest triage was removed;
-  the unfiltered stress workload and a raw loopback regression now pass.
+  before their first FETCH FLAGS appearance, including when a solicited FETCH
+  observes backend state newer than the connection's deferred update queue.
+  The imaptest triage was removed; repeated unfiltered stress workloads and raw
+  wire regressions now pass.
 
 #### Removed
 

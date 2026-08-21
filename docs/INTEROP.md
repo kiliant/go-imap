@@ -301,9 +301,12 @@ the complete set through `UpdateMailboxFlags`; the framework orders it before
 the STORE's first keyword-bearing FETCH response and delivers the same ordered
 update to other selected sessions. The memory backend also keeps applicable
 keywords in a persistent mailbox registry rather than withdrawing one when its
-last current message reference disappears. `TestStoreCreatedKeywordReannouncesMailboxFlags`
-pins creation and persistence at the raw wire boundary. The matching imaptest
-triage entry was removed, and `TestImaptestStress` passes with no ignored server
+last current message reference disappears. A final wire-level guard announces
+any still-unknown flag immediately before a FETCH FLAGS response; this covers a
+solicited FETCH reading current backend state while an older EXPUNGE deliberately
+keeps that connection's later mailbox update queued. The raw regressions pin
+both creation/persistence and FETCH ordering. The matching imaptest triage entry
+was removed, and repeated `TestImaptestStress` runs pass with no ignored server
 findings.
 
 The scripted corpus is a third, different case: it never ran at all. imaptest's

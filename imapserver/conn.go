@@ -948,6 +948,9 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		if update.modSeq != 0 {
 			data.Items[imap.FetchDataKey("MODSEQ")] = []imap.FetchData{imap.FetchDataModSeq(update.modSeq)}
 		}
+		if err := ensureFetchFlagsAdvertised(c, data); err != nil {
+			return err
+		}
 		// UIDONLY reshapes unilateral responses too: a client that enabled it
 		// has discarded the machinery for interpreting a sequence number, so
 		// one arriving unsolicited is worse than none at all.

@@ -65,3 +65,33 @@ func TestOpaqueFetchLiteralLimitIsProtocolLimit(t *testing.T) {
 		t.Fatalf("limit error = %v", err)
 	}
 }
+
+func TestFetchAdvertisesNewKeywordsBeforeFlagsData(t *testing.T) {
+	var wire bytes.Buffer
+	c := &conn{encoder: imapwire.NewEncoder(&wire, &imapwire.EncoderOptions{ServerResponse: true})}
+	c.state.selected = &selectedState{flags: []imap.Flag{imap.FlagSeen}}
+	data := &imap.FetchMessageData{SeqNum: 4, Items: map[imap.FetchDataKey][]imap.FetchData{
+		imap.FetchDataKey(imap.FetchItemFlags): {
+			imap.FetchDataFlags{imap.FlagSeen, "$Label4", "$Label5"},
+		},
+	}}
+
+	if err := writeFetchLikeResponse(c, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.encoder.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	got := wire.String()
+	flagsAt := strings.Index(got, "* FLAGS ")
+	fetchAt := strings.Index(got, "* 4 FETCH ")
+	if flagsAt < 0 || fetchAt < 0 || flagsAt > fetchAt {
+		t.Fatalf("mailbox FLAGS did not precede FETCH FLAGS:\n%s", got)
+	}
+	if !strings.Contains(got[:fetchAt], "$Label4") || !strings.Contains(got[:fetchAt], "$Label5") {
+		t.Fatalf("mailbox FLAGS did not announce every fetched keyword:\n%s", got)
+	}
+	if !imap.ContainsFlag(c.state.selected.flags, "$Label4") || !imap.ContainsFlag(c.state.selected.flags, "$Label5") {
+		t.Fatalf("selected applicable flags were not advanced: %v", c.state.selected.flags)
+	}
+}
