@@ -23,6 +23,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Root module — `github.com/kiliant/go-imap`
+
+#### Added
+
+- `cmd/imapcli`, a read-only command-line client that lists folders, lists
+  messages and prints one message by UID, using EXAMINE and `BODY.PEEK[]` so
+  it never changes server state. A `main` package: no exported API change.
+
 ## [imapserver/v0.2.0] - 2026-10-03
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
