@@ -87,6 +87,21 @@ set and conformance harness (T18–T25) are complete. One `imaptest` conformance
 finding remains recorded: a keyword first created by `STORE` is not re-announced
 in an untagged `FLAGS` response. See `docs/INTEROP.md`.
 
+## Command-line tool
+
+`cmd/imapcli` is a small read-only client for looking at a real mailbox: it
+lists folders as a tree, lists messages, and prints one message by UID. It
+opens mailboxes with EXAMINE and reads bodies with `BODY.PEEK[]`, so it never
+sets `\Seen` or changes anything else on the server.
+
+```bash
+go install github.com/kiliant/go-imap/cmd/imapcli@latest
+IMAP_PASS=… imapcli -addr mail.example:993 -tls -user alice -mailbox INBOX
+```
+
+It is also the library's own external consumer: it uses only the exported
+`imap` and `imapclient` API, exactly as any other program would.
+
 ## Documentation
 
 | Document | Contents |
