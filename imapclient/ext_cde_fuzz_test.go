@@ -120,6 +120,8 @@ func FuzzReadQuotaResponse(f *testing.F) {
 		" \"root\" (STORAGE -1 512)\r\n",
 		" \"root\" (STORAGE 10)\r\n",
 		" \"root\" (STORAGE 9223372036854775808 1)\r\n",
+		" \"ROOT\"\r\n",
+		" \"ROOT\" \r\n",
 	}, func(d *imapwire.Decoder) (any, error) { return readQuotaResponse(d) })
 }
 
