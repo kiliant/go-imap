@@ -41,7 +41,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `imapclient.Client.GetQuotaRoot` and `GetQuota` accept a QUOTA response with
   no resource list, as Courier-IMAP sends for a root without limits, and report
   the root with no resources instead of failing the command with a protocol
-  error.
+  error. `GetQuota` likewise reports the requested root with no resources when
+  the server completes without any QUOTA response, as Apache James 3.8 does.
 
 ## [imapserver/v0.2.0] - 2026-10-03
 

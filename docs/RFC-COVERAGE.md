@@ -341,8 +341,9 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^t26d]: Verified by T26's live tests. QUOTA (GETQUOTAROOT, and GETQUOTA
     where the server permits it) on Stalwart, GreenMail, Cyrus and Courier.
     Courier-IMAP sends `* QUOTA "ROOT"` without the resource list RFC 9208
-    requires; the client now reads it as the empty list it means rather than
-    failing the command. ACL (MYRIGHTS on the user's own mailbox, GETACL where
+    requires, and Apache James 3.8 answers GETQUOTA with no QUOTA response at
+    all; the client now reads both as the root with no resources they mean
+    rather than failing the command. ACL (MYRIGHTS on the user's own mailbox, GETACL where
     the user holds `a`) on Stalwart, Cyrus and Courier. NOTIFY (an EXISTS pushed
     to a watching session after another session's APPEND, with no command in
     between) on Dovecot and Cyrus; Cyrus needs its `idled` daemon for that,

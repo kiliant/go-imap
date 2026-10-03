@@ -45,6 +45,10 @@ type QuotaResourceLimit = imap.QuotaResourceLimit
 // GetQuota returns the resource usage and limits for quotaRoot.
 // QUOTA, RFC 9208 section 4.1.1.
 //
+// A root the server reports without any resource — an empty list, no list,
+// or no QUOTA response at all, all of which deployed servers send for a root
+// with no limits — comes back with Resources empty rather than as an error.
+//
 // It requires a capability whose name is "QUOTA" or starts with "QUOTA=".
 func (c *Client) GetQuota(ctx context.Context, quotaRoot string, options *GetQuotaOptions) (*QuotaData, error) {
 	_ = options
@@ -74,7 +78,11 @@ func (c *Client) GetQuota(ctx context.Context, quotaRoot string, options *GetQuo
 		return nil, err
 	}
 	if !got {
-		return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "GETQUOTA completed without a QUOTA response"}
+		// RFC 9208 section 4.1.1 has GETQUOTA answer with a QUOTA response.
+		// Apache James 3.8 completes with a bare OK for a root with no limits;
+		// report that root with no resources, which is what it means, rather
+		// than fail a command the server says succeeded.
+		return &QuotaData{Root: quotaRoot}, nil
 	}
 	return data, nil
 }
