@@ -23,7 +23,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+## [imapserver/v0.2.0] - 2026-10-03
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Still requires root `v1.1.0`: the root module has no code change since that tag,
+so no root release precedes this one. Two deliberate breaks, both in the
+capability-witness surface and both reported by `apidiff` against
+`imapserver/v0.1.0`; a backend migrates with the signature change below and by
+answering `"MOVE"` from `SupportsCapability` where it implemented `MoveSupport`.
 
 #### Added
 
@@ -549,5 +557,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.0...HEAD
-[1.0.0]: https://github.com/kiliant/go-imap/releases/tag/v1.0
+[Unreleased]: https://github.com/kiliant/go-imap/compare/imapserver/v0.2.0...HEAD
+[imapserver/v0.2.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.2.0
+[1.1.0]: https://github.com/kiliant/go-imap/releases/tag/v1.1.0
+[imapserver/v0.1.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.1.0
+[1.0.0]: https://github.com/kiliant/go-imap/releases/tag/v1.0.0

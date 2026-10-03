@@ -94,7 +94,7 @@ the proxy, and the workspace is the thing being bypassed.
 ```sh
 git tag -a v1.1.0        -m 'go-imap v1.1.0'
 git tag -a imapserver/v0.1.0 -m 'imapserver v0.1.0'
-git push github v1.1.0 imapserver/v0.1.0
+git push origin v1.1.0 imapserver/v0.1.0
 ```
 
 `imapserver/v0.1.0` is Go's own convention for a nested module's tag, not a
