@@ -323,3 +323,41 @@ func firstBodySection(t *testing.T, msg *imap.FetchMessageData) *imap.FetchDataB
 	t.Fatal("no BODY section")
 	return nil
 }
+
+// TestDeflateConnCloseUnblocksReader pins the shutdown order. The client's
+// reader goroutine sits in Read for as long as the connection is idle, holding
+// the read lock until the socket returns, and only closing the socket makes it
+// return. A Close that takes the locks before closing the socket therefore
+// waits forever on every idle compressed connection; found by the T26 interop
+// run against Cyrus 3.10.
+func TestDeflateConnCloseUnblocksReader(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	dc, err := newDeflateConn(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readReturned := make(chan error, 1)
+	go func() {
+		_, err := dc.Read(make([]byte, 16))
+		readReturned <- err
+	}()
+	// Give the reader time to block inside Read with the lock held.
+	time.Sleep(50 * time.Millisecond)
+
+	closed := make(chan error, 1)
+	go func() { closed <- dc.Close() }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return while a Read was blocked on the idle connection")
+	}
+	select {
+	case err := <-readReturned:
+		if err == nil {
+			t.Fatal("blocked Read returned no error after Close")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked Read did not return after Close")
+	}
+}
