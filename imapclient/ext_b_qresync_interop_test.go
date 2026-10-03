@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -480,7 +481,8 @@ func TestGroupBStatusItemsInterop(t *testing.T) {
 			})
 
 			t.Run("appendlimit", func(t *testing.T) {
-				if len(client.CapabilityValues("APPENDLIMIT")) == 0 {
+				advertised := client.CapabilityValues("APPENDLIMIT")
+				if len(advertised) == 0 {
 					harness.RequireCapabilities(t, capabilities, "APPENDLIMIT")
 				}
 				data, err := client.AppendLimit(ctx, mailbox, nil)
@@ -489,6 +491,18 @@ func TestGroupBStatusItemsInterop(t *testing.T) {
 				}
 				if !data.Unlimited && data.Limit <= 0 {
 					t.Fatalf("APPENDLIMIT = %#v, want a positive limit or Unlimited", data)
+				}
+				// RFC 7889 section 3.1: a value on the capability is the one
+				// limit for every mailbox, so it must come back unchanged and
+				// marked server-wide rather than as a per-mailbox answer.
+				if len(advertised) > 0 {
+					want, err := strconv.ParseInt(advertised[0], 10, 64)
+					if err != nil {
+						t.Fatalf("APPENDLIMIT capability value %q: %v", advertised[0], err)
+					}
+					if !data.ServerWide || data.Limit != want {
+						t.Fatalf("APPENDLIMIT = %#v, want the advertised server-wide %d", data, want)
+					}
 				}
 			})
 		})

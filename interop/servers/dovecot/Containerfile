@@ -1,4 +1,5 @@
 FROM docker.io/dovecot/dovecot:2.4.3
 
+COPY conf.d/98-interop-appendlimit.conf /etc/dovecot/conf.d/98-interop-appendlimit.conf
 COPY conf.d/99-interop-auth.conf /etc/dovecot/conf.d/99-interop-auth.conf
 COPY saslprep-passwd /etc/dovecot/saslprep-passwd

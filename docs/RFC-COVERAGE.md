@@ -118,7 +118,7 @@ everything landed by T23 stops at `done`.
     backend witnessing `WITHIN`.
 
 Verified against the servers that advertise each capability — Dovecot 2.4.3,
-Stalwart 0.11.8 and Cyrus 3.x for most, plus Courier for CHILDREN — with the
+Stalwart 0.11.8 and Cyrus 3.10 for most, plus Courier for CHILDREN — with the
 emulated paths exercised on GreenMail 2.1.9 and Courier, which advertise only
 UIDPLUS, MOVE and CHILDREN between them. SEARCHRES has exactly two independent
 servers, Dovecot and Stalwart.
@@ -141,9 +141,9 @@ servers, Dovecot and Stalwart.
 | OBJECTID | 8474 | verified [^objectid] | done [^srvitems] |
 | SAVEDATE | 8514 | verified [^savedate] | done [^srvitems] |
 | STATUS=SIZE | 8438 | verified | done [^srvitems] |
-| APPENDLIMIT | 7889 | done [^appendlimit] | done [^srvitems] |
+| APPENDLIMIT | 7889 | verified [^appendlimit] | done [^srvitems] |
 | PREVIEW | 8970 | verified [^preview] | done [^srvitems] |
-| REPLACE | 8508 | done [^replace] | done [^srvreplace] |
+| REPLACE | 8508 | verified [^replace] | done [^srvreplace] |
 
 [^srvcondstore]: Backend-delegated through the optional `CondStoreMailbox`.
     Conditional STORE reports rejected messages via MODIFIED on a successful
@@ -174,19 +174,21 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^savedate]: Typed `imap.FetchDataSaveDate` decode verified against Dovecot
     and Cyrus.
 
-[^appendlimit]: Only Cyrus advertises `APPENDLIMIT` anywhere in the matrix, and
-    only in the server-wide `APPENDLIMIT=4294967295` form, so the two-server
-    bar for `verified` cannot be met. Both forms RFC 7889 defines are
-    implemented and unit-tested, and the server-wide form is exercised live
-    against Cyrus.
+[^appendlimit]: The server-wide `APPENDLIMIT=<n>` form is verified against
+    Cyrus 3.10 and Dovecot 2.4.3: the interop test requires the returned limit
+    to equal the advertised value and be marked server-wide. Dovecot only
+    advertises it when the quota plugin reports a per-message limit, so the
+    harness sets `quota_mail_size`; until 2026-10-03 nothing did, and Cyrus was
+    the only advertising server. The per-mailbox `STATUS (APPENDLIMIT)` form is
+    unit-tested only — no server in the default matrix uses it.
 
 [^preview]: Typed `imap.FetchDataPreview` decode and the parenthesised
     `PREVIEW (LAZY)` request form verified against Dovecot, Stalwart and Cyrus.
 
-[^replace]: Only Dovecot advertises `REPLACE`, so the two-server bar cannot be
-    met. The native command is verified against Dovecot and the opt-in
-    non-atomic fallback of RFC 8508 section 3.4 against Stalwart, GreenMail,
-    Cyrus and Courier.
+[^replace]: The native command is verified against Dovecot 2.4.3 and Cyrus
+    3.10.2, which added REPLACE after the 3.6 series the harness ran until
+    2026-10-03. The opt-in non-atomic fallback of RFC 8508 section 3.4 is
+    exercised against Stalwart, GreenMail and Courier.
 
 ## Group C — content & structure (task T10)
 

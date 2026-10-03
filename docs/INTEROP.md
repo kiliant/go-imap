@@ -49,10 +49,10 @@ Probed on darwin/arm64, 2026-07-31.
 
 | Server | Image | Arch | Tier | Why it is in the matrix |
 |---|---|---|---|---|
-| Dovecot | local build from `docker.io/dovecot/dovecot:2.4.3` | arm64 native | 2 | The most deployed IMAP server; the local layer enables the T04 SASL matrix |
+| Dovecot | local build from `docker.io/dovecot/dovecot:2.4.3` | arm64 native | 2 | The most deployed IMAP server; the local layer enables the T04 SASL matrix and, through `quota_mail_size`, APPENDLIMIT |
 | Stalwart | local build: `interop/servers/stalwart/Containerfile` | arm64 native | 1 | Modern, aggressive RFC coverage incl. IMAP4rev2, OBJECTID, PARTIAL |
 | GreenMail | `docker.io/greenmail/standalone:2.1.9` | arm64 native | 1 | Deliberately minimal — catches assumptions about optional capabilities |
-| Cyrus IMAP | local build: `interop/servers/cyrus/Containerfile` | arm64 native | 2 | Large independent codebase; the ANNOTATE/METADATA and ACL reference |
+| Cyrus IMAP | local build: `interop/servers/cyrus/Containerfile` (Debian 13, Cyrus 3.10.2) | arm64 native | 2 | Large independent codebase; the ANNOTATE/METADATA and ACL reference, and the second native REPLACE |
 | Courier | local build: `interop/servers/courier/Containerfile` | arm64 native | 2 | Older, quirky, rev1-only — the compatibility canary |
 | Apache James | `docker.io/apache/james:demo-3.8.2` | **amd64 only** | 3 | JVM implementation, different bug class |
 
