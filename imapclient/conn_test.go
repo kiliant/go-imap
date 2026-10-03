@@ -346,3 +346,90 @@ func testCertificate(t *testing.T) tls.Certificate {
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
+
+// TestUnilateralStatusResponseAlertAndInProgress pins that an untagged status
+// response no command claims reaches the caller with its code. Before T27 it
+// was dropped, losing ALERT text RFC 3501 section 7.1 says must reach the
+// user and every INPROGRESS notification (RFC 9585). The greeting is not
+// delivered: it is the connection's own status, not unilateral data.
+func TestUnilateralStatusResponseAlertAndInProgress(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	updates := make(chan *StatusResponse, 3)
+	go func() {
+		_, _ = serverConn.Write([]byte("* OK [ALERT] greeting is not unilateral\r\n"))
+		_, _ = serverConn.Write([]byte("* OK [ALERT] System shutdown in 10 minutes\r\n"))
+		_, _ = serverConn.Write([]byte("* OK [INPROGRESS (\"A1\" 5 10)] Searching\r\n"))
+		_, _ = serverConn.Write([]byte("* NO [X-FUTURE some args] unknown code\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		StatusResponse: func(data *StatusResponse) { updates <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got []*StatusResponse
+	for len(got) < 3 {
+		select {
+		case data := <-updates:
+			got = append(got, data)
+		case <-ctx.Done():
+			t.Fatalf("received %d status responses, want 3", len(got))
+		}
+	}
+	if got[0].Status != "OK" || got[0].Code != imap.CodeAlert || got[0].Text != "System shutdown in 10 minutes" {
+		t.Fatalf("ALERT = %#v", got[0])
+	}
+	progress, err := ParseInProgressArgs(got[1].CodeArgs)
+	if got[1].Code != "INPROGRESS" || err != nil || progress.Tag != "A1" || progress.Progress != 5 || progress.Goal != 10 {
+		t.Fatalf("INPROGRESS = %#v (%v, %v)", got[1], progress, err)
+	}
+	if got[2].Status != "NO" || got[2].Code != "X-FUTURE" || got[2].CodeArgs != "some args" {
+		t.Fatalf("unknown code = %#v", got[2])
+	}
+}
+
+// TestUnilateralMailboxStatusAndList pins the delivery of NOTIFY's events for
+// mailboxes other than the selected one (RFC 5465 section 5): an unsolicited
+// STATUS for a change, an unsolicited LIST for MailboxName. Both were
+// discarded before T27.
+func TestUnilateralMailboxStatusAndList(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	statuses := make(chan *StatusData, 1)
+	lists := make(chan *ListData, 1)
+	go func() {
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		_, _ = serverConn.Write([]byte("* STATUS Archive (MESSAGES 12 UIDNEXT 40)\r\n"))
+		_, _ = serverConn.Write([]byte("* LIST (\\NonExistent) \"/\" Gone\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		MailboxStatus: func(data *StatusData) { statuses <- data },
+		List:          func(data *ListData) { lists <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case data := <-statuses:
+		if n, ok := data.Number(imap.StatusItemMessages); data.Mailbox != "Archive" || !ok || n != 12 {
+			t.Fatalf("STATUS = %#v", data)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive the unsolicited STATUS")
+	}
+	select {
+	case data := <-lists:
+		if data.Mailbox != "Gone" || data.Delimiter != '/' || !imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) {
+			t.Fatalf("LIST = %#v", data)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive the unsolicited LIST")
+	}
+}

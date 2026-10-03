@@ -530,3 +530,79 @@ func TestExtDNotifyInterop(t *testing.T) {
 		}
 	})
 }
+
+// TestExtCESortInterop checks ESORT (RFC 5267) against the same corpus as
+// SORT: the extended form must return the order the plain form does, with
+// MIN and MAX as its first and last positions rather than numeric extremes.
+func TestExtCESortInterop(t *testing.T) {
+	t26ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, client *imapclient.Client) {
+		harness.RequireCapabilities(t, caps, "SORT", "ESORT")
+		t26SortCorpus(t, ctx, server, client, t08Mailbox(t, ctx, server, client, "esort"))
+		keys := []imap.SortKeySpec{{Key: imap.SortKeySize, Reverse: true}}
+		plain, err := client.SortUID(ctx, keys, imap.SearchAll, nil)
+		if err != nil {
+			t08Fail(t, server, client, "UID SORT (REVERSE SIZE)", err)
+		}
+		data, err := client.SortExtendedUID(ctx, keys, imap.SearchAll, &imapclient.ESortOptions{
+			ReturnOptions: []imapclient.SearchReturnOption{
+				imapclient.SearchReturnMin, imapclient.SearchReturnMax,
+				imapclient.SearchReturnCount, imapclient.SearchReturnAll,
+			},
+		})
+		if err != nil {
+			t08Fail(t, server, client, "UID SORT RETURN (MIN MAX COUNT ALL) (REVERSE SIZE)", err)
+		}
+		if data.Emulated {
+			t.Fatal("ESORT was emulated on a server that advertises it")
+		}
+		order := plain.UIDs
+		if len(order) != 3 || data.Count != 3 {
+			t.Fatalf("SORT = %v, ESORT COUNT = %d; want 3 each", order, data.Count)
+		}
+		var all []imap.UID
+		for _, r := range data.AllUIDs {
+			for uid := r.Start; ; uid++ {
+				all = append(all, uid)
+				if uid >= r.Stop {
+					break
+				}
+			}
+		}
+		if fmt.Sprint(all) != fmt.Sprint(order) {
+			if reason, known := t26ESortAllIncomplete[server.Profile.Name]; known {
+				// The client reports the wire value verbatim; Values keeps it.
+				t.Logf("%s: ESORT ALL = %v (wire %q) against SORT %v; known server deviation: %s",
+					server.Profile.Name, all, data.Values[imap.ESearchReturnKeyAll], order, reason)
+				return
+			}
+			t.Fatalf("ESORT ALL = %v (wire %q), want the SORT order %v", all, data.Values[imap.ESearchReturnKeyAll], order)
+		}
+		// RFC 5267 section 3.1 defines MIN and MAX as "the lowest/highest
+		// sorted message". Dovecot reads that as the first and last position
+		// in the sort order; Cyrus 3.10 and Stalwart 0.11.8 as the numerically
+		// lowest and highest match. Both are matches, which is all the client
+		// relies on; which reading a server takes is logged, not asserted.
+		member := func(n uint32) bool {
+			for _, uid := range order {
+				if uint32(uid) == n {
+					return true
+				}
+			}
+			return false
+		}
+		if !data.HasMin || !data.HasMax || !member(data.Min) || !member(data.Max) {
+			t.Fatalf("ESORT MIN/MAX = %d/%d, want two of the matches %v", data.Min, data.Max, order)
+		}
+		reading := "numeric"
+		if imap.UID(data.Min) == order[0] && imap.UID(data.Max) == order[len(order)-1] {
+			reading = "sort-order"
+		}
+		t.Logf("%s: ESORT MIN/MAX = %d/%d over sort order %v (%s reading)", server.Profile.Name, data.Min, data.Max, order, reading)
+	})
+}
+
+// t26ESortAllIncomplete lists servers observed to return an ESORT ALL list
+// that disagrees with their own COUNT and SORT answers. Probed 2026-10-03.
+var t26ESortAllIncomplete = map[string]string{
+	"stalwart": "Stalwart 0.11.8 answers COUNT 3 with ALL 1,3 for three matches sorted 2,3,1",
+}

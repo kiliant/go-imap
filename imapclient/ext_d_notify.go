@@ -116,9 +116,11 @@ type NotifyOptions struct {
 // arrive through [UnilateralDataHandler] (Exists, Expunge, Fetch, Vanished) —
 // the same path IDLE uses. Do not install a second notification mechanism.
 //
-// STATUS and MailboxName events for non-selected mailboxes are currently
-// discarded by the connection-level handler unless a future
-// UnilateralDataHandler field claims them; see the T11 escalation note.
+// Events for mailboxes other than the selected one arrive as unsolicited
+// STATUS responses, through [UnilateralDataHandler.MailboxStatus], and the
+// MailboxName event as unsolicited LIST responses, through
+// [UnilateralDataHandler.List]. A rename's OLDNAME is not modelled yet, so
+// such an event carries the new name only.
 func (c *Client) Notify(ctx context.Context, filters []NotifyFilter, options *NotifyOptions) error {
 	if ctx == nil {
 		return &imap.Error{Type: imap.ErrorTypeProtocol, Text: "NOTIFY requires a non-nil context"}

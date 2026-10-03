@@ -276,6 +276,16 @@ func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.Re
 		if cond.Text.Code == "CAPABILITY" {
 			c.addCapabilities(strings.Fields(cond.Text.Args))
 		}
+		if !greeting && (upper == "OK" || upper == "NO" || upper == "BAD") {
+			if h := c.opts.UnilateralData; h != nil && h.StatusResponse != nil {
+				h.StatusResponse(&StatusResponse{
+					Status:   upper,
+					Code:     imap.ResponseCode(cond.Text.Code),
+					CodeArgs: cond.Text.Args,
+					Text:     cond.Text.Text,
+				})
+			}
+		}
 		c.trace(TraceServer, "* "+upper)
 		if upper == "BYE" && !greeting {
 			// RFC 3501 section 7.1.5: the server closes the connection after an
@@ -414,6 +424,31 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 			c.trace(TraceServer, "* RECENT")
 			return nil
 		}
+	}
+	if !resp.hasNum && resp.name == "STATUS" {
+		// Unsolicited STATUS: NOTIFY's report for a non-selected mailbox
+		// (RFC 5465 section 5). The STATUS command's parser reads it.
+		data := &StatusData{Values: make(map[imap.StatusItemKeyword]any)}
+		if _, err := statusCollector(data)(resp); err != nil {
+			return err
+		}
+		if h != nil && h.MailboxStatus != nil {
+			h.MailboxStatus(data)
+		}
+		c.trace(TraceServer, "* STATUS")
+		return nil
+	}
+	if !resp.hasNum && resp.name == "LIST" {
+		// Unsolicited LIST: NOTIFY's MailboxName event (RFC 5465 section 5).
+		var data []*ListData
+		if _, err := listCollector("LIST", &data, 1)(resp); err != nil {
+			return err
+		}
+		if h != nil && h.List != nil && len(data) == 1 {
+			h.List(data[0])
+		}
+		c.trace(TraceServer, "* LIST")
+		return nil
 	}
 	if !resp.hasNum && resp.name == "VANISHED" {
 		data, err := readVanished(resp.dec)

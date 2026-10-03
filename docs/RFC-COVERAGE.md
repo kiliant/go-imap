@@ -296,10 +296,10 @@ CONDSTORE `MODIFIED` on tagged OK.
 | METADATA | 5464 | done | done |
 | METADATA-SERVER | 5464 | done | done |
 | LIST-METADATA | 9590 | done | done |
-| NOTIFY | 5465 | verified [^t26d] | done [^srvnotify] |
+| NOTIFY | 5465 | verified [^t26d] [^t27notify] | done [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
-| INPROGRESS | 9585 | done | done [^srvinprogress] |
+| INPROGRESS | 9585 | done [^t27inprogress] | done [^srvinprogress] |
 | MESSAGELIMIT= | 9738 | done | done |
 | SAVELIMIT= | 9738 | done | done |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
@@ -330,6 +330,22 @@ CONDSTORE `MODIFIED` on tagged OK.
     because a dropped notification costs a refresh while a dropped selection
     update desynchronises a view in active use. Overflow is reported rather than
     hidden.
+
+[^t27notify]: The live test covers selected-mailbox events. Events for other
+    mailboxes — the unsolicited STATUS and LIST responses of RFC 5465
+    section 5 — were discarded by the client until T27 added
+    `UnilateralDataHandler.MailboxStatus` and `.List`; they are unit-tested
+    only so far. A rename's `OLDNAME` extended data is not modelled yet, so a
+    rename event carries the new name only.
+
+[^t27inprogress]: Until T27 the response code was parsed but never delivered:
+    an untagged `OK [INPROGRESS ...]` no command claimed was dropped, and so
+    was every other unclaimed status response, including connection-level
+    `[ALERT]` text RFC 3501 section 7.1 says must reach the user.
+    `UnilateralDataHandler.StatusResponse` now receives them all, with the
+    code and its arguments, for `ParseInProgressArgs` to decode. No server in
+    the matrix emits INPROGRESS on the short commands the tests issue, so it
+    stays `done`.
 
 [^srvinprogress]: The untagged OK progress response shape is framework-owned and
     advertised; no backend surface is required to emit one.
@@ -366,7 +382,7 @@ break the client; full command support is best-effort.
 | I18NLEVEL=2 | 5255 | done | done [^srvi18n2] | COMPARATOR command |
 | CONTEXT=SEARCH | 5267 | done | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
 | CONTEXT=SORT | 5267 | done | done [^srvcontext] | as above |
-| ESORT | 5267 | done | done [^srvesort] | capability + RETURN keywords |
+| ESORT | 5267 | verified [^esort] | done [^srvesort] | `SortExtended` / `SortExtendedUID` |
 | FILTERS | 5466 | done | done [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
 | IMAPSIEVE= | 6785 | deferred | deferred | server-side; parse only |
@@ -397,6 +413,17 @@ break the client; full command support is best-effort.
     backend re-entrancy the design forbids; RFC 5267 §4.3 permits REMOVEFROM
     without ADDTO, and a guessed ADDTO would put a message in the client's
     result set that never matched.
+
+[^esort]: Until T27 this row overstated: the client detected the capability
+    but could not send `SORT RETURN (...)` at all. `Client.SortExtended` and
+    `SortExtendedUID` now issue it and return ESEARCH data, falling back to a
+    plain SORT for MIN, MAX, ALL and COUNT when only SORT is advertised.
+    Verified live on Dovecot 2.4.3 and Cyrus 3.10: ALL arrives in the order a
+    plain SORT returns. RFC 5267 section 3.1 calls MIN and MAX "the
+    lowest/highest sorted message", which Dovecot reads as positions in the
+    sort order and Cyrus and Stalwart as numeric extremes; the client passes
+    either through. Stalwart 0.11.8 also answers ALL with fewer numbers than
+    its own COUNT, which the test records as a server deviation.
 
 [^srvesort]: The ESEARCH-shaped response for SORT. MIN and MAX are the ends of
     the *sorted* order rather than the numerically smallest and largest, and ALL
