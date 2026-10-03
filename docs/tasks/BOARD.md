@@ -67,6 +67,8 @@ call, not the originating task's.
 | [T23](T23-server-extensions.md) | Server extensions, groups A–E | M6 | T22 | `imapserver/ext_*.go` | extensions |
 | [T24](T24-server-conformance.md) | Server conformance, interop and fuzzing | M6 | T22 | `imapserver/**/*_fuzz_test.go`, `imapserver/interop/**` | fuzz-hardening + interop-harness |
 | [T25](T25-server-release.md) | Server API review, docs, release | M6 | T23, T24 | `imapserver` doc comments, `examples/server/**` | docs-release + api-guardian |
+| [T26](T26-ext-cde-interop.md) | Live interop for client extension groups C–E | post-M6 | T10, T11, T12 | `imapclient/ext_cde_interop_test.go`, group C–E client cells in `docs/RFC-COVERAGE.md` | extensions + interop-harness |
+| [T27](T27-client-gaps-from-t11.md) | Client gaps T11 left open: ESORT, INPROGRESS delivery, NOTIFY non-selected events, UIDAFTER/UIDBEFORE | post-M6 | T11 | see spec | extensions + api-guardian |
 
 T16 is deliberately out of numeric order: it is the design task, it has no
 dependencies, and T17 depends on it. See "Why T16 moved" below.

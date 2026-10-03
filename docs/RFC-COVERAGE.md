@@ -194,18 +194,18 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 | Capability | RFC | Client | Server |
 |---|---|---|---|
-| BINARY | 3516 | done | done [^srvbinary] |
-| CATENATE | 4469 | done | done [^srvcatenate] |
-| MULTIAPPEND | 3502 | done | done [^srvmultiappend] |
-| COMPRESS=DEFLATE | 4978 | done | done [^srvcompress] |
-| UTF8=ACCEPT | 9755 | done | done [^srvcompress] |
+| BINARY | 3516 | verified [^t26c] | done [^srvbinary] |
+| CATENATE | 4469 | verified [^t26c] | done [^srvcatenate] |
+| MULTIAPPEND | 3502 | verified [^t26c] | done [^srvmultiappend] |
+| COMPRESS=DEFLATE | 4978 | verified [^t26c] | done [^srvcompress] |
+| UTF8=ACCEPT | 9755 | verified [^t26c] | done [^srvcompress] |
 | UTF8=ALL | 5738, 9755 | done | — [^srvutf8] |
 | UTF8=APPEND | 5738, 9755 | done | done |
 | UTF8=ONLY | 9755 | done | — [^srvutf8] |
 | UTF8=USER | 5738, 9755 | done | — [^srvutf8] |
-| SORT | 5256 | done | done |
-| SORT=DISPLAY | 5957 | done | done |
-| THREAD | 5256 | done | done [^srvthread] |
+| SORT | 5256 | verified [^t26c] | done |
+| SORT=DISPLAY | 5957 | verified [^t26c] | done |
+| THREAD | 5256 | verified [^t26c] | done [^srvthread] |
 | MULTISEARCH | 7377 | done | done [^srvmultisearch] |
 | PARTIAL | 9394 | done | done [^srvpartial] |
 | SEARCH=FUZZY | 6203 | done | done [^srvfuzzy] |
@@ -269,20 +269,34 @@ CONDSTORE `MODIFIED` on tagged OK.
     criteria tree with no framework translation, so the capability is purely a
     claim about the backend and is gated on its witness.
 
+[^t26c]: Verified by T26's live tests (`imapclient/ext_cde_interop_test.go`),
+    each asserting the data the appended messages imply, not just a tagged OK.
+    BINARY (server-decoded base64 with a NUL, and BINARY.SIZE) and MULTIAPPEND
+    on Dovecot, Stalwart and Cyrus; CATENATE (client TEXT plus a server-side
+    RFC 5092 URL) and COMPRESS=DEFLATE (a 140 KiB literal each way) on Dovecot
+    and Cyrus; UTF8=ACCEPT (a non-ASCII mailbox name round-tripped through LIST
+    and a non-ASCII BODY search) on Dovecot, Stalwart and Courier; SORT on all
+    five, SORT=DISPLAY on Dovecot, Stalwart and Cyrus; THREAD on Dovecot,
+    Stalwart, Cyrus and Courier. The COMPRESS run found a deadlock in
+    `Client.Close` on an idle compressed connection, fixed with it. Stalwart
+    0.11.8 and GreenMail 2.1.9 sort `FROM` by display name rather than by
+    address as RFC 5256 requires; that one ordering is logged, not asserted, on
+    those two servers.
+
 ## Group D — administrative & server-side (task T11)
 
 | Capability | RFC | Client | Server |
 |---|---|---|---|
-| QUOTA | 9208 | done | done |
+| QUOTA | 9208 | verified [^t26d] | done |
 | QUOTA= | 9208 | done | done [^srvquotares] |
 | QUOTASET | 9208 | done | done |
-| ACL | 4314 | done | done |
+| ACL | 4314 | verified [^t26d] | done |
 | RIGHTS= | 4314 | done | done [^srvrights] |
 | LIST-MYRIGHTS | 8440 | done | done |
 | METADATA | 5464 | done | done |
 | METADATA-SERVER | 5464 | done | done |
 | LIST-METADATA | 9590 | done | done |
-| NOTIFY | 5465 | done | done [^srvnotify] |
+| NOTIFY | 5465 | verified [^t26d] | done [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
 | INPROGRESS | 9585 | done | done [^srvinprogress] |
@@ -323,6 +337,16 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvjmap]: Advertisement and response code only, witnessed by name through
     `CapabilitySupport`. The reference backend serves no JMAP endpoint and so
     does not witness it.
+
+[^t26d]: Verified by T26's live tests. QUOTA (GETQUOTAROOT, and GETQUOTA
+    where the server permits it) on Stalwart, GreenMail, Cyrus and Courier.
+    Courier-IMAP sends `* QUOTA "ROOT"` without the resource list RFC 9208
+    requires; the client now reads it as the empty list it means rather than
+    failing the command. ACL (MYRIGHTS on the user's own mailbox, GETACL where
+    the user holds `a`) on Stalwart, Cyrus and Courier. NOTIFY (an EXISTS pushed
+    to a watching session after another session's APPEND, with no command in
+    between) on Dovecot and Cyrus; Cyrus needs its `idled` daemon for that,
+    which the harness now starts.
 
 ## Group E — legacy & niche (task T11, lower priority)
 
