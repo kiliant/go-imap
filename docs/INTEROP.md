@@ -327,6 +327,13 @@ process per package, each owning an independent container lifecycle — and last
 because it is the slowest and because a failure there is our bug rather than a
 container's, which reads better at the end of a log than buried mid-run.
 
+Every suite runs with `-timeout 75m`. Go's default of 10 minutes is shorter than
+the limits these tests set themselves — 40 minutes for the imaptest image build,
+which compiles Dovecot from source, and 15 for its scripted run — so on a host
+where the build misses its layer cache the run used to end in a goroutine dump
+rather than in the skip or failure those limits exist to produce. Run the third
+suite by hand with the same flag.
+
 That puts `imaptest`, `mbsync` and the `goimap` capability table on the same
 nightly-and-push-to-main schedule as the client matrix, not on a developer's
 memory. The native job's timeout went to 120 minutes to absorb the Dovecot

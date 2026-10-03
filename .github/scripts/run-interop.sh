@@ -40,7 +40,13 @@ run_suite() {
   shift
   echo "===== $name ====="
   set +e
-  go test -v -count=1 -race -tags="$tags" "$@" 2>&1 | tee "$work_dir/$name.log"
+  # go test's default 10-minute limit is shorter than the suites' own: the
+  # imaptest image build allows 40 minutes (it compiles Dovecot from source)
+  # and its scripted run 15. A cold build on a slower host then ends in a
+  # goroutine dump instead of the skip or failure, with tool output, those
+  # limits exist to produce. 75 minutes covers both and stays inside the CI
+  # job's 120.
+  go test -v -count=1 -race -timeout 75m -tags="$tags" "$@" 2>&1 | tee "$work_dir/$name.log"
   local command_status=${PIPESTATUS[0]}
   set -e
   printf '%d\n' "$command_status" >"$work_dir/$name.status"
