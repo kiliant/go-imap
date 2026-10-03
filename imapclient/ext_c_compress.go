@@ -213,14 +213,20 @@ func (c *deflateConn) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// Close closes the transport before taking either lock. A Read or Write that
+// is blocked on the socket holds its lock until the socket returns, and only
+// closing it makes the socket return; the client's reader goroutine is blocked
+// in Read for as long as the connection is idle, so taking the locks first
+// deadlocks every Close of an idle compressed connection.
 func (c *deflateConn) Close() error {
+	err := c.Conn.Close()
 	c.write.Lock()
 	_ = c.w.Close()
 	c.write.Unlock()
 	c.read.Lock()
 	_ = c.r.Close()
 	c.read.Unlock()
-	return c.Conn.Close()
+	return err
 }
 
 func (c *deflateConn) SetDeadline(t time.Time) error {

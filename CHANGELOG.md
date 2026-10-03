@@ -31,6 +31,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   messages and prints one message by UID, using EXAMINE and `BODY.PEEK[]` so
   it never changes server state. A `main` package: no exported API change.
 
+#### Fixed
+
+- `imapclient.Client.Close` no longer deadlocks on an idle connection after
+  `Client.Compress`. The DEFLATE wrapper took its read lock before closing the
+  socket, while the reader goroutine held that lock blocked in a read only the
+  socket's close could end. Found by the first live COMPRESS test, against
+  Cyrus 3.10.
+- `imapclient.Client.GetQuotaRoot` and `GetQuota` accept a QUOTA response with
+  no resource list, as Courier-IMAP sends for a root without limits, and report
+  the root with no resources instead of failing the command with a protocol
+  error. `GetQuota` likewise reports the requested root with no resources when
+  the server completes without any QUOTA response, as Apache James 3.8 does.
+
 ## [imapserver/v0.2.0] - 2026-10-03
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`

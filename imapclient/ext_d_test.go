@@ -59,6 +59,50 @@ func TestGetQuotaAndQuotaRoot(t *testing.T) {
 	}
 }
 
+// TestGetQuotaWithoutQuotaResponse replays Apache James 3.8, which completes
+// GETQUOTA on a root with no limits with a bare OK and no QUOTA response.
+func TestGetQuotaWithoutQuotaResponse(t *testing.T) {
+	c, _ := extDDial(t, func(tag, line string) string {
+		if strings.Contains(line, "GETQUOTA") {
+			return tag + " OK GETQUOTA completed.\r\n"
+		}
+		return tag + " BAD unexpected\r\n"
+	})
+	extDReady(c, []string{"IMAP4rev1", "QUOTA"}, nil, false)
+
+	got, err := c.GetQuota(extDContext(t), "#private&interop@example.test", nil)
+	if err != nil {
+		t.Fatalf("GetQuota: %v", err)
+	}
+	if got.Root != "#private&interop@example.test" || len(got.Resources) != 0 {
+		t.Fatalf("GetQuota = %#v, want the requested root with no resources", got)
+	}
+}
+
+// TestGetQuotaRootWithoutResourceList replays Courier-IMAP 5, which omits the
+// quota-list RFC 9208 requires for a root with no limits. The root must still
+// be reported, with no resources, rather than the command failing.
+func TestGetQuotaRootWithoutResourceList(t *testing.T) {
+	c, _ := extDDial(t, func(tag, line string) string {
+		if strings.Contains(line, "GETQUOTAROOT") {
+			return "* QUOTAROOT \"INBOX\" \"ROOT\"\r\n* QUOTA \"ROOT\"\r\n" + tag + " OK GETQUOTAROOT Ok.\r\n"
+		}
+		return tag + " BAD unexpected\r\n"
+	})
+	extDReady(c, []string{"IMAP4rev1", "QUOTA"}, nil, false)
+
+	root, err := c.GetQuotaRoot(extDContext(t), "INBOX", nil)
+	if err != nil {
+		t.Fatalf("GetQuotaRoot: %v", err)
+	}
+	if len(root.Roots) != 1 || root.Roots[0] != "ROOT" {
+		t.Fatalf("Roots = %#v, want [ROOT]", root.Roots)
+	}
+	if len(root.Quotas) != 1 || root.Quotas[0].Root != "ROOT" || len(root.Quotas[0].Resources) != 0 {
+		t.Fatalf("Quotas = %#v, want one resource-less QUOTA for ROOT", root.Quotas)
+	}
+}
+
 func TestGetQuotaRequiresCapability(t *testing.T) {
 	c, _ := extDDial(t, func(tag, _ string) string { return tag + " OK\r\n" })
 	extDReady(c, []string{"IMAP4rev1"}, nil, false)

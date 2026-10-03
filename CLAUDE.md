@@ -118,7 +118,7 @@ tagged before the server module can be.
   is the whole of it, and is what CI runs.
 - Run `go test -count=1 -race -tags=interop ./imapclient`, then separately run
   `go test -count=1 -race -tags=interop ./interop/...`, then separately run
-  `go test -count=1 -race -tags=interop ./imapserver/interop/...` — the first two
+  `go test -count=1 -race -timeout 75m -tags=interop ./imapserver/interop/...` — the first two
   drive real servers under podman, including interop-tagged production-client
   tests; the third is the inverse, measuring our own server as a matrix entry and
   driving real third-party clients (`imaptest`, `mbsync`) against it. The
