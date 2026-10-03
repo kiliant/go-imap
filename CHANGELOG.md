@@ -30,6 +30,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `cmd/imapcli`, a read-only command-line client that lists folders, lists
   messages and prints one message by UID, using EXAMINE and `BODY.PEEK[]` so
   it never changes server state. A `main` package: no exported API change.
+- `imapclient.Client.SortExtended`, `imapclient.Client.SortExtendedUID` and
+  `imapclient.ESortOptions`: SORT with a RETURN list, answered as ESEARCH data.
+  ESORT, RFC 5267. The client previously detected ESORT but had no way to send
+  it. Falls back to a plain SORT for MIN, MAX, ALL and COUNT. Additive;
+  `apidiff` reports three compatible additions.
 
 #### Fixed
 

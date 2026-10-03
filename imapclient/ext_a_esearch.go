@@ -367,10 +367,12 @@ func (c *Client) searchPending() bool {
 	defer c.mu.Unlock()
 	for _, cmd := range c.pendingQ {
 		switch cmd.name {
-		case "SEARCH", "UID SEARCH", "ESEARCH", "UID ESEARCH":
+		case "SEARCH", "UID SEARCH", "ESEARCH", "UID ESEARCH", "SORT", "UID SORT":
 			// ESEARCH / UID ESEARCH are the MULTISEARCH command names (RFC 7377).
 			// Their collectors claim untagged ESEARCH the same way extended SEARCH
-			// does, so they must participate in this mutual exclusion.
+			// does, so they must participate in this mutual exclusion. So does an
+			// extended SORT (RFC 5267), which is answered by ESEARCH as well; a
+			// plain SORT is included because the name does not say which it is.
 			return true
 		}
 	}

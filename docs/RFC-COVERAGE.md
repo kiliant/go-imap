@@ -366,7 +366,7 @@ break the client; full command support is best-effort.
 | I18NLEVEL=2 | 5255 | done | done [^srvi18n2] | COMPARATOR command |
 | CONTEXT=SEARCH | 5267 | done | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
 | CONTEXT=SORT | 5267 | done | done [^srvcontext] | as above |
-| ESORT | 5267 | done | done [^srvesort] | capability + RETURN keywords |
+| ESORT | 5267 | verified [^esort] | done [^srvesort] | `SortExtended` / `SortExtendedUID` |
 | FILTERS | 5466 | done | done [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
 | IMAPSIEVE= | 6785 | deferred | deferred | server-side; parse only |
@@ -397,6 +397,17 @@ break the client; full command support is best-effort.
     backend re-entrancy the design forbids; RFC 5267 §4.3 permits REMOVEFROM
     without ADDTO, and a guessed ADDTO would put a message in the client's
     result set that never matched.
+
+[^esort]: Until T27 this row overstated: the client detected the capability
+    but could not send `SORT RETURN (...)` at all. `Client.SortExtended` and
+    `SortExtendedUID` now issue it and return ESEARCH data, falling back to a
+    plain SORT for MIN, MAX, ALL and COUNT when only SORT is advertised.
+    Verified live on Dovecot 2.4.3 and Cyrus 3.10: ALL arrives in the order a
+    plain SORT returns. RFC 5267 section 3.1 calls MIN and MAX "the
+    lowest/highest sorted message", which Dovecot reads as positions in the
+    sort order and Cyrus and Stalwart as numeric extremes; the client passes
+    either through. Stalwart 0.11.8 also answers ALL with fewer numbers than
+    its own COUNT, which the test records as a server deviation.
 
 [^srvesort]: The ESEARCH-shaped response for SORT. MIN and MAX are the ends of
     the *sorted* order rather than the numerically smallest and largest, and ALL
