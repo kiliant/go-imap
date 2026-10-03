@@ -35,6 +35,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   ESORT, RFC 5267. The client previously detected ESORT but had no way to send
   it. Falls back to a plain SORT for MIN, MAX, ALL and COUNT. Additive;
   `apidiff` reports three compatible additions.
+- `imapclient.UnilateralDataHandler.StatusResponse` and the
+  `imapclient.StatusResponse` type: untagged OK, NO and BAD responses no command
+  claims now reach the caller with their response code. They were dropped,
+  which lost INPROGRESS notifications (RFC 9585) and connection-level ALERT
+  text (RFC 3501 section 7.1). Additive.
+- `imapclient.UnilateralDataHandler.MailboxStatus` and `.List`: unsolicited
+  STATUS and LIST responses, which NOTIFY uses for events in mailboxes other
+  than the selected one (RFC 5465 section 5), were discarded and are now
+  delivered. Additive. A malformed unsolicited STATUS or LIST is now a
+  protocol error, as for every other unilateral response the client parses.
 
 #### Fixed
 

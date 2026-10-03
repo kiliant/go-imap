@@ -136,7 +136,41 @@ type UnilateralDataHandler struct {
 	// expunges that happened while disconnected and does not renumber
 	// sequence numbers. See [VanishedData].
 	Vanished func(data VanishedData)
-	_        struct{}
+	// StatusResponse receives an untagged OK, NO or BAD response that no
+	// command claimed, with its response code. This is how a server reports
+	// INPROGRESS progress (RFC 9585; decode the arguments with
+	// [ParseInProgressArgs]) and connection-level ALERT text, which RFC 3501
+	// section 7.1 requires a client to present to its user. A response code
+	// this library does not know arrives here unchanged.
+	StatusResponse func(data *StatusResponse)
+	// MailboxStatus receives an unsolicited STATUS response. After NOTIFY,
+	// it is how the server reports a change in a mailbox other than the
+	// selected one (RFC 5465 section 5).
+	MailboxStatus func(data *StatusData)
+	// List receives an unsolicited LIST response. After NOTIFY, it is how the
+	// server reports the MailboxName event: a mailbox created, deleted or
+	// renamed (RFC 5465 section 5).
+	List func(data *ListData)
+	_    struct{}
+}
+
+// StatusResponse is an untagged status response delivered to
+// [UnilateralDataHandler.StatusResponse]. RFC 3501 section 7.1.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type StatusResponse struct {
+	// Status is "OK", "NO" or "BAD".
+	Status string
+	// Code is the response code without brackets or arguments, or "" if the
+	// server sent none.
+	Code imap.ResponseCode
+	// CodeArgs is the verbatim text between the code and the closing
+	// bracket, or "" if the code had no arguments.
+	CodeArgs string
+	// Text is the human-readable text, with any response code removed.
+	Text string
+
+	_ struct{}
 }
 
 // Client is an IMAP session. Its zero value is not usable; obtain one with

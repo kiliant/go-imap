@@ -28,6 +28,17 @@ return option and the MESSAGELIMIT code exist), one is documentation only
 4. **UIDAFTER / UIDBEFORE (RFC 9586).** The search keys UIDONLY introduces have
    no representation in the search-criteria tree.
 
+## Found while doing it
+
+- **ALERT was dropped too.** The INPROGRESS gap was one case of a general
+  one: every untagged status response no command claimed was discarded,
+  connection-level `[ALERT]` included. The fix is therefore one generic hook,
+  not one per response code, so the next code needs no API change.
+- **Rename events lose the old name.** NOTIFY reports a rename as LIST with
+  `OLDNAME` extended data (RFC 5465 section 5.4), which neither `imap.ListData`
+  nor the LIST parser models. An additive `OldName` field and an extended-data
+  parser are still open.
+
 ## Constraints
 
 The root and `imapclient` APIs are frozen at v1: every change here must be

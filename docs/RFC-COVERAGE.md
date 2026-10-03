@@ -296,10 +296,10 @@ CONDSTORE `MODIFIED` on tagged OK.
 | METADATA | 5464 | done | done |
 | METADATA-SERVER | 5464 | done | done |
 | LIST-METADATA | 9590 | done | done |
-| NOTIFY | 5465 | verified [^t26d] | done [^srvnotify] |
+| NOTIFY | 5465 | verified [^t26d] [^t27notify] | done [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
-| INPROGRESS | 9585 | done | done [^srvinprogress] |
+| INPROGRESS | 9585 | done [^t27inprogress] | done [^srvinprogress] |
 | MESSAGELIMIT= | 9738 | done | done |
 | SAVELIMIT= | 9738 | done | done |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
@@ -330,6 +330,22 @@ CONDSTORE `MODIFIED` on tagged OK.
     because a dropped notification costs a refresh while a dropped selection
     update desynchronises a view in active use. Overflow is reported rather than
     hidden.
+
+[^t27notify]: The live test covers selected-mailbox events. Events for other
+    mailboxes — the unsolicited STATUS and LIST responses of RFC 5465
+    section 5 — were discarded by the client until T27 added
+    `UnilateralDataHandler.MailboxStatus` and `.List`; they are unit-tested
+    only so far. A rename's `OLDNAME` extended data is not modelled yet, so a
+    rename event carries the new name only.
+
+[^t27inprogress]: Until T27 the response code was parsed but never delivered:
+    an untagged `OK [INPROGRESS ...]` no command claimed was dropped, and so
+    was every other unclaimed status response, including connection-level
+    `[ALERT]` text RFC 3501 section 7.1 says must reach the user.
+    `UnilateralDataHandler.StatusResponse` now receives them all, with the
+    code and its arguments, for `ParseInProgressArgs` to decode. No server in
+    the matrix emits INPROGRESS on the short commands the tests issue, so it
+    stays `done`.
 
 [^srvinprogress]: The untagged OK progress response shape is framework-owned and
     advertised; no backend surface is required to emit one.
