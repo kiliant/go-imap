@@ -1,8 +1,8 @@
-FROM docker.io/library/debian:12.11-slim
+FROM docker.io/library/debian:13.7-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
- && apt-get install --no-install-recommends -y cyrus-imapd=3.6.1-4+deb12u4 cyrus-admin=3.6.1-4+deb12u4 sasl2-bin \
+ && apt-get install --no-install-recommends -y cyrus-imapd=3.10.2-1+deb13u2 cyrus-admin=3.10.2-1+deb13u2 sasl2-bin \
  && rm -rf /var/lib/apt/lists/*
 
 COPY imapd.conf /etc/imapd.conf
