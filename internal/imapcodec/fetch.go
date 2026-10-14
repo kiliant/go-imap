@@ -14,7 +14,10 @@ import (
 
 // LiteralAdapter turns an imapwire literal into the reader exposed in a FETCH
 // value. wait, when non-nil, is called before semantic decoding resumes. The
-// client uses it to preserve streaming back-pressure.
+// client uses it to preserve streaming back-pressure: the response is emitted
+// at the literal and parsing waits for the caller to consume it. A nil wait
+// means there is nothing to stream, and the response is emitted only once it
+// has been decoded completely.
 type LiteralAdapter func(*imapwire.LiteralReader) (reader io.Reader, wait func())
 
 // ReadFetchResponse decodes the part of an untagged FETCH response following
@@ -70,8 +73,14 @@ func ReadFetchResponse(dec *imapwire.Decoder, seqNum imap.SeqNum, adapt LiteralA
 				value = BinarySectionData(&section, literal)
 			}
 			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
-			emitNow()
 			if wait != nil {
+				// Hand the response over at the body so its payload streams,
+				// and resume parsing only once the caller has consumed it. A
+				// NIL or zero-length body has nothing to stream, so its response
+				// is delivered complete, at the end, instead: delivering it now
+				// would leave the caller reading Items while the rest of the
+				// response is still being appended to it.
+				emitNow()
 				wait()
 			}
 			return nil
@@ -116,8 +125,14 @@ func ReadFetchResponse(dec *imapwire.Decoder, seqNum imap.SeqNum, adapt LiteralA
 			}
 			value = &imap.FetchDataLiteral{Literal: literal}
 			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
-			emitNow()
 			if wait != nil {
+				// Hand the response over at the body so its payload streams,
+				// and resume parsing only once the caller has consumed it. A
+				// NIL or zero-length body has nothing to stream, so its response
+				// is delivered complete, at the end, instead: delivering it now
+				// would leave the caller reading Items while the rest of the
+				// response is still being appended to it.
+				emitNow()
 				wait()
 			}
 			return nil

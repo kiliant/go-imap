@@ -33,6 +33,18 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- A FETCH that streams more than one body no longer has a data race. Reading
+  a body literal to EOF a second time, which `io.Copy` always does, or closing
+  it after it was read, touched decoder state. The reader goroutine was
+  already using that state for the next response. The streamed body now
+  leaves the decoder alone once its payload is consumed, empty bodies
+  included. Internal (`internal/imapwire`), no exported API change. Found by
+  `imapcli -backup` under `-race`.
+- A FETCH response whose body section is NIL or a zero-length literal is
+  delivered once it is complete. Before, it was handed over at the body while
+  the items after it were still being added to the `Items` map the caller was
+  reading. That was a data race, and could end in a fatal concurrent map
+  access. No exported API change.
 - `imapclient.Client.Close` no longer deadlocks on an idle connection after
   `Client.Compress`. The DEFLATE wrapper took its read lock before closing the
   socket, while the reader goroutine held that lock blocked in a read only the
