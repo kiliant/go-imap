@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kiliant/go-imap"
 )
@@ -68,6 +69,11 @@ func TestSortExtendedRefusesWhatCannotBeEmulated(t *testing.T) {
 		&ESortOptions{ReturnOptions: []SearchReturnOption{SearchReturnSave}}); err == nil {
 		t.Fatal("RETURN (SAVE) was accepted")
 	}
+	extCReady(c, []string{"IMAP4REV1", "SORT", "ESORT", "CONTEXT=SORT"}, nil, true)
+	if _, err := c.SortExtended(extCContext(t), []SortKeySpec{{Key: SortKeyDate}}, imap.SearchAll,
+		&ESortOptions{ReturnOptions: []SearchReturnOption{SearchReturnCount, SearchReturnUpdate}}); err == nil || !strings.Contains(err.Error(), "UPDATE") {
+		t.Fatalf("RETURN (UPDATE) error = %v", err)
+	}
 	if len(server.Lines()) != 0 {
 		t.Fatalf("sent: %q", server.Lines())
 	}
@@ -83,4 +89,54 @@ func TestSortExtendedRequiresSort(t *testing.T) {
 	if len(server.Lines()) != 0 {
 		t.Fatalf("sent: %q", server.Lines())
 	}
+}
+
+// TestPlainSortPipelinesWithExtendedSearch pins v1.1 behaviour that the
+// extended-search exclusion must not take away: a plain SORT is answered by
+// an untagged SORT, not ESEARCH, so an extended SEARCH may run beside it.
+func TestPlainSortPipelinesWithExtendedSearch(t *testing.T) {
+	c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 ESEARCH SORT ESORT] ready", func(s *extAServer) {
+		s.selectInbox("INBOX", "101")
+		sortTag, _ := s.command()
+		searchTag, _ := s.command()
+		s.reply(`* ESEARCH (TAG "`+searchTag+`") UID COUNT 2`, searchTag+" OK searched")
+		s.reply("* SORT 2 1", sortTag+" OK sorted")
+	})
+	if _, err := c.Select("INBOX", nil).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sorted := make(chan error, 1)
+	go func() {
+		_, err := c.SortUID(ctx, []SortKeySpec{{Key: SortKeyDate}}, imap.SearchAll, nil)
+		sorted <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for !c.pendingNamed("UID SORT") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if c.searchPending() {
+		t.Fatal("a plain SORT counts as a pending extended search")
+	}
+	data, err := c.SearchExtendedUID(imap.SearchAll, nil).Wait(ctx)
+	if err != nil {
+		t.Fatalf("extended SEARCH beside a plain SORT: %v", err)
+	}
+	if !data.HasCount || data.Count != 2 {
+		t.Fatalf("data = %#v", data)
+	}
+	if err := <-sorted; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pendingNamed reports whether a command with this name awaits completion.
+func (c *Client) pendingNamed(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, cmd := range c.pendingQ {
+		if cmd.name == name {
+			return true
+		}
+	}
+	return false
 }

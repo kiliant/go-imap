@@ -21,7 +21,9 @@ const (
 	SearchReturnContext SearchReturnOptionKeyword = "CONTEXT"
 
 	// SearchReturnUpdate asks for incremental ESEARCH updates to a CONTEXT.
-	// RFC 5267 section 4.3.
+	// RFC 5267 section 4.3. This client does not deliver those updates yet:
+	// the unsolicited ESEARCH responses carrying them are discarded. See the
+	// CONTEXT=SEARCH row of docs/RFC-COVERAGE.md.
 	SearchReturnUpdate SearchReturnOptionKeyword = "UPDATE"
 
 	// SearchReturnESortAll is the ALL return option for ESORT. RFC 5267

@@ -117,10 +117,16 @@ type NotifyOptions struct {
 // the same path IDLE uses. Do not install a second notification mechanism.
 //
 // Events for mailboxes other than the selected one arrive as unsolicited
-// STATUS responses, through [UnilateralDataHandler.MailboxStatus], and the
-// MailboxName event as unsolicited LIST responses, through
-// [UnilateralDataHandler.List]. A rename's OLDNAME is not modelled yet, so
-// such an event carries the new name only.
+// STATUS responses, through [UnilateralDataHandler.Status]. The MailboxName and
+// SubscriptionChange events arrive as unsolicited LIST responses, through
+// [UnilateralDataHandler.List]. A rename carries the previous name in
+// [imap.ListData.OldName].
+//
+// Three limits remain. MailboxMetadataChange and ServerMetadataChange events
+// arrive as unsolicited METADATA responses (RFC 5464 section 4.4.2), which
+// are not delivered yet. A STATUS event that arrives while a STATUS command
+// is in flight is merged into that command's result, and a LIST event that
+// arrives during a LIST command joins its listing.
 func (c *Client) Notify(ctx context.Context, filters []NotifyFilter, options *NotifyOptions) error {
 	if ctx == nil {
 		return &imap.Error{Type: imap.ErrorTypeProtocol, Text: "NOTIFY requires a non-nil context"}

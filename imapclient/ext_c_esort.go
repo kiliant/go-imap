@@ -2,6 +2,7 @@ package imapclient
 
 import (
 	"context"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -27,8 +28,10 @@ type ESortOptions struct {
 // ESEARCH data. ESORT, RFC 5267 section 3.
 //
 // ALL lists the matches in the requested sort order (RFC 5267 section 3.1).
-// It is returned as the server wrote it and must not be normalised by the
-// caller, which would re-sort it numerically.
+// It is returned as the server wrote it. Read the order by walking its ranges
+// in sequence, each from Start to Stop as given — a range may run downwards,
+// as in "7:5". The [imap.NumSet] helpers All, Nums, Normalized and Equal all
+// yield ascending numbers and lose the order.
 //
 // MIN and MAX are "the lowest/highest sorted message" in the RFC's words,
 // and servers read that differently: Dovecot returns the first and last
@@ -45,7 +48,7 @@ type ESortOptions struct {
 // has no faithful emulation and returns an [imap.Error] wrapping
 // [ErrCapabilityNotAdvertised] without writing anything.
 //
-// RETURN (SAVE) is not supported by this method.
+// RETURN (SAVE) and RETURN (UPDATE) are not supported by this method.
 func (c *Client) SortExtended(ctx context.Context, keys []SortKeySpec, criteria imap.SearchCriteria, options *ESortOptions) (*ESearchData, error) {
 	return c.sortExtended(ctx, false, keys, criteria, options)
 }
@@ -78,6 +81,15 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	if save {
 		return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "SORT RETURN (SAVE) is not supported by SortExtended"}
 	}
+	for _, keyword := range keywords {
+		if strings.EqualFold(keyword, string(SearchReturnUpdate)) {
+			// RFC 5267 section 4: UPDATE registers for unsolicited ESEARCH
+			// ADDTO/REMOVEFROM responses, which this client does not deliver
+			// yet. Accepting it would register for notifications that are
+			// then lost. Allowing it once they are delivered is compatible.
+			return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "SORT RETURN (UPDATE) is not supported by SortExtended: ESEARCH update responses are not delivered"}
+		}
+	}
 	if criteria == nil {
 		criteria = imap.SearchAll
 	}
@@ -108,7 +120,7 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	}
 
 	cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}}, uid: uid}
-	cmd.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+	write := func(enc *imapwire.Encoder) {
 		// RFC 5267 section 3: sort = ["UID" SP] "SORT" [sort-return-opts]
 		// SP sort-criteria SP search-criteria, so RETURN comes first.
 		enc.SP().Atom("RETURN").SP().List(len(keywords), func(i int) { enc.Atom(keywords[i]) })
@@ -124,7 +136,13 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 		}
 		enc.Special(')').SP().Astring(charset).SP()
 		writeSearchCriteria(enc, criteria)
-	}, esearchCollector(cmd))
+	}
+	cmd.Command = c.issue(name, commandOptions{
+		allowed:        stateSelected,
+		write:          write,
+		collector:      esearchCollector(cmd),
+		answersESearch: true,
+	})
 	return cmd.Wait(ctx)
 }
 

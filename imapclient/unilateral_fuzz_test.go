@@ -44,7 +44,7 @@ func FuzzUnilateralStream(f *testing.F) {
 			Fetch:          func(*imap.FetchMessageData) {},
 			Vanished:       func(VanishedData) {},
 			StatusResponse: func(*StatusResponse) {},
-			MailboxStatus:  func(*StatusData) {},
+			Status:         func(*StatusData) {},
 			List:           func(*ListData) {},
 		}})
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

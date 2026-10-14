@@ -432,8 +432,8 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 		if _, err := statusCollector(data)(resp); err != nil {
 			return err
 		}
-		if h != nil && h.MailboxStatus != nil {
-			h.MailboxStatus(data)
+		if h != nil && h.Status != nil {
+			h.Status(data)
 		}
 		c.trace(TraceServer, "* STATUS")
 		return nil
@@ -444,10 +444,7 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 		if _, err := listCollector("LIST", &data, 1)(resp); err != nil {
 			return err
 		}
-		if h != nil && h.List != nil && len(data) == 1 {
-			h.List(data[0])
-		}
-		c.trace(TraceServer, "* LIST")
+		c.deliverUnilateralList(data)
 		return nil
 	}
 	if !resp.hasNum && resp.name == "VANISHED" {
@@ -556,4 +553,13 @@ func parseUint32(s string) (uint32, error) {
 		}
 	}
 	return uint32(n), nil
+}
+
+// deliverUnilateralList hands a LIST response no command owns to
+// UnilateralDataHandler.List. It runs on the reader goroutine.
+func (c *Client) deliverUnilateralList(data []*ListData) {
+	if h := c.opts.UnilateralData; h != nil && h.List != nil && len(data) == 1 {
+		h.List(data[0])
+	}
+	c.trace(TraceServer, "* LIST")
 }

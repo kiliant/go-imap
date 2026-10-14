@@ -37,10 +37,32 @@ and `docs/RFC-COVERAGE.md` read `done` for capabilities they affect:
   one: every untagged status response no command claimed was discarded,
   connection-level `[ALERT]` included. The fix is therefore one generic hook,
   not one per response code, so the next code needs no API change.
-- **Rename events lose the old name.** NOTIFY reports a rename as LIST with
+- **Rename events lost the old name.** NOTIFY reports a rename as LIST with
   `OLDNAME` extended data (RFC 5465 section 5.4), which neither `imap.ListData`
-  nor the LIST parser models. An additive `OldName` field and an extended-data
-  parser are still open.
+  nor the LIST parser modelled. `imap.ListData.OldName` is now filled by the
+  client's LIST parser. The field passes API-STABILITY §9 because a server
+  can meaningfully fill it, in a NOTIFY rename and in the RFC 9051 SELECT
+  case. §9 does not require this framework to write it already. The server
+  does not write it from a backend's LIST results, where it has no meaning.
+  Server-side OLDNAME belongs to the NOTIFY MailboxName work, gated on what
+  the session negotiated, and to a framework-derived RFC 9051 §6.3.2 case.
+- **api-guardian review (2026-10-14): CHANGES REQUIRED, now addressed.**
+  - Two blocking findings:
+    - Plain SORT had joined the extended-search exclusion. That broke
+      pipelining that v1.1 allowed, so now only a SORT with RETURN takes
+      part.
+    - The LIST that an IMAP4rev2 server sends during SELECT reached the
+      NOTIFY hook. The SELECT and EXAMINE collectors now claim it.
+  - Two names were fixed before they become permanent:
+    - `UnilateralDataHandler.MailboxStatus` became `Status`, matching the
+      other fields, which are named after their response.
+    - `StatusResponse` moved to the root package, with an alias, like every
+      other shared response shape.
+  - Documented rather than fixed:
+    - NOTIFY events swallowed by an in-flight STATUS or LIST.
+    - METADATA events not delivered.
+    - CONTEXT updates not delivered. Those rows now read `in progress`, and
+      `SortExtended` refuses RETURN (UPDATE).
 
 ## Constraints
 

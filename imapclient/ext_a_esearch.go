@@ -89,8 +89,8 @@ type ESearchOptions struct {
 //	&ESearchData{ESearchData: imap.ESearchData{UID: true}}
 //
 // Emulated is not part of [imap.ESearchData] because no server produces it: it
-// says these values were computed by this client from an ordinary SEARCH
-// response, because the server does not advertise ESEARCH. It is reachable from
+// says these values were computed by this client from an ordinary SEARCH or
+// SORT response, because the server does not advertise ESEARCH or ESORT. It is reachable from
 // [imap.MultiSearchResult.Data], which a server framework constructs, so
 // leaving it on the shared type would put a field there that one of the two
 // directions can never fill.
@@ -100,8 +100,8 @@ type ESearchData struct {
 	imap.ESearchData
 
 	// Emulated reports that the value was computed from an ordinary SEARCH
-	// response rather than decoded from an ESEARCH one. See
-	// [Client.SearchExtended].
+	// or SORT response rather than decoded from an ESEARCH one. See
+	// [Client.SearchExtended] and [Client.SortExtended].
 	Emulated bool
 
 	_ struct{}
@@ -367,12 +367,16 @@ func (c *Client) searchPending() bool {
 	defer c.mu.Unlock()
 	for _, cmd := range c.pendingQ {
 		switch cmd.name {
-		case "SEARCH", "UID SEARCH", "ESEARCH", "UID ESEARCH", "SORT", "UID SORT":
+		case "SEARCH", "UID SEARCH", "ESEARCH", "UID ESEARCH":
 			// ESEARCH / UID ESEARCH are the MULTISEARCH command names (RFC 7377).
 			// Their collectors claim untagged ESEARCH the same way extended SEARCH
-			// does, so they must participate in this mutual exclusion. So does an
-			// extended SORT (RFC 5267), which is answered by ESEARCH as well; a
-			// plain SORT is included because the name does not say which it is.
+			// does, so they must participate in this mutual exclusion.
+			return true
+		}
+		if cmd.answersESearch {
+			// An extended SORT (RFC 5267) is answered by ESEARCH as well. A
+			// plain SORT is not, and v1.1 let it run beside an extended
+			// SEARCH, so the command name alone must not decide.
 			return true
 		}
 	}

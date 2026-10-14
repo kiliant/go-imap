@@ -407,8 +407,8 @@ func TestUnilateralMailboxStatusAndList(t *testing.T) {
 		_, _ = serverConn.Write([]byte("* LIST (\\NonExistent) \"/\" Gone\r\n"))
 	}()
 	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
-		MailboxStatus: func(data *StatusData) { statuses <- data },
-		List:          func(data *ListData) { lists <- data },
+		Status: func(data *StatusData) { statuses <- data },
+		List:   func(data *ListData) { lists <- data },
 	}})
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -431,5 +431,143 @@ func TestUnilateralMailboxStatusAndList(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("did not receive the unsolicited LIST")
+	}
+}
+
+// TestSelectClaimsItsOwnList pins RFC 9051 section 6.3.2: an IMAP4rev2
+// server answers SELECT with a LIST for the selected mailbox. That LIST is
+// part of the selection, not a NOTIFY event; a LIST for another mailbox
+// arriving at the same time still is one.
+func TestSelectClaimsItsOwnList(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lists := make(chan *ListData, 4)
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* PREAUTH ready\r\n"))
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		tag := strings.Fields(line)[0]
+		_, _ = serverConn.Write([]byte("* 3 EXISTS\r\n" +
+			"* LIST () \"/\" Elsewhere\r\n" +
+			"* LIST () \"/\" INBOX\r\n" +
+			"* FLAGS (\\Seen)\r\n" +
+			"* OK [UIDVALIDITY 7] ok\r\n" +
+			tag + " OK [READ-WRITE] selected\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		List: func(data *ListData) { lists <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	c.enabled["IMAP4REV2"] = struct{}{}
+	c.mu.Unlock()
+	status, err := c.Select("inbox", nil).Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.NumMessages != 3 || status.UIDValidity != 7 {
+		t.Fatalf("status = %#v", status)
+	}
+	close(lists)
+	var got []string
+	for data := range lists {
+		got = append(got, data.Mailbox)
+	}
+	if len(got) != 1 || got[0] != "Elsewhere" {
+		t.Fatalf("List handler got %q, want only the other mailbox's event", got)
+	}
+}
+
+// TestUnilateralListOldName covers the NOTIFY rename event: LIST extended data
+// carries the previous name (RFC 5465 section 5.4). Other extended items are
+// skipped, and extended data the client cannot parse costs the old name, not
+// the response.
+func TestUnilateralListOldName(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lists := make(chan *ListData, 4)
+	go func() {
+		_, _ = serverConn.Write([]byte("* OK ready\r\n" +
+			"* LIST () \"/\" New (\"OLDNAME\" (\"Old\"))\r\n" +
+			"* LIST (\\HasChildren) \"/\" Parent (\"CHILDINFO\" (\"SUBSCRIBED\") \"OLDNAME\" (\"P&AOQ-rent\"))\r\n" +
+			"* LIST () \"/\" Odd (\"OLDNAME\")\r\n" +
+			"* LIST () \"/\" Plain\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		List: func(data *ListData) { lists <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ mailbox, oldName string }{
+		{"New", "Old"},
+		{"Parent", "Pärent"},
+		{"Odd", ""},
+		{"Plain", ""},
+	}
+	for _, w := range want {
+		select {
+		case data := <-lists:
+			if data.Mailbox != w.mailbox || data.OldName != w.oldName || data.Delimiter != '/' {
+				t.Fatalf("LIST = %#v, want mailbox %q with OldName %q", data, w.mailbox, w.oldName)
+			}
+			if w.mailbox == "Parent" && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrHasChildren) {
+				t.Fatalf("attributes lost beside extended data: %#v", data)
+			}
+		case <-ctx.Done():
+			t.Fatalf("did not receive the LIST for %s", w.mailbox)
+		}
+	}
+}
+
+// TestSelectClaimsItsOwnListByOldName covers RFC 9051 section 6.3.2's
+// non-canonical case: the server lists the canonical name with the name the
+// client sent as OLDNAME, and that LIST still belongs to the SELECT.
+func TestSelectClaimsItsOwnListByOldName(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lists := make(chan *ListData, 4)
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* PREAUTH ready\r\n"))
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		tag := strings.Fields(line)[0]
+		_, _ = serverConn.Write([]byte("* 0 EXISTS\r\n" +
+			"* LIST () \"/\" Archive (\"OLDNAME\" (\"Archive/\"))\r\n" +
+			"* OK [UIDVALIDITY 3] ok\r\n" +
+			tag + " OK [READ-WRITE] selected\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		List: func(data *ListData) { lists <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	c.enabled["IMAP4REV2"] = struct{}{}
+	c.mu.Unlock()
+	if _, err := c.Select("Archive/", nil).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	close(lists)
+	for data := range lists {
+		t.Fatalf("the SELECT's own LIST reached the List handler: %#v", data)
 	}
 }

@@ -198,12 +198,9 @@ func listCollector(name string, data *[]*ListData, limit int) commandCollector {
 		if !resp.dec.ExpectMailbox(&mailbox) {
 			return true, resp.dec.Err()
 		}
-		if !resp.dec.ExpectCRLF() {
-			// LIST-EXTENDED can add return data after the mailbox. T08 owns the
-			// typed parsing; discard it here without losing stream alignment.
-			if err := resp.dec.DiscardLine(); err != nil {
-				return true, err
-			}
+		oldName, err := readListExtendedData(resp.dec)
+		if err != nil {
+			return true, err
 		}
 		attrs := make([]imap.MailboxAttr, len(rawAttrs))
 		for i, attr := range rawAttrs {
@@ -217,9 +214,43 @@ func listCollector(name string, data *[]*ListData, limit int) commandCollector {
 				return true, fmt.Errorf("invalid LIST hierarchy delimiter %q", rawDelimiter)
 			}
 		}
-		*data = append(*data, &ListData{Attrs: attrs, Delimiter: delimiter, Mailbox: mailbox})
+		*data = append(*data, &ListData{Attrs: attrs, Delimiter: delimiter, Mailbox: mailbox, OldName: oldName})
 		return true, nil
 	}
+}
+
+// readListExtendedData reads the rest of a LIST response after the mailbox
+// name — the extended data items of RFC 5258 section 9, if any — and returns
+// the OLDNAME item's mailbox (RFC 5465 section 5.4), or "". Other items, such
+// as CHILDINFO, are skipped.
+//
+// It is as lenient as the client has always been here. Anything it cannot
+// parse is discarded to the end of the line, and the response keeps its
+// attributes and name rather than failing the command.
+func readListExtendedData(dec *imapwire.Decoder) (string, error) {
+	var oldName string
+	ok := true
+	if dec.PeekSpecial(' ') {
+		ok = dec.SP() && dec.ExpectList(func() error {
+			var tag string
+			if !dec.ExpectAstring(&tag) || !dec.ExpectSP() {
+				return dec.Err()
+			}
+			if !strings.EqualFold(tag, "OLDNAME") {
+				return dec.DiscardValue()
+			}
+			return dec.ExpectList(func() error {
+				if !dec.ExpectMailbox(&oldName) {
+					return dec.Err()
+				}
+				return nil
+			})
+		}) == nil
+	}
+	if ok && dec.ExpectCRLF() {
+		return oldName, nil
+	}
+	return "", dec.DiscardLine()
 }
 
 func isListKeyword(s string) bool {
