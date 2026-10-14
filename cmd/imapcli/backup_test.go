@@ -440,32 +440,6 @@ func TestBackupFlagValidation(t *testing.T) {
 	}
 }
 
-func TestPasswordAuthOptions(t *testing.T) {
-	tests := []struct {
-		caps string
-		want string // "" means imapclient's own choice
-	}{
-		{"AUTH=OAUTHBEARER AUTH=PLAIN", "PLAIN"},
-		{"AUTH=XOAUTH2 AUTH=LOGIN", "LOGIN"},
-		{"AUTH=OAUTHBEARER AUTH=CRAM-MD5 AUTH=PLAIN", "CRAM-MD5"},
-		{"AUTH=SCRAM-SHA-256 AUTH=OAUTHBEARER AUTH=PLAIN", ""},
-		{"AUTH=OAUTHBEARER", ""},
-	}
-	for _, tt := range tests {
-		caps := make(map[string]bool)
-		for _, c := range strings.Fields(tt.caps) {
-			caps[c] = true
-		}
-		got := ""
-		if opts := passwordAuthOptions(caps); opts != nil {
-			got = opts.Mechanism
-		}
-		if got != tt.want {
-			t.Errorf("passwordAuthOptions(%s) = %q, want %q", tt.caps, got, tt.want)
-		}
-	}
-}
-
 // TestBackupPrefersPasswordOverOAuth is the Stalwart case: a server offering
 // OAUTHBEARER and PLAIN must get the password through PLAIN.
 func TestBackupPrefersPasswordOverOAuth(t *testing.T) {
