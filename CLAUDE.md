@@ -126,6 +126,11 @@ tagged before the server module can be.
   independent harness lifecycles and could otherwise collide on container names.
   `.github/scripts/run-interop.sh` runs all three in order, which is what CI
   uses. See `docs/INTEROP.md`. Requires a running podman machine.
+- **Full interop runs go to the CI runner**, not the development machine: push
+  the branch, then `gh workflow run interop.yml --ref <branch>`. `interop.yml`
+  does not run on pull requests, so a branch needs the dispatch. Targeted
+  interop tests (`-run`, `GO_IMAP_INTEROP_SERVERS`) are fine locally while
+  developing.
 - Interop tests **skip** on absent server capabilities, never fail. A permanently
   red matrix is a matrix nobody reads.
 - Every parser gets a fuzz target. Malformed input from a hostile server must not
@@ -139,27 +144,39 @@ emulated behind `-tags=interop_emulated`.
 
 ## Plan vs state
 
-Everything lives in this repository. All paths are repo-relative — nothing here
-refers to an absolute path on one machine.
+Plans live in this repository; status lives on its GitHub issue tracker. All
+paths are repo-relative — nothing here refers to an absolute path on one
+machine.
 
-| | Where | In git |
+| | Where | Versioned by |
 |---|---|---|
-| Task specs, dependency graph, file ownership | `docs/tasks/` | yes — it is documentation |
-| Current status, progress notes, scratch | `.state/` | no — mutable coordination state |
+| Task specs, dependency graph, file ownership | `docs/tasks/` | git — it is documentation |
+| Task status, progress, decisions, review verdicts | one GitHub issue per task, label `task` | the issue |
+| Work found during a task and left for later | its own issue, label `follow-up` | the issue |
+| Scratch for one session | `.state/` | nothing — ignored, never relied on |
+
+**Issues are public.** Post what a reader of the project should know, at real
+milestones: implementation done, review verdict, CI result, hand-over, a
+decision and its reason. Notes that matter only to one session stay out of
+them.
+
+A task's spec names its issue, and the PR that completes the task closes it
+(`Closes #N`). Something found during a task and deliberately left becomes a
+`follow-up` issue, not a paragraph buried in a spec; the spec may name the
+issue number. Label by module too: `module:root`, `module:imapserver`,
+`module:imapcli`.
+
+A spec never depends on its issue to be understood. A fresh clone is a complete
+plan; the issues record what happened to it.
 
 `.state/` holds a `.gitignore` containing `*` and `!.gitignore`, so it ignores its
-own contents while the protection itself stays tracked — meaning it survives a
-fresh clone. `git add -A` cannot stage anything in there.
-
-Do not create `TASKS.md`, `PROGRESS.md` or similar elsewhere in the tree —
-mutable state goes in `.state/`, and nowhere else.
-
-The dependency is one-directional by design: `docs/tasks/` never refers to
-`.state/` contents, so a fresh clone with no `.state/` is complete and readable.
+own contents while the protection itself stays tracked. `git add -A` cannot
+stage anything in there. Do not create `TASKS.md`, `PROGRESS.md` or similar in
+the tree.
 
 **Start at `docs/tasks/BOARD.md`.** It defines dependency order and which files
 each task owns. **Only edit files your task owns** — that table is what makes
-parallel agents safe. Write your working notes to `.state/progress/<task>.md`.
+parallel agents safe. Report progress on the task's issue.
 
 ## Commit conventions
 

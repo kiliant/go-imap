@@ -3,15 +3,16 @@
 The implementation plan. Task specs are in this directory, one file per task.
 
 This file is **committed**: it is documentation, and it is static — the
-dependency graph and file ownership do not change as work proceeds. Mutable
-status lives in `.state/status.md`, which is gitignored. See "Plan vs state"
-below.
+dependency graph and file ownership do not change as work proceeds. Status
+lives in GitHub issues: one per task, labelled `task`, and one per follow-up,
+labelled `follow-up`. See "Plan vs state" below.
 
 ## The two rules that make parallel work safe
 
 1. **Only edit files your task owns.** The ownership column is the lock. If your
-   task needs a change to a file it does not own, record the request in
-   `.state/progress/<task>.md` and stop. Do not edit across the boundary.
+   task needs a change to a file it does not own, record the request on your
+   task's issue, or as a `follow-up` issue, and stop. Do not edit across the
+   boundary.
 2. **Do not start a task whose dependencies are unfinished.** The order exists
    because these tasks change shared type signatures; starting early produces
    rework, not speed.
@@ -151,8 +152,13 @@ symbol it added, and its rows in `../RFC-COVERAGE.md` are updated.
 | | Where | In git | Why |
 |---|---|---|---|
 | Task specs, dependency graph, ownership | `docs/tasks/` | yes | Documentation. A clone must be self-contained. |
-| Current status, progress notes, scratch | `.state/` | no | Mutable coordination state, not project history. |
+| Task status, progress, decisions, review verdicts | GitHub issue per task, label `task` | no | Visible from any machine, and closed by the PR that completes the task. |
+| Work found during a task and left for later | GitHub issue, label `follow-up` | no | Trackable, unlike a paragraph in a spec. |
+| Scratch for one session | `.state/` | no | Never relied on. |
 
-`.state/` contains a `.gitignore` holding `*` and `!.gitignore`: it ignores its own
-contents, while the rule itself is tracked and therefore survives a fresh clone. Nothing in the repo depends on `.state/` existing:
-delete it and the plan is still complete and readable.
+Issues are public: post milestones, decisions and their reasons, not working
+notes. `.state/` contains a `.gitignore` holding `*` and `!.gitignore`: it
+ignores its own contents, while the rule itself is tracked and therefore
+survives a fresh clone. Nothing in the repo depends on the issues or on
+`.state/` to be understood: delete both and the plan is still complete and
+readable.
