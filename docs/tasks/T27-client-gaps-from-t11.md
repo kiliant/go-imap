@@ -81,3 +81,13 @@ a fuzz target covers any new parser path, ESORT and NOTIFY have interop tests
 on the servers that advertise them (Dovecot, Stalwart and Cyrus for ESORT;
 Dovecot and Cyrus for NOTIFY), `apidiff` reports only compatible changes, and
 the coverage rows and `CHANGELOG.md` describe the state accurately.
+
+## Hand-over to T29
+
+T27 is complete. Under BOARD's lock-passing rule, two pieces pass to
+[T29](T29-list-extdata-auth.md), because T29 changes what they describe:
+
+- `TestUnilateralListOldName` in `imapclient/conn_test.go`. Its comment says
+  the client skips LIST extended items other than OLDNAME.
+- The doc comment on `UnilateralDataHandler.List`, which must state when a
+  SELECT's own LIST can still arrive there.

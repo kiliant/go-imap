@@ -4,9 +4,18 @@
 
 **Owns:**
 - the `ListData` declaration and a new `ListExtendedItem` type in the root package (`mailbox.go`)
-- `imapclient/list.go` (`readListExtendedData` only), `selectCollector` in `imapclient/select.go`, and the SASL selection in `imapclient/auth.go`
+- `imapclient/list.go` (`readListExtendedData`, its helpers, and the `ListExtendedItem` alias), `selectCollector` in `imapclient/select.go`, and the SASL selection in `imapclient/auth.go`
 - `imapserver/cmd_list.go`, `imapserver/ext_a_list.go`, the `ListOptions`/`ListWriter` documentation in `imapserver/backend.go`, the RECURSIVEMATCH parts of `imapserver/memory/**` and `imapserver/backendtest/**`
 - new test files named below, the LIST-EXTENDED rows in `docs/RFC-COVERAGE.md`, and the matching `CHANGELOG.md` entries
+- the v2-candidates note in `docs/ROADMAP.md`, which records item 3's default flip
+- by hand-over from completed tasks (BOARD's lock-passing rule, named in both
+  specs): `cmd/imapcli/auth.go` and its mechanism-choice test in
+  `cmd/imapcli/backup_test.go` from [T28](T28-imapcli-backup.md), and
+  `TestUnilateralListOldName` in `imapclient/conn_test.go` and the
+  `UnilateralDataHandler.List` doc comment from
+  [T27](T27-client-gaps-from-t11.md)
+- the T29 precedent notes in `docs/API-STABILITY.md` (rules 1 and 9, and the
+  versioning policy), which api-guardian required
 
 T27 left these three items open after its review. All three change library
 behaviour or API, so all three go through `api-guardian` before merge. T27
@@ -27,9 +36,13 @@ match swallows exactly those events for the selected mailbox. The guardian
 recorded this as T27's last observation.
 
 **Change.**
-- Snapshot whether IMAP4rev2 is enabled when the command is issued, as the
-  first T27 draft did. Claim a LIST only on a rev2 session, by name or
-  OLDNAME, and at most once.
+- Read whether IMAP4rev2 is enabled when a LIST arrives. Claim a LIST only
+  on a rev2 session, by name or OLDNAME, and at most once. (This spec first
+  said to snapshot it when the command is issued. The api-guardian review
+  found that a snapshot can race ENABLE's completion, which records
+  IMAP4rev2 after ENABLE has left the pending queue. The reader goroutine
+  runs that completion before it decodes any later response, so reading on
+  arrival is exact.)
 - On a rev1 session, forward every LIST.
 - Document the ambiguity rev2 leaves: an event for the selected mailbox
   that arrives before the SELECT's own LIST looks identical to it, for
@@ -140,11 +153,15 @@ Decisions for the guardian, with the reasoning so far:
 
 ### Client
 
-- **`readListExtendedData`** fills `OldName` (as now), `ChildInfo`, and
-  `Extended` for everything else. Keep T27's leniency: anything unparseable
-  costs the extended data, never the response.
-- **Repeats.** Decide what to do with a CHILDINFO item that is repeated or
-  malformed: keep the first, skip the rest. Write the rule down.
+- **`readListExtendedData`** keeps every item raw in `Extended`, OLDNAME and
+  CHILDINFO included, and decodes `OldName` and `ChildInfo` from the
+  captured bytes. Keep T27's leniency: anything unparseable costs the
+  extended data, never the response. (This spec first proposed `Extended`
+  for unmodelled items only. The api-guardian review rejected that: when a
+  later release learns to decode an item, it would vanish from `Extended`
+  for exactly the callers reading it there.)
+- **Repeats.** Of repeated or malformed OLDNAME and CHILDINFO items, the
+  first that decodes is used. Every one is kept raw.
 - **Fuzz.** Extend `FuzzUnilateralStream`'s seeds, or add a LIST-response
   fuzz target, with CHILDINFO, an unknown item containing a literal, nested
   lists, and malformed values. The fuzz files are T13's pattern, so name
@@ -272,10 +289,9 @@ const (
     `CredentialPassword` logs in with the interop password.
   - The existing OAUTHBEARER test passes with `CredentialBearerToken`.
 
-**Follow-up outside this task.** `cmd/imapcli/auth.go` can then drop its own
-selection and set `Credential: CredentialPassword`. That file belongs to T28,
-which is done. Make the change in a one-commit follow-up, or have this spec
-and T28's both name the hand-over (BOARD's lock-passing rule).
+**Follow-up.** `cmd/imapcli/auth.go` drops its own selection and sets
+`Credential: CredentialPassword`. That file belonged to T28, which is done;
+this spec and T28's both name the hand-over (BOARD's lock-passing rule).
 
 ## Done when
 

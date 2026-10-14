@@ -158,7 +158,10 @@ type UnilateralDataHandler struct {
 	// created, deleted or renamed — and SubscriptionChange (RFC 5465 sections
 	// 5.4 and 5.5). The LIST an IMAP4rev2 server sends as part of SELECT or
 	// EXAMINE (RFC 9051 section 6.3.2) belongs to that command and does not
-	// arrive here.
+	// arrive here. The one exception no client can avoid: an event for the
+	// mailbox being selected that arrives before that LIST is identical to it
+	// on the wire, so the event is taken as the command's and the command's
+	// LIST arrives here in its place. On IMAP4rev1 every LIST arrives here.
 	List func(data *ListData)
 	_    struct{}
 }

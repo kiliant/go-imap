@@ -487,9 +487,10 @@ func TestSelectClaimsItsOwnList(t *testing.T) {
 }
 
 // TestUnilateralListOldName covers the NOTIFY rename event: LIST extended data
-// carries the previous name (RFC 5465 section 5.4). Other extended items are
-// skipped, and extended data the client cannot parse costs the old name, not
-// the response.
+// carries the previous name (RFC 5465 section 5.4). Other extended items beside
+// it do not disturb it, and extended data the client cannot parse costs the old
+// name, not the response. The other items themselves are covered in
+// list_extended_test.go.
 func TestUnilateralListOldName(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()

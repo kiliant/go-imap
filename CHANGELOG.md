@@ -72,11 +72,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   client keeps LIST's CHILDINFO extended data item, which it used to drop.
   CHILDINFO is the reason RECURSIVEMATCH exists (RFC 5258 section 3.5): it
   marks a parent returned because a descendant matched. So
-  `imapclient.ListSelectRecursiveMatch` was unusable until now. Every other
-  extended data item is kept raw in `Extended`, in wire order, so an item a
-  future RFC defines is not lost. A malformed CHILDINFO is skipped without
-  costing the other items, and of repeated ones the first is kept. Verified
-  against Dovecot, Stalwart and Cyrus. Additive.
+  `imapclient.ListSelectRecursiveMatch` was unusable until now. Every extended
+  data item, OLDNAME and CHILDINFO included, is kept raw in `Extended` in wire
+  order. `OldName` and `ChildInfo` are decoded from those items, so an item a
+  later release learns to decode stays in `Extended` too. A malformed OLDNAME
+  or CHILDINFO is kept raw and decodes to nothing, without costing the other
+  items. Of repeated ones, the first that decodes is used. Verified against
+  Dovecot, Stalwart and Cyrus. Additive.
 - `imapclient.Client.SortExtended` refuses RETURN (UPDATE), because the
   unsolicited ESEARCH updates it asks for are not delivered yet. Allowing it
   later is compatible.

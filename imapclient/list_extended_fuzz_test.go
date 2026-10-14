@@ -20,6 +20,9 @@ func FuzzReadListExtendedData(f *testing.F) {
 		" (\"X-LIT\" {5}\r\nab\r\nc \"X-NEXT\" ({3}\r\nxyz))\r\n",
 		" (\"CHILDINFO\" ((\"SUBSCRIBED\")) \"CHILDINFO\" () \"CHILDINFO\" (\"\") \"CHILDINFO\" \"SUBSCRIBED\")\r\n",
 		" (\"CHILDINFO\" (\"SUBSCRIBED\") \"CHILDINFO\" (\"REMOTE\"))\r\n",
+		" (\"OLDNAME\" (\"Old\") \"OLDNAME\" (\"A\" \"B\") \"OLDNAME\" {3}\r\nabc)\r\n",
+		" (\"CHILDINFO\" (\"x-opt Value\"))\r\n",
+		" (\"CHILDINFO\" (\" SUBSCRIBED\"))\r\n",
 		" (\"X-BROKEN\")\r\n",
 		" (\"CHILDINFO\" (\"SUBSCRIBED\"\r\n",
 		" (\"X-DEEP\" ((((((((((((((((x)))))))))))))))))\r\n",
@@ -37,14 +40,22 @@ func FuzzReadListExtendedData(f *testing.F) {
 			t.Fatalf("present but empty ChildInfo from %q", wire)
 		}
 		for _, option := range got.ChildInfo {
-			if option == "" || option != strings.ToUpper(option) {
+			name, _, _ := strings.Cut(option, " ")
+			if name == "" || name != strings.ToUpper(name) {
 				t.Fatalf("CHILDINFO option %q from %q", option, wire)
 			}
 		}
+		tags := make(map[string]bool)
 		for _, item := range got.Extended {
-			if item.Tag == "" || item.Tag != strings.ToUpper(item.Tag) || item.Tag == "OLDNAME" || item.Tag == "CHILDINFO" {
+			if item.Tag == "" || item.Tag != strings.ToUpper(item.Tag) {
 				t.Fatalf("extended item tag %q from %q", item.Tag, wire)
 			}
+			tags[item.Tag] = true
+		}
+		// A decoded field is a view of an item that is kept, never a
+		// replacement for it.
+		if got.ChildInfo != nil && !tags["CHILDINFO"] || got.OldName != "" && !tags["OLDNAME"] {
+			t.Fatalf("decoded item missing from Extended: %#v from %q", got, wire)
 		}
 	})
 }

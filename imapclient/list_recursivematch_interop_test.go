@@ -73,8 +73,12 @@ func TestListRecursiveMatchInterop(t *testing.T) {
 			case listChildInfoOmitted[server.Profile.Name]:
 				t.Logf("recorded omission not observed: server returned %#v", got)
 			}
-			if got != nil && len(got.Extended) > 0 {
-				t.Logf("server sent extended data items this library does not model: %#v", got.Extended)
+			if got != nil {
+				for _, item := range got.Extended {
+					if item.Tag != "CHILDINFO" && item.Tag != "OLDNAME" {
+						t.Logf("server sent an extended data item this library does not decode: %#v", item)
+					}
+				}
 			}
 		})
 	}

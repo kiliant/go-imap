@@ -136,25 +136,27 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 // claimed. On IMAP4rev1 a LIST during SELECT can only be an event, such as a
 // NOTIFY MailboxName or SubscriptionChange for the mailbox being selected
 // (RFC 5465 sections 5.4 and 5.5), and every one is passed on. Whether
-// IMAP4rev2 is enabled is read once, when the command is issued; SELECT is
-// never pipelined with a pending ENABLE, so it cannot change before the
-// response arrives.
+// IMAP4rev2 is enabled is read when a LIST arrives, not when SELECT is issued.
+// ENABLE records IMAP4rev2 in its completion, which the reader goroutine runs
+// before it decodes any response to a later command; a snapshot at issue could
+// be taken in the moment between ENABLE leaving the pending queue and that
+// completion running, and read rev1 on a rev2 session.
 //
 // IMAP4rev2 leaves one case no client can resolve: an event for the selected
 // mailbox that arrives before the SELECT's own LIST is identical to it on the
 // wire. The first is claimed, and the SELECT's own LIST, arriving second, is
 // passed on in its place.
 func selectCollector(c *Client, data *MailboxStatus) commandCollector {
-	claimList := c.rev2Enabled()
+	claimed := false
 	return func(resp *untaggedResponse) (bool, error) {
 		if !resp.hasNum && resp.cond == nil && resp.name == "LIST" {
 			var list []*ListData
 			if _, err := listCollector("LIST", &list, 1)(resp); err != nil {
 				return true, err
 			}
-			if claimList && len(list) == 1 && (normalisedMailbox(list[0].Mailbox) == data.Mailbox ||
+			if !claimed && len(list) == 1 && c.rev2Enabled() && (normalisedMailbox(list[0].Mailbox) == data.Mailbox ||
 				list[0].OldName != "" && normalisedMailbox(list[0].OldName) == data.Mailbox) {
-				claimList = false
+				claimed = true
 				return true, nil
 			}
 			c.deliverUnilateralList(list)
