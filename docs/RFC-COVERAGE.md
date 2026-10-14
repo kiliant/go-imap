@@ -331,12 +331,21 @@ CONDSTORE `MODIFIED` on tagged OK.
     update desynchronises a view in active use. Overflow is reported rather than
     hidden.
 
-[^t27notify]: The live test covers selected-mailbox events. Events for other
-    mailboxes — the unsolicited STATUS and LIST responses of RFC 5465
-    section 5 — were discarded by the client until T27 added
-    `UnilateralDataHandler.MailboxStatus` and `.List`; they are unit-tested
-    only so far. A rename's `OLDNAME` extended data is not modelled yet, so a
-    rename event carries the new name only.
+[^t27notify]: Events for other mailboxes are the unsolicited STATUS and LIST
+    responses of RFC 5465 section 5. The client discarded them until T27 added
+    `UnilateralDataHandler.Status` and `.List`. They are live-verified: a
+    MessageNew in a mailbox the watcher has not selected arrives as STATUS,
+    and a CREATE arrives as LIST, on Dovecot and Cyrus. A rename carries the
+    previous name in `imap.ListData.OldName`, from the `OLDNAME` extended data
+    (section 5.4). This is verified on Cyrus. Dovecot 2.4 sends no MailboxName
+    event for RENAME at all, so that check skips there. SubscriptionChange
+    (section 5.5) arrives through `.List` as well. Three gaps remain:
+    - MailboxMetadataChange and ServerMetadataChange arrive as unsolicited
+      METADATA (RFC 5464 §4.4.2) and are still discarded. A `.Metadata`
+      handler would be additive.
+    - A STATUS event for another mailbox that arrives while a STATUS command
+      is in flight is merged into that command's result.
+    - A LIST event that arrives during a LIST command joins the listing.
 
 [^t27inprogress]: Until T27 the response code was parsed but never delivered:
     an untagged `OK [INPROGRESS ...]` no command claimed was dropped, and so
@@ -380,8 +389,8 @@ break the client; full command support is best-effort.
 | LANGUAGE | 5255 | done | done | |
 | I18NLEVEL=1 | 5255 | done | done | capability probe |
 | I18NLEVEL=2 | 5255 | done | done [^srvi18n2] | COMPARATOR command |
-| CONTEXT=SEARCH | 5267 | done | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
-| CONTEXT=SORT | 5267 | done | done [^srvcontext] | as above |
+| CONTEXT=SEARCH | 5267 | in progress [^t27context] | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | in progress [^t27context] | done [^srvcontext] | as above |
 | ESORT | 5267 | verified [^esort] | done [^srvesort] | `SortExtended` / `SortExtendedUID` |
 | FILTERS | 5466 | done | done [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
@@ -403,6 +412,14 @@ break the client; full command support is best-effort.
     Comparator names are an open RFC 4790 registry and cross the boundary as
     strings. A request naming nothing servable returns BADCOMPARATOR rather than
     a generic NO, so a client can tell it apart and fall back.
+
+[^t27context]: The client sends the CONTEXT and UPDATE return options and
+    CANCELUPDATE, but discards the unsolicited ESEARCH responses with ADDTO and
+    REMOVEFROM that carry the updates (RFC 5267 §4.3). An update arriving while
+    another extended SEARCH or SORT is pending is claimed by that command and
+    fails it. `SortExtended` therefore refuses RETURN (UPDATE), which can be
+    allowed compatibly once updates are delivered. Delivering them needs a
+    handler field and the command tag for CANCELUPDATE, both additive.
 
 [^srvcontext]: `RETURN (UPDATE)` registers a search result and `CANCELUPDATE`
     drops it; removals are reported as `REMOVEFROM` on further untagged ESEARCH
