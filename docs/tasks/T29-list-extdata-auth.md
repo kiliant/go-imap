@@ -296,8 +296,10 @@ this spec and T28's both name the hand-over (BOARD's lock-passing rule).
 ## Follow-ups outside this task
 
 Found by the api-guardian review, recorded here so a later task picks them up.
+Each is tracked as a GitHub issue; the bugs found along the way are #22 and
+#23, and the missing `imapserver/v0.2.0` tag is #24.
 
-- **imapserver: witness the LIST-EXTENDED selection options.** LIST-EXTENDED
+- **imapserver: witness the LIST-EXTENDED selection options** (#20). LIST-EXTENDED
   is witnessed by the framework alone (`imapserver/capability.go`), so
   `ListOptions.SelectRecursiveMatch` and `SelectRemote` reach every backend,
   whether or not it implements them. RECURSIVEMATCH is something only a
@@ -309,7 +311,7 @@ Found by the api-guardian review, recorded here so a later task picks them up.
   shape. This predates T29. imapserver is on v0.x, so the change is allowed.
   `backendtest` already checks RECURSIVEMATCH, so a backend that claims the
   witness and ignores the option fails there.
-- **imapclient: a code for "no mechanism takes this credential".**
+- **imapclient: a code for "no mechanism takes this credential"** (#21).
   `Authenticate` refuses locally when no advertised mechanism takes the
   `Credential` kind, but the `*imap.Error` it returns has no `Code`. A caller
   can tell it apart only by its text. So `cmd/imapcli/auth.go` keeps its own
