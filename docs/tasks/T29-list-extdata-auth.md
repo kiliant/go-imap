@@ -1,6 +1,6 @@
 # T29 — LIST extended data, the SELECT LIST claim, opt-in password-only SASL
 
-**Agent:** `extensions` + `client-core` + `api-guardian` · **Milestone:** post-M6 (root `v1.2.0` / `imapserver/v0.3.0`) · **Depends on:** T27
+**Agent:** `extensions` + `client-core` + `api-guardian` · **Milestone:** post-M6 (root `v1.2.0` / `imapserver/v0.3.0`) · **Depends on:** T27 · **Issue:** #19
 
 **Owns:**
 - the `ListData` declaration and a new `ListExtendedItem` type in the root package (`mailbox.go`)
