@@ -40,6 +40,35 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   now authenticates only with password mechanisms. Before, a server offering
   OAUTHBEARER beside PLAIN (Stalwart does by default) got the password as a
   bearer token and refused it. A `main` package: no exported API change.
+- `imapclient.Client.SortExtended`, `imapclient.Client.SortExtendedUID` and
+  `imapclient.ESortOptions`: SORT with a RETURN list, answered as ESEARCH data.
+  ESORT, RFC 5267. The client previously detected ESORT but had no way to send
+  it. Falls back to a plain SORT for MIN, MAX, ALL and COUNT. Additive;
+  `apidiff` reports three compatible additions.
+- `imapclient.UnilateralDataHandler.StatusResponse`, the shared
+  `imap.StatusResponse` type and its alias `imapclient.StatusResponse`:
+  untagged OK, NO and BAD responses no command claims now reach the caller
+  with their response code. They were dropped, which lost INPROGRESS
+  notifications (RFC 9585) and connection-level ALERT text (RFC 3501 section
+  7.1). The type lives in the root package like every other response shape,
+  because a server sends the same thing. Additive in both packages.
+- `imapclient.UnilateralDataHandler.Status` and `.List`: unsolicited
+  STATUS and LIST responses, which NOTIFY uses for events in mailboxes other
+  than the selected one (RFC 5465 section 5), were discarded and are now
+  delivered. Additive. A malformed unsolicited STATUS or LIST is now a
+  protocol error, as for every other unilateral response the client parses.
+  SELECT and EXAMINE claim the LIST an IMAP4rev2 server sends for the
+  selected mailbox (RFC 9051 section 6.3.2), so it is not mistaken for an
+  event.
+- `imap.ListData.OldName`: the previous name from LIST's OLDNAME extended data
+  item, which NOTIFY uses to report a rename (RFC 5465 section 5.4) and an
+  IMAP4rev2 server uses when SELECT named a mailbox in non-canonical form
+  (RFC 9051 section 6.3.2). The client's LIST parser fills it and skips other
+  extended items. Extended data it cannot parse still costs only the old name,
+  never the response. Additive.
+- `imapclient.Client.SortExtended` refuses RETURN (UPDATE), because the
+  unsolicited ESEARCH updates it asks for are not delivered yet. Allowing it
+  later is compatible.
 
 #### Fixed
 

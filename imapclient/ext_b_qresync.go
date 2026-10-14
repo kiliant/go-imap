@@ -190,7 +190,7 @@ func (c *Client) selectSync(name, mailbox string, options *SyncSelectOptions) *S
 	result.Command = c.beginCommandWithCompletion(name, stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox)
 		writeSelectParams(enc, &o)
-	}, syncSelectCollector(data, selectCollector(base), &untagged, limit, name), func(success bool, _, _ string) {
+	}, syncSelectCollector(data, selectCollector(c, base), &untagged, limit, name), func(success bool, _, _ string) {
 		c.finishSelectSync(success, data, &o)
 	})
 	return result

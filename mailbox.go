@@ -98,7 +98,16 @@ type ListData struct {
 	Attrs     []MailboxAttr
 	Delimiter rune
 	Mailbox   string
-	_         struct{}
+
+	// OldName is the mailbox's previous name, from the OLDNAME extended data
+	// item, or "" when there is none. A NOTIFY MailboxName event reports a
+	// rename this way (RFC 5465 section 5.4), and an IMAP4rev2 server uses it
+	// in the LIST answering a SELECT of a name that was not in canonical form
+	// (RFC 9051 section 6.3.2). "" cannot be a present value: no mailbox is
+	// renamed from, or selected as, the empty name.
+	OldName string
+
+	_ struct{}
 }
 
 // MailboxStatus is the state of a mailbox as reported while selecting it: the

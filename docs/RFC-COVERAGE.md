@@ -296,10 +296,10 @@ CONDSTORE `MODIFIED` on tagged OK.
 | METADATA | 5464 | done | done |
 | METADATA-SERVER | 5464 | done | done |
 | LIST-METADATA | 9590 | done | done |
-| NOTIFY | 5465 | verified [^t26d] | done [^srvnotify] |
+| NOTIFY | 5465 | verified [^t26d] [^t27notify] | done [^srvnotify] |
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
-| INPROGRESS | 9585 | done | done [^srvinprogress] |
+| INPROGRESS | 9585 | done [^t27inprogress] | done [^srvinprogress] |
 | MESSAGELIMIT= | 9738 | done | done |
 | SAVELIMIT= | 9738 | done | done |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
@@ -330,6 +330,31 @@ CONDSTORE `MODIFIED` on tagged OK.
     because a dropped notification costs a refresh while a dropped selection
     update desynchronises a view in active use. Overflow is reported rather than
     hidden.
+
+[^t27notify]: Events for other mailboxes are the unsolicited STATUS and LIST
+    responses of RFC 5465 section 5. The client discarded them until T27 added
+    `UnilateralDataHandler.Status` and `.List`. They are live-verified: a
+    MessageNew in a mailbox the watcher has not selected arrives as STATUS,
+    and a CREATE arrives as LIST, on Dovecot and Cyrus. A rename carries the
+    previous name in `imap.ListData.OldName`, from the `OLDNAME` extended data
+    (section 5.4). This is verified on Cyrus. Dovecot 2.4 sends no MailboxName
+    event for RENAME at all, so that check skips there. SubscriptionChange
+    (section 5.5) arrives through `.List` as well. Three gaps remain:
+    - MailboxMetadataChange and ServerMetadataChange arrive as unsolicited
+      METADATA (RFC 5464 §4.4.2) and are still discarded. A `.Metadata`
+      handler would be additive.
+    - A STATUS event for another mailbox that arrives while a STATUS command
+      is in flight is merged into that command's result.
+    - A LIST event that arrives during a LIST command joins the listing.
+
+[^t27inprogress]: Until T27 the response code was parsed but never delivered:
+    an untagged `OK [INPROGRESS ...]` no command claimed was dropped, and so
+    was every other unclaimed status response, including connection-level
+    `[ALERT]` text RFC 3501 section 7.1 says must reach the user.
+    `UnilateralDataHandler.StatusResponse` now receives them all, with the
+    code and its arguments, for `ParseInProgressArgs` to decode. No server in
+    the matrix emits INPROGRESS on the short commands the tests issue, so it
+    stays `done`.
 
 [^srvinprogress]: The untagged OK progress response shape is framework-owned and
     advertised; no backend surface is required to emit one.
@@ -364,9 +389,9 @@ break the client; full command support is best-effort.
 | LANGUAGE | 5255 | done | done | |
 | I18NLEVEL=1 | 5255 | done | done | capability probe |
 | I18NLEVEL=2 | 5255 | done | done [^srvi18n2] | COMPARATOR command |
-| CONTEXT=SEARCH | 5267 | done | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
-| CONTEXT=SORT | 5267 | done | done [^srvcontext] | as above |
-| ESORT | 5267 | done | done [^srvesort] | capability + RETURN keywords |
+| CONTEXT=SEARCH | 5267 | in progress [^t27context] | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | in progress [^t27context] | done [^srvcontext] | as above |
+| ESORT | 5267 | verified [^esort] | done [^srvesort] | `SortExtended` / `SortExtendedUID` |
 | FILTERS | 5466 | done | done [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
 | IMAPSIEVE= | 6785 | deferred | deferred | server-side; parse only |
@@ -388,6 +413,14 @@ break the client; full command support is best-effort.
     strings. A request naming nothing servable returns BADCOMPARATOR rather than
     a generic NO, so a client can tell it apart and fall back.
 
+[^t27context]: The client sends the CONTEXT and UPDATE return options and
+    CANCELUPDATE, but discards the unsolicited ESEARCH responses with ADDTO and
+    REMOVEFROM that carry the updates (RFC 5267 §4.3). An update arriving while
+    another extended SEARCH or SORT is pending is claimed by that command and
+    fails it. `SortExtended` therefore refuses RETURN (UPDATE), which can be
+    allowed compatibly once updates are delivered. Delivering them needs a
+    handler field and the command tag for CANCELUPDATE, both additive.
+
 [^srvcontext]: `RETURN (UPDATE)` registers a search result and `CANCELUPDATE`
     drops it; removals are reported as `REMOVEFROM` on further untagged ESEARCH
     responses. The registration is framework state — it already sees every
@@ -397,6 +430,17 @@ break the client; full command support is best-effort.
     backend re-entrancy the design forbids; RFC 5267 §4.3 permits REMOVEFROM
     without ADDTO, and a guessed ADDTO would put a message in the client's
     result set that never matched.
+
+[^esort]: Until T27 this row overstated: the client detected the capability
+    but could not send `SORT RETURN (...)` at all. `Client.SortExtended` and
+    `SortExtendedUID` now issue it and return ESEARCH data, falling back to a
+    plain SORT for MIN, MAX, ALL and COUNT when only SORT is advertised.
+    Verified live on Dovecot 2.4.3 and Cyrus 3.10: ALL arrives in the order a
+    plain SORT returns. RFC 5267 section 3.1 calls MIN and MAX "the
+    lowest/highest sorted message", which Dovecot reads as positions in the
+    sort order and Cyrus and Stalwart as numeric extremes; the client passes
+    either through. Stalwart 0.11.8 also answers ALL with fewer numbers than
+    its own COUNT, which the test records as a server deviation.
 
 [^srvesort]: The ESEARCH-shaped response for SORT. MIN and MAX are the ends of
     the *sorted* order rather than the numerically smallest and largest, and ALL

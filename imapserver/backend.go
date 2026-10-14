@@ -775,6 +775,13 @@ type ListWriter struct {
 
 // WriteList writes one LIST result. ctx is normally the context passed to the
 // enclosing Session.List call.
+//
+// Attrs, Delimiter and Mailbox are written. A previous name in the result's
+// OldName field is not: OLDNAME has no meaning in a LIST result. RFC 5465
+// section 5.4 gives it one in a NOTIFY MailboxName event, and RFC 9051 section
+// 6.3.2 in the LIST answering a SELECT of a non-canonical name. The framework
+// will write it itself in those cases, where what the session negotiated
+// decides, as for every other extension data.
 func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 	if w == nil {
 		return ErrWriterClosed

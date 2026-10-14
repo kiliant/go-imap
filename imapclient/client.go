@@ -121,6 +121,9 @@ type TraceEvent struct {
 // claims. It is a struct of callbacks rather than an interface so future
 // unsolicited response types can be added without breaking implementations.
 //
+// Every callback runs on the client's reader goroutine and must not block:
+// until it returns, no further response is read.
+//
 // Construct with keyed fields only; fields may be added in a future release.
 type UnilateralDataHandler struct {
 	// Exists receives the updated message count for the selected mailbox.
@@ -136,8 +139,34 @@ type UnilateralDataHandler struct {
 	// expunges that happened while disconnected and does not renumber
 	// sequence numbers. See [VanishedData].
 	Vanished func(data VanishedData)
-	_        struct{}
+	// StatusResponse receives an untagged OK, NO or BAD response that no
+	// command claimed, with its response code. This is how a server reports
+	// INPROGRESS progress (RFC 9585; decode the arguments with
+	// [ParseInProgressArgs]) and connection-level ALERT text, which RFC 3501
+	// section 7.1 requires a client to present to its user. A response code
+	// this library does not know arrives here unchanged. Responses without a
+	// code arrive too, such as the "* OK Still here" a server sends during
+	// IDLE, so a user interface presents only Code == [imap.CodeAlert]. The
+	// greeting is not delivered here, ALERT included.
+	StatusResponse func(data *StatusResponse)
+	// Status receives an unsolicited STATUS response. After NOTIFY, it is how
+	// the server reports a change in a mailbox other than the selected one
+	// (RFC 5465 section 5).
+	Status func(data *StatusData)
+	// List receives a LIST response no in-flight command claimed. After
+	// NOTIFY, it is how the server reports the MailboxName event — a mailbox
+	// created, deleted or renamed — and SubscriptionChange (RFC 5465 sections
+	// 5.4 and 5.5). The LIST an IMAP4rev2 server sends as part of SELECT or
+	// EXAMINE (RFC 9051 section 6.3.2) belongs to that command and does not
+	// arrive here.
+	List func(data *ListData)
+	_    struct{}
 }
+
+// StatusResponse is an untagged status response delivered to
+// [UnilateralDataHandler.StatusResponse]. It is an alias for
+// [imap.StatusResponse], which both protocol directions share.
+type StatusResponse = imap.StatusResponse
 
 // Client is an IMAP session. Its zero value is not usable; obtain one with
 // [Dial], [DialTLS], [DialStartTLS], or [NewClient].
@@ -276,6 +305,11 @@ type Command struct {
 
 	collector  commandCollector
 	onComplete taggedCompleteFunc
+
+	// answersESearch marks a command whose name does not say that its answer
+	// is an untagged ESEARCH: today, a SORT with a RETURN list (RFC 5267).
+	// It is set before the command is registered and never changes.
+	answersESearch bool
 }
 
 // taggedCompleteFunc is invoked on the reader goroutine with the tagged
@@ -519,6 +553,9 @@ type commandOptions struct {
 	// own continuation handler before issuing the command and keep it for the
 	// remainder of the exchange.
 	ownsContinuation bool
+
+	// answersESearch is copied to Command.answersESearch.
+	answersESearch bool
 }
 
 func (c *Client) beginCommand(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector) *Command {
@@ -584,7 +621,7 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 // blocks here until the server answers, and the reader goroutine must stay free
 // to deliver that answer.
 func (c *Client) issue(name string, opts commandOptions) *Command {
-	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: opts.collector, onComplete: opts.onComplete}
+	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: opts.collector, onComplete: opts.onComplete, answersESearch: opts.answersESearch}
 
 	if !opts.ownsContinuation {
 		c.continuationOwnerMu.Lock()

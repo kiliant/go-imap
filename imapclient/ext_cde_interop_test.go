@@ -530,3 +530,217 @@ func TestExtDNotifyInterop(t *testing.T) {
 		}
 	})
 }
+
+// TestExtCESortInterop checks ESORT (RFC 5267) against the same corpus as
+// SORT: the extended form must return the order the plain form does, with
+// MIN and MAX as its first and last positions rather than numeric extremes.
+func TestExtCESortInterop(t *testing.T) {
+	t26ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, client *imapclient.Client) {
+		harness.RequireCapabilities(t, caps, "SORT", "ESORT")
+		t26SortCorpus(t, ctx, server, client, t08Mailbox(t, ctx, server, client, "esort"))
+		keys := []imap.SortKeySpec{{Key: imap.SortKeySize, Reverse: true}}
+		plain, err := client.SortUID(ctx, keys, imap.SearchAll, nil)
+		if err != nil {
+			t08Fail(t, server, client, "UID SORT (REVERSE SIZE)", err)
+		}
+		data, err := client.SortExtendedUID(ctx, keys, imap.SearchAll, &imapclient.ESortOptions{
+			ReturnOptions: []imapclient.SearchReturnOption{
+				imapclient.SearchReturnMin, imapclient.SearchReturnMax,
+				imapclient.SearchReturnCount, imapclient.SearchReturnAll,
+			},
+		})
+		if err != nil {
+			t08Fail(t, server, client, "UID SORT RETURN (MIN MAX COUNT ALL) (REVERSE SIZE)", err)
+		}
+		if data.Emulated {
+			t.Fatal("ESORT was emulated on a server that advertises it")
+		}
+		order := plain.UIDs
+		if len(order) != 3 || data.Count != 3 {
+			t.Fatalf("SORT = %v, ESORT COUNT = %d; want 3 each", order, data.Count)
+		}
+		// ALL keeps the sort order, and a range may run downwards ("7:5"), so
+		// it is walked range by range in the direction written; the NumSet
+		// helpers would sort it.
+		var all []imap.UID
+		for _, r := range data.AllUIDs {
+			step := imap.UID(1)
+			if r.Start > r.Stop {
+				step = ^imap.UID(0) // -1
+			}
+			for uid := r.Start; ; uid += step {
+				all = append(all, uid)
+				if uid == r.Stop {
+					break
+				}
+			}
+		}
+		if fmt.Sprint(all) != fmt.Sprint(order) {
+			if reason, known := t26ESortAllIncomplete[server.Profile.Name]; known {
+				// The client reports the wire value verbatim; Values keeps it.
+				t.Logf("%s: ESORT ALL = %v (wire %q) against SORT %v; known server deviation: %s",
+					server.Profile.Name, all, data.Values[imap.ESearchReturnKeyAll], order, reason)
+				return
+			}
+			t.Fatalf("ESORT ALL = %v (wire %q), want the SORT order %v", all, data.Values[imap.ESearchReturnKeyAll], order)
+		}
+		// RFC 5267 section 3.1 defines MIN and MAX as "the lowest/highest
+		// sorted message". Dovecot reads that as the first and last position
+		// in the sort order; Cyrus 3.10 and Stalwart 0.11.8 as the numerically
+		// lowest and highest match. Both are matches, which is all the client
+		// relies on; which reading a server takes is logged, not asserted.
+		member := func(n uint32) bool {
+			for _, uid := range order {
+				if uint32(uid) == n {
+					return true
+				}
+			}
+			return false
+		}
+		if !data.HasMin || !data.HasMax || !member(data.Min) || !member(data.Max) {
+			t.Fatalf("ESORT MIN/MAX = %d/%d, want two of the matches %v", data.Min, data.Max, order)
+		}
+		reading := "numeric"
+		if imap.UID(data.Min) == order[0] && imap.UID(data.Max) == order[len(order)-1] {
+			reading = "sort-order"
+		}
+		t.Logf("%s: ESORT MIN/MAX = %d/%d over sort order %v (%s reading)", server.Profile.Name, data.Min, data.Max, order, reading)
+	})
+}
+
+// t26ESortAllIncomplete lists servers observed to return an ESORT ALL list
+// that disagrees with their own COUNT and SORT answers. Probed 2026-10-03.
+var t26ESortAllIncomplete = map[string]string{
+	"stalwart": "Stalwart 0.11.8 answers COUNT 3 with ALL 1,3 for three matches sorted 2,3,1",
+}
+
+// TestExtDNotifyOtherMailboxesInterop checks the events T27 started
+// delivering. For a mailbox other than the selected one, NOTIFY reports
+// MessageNew as an unsolicited STATUS and MailboxName as an unsolicited LIST
+// (RFC 5465 section 5), and a rename carries OLDNAME (section 5.4).
+func TestExtDNotifyOtherMailboxesInterop(t *testing.T) {
+	t26ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, setup *imapclient.Client) {
+		harness.RequireCapabilities(t, caps, "NOTIFY")
+		watched := t08Mailbox(t, ctx, server, setup, "notify-other")
+		renamed := watched + "-renamed"
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = setup.Delete(renamed, nil).Wait(cleanupCtx)
+		})
+
+		statuses := make(chan *imapclient.StatusData, 32)
+		lists := make(chan *imapclient.ListData, 32)
+		watcher, err := interopDial(ctx, server, &imapclient.Options{
+			AllowInsecureAuth: true,
+			UnilateralData: &imapclient.UnilateralDataHandler{
+				Status: func(data *imapclient.StatusData) {
+					select {
+					case statuses <- data:
+					default:
+					}
+				},
+				List: func(data *imapclient.ListData) {
+					select {
+					case lists <- data:
+					default:
+					}
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("dial watcher: %v", err)
+		}
+		defer watcher.Close()
+		if err := watcher.Login(ctx, authInteropUsername, authInteropPassword, nil); err != nil {
+			t.Fatalf("watcher login: %v", err)
+		}
+		// RFC 5465 section 5.2: MessageNew requires MessageExpunge beside it.
+		filters := []imapclient.NotifyFilter{{
+			Specifier: imapclient.NotifyPersonal,
+			Events: []imapclient.NotifyEventName{
+				imapclient.NotifyEventMessageNew,
+				imapclient.NotifyEventMessageExpunge,
+				imapclient.NotifyEventMailboxName,
+			},
+		}}
+		if err := watcher.Notify(ctx, filters, nil); err != nil {
+			t08Fail(t, server, watcher, "NOTIFY SET (PERSONAL (MessageNew MessageExpunge MailboxName))", err)
+		}
+
+		// MessageNew in a mailbox the watcher has not selected arrives as
+		// STATUS for that mailbox, with no command from the watcher.
+		t08Append(t, ctx, setup, watched, "t27-notify-other")
+		status := t27Await(t, statuses, func(data *imapclient.StatusData) bool { return data.Mailbox == watched },
+			"an unsolicited STATUS for "+watched+" after an APPEND by another session")
+		if n, ok := status.Number(imap.StatusItemMessages); ok && n != 1 {
+			t.Fatalf("STATUS MESSAGES = %d, want 1", n)
+		}
+
+		// MailboxName: a CREATE arrives as LIST for the new mailbox. That
+		// proves LIST delivery works against this server before the rename
+		// below relies on it.
+		created := watched + "-created"
+		if err := setup.Create(created, nil).Wait(ctx); err != nil {
+			t08Fail(t, server, setup, "CREATE", err)
+		}
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = setup.Delete(created, nil).Wait(cleanupCtx)
+		})
+		t27Await(t, lists, func(data *imapclient.ListData) bool { return data.Mailbox == created },
+			"an unsolicited LIST for "+created+" after a CREATE by another session")
+
+		// A rename arrives as LIST for the new name, with the old one as
+		// OLDNAME extended data. Dovecot 2.4 reports no MailboxName event for
+		// RENAME at all, though it does for CREATE; that is the server's gap,
+		// so its absence skips, while a wrong OLDNAME fails.
+		if err := setup.Rename(watched, renamed, nil).Wait(ctx); err != nil {
+			t08Fail(t, server, setup, "RENAME", err)
+		}
+		list, ok := t27AwaitOptional(lists, func(data *imapclient.ListData) bool { return data.Mailbox == renamed })
+		if !ok {
+			t.Skipf("%s sent no MailboxName event for RENAME within 15s; OLDNAME not exercised here", server.Profile.Name)
+		}
+		if list.OldName != watched {
+			t.Fatalf("rename event: OldName = %q, want %q (LIST %#v)", list.OldName, watched, list)
+		}
+	})
+}
+
+// t27AwaitOptional is t27Await for an event the server may legitimately not
+// send: ok is false when none matched within 15 seconds.
+func t27AwaitOptional[T any](ch <-chan T, match func(T) bool) (v T, ok bool) {
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case v = <-ch:
+			if match(v) {
+				return v, true
+			}
+		case <-deadline:
+			var zero T
+			return zero, false
+		}
+	}
+}
+
+// t27Await returns the first value from ch that matches, failing the test if
+// none arrives within 15 seconds.
+func t27Await[T any](t *testing.T, ch <-chan T, match func(T) bool, what string) T {
+	t.Helper()
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case v := <-ch:
+			if match(v) {
+				return v
+			}
+		case <-deadline:
+			var zero T
+			t.Fatalf("no %s within 15s", what)
+			return zero
+		}
+	}
+}

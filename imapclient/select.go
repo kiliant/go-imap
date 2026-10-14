@@ -90,7 +90,7 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 	data := &MailboxStatus{MailboxStatus: imap.MailboxStatus{Mailbox: normalisedMailbox(mailbox), ReadOnly: name == "EXAMINE"}}
 	cmd := c.beginCommandWithCompletion(name, stateAuthenticated|stateSelected, func(enc *imapwire.Encoder) {
 		enc.SP().Mailbox(mailbox)
-	}, selectCollector(data), func(success bool, _, _ string) {
+	}, selectCollector(c, data), func(success bool, _, _ string) {
 		if !success {
 			// RFC 3501 section 6.3.1: a failed SELECT or EXAMINE leaves no
 			// mailbox selected, so a session that had one drops back to the
@@ -118,8 +118,35 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 	return &SelectCommand{Command: cmd, data: data}
 }
 
-func selectCollector(data *MailboxStatus) commandCollector {
+// selectCollector claims the untagged responses that describe the mailbox
+// being selected into data.
+//
+// That includes one LIST: RFC 9051 section 6.3.2 has an IMAP4rev2 server
+// answer SELECT and EXAMINE with a LIST response for the selected mailbox,
+// carrying OLDNAME when the name asked for was not the canonical one. That
+// LIST belongs to the selection and must not reach
+// [UnilateralDataHandler.List], where it would read as a NOTIFY MailboxName
+// event or a rename. It is recognised by name: the listed name, or its
+// OLDNAME, is the one this command selected. Every other LIST that arrives
+// meanwhile is passed on as an event. The collector chain reads each response
+// once, so this also passes on a pipelined LIST command's responses if a
+// server ever interleaved them with this SELECT's.
+func selectCollector(c *Client, data *MailboxStatus) commandCollector {
+	ownList := false
 	return func(resp *untaggedResponse) (bool, error) {
+		if !resp.hasNum && resp.cond == nil && resp.name == "LIST" {
+			var list []*ListData
+			if _, err := listCollector("LIST", &list, 1)(resp); err != nil {
+				return true, err
+			}
+			if !ownList && len(list) == 1 && (normalisedMailbox(list[0].Mailbox) == data.Mailbox ||
+				list[0].OldName != "" && normalisedMailbox(list[0].OldName) == data.Mailbox) {
+				ownList = true
+				return true, nil
+			}
+			c.deliverUnilateralList(list)
+			return true, nil
+		}
 		if resp.cond != nil && resp.name == "OK" {
 			switch resp.cond.Text.Code {
 			case "UIDNEXT":
