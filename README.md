@@ -90,14 +90,49 @@ in an untagged `FLAGS` response. See `docs/INTEROP.md`.
 ## Command-line tool
 
 `cmd/imapcli` is a small read-only client for looking at a real mailbox: it
-lists folders as a tree, lists messages, and prints one message by UID. It
-opens mailboxes with EXAMINE and reads bodies with `BODY.PEEK[]`, so it never
-sets `\Seen` or changes anything else on the server.
+lists folders as a tree, lists messages, prints one message by UID, and keeps
+a local backup of a whole account. It opens mailboxes with EXAMINE and reads
+bodies with `BODY.PEEK[]`, so it never sets `\Seen` or changes anything else
+on the server.
 
 ```bash
-go install github.com/kiliant/go-imap/cmd/imapcli@latest
+go install github.com/kiliant/go-imap/cmd/imapcli@latest   # from v1.2.0; until then, ./cmd/imapcli from a checkout
 IMAP_PASS=… imapcli -addr mail.example:993 -tls -user alice -mailbox INBOX
 ```
+
+### Backing up an account
+
+`imapcli -backup DIR` mirrors every mailbox into `DIR` as Maildir. A first run
+downloads everything. Later runs fetch only new messages, rename files whose
+flags changed, and delete what the server deleted. A message is written once
+and never rewritten, so a deduplicating backup tool such as restic stores each
+one once and keeps the history in its snapshots. The package documentation
+describes the layout.
+
+A daily job for two accounts, run from launchd or cron:
+
+```sh
+#!/bin/sh
+set -u
+status=0
+imapcli -addr imap.mailbox.org:993 -tls -user me@mailbox.org \
+    -pass-cmd 'security find-generic-password -s imapcli-mailbox.org -w' \
+    -backup "$HOME/MailBackup/mailbox.org" || status=1
+imapcli -addr mail.example.net:993 -tls -user me@example.net \
+    -pass-file "$HOME/.config/imapcli/example.net.pw" \
+    -backup "$HOME/MailBackup/example.net" || status=1
+# Snapshot even after a failure: a failed mailbox keeps its previous copy, and
+# nothing is pruned in a run that had one.
+restic backup --tag mail "$HOME/MailBackup" || status=1
+restic forget --tag mail --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune || status=1
+exit $status
+```
+
+The password comes from a file (`-pass-file`) or a command (`-pass-cmd`), so
+nothing secret sits in the process list or the job definition. A second run
+on the same directory refuses to start while the first holds its lock, and
+`-exclude` skips mailboxes such as `Junk`. A backup directory belongs to one
+account; pointing another account at it is refused.
 
 It is also the library's own external consumer: it uses only the exported
 `imap` and `imapclient` API, exactly as any other program would.

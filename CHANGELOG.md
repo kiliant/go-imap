@@ -30,6 +30,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `cmd/imapcli`, a read-only command-line client that lists folders, lists
   messages and prints one message by UID, using EXAMINE and `BODY.PEEK[]` so
   it never changes server state. A `main` package: no exported API change.
+- `imapcli -backup DIR`: an incremental, read-only mirror of every mailbox
+  into Maildir, for a file-level backup tool such as restic. Messages are
+  stored byte for byte with INTERNALDATE as mtime. Flag changes are renames,
+  and expunged messages and deleted mailboxes are removed. Writes go through
+  `tmp/` and a rename, so an interrupted run never leaves a partial message.
+  Also new: `-pass-file` and `-pass-cmd` for unattended runs, `-exclude`, a
+  per-directory lock and account marker, and COMPRESS when offered. imapcli
+  now authenticates only with password mechanisms. Before, a server offering
+  OAUTHBEARER beside PLAIN (Stalwart does by default) got the password as a
+  bearer token and refused it. A `main` package: no exported API change.
 
 #### Fixed
 
