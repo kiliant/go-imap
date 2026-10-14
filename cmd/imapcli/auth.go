@@ -24,12 +24,31 @@ func authenticate(ctx context.Context, client *imapclient.Client, user, password
 		}
 		caps = client.Capabilities()
 	}
-	if !hasAuthMechanism(caps) {
+	if !offersPasswordMechanism(caps) {
+		// With no mechanism that takes a password, Authenticate would refuse
+		// before sending anything, and LOGIN is the fallback imapclient
+		// documents for that case. Login itself refuses under LOGINDISABLED.
 		return client.Login(ctx, user, password, nil)
 	}
 	return client.Authenticate(ctx, user, password, &imapclient.AuthenticateOptions{
 		Credential: imapclient.CredentialPassword,
 	})
+}
+
+// passwordMechanisms are the SASL mechanisms imapclient selects with
+// CredentialPassword, as its documentation lists them.
+var passwordMechanisms = []string{
+	"SCRAM-SHA-256-PLUS", "SCRAM-SHA-256", "SCRAM-SHA-1-PLUS", "SCRAM-SHA-1",
+	"CRAM-MD5", "PLAIN", "LOGIN",
+}
+
+func offersPasswordMechanism(caps map[string]bool) bool {
+	for _, m := range passwordMechanisms {
+		if caps["AUTH="+m] {
+			return true
+		}
+	}
+	return false
 }
 
 func hasAuthMechanism(caps map[string]bool) bool {
