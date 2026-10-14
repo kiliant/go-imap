@@ -59,7 +59,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   protocol error, as for every other unilateral response the client parses.
   SELECT and EXAMINE claim the LIST an IMAP4rev2 server sends for the
   selected mailbox (RFC 9051 section 6.3.2), so it is not mistaken for an
-  event.
+  event. They claim it only once IMAP4rev2 is enabled. On IMAP4rev1, where
+  no server sends one, every LIST during SELECT is an event, such as a NOTIFY
+  SubscriptionChange for the selected mailbox, and is delivered.
 - `imap.ListData.OldName`: the previous name from LIST's OLDNAME extended data
   item, which NOTIFY uses to report a rename (RFC 5465 section 5.4) and an
   IMAP4rev2 server uses when SELECT named a mailbox in non-canonical form
