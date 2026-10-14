@@ -65,9 +65,18 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `imap.ListData.OldName`: the previous name from LIST's OLDNAME extended data
   item, which NOTIFY uses to report a rename (RFC 5465 section 5.4) and an
   IMAP4rev2 server uses when SELECT named a mailbox in non-canonical form
-  (RFC 9051 section 6.3.2). The client's LIST parser fills it and skips other
-  extended items. Extended data it cannot parse still costs only the old name,
-  never the response. Additive.
+  (RFC 9051 section 6.3.2). The client's LIST parser fills it. Extended data
+  it cannot parse costs the extended data, never the response. Additive.
+- `imap.ListData.ChildInfo`, `imap.ListData.Extended`, the type
+  `imap.ListExtendedItem` and its alias `imapclient.ListExtendedItem`: the
+  client keeps LIST's CHILDINFO extended data item, which it used to drop.
+  CHILDINFO is the reason RECURSIVEMATCH exists (RFC 5258 section 3.5): it
+  marks a parent returned because a descendant matched. So
+  `imapclient.ListSelectRecursiveMatch` was unusable until now. Every other
+  extended data item is kept raw in `Extended`, in wire order, so an item a
+  future RFC defines is not lost. A malformed CHILDINFO is skipped without
+  costing the other items, and of repeated ones the first is kept. Verified
+  against Dovecot, Stalwart and Cyrus. Additive.
 - `imapclient.Client.SortExtended` refuses RETURN (UPDATE), because the
   unsolicited ESEARCH updates it asks for are not delivered yet. Allowing it
   later is compatible.

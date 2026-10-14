@@ -107,6 +107,38 @@ type ListData struct {
 	// renamed from, or selected as, the empty name.
 	OldName string
 
+	// ChildInfo is the CHILDINFO extended data item: the base selection
+	// options, upper-cased, that a descendant of this mailbox matched. It is
+	// why a LIST with the RECURSIVEMATCH selection option returns a mailbox
+	// that does not match itself, such as an unsubscribed parent of a
+	// subscribed child, with ChildInfo ["SUBSCRIBED"]. RFC 5258 section 3.5.
+	//
+	// Nil means the item was absent. A present item is never empty: its
+	// grammar requires at least one option (RFC 5258 section 6).
+	ChildInfo []string
+
+	// Extended holds, in the order received, the extended data items this
+	// library does not model, so that an item a future RFC defines is kept
+	// rather than dropped. OLDNAME and CHILDINFO are never here.
+	// RFC 5258 section 6 (mbox-list-extended-item).
+	Extended []ListExtendedItem
+
+	_ struct{}
+}
+
+// ListExtendedItem is one LIST extended data item, kept as received because
+// this library does not model it. RFC 5258 section 6.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ListExtendedItem struct {
+	// Tag is the item's tag, upper-cased.
+	Tag string
+
+	// Value is the item's value (tagged-ext-val) exactly as it appeared on
+	// the wire. The wire cannot carry an empty value, so an empty Value means
+	// one too large to hold in memory, which was consumed but not kept.
+	Value string
+
 	_ struct{}
 }
 
