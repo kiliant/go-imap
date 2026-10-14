@@ -254,6 +254,12 @@ func readListExtendedData(dec *imapwire.Decoder) (ListData, error) {
 			if !dec.ExpectAstring(&tag) || !dec.ExpectSP() {
 				return dec.Err()
 			}
+			if tag == "" {
+				// The tag is an astring, which may be an empty quoted string,
+				// but its content must be a vendor or standard tag (RFC 5258
+				// section 6, mbox-list-extended-item-tag), never empty.
+				return errEmptyExtendedTag
+			}
 			raw, err := captureListExtendedValue(dec)
 			if err != nil {
 				return err
@@ -307,6 +313,8 @@ func parseOldName(raw string, opts *imapwire.Options) string {
 }
 
 var errMalformedOldName = errors.New("malformed OLDNAME")
+
+var errEmptyExtendedTag = errors.New("empty LIST extended data item tag")
 
 // captureListExtendedValue reads one tagged-ext-val as its wire bytes. A value
 // too large to keep is consumed and returned empty, as for FetchDataRaw.

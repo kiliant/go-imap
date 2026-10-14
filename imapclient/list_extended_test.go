@@ -152,6 +152,11 @@ func TestReadListExtendedData(t *testing.T) {
 			ListData{},
 		},
 		{
+			"an empty tag costs all of it",
+			` ("X-A" 1 "" "")` + "\r\n",
+			ListData{},
+		},
+		{
 			"not a list",
 			` "CHILDINFO" ("SUBSCRIBED")` + "\r\n",
 			ListData{},
