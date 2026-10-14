@@ -293,6 +293,23 @@ const (
 `Credential: CredentialPassword`. That file belonged to T28, which is done;
 this spec and T28's both name the hand-over (BOARD's lock-passing rule).
 
+## Follow-ups outside this task
+
+Found by the api-guardian review, recorded here so a later task picks them up.
+
+- **imapserver: witness the LIST-EXTENDED selection options.** LIST-EXTENDED
+  is witnessed by the framework alone (`imapserver/capability.go`), so
+  `ListOptions.SelectRecursiveMatch` and `SelectRemote` reach every backend,
+  whether or not it implements them. RECURSIVEMATCH is something only a
+  backend can evaluate, and API-STABILITY section 10 says such behaviour must
+  be witnessed. The pressure is the LIST-EXTENDED option registry (RFC 5258
+  section 9.3): every option registered there would land on an always-active
+  feature and be silently ignored by older backends. A `CapabilitySupport`
+  witness, with RECURSIVEMATCH refused when it is missing, is the likely
+  shape. This predates T29. imapserver is on v0.x, so the change is allowed.
+  `backendtest` already checks RECURSIVEMATCH, so a backend that claims the
+  witness and ignores the option fails there.
+
 ## Done when
 
 - **Item 1:** rev1 forwards and rev2 claims. Unit tests cover both, and the

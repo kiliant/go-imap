@@ -263,11 +263,11 @@ func readListExtendedData(dec *imapwire.Decoder) (ListData, error) {
 			switch tag {
 			case "OLDNAME":
 				if extended.OldName == "" {
-					extended.OldName = parseOldName(raw, dec.UTF8Accept())
+					extended.OldName = parseOldName(raw, valueDecoderOptions(dec))
 				}
 			case "CHILDINFO":
 				if extended.ChildInfo == nil {
-					extended.ChildInfo = parseChildInfo(raw)
+					extended.ChildInfo = parseChildInfo(raw, valueDecoderOptions(dec))
 				}
 			}
 			return nil
@@ -279,12 +279,19 @@ func readListExtendedData(dec *imapwire.Decoder) (ListData, error) {
 	return ListData{}, dec.DiscardLine()
 }
 
+// valueDecoderOptions returns the options for decoding a value captured from
+// dec: the connection's own limits and its current mailbox-name encoding, so
+// the captured bytes decode exactly as they would have in place.
+func valueDecoderOptions(dec *imapwire.Decoder) *imapwire.Options {
+	opts := dec.Options()
+	opts.UTF8Accept = dec.UTF8Accept()
+	return &opts
+}
+
 // parseOldName reads an OLDNAME value, a parenthesised mailbox name, and
-// returns the name or "" when the value is malformed. utf8Accept is the
-// connection's mailbox-name encoding, which decides how the captured bytes
-// decode.
-func parseOldName(raw string, utf8Accept bool) string {
-	dec := imapwire.NewDecoderString(raw, &imapwire.Options{UTF8Accept: utf8Accept})
+// returns the name or "" when the value is malformed.
+func parseOldName(raw string, opts *imapwire.Options) string {
+	dec := imapwire.NewDecoderString(raw, opts)
 	var name string
 	count := 0
 	err := dec.ExpectList(func() error {
@@ -320,8 +327,8 @@ var errEmptyChildInfoOption = errors.New("CHILDINFO option without a name")
 // options (RFC 5258 section 6, childinfo-extended-item), and returns them with
 // each option's name upper-cased, or nil when the value is malformed. The
 // grammar quotes each option; a bare atom is accepted too.
-func parseChildInfo(raw string) []string {
-	dec := imapwire.NewDecoderString(raw, nil)
+func parseChildInfo(raw string, opts *imapwire.Options) []string {
+	dec := imapwire.NewDecoderString(raw, opts)
 	var options []string
 	err := dec.ExpectList(func() error {
 		var option string

@@ -48,11 +48,21 @@ items are preserved in raw form.
 **A raw-preservation field keeps an item when a later release starts decoding
 it** — added by T29, 2026-10-14. The callers who read an item raw are exactly
 those using one the library does not decode yet. If decoding it moved it out of
-the raw field, they would break with no compile error. So the raw field holds
-every item received, and a decoded field is an additional view of one of them.
-Precedents: `imap.ESearchData.Values` ("modelled items appear here too") and
+the raw field, they would break with no compile error. So where a type keeps a
+raw field apart from its decoded fields, the raw field holds every item
+received, and a decoded field is an additional view of one of them. Precedents:
+`imap.ESearchData.Values` ("modelled items appear here too") and
 `imap.ListData.Extended`, which keeps OLDNAME and CHILDINFO beside `OldName` and
 `ChildInfo`.
+
+FETCH predates this and is the exception. `FetchMessageData.Items` holds one
+value per item received, and `FetchData` documents that a value is
+`*FetchDataRaw` only while the library does not yet model its item. When a later
+release models one, that key's value changes type. RFC 5257's ANNOTATION, named
+under "The next one" below, is the candidate. That is documented v1 behaviour
+and stays. Do not bring FETCH into line by appending a raw duplicate beside the
+typed value: that would misreport what the server sent. The rule above applies
+to a raw field kept apart from its decoded views.
 
 ## 2. context.Context from commit one
 
