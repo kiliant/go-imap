@@ -21,6 +21,12 @@ type LiteralReader struct {
 	size      int64
 	remaining int64
 	binary    bool
+	// held reports that this reader holds the decoder's pending-literal
+	// interlock. Once it is released the reader never touches the decoder
+	// again: a streaming consumer hands the decoder back to the parsing
+	// goroutine at that point, so a later Read at EOF or a Discard must not
+	// race with whatever the parser does next.
+	held bool
 }
 
 // LiteralInfo is a client literal announcement. A server-facing command
@@ -97,8 +103,12 @@ func (lr *LiteralReader) Discard() error {
 }
 
 // release clears the decoder's pending-literal interlock once the payload is
-// gone.
+// gone. Only the first call touches the decoder.
 func (lr *LiteralReader) release() {
+	if !lr.held {
+		return
+	}
+	lr.held = false
 	if lr.d.lit == lr {
 		lr.d.lit = nil
 	}
@@ -255,6 +265,7 @@ func (d *Decoder) OpenLiteral(info LiteralInfo) *LiteralReader {
 	if lr.remaining > 0 {
 		// A zero-length literal needs no interlock: there is nothing to drain.
 		d.lit = lr
+		lr.held = true
 	}
 	return lr
 }

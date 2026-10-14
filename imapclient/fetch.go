@@ -219,6 +219,11 @@ func writeFetchItem(enc *imapwire.Encoder, item imap.FetchItem) {
 func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)) error {
 	return imapcodec.ReadFetchResponse(resp.dec, imap.SeqNum(resp.number), func(lr *imapwire.LiteralReader) (io.Reader, func()) {
 		stream := newFetchLiteralReader(lr)
+		if lr.Size() == 0 {
+			// Nothing to stream: no wait, so the response is delivered once
+			// it is complete.
+			return stream, nil
+		}
 		return stream, func() { <-stream.done }
 	}, emit)
 }

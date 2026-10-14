@@ -30,6 +30,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `cmd/imapcli`, a read-only command-line client that lists folders, lists
   messages and prints one message by UID, using EXAMINE and `BODY.PEEK[]` so
   it never changes server state. A `main` package: no exported API change.
+- `imapcli -backup DIR`: an incremental, read-only mirror of every mailbox
+  into Maildir, for a file-level backup tool such as restic. Messages are
+  stored byte for byte with INTERNALDATE as mtime. Flag changes are renames,
+  and expunged messages and deleted mailboxes are removed. Writes go through
+  `tmp/` and a rename, so an interrupted run never leaves a partial message.
+  Also new: `-pass-file` and `-pass-cmd` for unattended runs, `-exclude`, a
+  per-directory lock and account marker, and COMPRESS when offered. imapcli
+  now authenticates only with password mechanisms. Before, a server offering
+  OAUTHBEARER beside PLAIN (Stalwart does by default) got the password as a
+  bearer token and refused it. A `main` package: no exported API change.
 - `imapclient.Client.SortExtended`, `imapclient.Client.SortExtendedUID` and
   `imapclient.ESortOptions`: SORT with a RETURN list, answered as ESEARCH data.
   ESORT, RFC 5267. The client previously detected ESORT but had no way to send
@@ -62,6 +72,18 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- A FETCH that streams more than one body no longer has a data race. Reading
+  a body literal to EOF a second time, which `io.Copy` always does, or closing
+  it after it was read, touched decoder state. The reader goroutine was
+  already using that state for the next response. The streamed body now
+  leaves the decoder alone once its payload is consumed, empty bodies
+  included. Internal (`internal/imapwire`), no exported API change. Found by
+  `imapcli -backup` under `-race`.
+- A FETCH response whose body section is NIL or a zero-length literal is
+  delivered once it is complete. Before, it was handed over at the body while
+  the items after it were still being added to the `Items` map the caller was
+  reading. That was a data race, and could end in a fatal concurrent map
+  access. No exported API change.
 - `imapclient.Client.Close` no longer deadlocks on an idle connection after
   `Client.Compress`. The DEFLATE wrapper took its read lock before closing the
   socket, while the reader goroutine held that lock blocked in a read only the

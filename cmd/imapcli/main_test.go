@@ -133,7 +133,7 @@ func TestRunAuthFailure(t *testing.T) {
 
 func clearIMAPEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"IMAP_ADDR", "IMAP_USER", "IMAP_PASS", "IMAP_TLS", "IMAP_STARTTLS", "IMAP_INSECURE"} {
+	for _, key := range []string{"IMAP_ADDR", "IMAP_USER", "IMAP_PASS", "IMAP_PASS_FILE", "IMAP_PASS_CMD", "IMAP_TLS", "IMAP_STARTTLS", "IMAP_INSECURE"} {
 		t.Setenv(key, "")
 	}
 }
