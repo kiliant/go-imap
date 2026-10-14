@@ -309,6 +309,16 @@ Found by the api-guardian review, recorded here so a later task picks them up.
   shape. This predates T29. imapserver is on v0.x, so the change is allowed.
   `backendtest` already checks RECURSIVEMATCH, so a backend that claims the
   witness and ignores the option fails there.
+- **imapclient: a code for "no mechanism takes this credential".**
+  `Authenticate` refuses locally when no advertised mechanism takes the
+  `Credential` kind, but the `*imap.Error` it returns has no `Code`. A caller
+  can tell it apart only by its text. So `cmd/imapcli/auth.go` keeps its own
+  copy of the password-mechanism list to decide when to fall back to LOGIN.
+  If the library adds a password mechanism, such copies fall out of date:
+  the caller then uses LOGIN where SASL was available, which degrades the
+  login but does not break it. `imap.Error.Code` is an open string, so a
+  code can be added later without a break. Worth doing if a second caller
+  needs the same distinction.
 
 ## Done when
 
