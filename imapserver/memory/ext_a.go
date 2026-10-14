@@ -14,7 +14,9 @@ import (
 //
 // ESEARCH, SEARCHRES, LIST-EXTENDED and LIST-STATUS are answered entirely by the
 // framework from data this backend already returns, so they are not witnessed
-// here — a backend does not opt into them and cannot fail to support them.
+// here — a backend does not opt into them and cannot fail to support them. The
+// one exception is LIST-EXTENDED's RECURSIVEMATCH selection option, which only
+// the backend can evaluate; see listRecursiveSubscribedLocked.
 
 // supportedCapabilities are the tokens this backend witnesses for group A.
 //
@@ -150,3 +152,65 @@ func (s *session) applyCreateSpecialUseLocked(m *mailbox, options *imapserver.Cr
 }
 
 var _ imapserver.CapabilitySupport = (*Backend)(nil)
+
+// listRecursiveSubscribedLocked answers LIST (SUBSCRIBED RECURSIVEMATCH): every
+// name matching the patterns that is subscribed or has a subscribed
+// descendant, the second kind with ChildInfo ["SUBSCRIBED"]. The descendant
+// need not match the patterns. Names are the mailboxes and every hierarchy
+// level above them, so a parent that does not exist is returned too, as
+// \NonExistent. RFC 5258 section 3.5, and examples 9 and 10 in section 5.
+//
+// A subscribed mailbox with a subscribed descendant carries ChildInfo as well,
+// as in example 9. RFC 5258 section 3.5 says a server SHOULD suppress CHILDINFO
+// that is redundant because the matching children are returned anyway, but
+// its own examples do not, and a client must handle either.
+//
+// The caller must hold the account lock.
+func (s *session) listRecursiveSubscribedLocked(reference string, patterns []string) []*imap.ListData {
+	// names maps every candidate name to its mailbox, nil for a hierarchy level
+	// that is not one.
+	names := make(map[string]*mailbox)
+	subscribedBelow := make(map[string]bool)
+	for _, m := range s.account.mailboxes {
+		names[m.name] = m
+		for i := strings.IndexByte(m.name, '/'); i >= 0; i = nextDelimiter(m.name, i) {
+			parent := m.name[:i]
+			if parent == "" {
+				continue
+			}
+			if _, ok := names[parent]; !ok {
+				names[parent] = nil
+			}
+			if m.subscribed {
+				subscribedBelow[parent] = true
+			}
+		}
+	}
+	var results []*imap.ListData
+	for name, m := range names {
+		subscribed := m != nil && m.subscribed
+		if !subscribed && !subscribedBelow[name] || !matchesAnyMailbox(name, reference, patterns) {
+			continue
+		}
+		data := &imap.ListData{Delimiter: '/', Mailbox: name}
+		if m != nil {
+			data.Attrs = s.mailboxAttrsLocked(m)
+		} else {
+			data.Attrs = []imap.MailboxAttr{imap.MailboxAttrNonExistent, imap.MailboxAttrHasChildren}
+		}
+		if subscribedBelow[name] {
+			data.ChildInfo = []string{"SUBSCRIBED"}
+		}
+		results = append(results, data)
+	}
+	return results
+}
+
+// nextDelimiter returns the index of the next "/" in name after i, or -1.
+func nextDelimiter(name string, i int) int {
+	next := strings.IndexByte(name[i+1:], '/')
+	if next < 0 {
+		return -1
+	}
+	return i + 1 + next
+}

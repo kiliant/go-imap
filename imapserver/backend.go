@@ -292,9 +292,18 @@ type ListOptions struct {
 	// SelectRemote requests that remote mailboxes be included. RFC 5258
 	// section 3.
 	SelectRemote bool `imapfeature:"list-extended"`
-	// SelectRecursiveMatch requests that a mailbox be returned when a child
-	// matches the selection criteria, carrying a CHILDINFO extended item.
-	// It is meaningless without another selection option. RFC 5258 section 3.5.
+	// SelectRecursiveMatch modifies the other selection options: a name
+	// matching the patterns is also returned when it does not meet the
+	// selection criteria itself but a descendant does, whether or not that
+	// descendant matches the patterns. Such a result, and any other result
+	// with a descendant that meets the criteria, sets [imap.ListData]'s
+	// ChildInfo to the options the descendant met, such as "SUBSCRIBED". A
+	// returned name that is not a mailbox carries \NonExistent. RFC 5258
+	// sections 3 and 3.5.
+	//
+	// The framework sets it only together with Subscribed, the one base
+	// selection option it implements, and answers any other combination BAD
+	// (RFC 5258 section 6).
 	SelectRecursiveMatch bool `imapfeature:"list-extended"`
 	// SelectSpecialUse restricts the result to special-use mailboxes.
 	// RFC 6154 section 5.1.
@@ -776,12 +785,19 @@ type ListWriter struct {
 // WriteList writes one LIST result. ctx is normally the context passed to the
 // enclosing Session.List call.
 //
-// Attrs, Delimiter and Mailbox are written. A previous name in the result's
-// OldName field is not: OLDNAME has no meaning in a LIST result. RFC 5465
-// section 5.4 gives it one in a NOTIFY MailboxName event, and RFC 9051 section
-// 6.3.2 in the LIST answering a SELECT of a non-canonical name. The framework
-// will write it itself in those cases, where what the session negotiated
-// decides, as for every other extension data.
+// Attrs, Delimiter and Mailbox are written. ChildInfo is written as the
+// CHILDINFO extended data item (RFC 5258 section 3.5), but only when the LIST
+// command used RECURSIVEMATCH and only for the base selection options it
+// requested; the framework drops anything else, so a backend may set it
+// whenever it knows it.
+//
+// A previous name in the result's OldName field is not written: OLDNAME has no
+// meaning in a LIST result. RFC 5465 section 5.4 gives it one in a NOTIFY
+// MailboxName event, and RFC 9051 section 6.3.2 in the LIST answering a SELECT
+// of a non-canonical name. The framework will write it itself in those cases,
+// where what the session negotiated decides, as for every other extension
+// data. Extended is never written: raw items from a backend can be neither
+// validated nor gated on what the client asked for.
 func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 	if w == nil {
 		return ErrWriterClosed

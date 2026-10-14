@@ -102,8 +102,15 @@ func listArgsSize(args *listArgs) int64 {
 // writeListData encodes one mailbox-listing line. Both LIST and LSUB use it,
 // and so does SELECT, which RFC 9051 section 6.3.2 requires to answer with a
 // LIST response of its own — attribute filtering is the caller's, since only it
-// knows which RETURN options were in force.
+// knows which RETURN options were in force. It writes no extended data.
 func writeListData(c *conn, name string, attrs []imap.MailboxAttr, data *imap.ListData) error {
+	return writeListDataExtended(c, name, attrs, data, nil)
+}
+
+// writeListDataExtended is writeListData with a CHILDINFO extended data item,
+// written when childInfo is non-empty. The caller decides childInfo from the
+// command's arguments; see listResultChildInfo.
+func writeListDataExtended(c *conn, name string, attrs []imap.MailboxAttr, data *imap.ListData, childInfo []string) error {
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom(name).SP().List(len(attrs), func(i int) {
 		c.encoder.Flag(string(attrs[i]))
 	}).SP()
@@ -112,7 +119,15 @@ func writeListData(c *conn, name string, attrs []imap.MailboxAttr, data *imap.Li
 	} else {
 		c.encoder.String(string(data.Delimiter))
 	}
-	c.encoder.SP().Mailbox(data.Mailbox).CRLF()
+	c.encoder.SP().Mailbox(data.Mailbox)
+	if len(childInfo) > 0 {
+		// RFC 5258 section 6: the options are always quoted here, unlike in
+		// the command.
+		c.encoder.SP().Special('(').Quoted("CHILDINFO").SP().List(len(childInfo), func(i int) {
+			c.encoder.Quoted(childInfo[i])
+		}).Special(')')
+	}
+	c.encoder.CRLF()
 	return c.encoder.Flush()
 }
 
@@ -146,7 +161,7 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if wantsPerMailboxResponses(args) {
 			statusMailboxes = append(statusMailboxes, data.Mailbox)
 		}
-		return writeListData(c, writtenName, listResultAttrs(args, options, data.Attrs), data)
+		return writeListDataExtended(c, writtenName, listResultAttrs(args, options, data.Attrs), data, listResultChildInfo(args, options, data.ChildInfo))
 	})
 	err := c.state.session.List(ctx, writer, args.reference, args.patterns, options)
 	writer.core.close()

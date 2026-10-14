@@ -116,6 +116,37 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   error. `GetQuota` likewise reports the requested root with no resources when
   the server completes without any QUOTA response, as Apache James 3.8 does.
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
+`v1.1.0`: tag the root module first and bump the `require`
+(`docs/RELEASING.md`).
+
+#### Added
+
+- LIST writes the CHILDINFO extended data item (RFC 5258 section 3.5) from
+  `imap.ListData.ChildInfo`. It is written only when the command used
+  RECURSIVEMATCH, and only for base selection options the command requested.
+  So LSUB, a plain LIST and the LIST answering SELECT never carry it.
+  `ListWriter.WriteList` documents this, and that `ListData.Extended` is
+  never written. `ListOptions.SelectRecursiveMatch` now documents what a
+  backend must return. No exported API change.
+- `imapserver/memory` implements `LIST (SUBSCRIBED RECURSIVEMATCH)`. It
+  returns a parent with a subscribed descendant and its CHILDINFO, and
+  returns a hierarchy level that is not a mailbox as `\NonExistent`. Before,
+  it ignored the option and returned no such parent.
+- `backendtest` checks RECURSIVEMATCH, so a backend that ignores it fails.
+  LIST-EXTENDED needs no backend witness, so the framework accepts the option
+  for every backend.
+
+#### Fixed
+
+- `LIST (REMOTE RECURSIVEMATCH)` and `LIST (SPECIAL-USE RECURSIVEMATCH)` are
+  answered BAD, as RFC 5258 section 3 requires. RECURSIVEMATCH modifies a
+  base selection option. REMOTE is an independent option (RFC 5258 section
+  6), and so is SPECIAL-USE (RFC 6154's formal syntax), so neither qualifies.
+  SUBSCRIBED is the only base option the framework implements.
+
 ## [imapserver/v0.2.0] - 2026-10-03
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
