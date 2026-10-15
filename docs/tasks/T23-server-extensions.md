@@ -96,3 +96,11 @@ does not own) rather than reshaping the selection-scoped one.
 - The golden interface-method-set test and the feature-binding gate (T19) stay
   green after every group.
 - Full `-race` suite green; `api-guardian` reviews each new optional interface.
+
+## Hand-over to T31
+
+[T31](T31-uidbatches.md) creates the `imapserver/ext_d_uidbatches*` files
+inside this task's `ext_*` pattern: the server side of UIDBATCHES and its
+colocated tests and fuzz target. It also takes the server cell of the new
+UIDBATCHES row in `docs/RFC-COVERAGE.md`. No existing server extension file
+passes from completed T23.

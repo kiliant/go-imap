@@ -87,3 +87,10 @@ is about catching *unintended* breaks, not enforcing v1 semantics prematurely).
   surface, and the human approves the versioning execution (the design's §9
   recommendation was approved in principle with the rest of the design; this
   is where it becomes a real tag).
+
+## Hand-over to T31
+
+[T31](T31-uidbatches.md) makes the commit that bumps `imapserver/go.mod` and
+`go.sum` to require the root release containing the UIDBATCHES vocabulary,
+including the comment that names the floor. It follows the precedent of
+`0d38190`. The release sequence in `docs/RELEASING.md` is unchanged.

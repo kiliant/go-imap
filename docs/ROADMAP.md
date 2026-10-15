@@ -229,12 +229,20 @@ The next work is ordered deliberately:
    interleaved responses safely, deliver CONTEXT updates and metadata-change
    notifications, and document event/command cases indistinguishable on the
    wire. Public API additions make this a candidate for root `v1.3.0`.
+4. [T31](tasks/T31-uidbatches.md), tracked by
+   [#51](https://github.com/kiliant/go-imap/issues/51): UIDBATCHES, published
+   as RFC 10022 on 2026-07-31, the day of the coverage table's registry
+   snapshot. Apart from the deliberately deferred capabilities, it is the only
+   registered capability that neither direction implements. Both directions
+   ship together, tagged the same day with the root first: the root minor
+   after T30's `v1.3.0`, and the next `imapserver` minor. T30 does not wait
+   for it.
 
 **Exit:** the patch is fetchable and builds outside the workspace; backend
 conformance catches faulty option combinations; T30's scripted, race, fuzz,
-API-compatibility and supporting-server interop gates pass. Coverage must name
-remaining limitations instead of treating command serialization as a fix for
-lost events.
+API-compatibility and supporting-server interop gates pass, and so do T31's.
+Coverage must name remaining limitations instead of treating command
+serialization as a fix for lost events.
 
 The authentication refusal code in
 [#21](https://github.com/kiliant/go-imap/issues/21) stays lower priority until

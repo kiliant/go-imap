@@ -135,6 +135,14 @@ No automatic GETMETADATA refresh, unbounded event queue or background worker.
   changelog reflect delivered behavior. The task issue closes with the
   implementation PR, not with this plan.
 
+## Hand-over to T31
+
+Once this task is complete, [T31](T31-uidbatches.md) takes the UIDBATCHES
+case in `decodeData` and its field on `responseData`, both in
+`imapclient/response_data.go`. The UIDBATCHES collector then uses the same
+decode-once path and can decline a foreign correlator without advancing the
+decoder. No other part of this task's routing passes.
+
 ## Protocol references
 
 - [RFC 5267 sections 4.3–4.3.5](https://www.rfc-editor.org/rfc/rfc5267.html#section-4.3):
