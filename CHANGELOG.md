@@ -39,11 +39,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   which read as a count of unseen messages but is the sequence number of the
   first one. A `main` package: no exported API change. (#37)
 
+## [imapserver/v0.3.0] - 2026-10-15
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
-Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
-`v1.1.0`: tag the root module first and bump the `require`
-(`docs/RELEASING.md`).
+Requires root `v1.2.0`, for `imap.ListData.ChildInfo`; `imapserver/go.mod` was
+bumped from `v1.1.0` for this release. No exported symbol changed: `apidiff`
+against `imapserver/v0.2.0` reports none. One behaviour changed deliberately,
+see *Changed*. RECURSIVEMATCH now reaches only a backend that witnesses
+`"LIST-EXTENDED"`. A backend that implemented the option against v0.2.0 adds
+that witness to keep receiving it, and the framework answers for it in the
+meantime.
 
 #### Added
 
@@ -743,6 +749,7 @@ previous `imapserver/v*` tag.
   interop harness shells out to a container CLI rather than using an SDK.
 
 [Unreleased]: https://github.com/kiliant/go-imap/compare/v1.2.0...HEAD
+[imapserver/v0.3.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.3.0
 [1.2.0]: https://github.com/kiliant/go-imap/releases/tag/v1.2.0
 [imapserver/v0.2.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.2.0
 [1.1.0]: https://github.com/kiliant/go-imap/releases/tag/v1.1.0
