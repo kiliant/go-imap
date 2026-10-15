@@ -92,10 +92,16 @@ the proxy, and the workspace is the thing being bypassed.
 ## Tagging
 
 ```sh
-git tag -a v1.1.0        -m 'go-imap v1.1.0'
-git tag -a imapserver/v0.1.0 -m 'imapserver v0.1.0'
+git tag -s v1.1.0        -m 'go-imap v1.1.0'
+git tag -s imapserver/v0.1.0 -m 'imapserver v0.1.0'
+git tag -v v1.1.0 imapserver/v0.1.0
 git push origin v1.1.0 imapserver/v0.1.0
 ```
+
+Every release tag is signed (`-s`, with the SSH key `gpg.format = ssh`
+configures) and verified before it is pushed. An unsigned `-a` tag looks the
+same in `git tag` and in the module proxy, which is how `imapserver/v0.2.0`
+first went out without a signature.
 
 `imapserver/v0.1.0` is Go's own convention for a nested module's tag, not a
 local invention: the module's directory prefix, then the version. `apidiff.sh`
