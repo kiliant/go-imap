@@ -81,7 +81,7 @@ everything landed by T23 stops at `done`.
 | MOVE | 6851 | verified | done |
 | ESEARCH | 4731 | verified | done [^srvesearch] |
 | SEARCHRES | 5182 | verified | done [^srvesearch] |
-| LIST-EXTENDED | 5258 | verified | done |
+| LIST-EXTENDED | 5258 | verified [^listext] | done [^srvlistext] |
 | LIST-STATUS | 5819 | verified | done [^srvliststatus] |
 | SPECIAL-USE | 6154 | verified [^specialuse] | done |
 | CREATE-SPECIAL-USE | 6154 | verified | done |
@@ -131,6 +131,21 @@ servers, Dovecot and Stalwart.
 [^specialuse]: Servers disagree about whether a use attribute appears on a plain
     `LIST` or only under `RETURN (SPECIAL-USE)`: Cyrus does the former, Stalwart
     the latter. The client asks explicitly wherever LIST-EXTENDED is available.
+
+[^listext]: Until T29 the client dropped the CHILDINFO extended data item
+    (RFC 5258 section 3.5), so RECURSIVEMATCH could be sent but its answer not
+    read. It now fills `ListData.ChildInfo` and keeps every unmodelled item raw
+    in `ListData.Extended`. The section 3.5 scenario, an unsubscribed parent of
+    a subscribed child under `LIST (SUBSCRIBED RECURSIVEMATCH)`, returns
+    `CHILDINFO ("SUBSCRIBED")` on Dovecot, Stalwart and Cyrus; Courier and
+    GreenMail do not offer LIST-EXTENDED.
+
+[^srvlistext]: CHILDINFO is written by the framework, only under
+    RECURSIVEMATCH and only for requested base selection options; the backend
+    supplies `ListData.ChildInfo`. RECURSIVEMATCH is accepted only beside
+    SUBSCRIBED, the one base option implemented; REMOTE and SPECIAL-USE are
+    independent options. `imapserver/memory` implements it, `backendtest`
+    checks it, and `goimap` passes the section 3.5 interop scenario.
 
 ## Group B — synchronisation & identity (task T09)
 

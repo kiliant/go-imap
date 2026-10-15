@@ -71,6 +71,7 @@ call, not the originating task's.
 | [T26](T26-ext-cde-interop.md) | Live interop for client extension groups C–E | post-M6 | T10, T11, T12 | `imapclient/ext_cde_interop_test.go`, group C–E client cells in `docs/RFC-COVERAGE.md` | extensions + interop-harness |
 | [T27](T27-client-gaps-from-t11.md) | Client gaps T11 left open: ESORT, INPROGRESS delivery, NOTIFY non-selected events, UIDAFTER/UIDBEFORE | post-M6 | T11 | see spec | extensions + api-guardian |
 | [T28](T28-imapcli-backup.md) | imapcli backup mode: incremental Maildir mirror for restic | post-M6 | — | `cmd/imapcli/**`, `interop/imapcli/**` | client-core |
+| [T29](T29-list-extdata-auth.md) | LIST extended data (CHILDINFO, raw items) in both directions, SELECT LIST claim only on rev2, opt-in password-only SASL | post-M6 | T27 | see spec | extensions + client-core + api-guardian |
 
 T16 is deliberately out of numeric order: it is the design task, it has no
 dependencies, and T17 depends on it. See "Why T16 moved" below.

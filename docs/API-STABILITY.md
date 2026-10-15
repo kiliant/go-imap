@@ -45,6 +45,25 @@ Returned FETCH data must likewise be keyed, not a fixed struct: a server may sen
 items we do not model yet, and dropping them silently is data loss. Unrecognised
 items are preserved in raw form.
 
+**A raw-preservation field keeps an item when a later release starts decoding
+it** — added by T29, 2026-10-14. The callers who read an item raw are exactly
+those using one the library does not decode yet. If decoding it moved it out of
+the raw field, they would break with no compile error. So where a type keeps a
+raw field apart from its decoded fields, the raw field holds every item
+received, and a decoded field is an additional view of one of them. Precedents:
+`imap.ESearchData.Values` ("modelled items appear here too") and
+`imap.ListData.Extended`, which keeps OLDNAME and CHILDINFO beside `OldName` and
+`ChildInfo`.
+
+FETCH predates this and is the exception. `FetchMessageData.Items` holds one
+value per item received, and `FetchData` documents that a value is
+`*FetchDataRaw` only while the library does not yet model its item. When a later
+release models one, that key's value changes type. RFC 5257's ANNOTATION, named
+under "The next one" below, is the candidate. That is documented v1 behaviour
+and stays. Do not bring FETCH into line by appending a raw duplicate beside the
+typed value: that would misreport what the server sent. The rule above applies
+to a raw field kept apart from its decoded views.
+
 ## 2. context.Context from commit one
 
 Every operation that waits for a server response or transfers caller-sized data
@@ -326,6 +345,20 @@ between the two spellings: promotion then reaches it from the wrapper, and a
 value receiver reaches it from a non-addressable field. That is how
 `imapclient.ParsePartialSearchData` became `imap.ESearchData.Partial`.
 
+**Scope: wire data the framework declines to write is still vocabulary** —
+recorded by T29, 2026-10-14. Rule 9 is about observations with no wire form:
+comparisons against a cache, emulation, receipt markers. A field for wire data
+that a correct server could send belongs in `package imap`, even when the
+`imapserver` framework declines to write it from backend results. That refusal
+is framework policy and can change without touching the root type. Precedents:
+
+- `FetchDataRaw`, refused because it cannot be bounded;
+- `ListData.OldName`, written only where what was negotiated gives it meaning;
+- `ListData.Extended`, never written, because unknown items cannot be gated on
+  what the client asked for.
+
+The test is whether a correct server, given the data, could put it on the wire.
+
 ## Versioning policy
 
 - **v0.x** until every task in the board's M0–M4 milestones is complete and the
@@ -333,6 +366,13 @@ value receiver reaches it from a non-addressable field. That is how
   describe execution expense, not release priority. Breaking changes allowed,
   documented in `CHANGELOG.md`.
 - **v1.0** freezes the exported API. After it: additive changes only.
+- **Documented behaviour is frozen too** — recorded by T29, 2026-10-14.
+  `apidiff` sees signatures, not behaviour, and a default documented in v1 is
+  part of the promise. If one is judged wrong after v1.0, it gets an additive
+  opt-in on the existing options struct, and the flip is recorded under "v2
+  candidates" in `docs/ROADMAP.md`. First exercised by
+  `imapclient.AuthenticateOptions.CredentialKind`: unset, `Authenticate` can
+  still send a password as a bearer token, as v1 documents.
 - Removal requires a deprecation notice for at least two minor releases, and
   never lands before v2.
 - CI will run `golang.org/x/exp/cmd/apidiff` against the previous tag on every

@@ -59,16 +59,39 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   protocol error, as for every other unilateral response the client parses.
   SELECT and EXAMINE claim the LIST an IMAP4rev2 server sends for the
   selected mailbox (RFC 9051 section 6.3.2), so it is not mistaken for an
-  event.
+  event. They claim it only once IMAP4rev2 is enabled. On IMAP4rev1, where
+  no server sends one, every LIST during SELECT is an event, such as a NOTIFY
+  SubscriptionChange for the selected mailbox, and is delivered.
 - `imap.ListData.OldName`: the previous name from LIST's OLDNAME extended data
   item, which NOTIFY uses to report a rename (RFC 5465 section 5.4) and an
   IMAP4rev2 server uses when SELECT named a mailbox in non-canonical form
-  (RFC 9051 section 6.3.2). The client's LIST parser fills it and skips other
-  extended items. Extended data it cannot parse still costs only the old name,
-  never the response. Additive.
+  (RFC 9051 section 6.3.2). The client's LIST parser fills it. Extended data
+  it cannot parse costs the extended data, never the response. Additive.
+- `imap.ListData.ChildInfo`, `imap.ListData.Extended`, the type
+  `imap.ListExtendedItem` and its alias `imapclient.ListExtendedItem`: the
+  client keeps LIST's CHILDINFO extended data item, which it used to drop.
+  CHILDINFO is the reason RECURSIVEMATCH exists (RFC 5258 section 3.5): it
+  marks a parent returned because a descendant matched. So
+  `imapclient.ListSelectRecursiveMatch` was unusable until now. Every extended
+  data item, OLDNAME and CHILDINFO included, is kept raw in `Extended` in wire
+  order. `OldName` and `ChildInfo` are decoded from those items, so an item a
+  later release learns to decode stays in `Extended` too. A malformed OLDNAME
+  or CHILDINFO is kept raw and decodes to nothing, without costing the other
+  items. Of repeated ones, the first that decodes is used. Verified against
+  Dovecot, Stalwart and Cyrus. Additive.
 - `imapclient.Client.SortExtended` refuses RETURN (UPDATE), because the
   unsolicited ESEARCH updates it asks for are not delivered yet. Allowing it
   later is compatible.
+- `imapclient.AuthenticateOptions.CredentialKind`, the type
+  `imapclient.CredentialKind` and its constants `CredentialPassword` and
+  `CredentialBearerToken`: they say what `Authenticate`'s password argument
+  holds, and restrict automatic SASL selection to the mechanisms that take it.
+  With `CredentialPassword`, a server offering OAUTHBEARER or XOAUTH2 beside
+  PLAIN, as Stalwart does by default, gets SCRAM, CRAM-MD5, PLAIN or LOGIN
+  instead of the password as a bearer token. Settings that contradict the
+  kind, and kinds this release does not know, are refused before anything is
+  sent. Unset, selection is unchanged: the default stays as documented in v1,
+  and changing it is left for v2. Additive.
 
 #### Fixed
 
@@ -94,6 +117,37 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   the root with no resources instead of failing the command with a protocol
   error. `GetQuota` likewise reports the requested root with no resources when
   the server completes without any QUOTA response, as Apache James 3.8 does.
+
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
+`v1.1.0`: tag the root module first and bump the `require`
+(`docs/RELEASING.md`).
+
+#### Added
+
+- LIST writes the CHILDINFO extended data item (RFC 5258 section 3.5) from
+  `imap.ListData.ChildInfo`. It is written only when the command used
+  RECURSIVEMATCH, and only for base selection options the command requested.
+  So LSUB, a plain LIST and the LIST answering SELECT never carry it.
+  `ListWriter.WriteList` documents this, and that `ListData.Extended` is
+  never written. `ListOptions.SelectRecursiveMatch` now documents what a
+  backend must return. No exported API change.
+- `imapserver/memory` implements `LIST (SUBSCRIBED RECURSIVEMATCH)`. It
+  returns a parent with a subscribed descendant and its CHILDINFO, and
+  returns a hierarchy level that is not a mailbox as `\NonExistent`. Before,
+  it ignored the option and returned no such parent.
+- `backendtest` checks RECURSIVEMATCH, so a backend that ignores it fails.
+  LIST-EXTENDED needs no backend witness, so the framework accepts the option
+  for every backend.
+
+#### Fixed
+
+- `LIST (REMOTE RECURSIVEMATCH)` and `LIST (SPECIAL-USE RECURSIVEMATCH)` are
+  answered BAD, as RFC 5258 section 3 requires. RECURSIVEMATCH modifies a
+  base selection option. REMOTE is an independent option (RFC 5258 section
+  6), and so is SPECIAL-USE (RFC 6154's formal syntax), so neither qualifies.
+  SUBSCRIBED is the only base option the framework implements.
 
 ## [imapserver/v0.2.0] - 2026-10-03
 

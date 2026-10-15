@@ -121,7 +121,7 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 // selectCollector claims the untagged responses that describe the mailbox
 // being selected into data.
 //
-// That includes one LIST: RFC 9051 section 6.3.2 has an IMAP4rev2 server
+// That can include one LIST. RFC 9051 section 6.3.2 has an IMAP4rev2 server
 // answer SELECT and EXAMINE with a LIST response for the selected mailbox,
 // carrying OLDNAME when the name asked for was not the canonical one. That
 // LIST belongs to the selection and must not reach
@@ -131,17 +131,32 @@ func (c *Client) selectMailbox(name, mailbox string, _ *SelectOptions) *SelectCo
 // meanwhile is passed on as an event. The collector chain reads each response
 // once, so this also passes on a pipelined LIST command's responses if a
 // server ever interleaved them with this SELECT's.
+//
+// Only an IMAP4rev2 session is answered that way, so only there is a LIST
+// claimed. On IMAP4rev1 a LIST during SELECT can only be an event, such as a
+// NOTIFY MailboxName or SubscriptionChange for the mailbox being selected
+// (RFC 5465 sections 5.4 and 5.5), and every one is passed on. Whether
+// IMAP4rev2 is enabled is read when a LIST arrives, not when SELECT is issued.
+// ENABLE records IMAP4rev2 in its completion, which the reader goroutine runs
+// before it decodes any response to a later command; a snapshot at issue could
+// be taken in the moment between ENABLE leaving the pending queue and that
+// completion running, and read rev1 on a rev2 session.
+//
+// IMAP4rev2 leaves one case no client can resolve: an event for the selected
+// mailbox that arrives before the SELECT's own LIST is identical to it on the
+// wire. The first is claimed, and the SELECT's own LIST, arriving second, is
+// passed on in its place.
 func selectCollector(c *Client, data *MailboxStatus) commandCollector {
-	ownList := false
+	claimed := false
 	return func(resp *untaggedResponse) (bool, error) {
 		if !resp.hasNum && resp.cond == nil && resp.name == "LIST" {
 			var list []*ListData
 			if _, err := listCollector("LIST", &list, 1)(resp); err != nil {
 				return true, err
 			}
-			if !ownList && len(list) == 1 && (normalisedMailbox(list[0].Mailbox) == data.Mailbox ||
+			if !claimed && len(list) == 1 && c.rev2Enabled() && (normalisedMailbox(list[0].Mailbox) == data.Mailbox ||
 				list[0].OldName != "" && normalisedMailbox(list[0].OldName) == data.Mailbox) {
-				ownList = true
+				claimed = true
 				return true, nil
 			}
 			c.deliverUnilateralList(list)

@@ -150,10 +150,14 @@ func applyListOptions(c *conn, args *listArgs, options *ListOptions) error {
 			return fmt.Errorf("unsupported LIST selection option %q", option)
 		}
 	}
-	// RFC 5258 section 3: RECURSIVEMATCH modifies another selection option and
-	// is meaningless alone.
-	if options.SelectRecursiveMatch && !options.Subscribed && !options.SelectRemote && !options.SelectSpecialUse {
-		return fmt.Errorf("LIST selection option RECURSIVEMATCH requires another selection option")
+	// RFC 5258 section 6: RECURSIVEMATCH modifies a base selection option and
+	// needs one present; section 3 has the server answer BAD otherwise. An
+	// independent option does not count: REMOTE is one, and so is SPECIAL-USE
+	// (RFC 6154's formal syntax extends list-select-independent-opt), so
+	// (REMOTE RECURSIVEMATCH) and (SPECIAL-USE RECURSIVEMATCH) are refused.
+	// SUBSCRIBED is the only base option this framework knows.
+	if options.SelectRecursiveMatch && !listSelectionHasBaseOption(args.selection) {
+		return fmt.Errorf("LIST selection option RECURSIVEMATCH requires a base selection option such as SUBSCRIBED")
 	}
 	for _, option := range args.returnOptions {
 		switch option {
@@ -184,6 +188,41 @@ func applyListOptions(c *conn, args *listArgs, options *ListOptions) error {
 		}
 	}
 	return nil
+}
+
+// listSelectBaseOptions are the RFC 5258 base selection options this
+// framework implements: the options RECURSIVEMATCH can modify, and so the only
+// values a CHILDINFO extended data item can carry. RFC 5258 section 6
+// (list-select-base-opt).
+var listSelectBaseOptions = []string{listSelectSubscribed}
+
+func listSelectionHasBaseOption(selection []string) bool {
+	return slices.ContainsFunc(selection, func(option string) bool {
+		return slices.Contains(listSelectBaseOptions, option)
+	})
+}
+
+// listResultChildInfo returns the CHILDINFO values to write for one LIST
+// result: those of the backend's ChildInfo that are base selection options
+// this command requested, upper-cased and without repeats.
+//
+// What the session negotiated, not the backend, decides whether the item
+// appears at all. RFC 5258 section 3.5 forbids CHILDINFO unless the command
+// used RECURSIVEMATCH, which also rules out LSUB and the LIST answering a
+// SELECT, and has it describe "the selection criteria that has caused it to be
+// returned", which can only be options the client asked for.
+func listResultChildInfo(args *listArgs, options *ListOptions, childInfo []string) []string {
+	if args.legacy || !options.SelectRecursiveMatch {
+		return nil
+	}
+	var values []string
+	for _, value := range childInfo {
+		value = strings.ToUpper(value)
+		if slices.Contains(listSelectBaseOptions, value) && slices.Contains(args.selection, value) && !slices.Contains(values, value) {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 // wantsListStatus reports whether this LIST must be followed by STATUS

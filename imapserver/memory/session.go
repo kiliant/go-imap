@@ -38,14 +38,18 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 		return noError(imap.CodeClosed, "session is closed")
 	}
 	var results []*imap.ListData
-	for _, m := range s.account.mailboxes {
-		if options != nil && options.Subscribed && !m.subscribed {
-			continue
+	if options != nil && options.Subscribed && options.SelectRecursiveMatch {
+		results = s.listRecursiveSubscribedLocked(reference, patterns)
+	} else {
+		for _, m := range s.account.mailboxes {
+			if options != nil && options.Subscribed && !m.subscribed {
+				continue
+			}
+			if !matchesAnyMailbox(m.name, reference, patterns) {
+				continue
+			}
+			results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
 		}
-		if !matchesAnyMailbox(m.name, reference, patterns) {
-			continue
-		}
-		results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
 	}
 	s.account.mu.Unlock()
 	slices.SortFunc(results, func(a, b *imap.ListData) int { return strings.Compare(a.Mailbox, b.Mailbox) })

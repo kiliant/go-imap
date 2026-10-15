@@ -2,6 +2,7 @@ package imapclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -67,6 +68,11 @@ type ListOptions struct {
 // ListData describes one mailbox returned by LIST or LSUB. It is an alias for
 // [imap.ListData], which both protocol directions share.
 type ListData = imap.ListData
+
+// ListExtendedItem is one LIST extended data item as received, kept in
+// [ListData.Extended]. It is an alias for [imap.ListExtendedItem], which both
+// protocol directions share.
+type ListExtendedItem = imap.ListExtendedItem
 
 // ListCommand is an in-flight LIST or LSUB command.
 type ListCommand struct {
@@ -198,7 +204,7 @@ func listCollector(name string, data *[]*ListData, limit int) commandCollector {
 		if !resp.dec.ExpectMailbox(&mailbox) {
 			return true, resp.dec.Err()
 		}
-		oldName, err := readListExtendedData(resp.dec)
+		extended, err := readListExtendedData(resp.dec)
 		if err != nil {
 			return true, err
 		}
@@ -214,21 +220,33 @@ func listCollector(name string, data *[]*ListData, limit int) commandCollector {
 				return true, fmt.Errorf("invalid LIST hierarchy delimiter %q", rawDelimiter)
 			}
 		}
-		*data = append(*data, &ListData{Attrs: attrs, Delimiter: delimiter, Mailbox: mailbox, OldName: oldName})
+		*data = append(*data, &ListData{
+			Attrs:     attrs,
+			Delimiter: delimiter,
+			Mailbox:   mailbox,
+			OldName:   extended.OldName,
+			ChildInfo: extended.ChildInfo,
+			Extended:  extended.Extended,
+		})
 		return true, nil
 	}
 }
 
 // readListExtendedData reads the rest of a LIST response after the mailbox
-// name — the extended data items of RFC 5258 section 9, if any — and returns
-// the OLDNAME item's mailbox (RFC 5465 section 5.4), or "". Other items, such
-// as CHILDINFO, are skipped.
+// name: the extended data items of RFC 5258 section 6, if any. It returns them
+// in a ListData that carries only Extended, which keeps every item raw in wire
+// order, and the items decoded from it: OldName (RFC 5465 section 5.4) and
+// ChildInfo (RFC 5258 section 3.5).
 //
-// It is as lenient as the client has always been here. Anything it cannot
+// It is as lenient as the client has always been here. Extended data it cannot
 // parse is discarded to the end of the line, and the response keeps its
-// attributes and name rather than failing the command.
-func readListExtendedData(dec *imapwire.Decoder) (string, error) {
-	var oldName string
+// attributes and name rather than failing the command. Each value is captured
+// before it is decoded, so an OLDNAME or CHILDINFO value that is well-formed
+// but not of its item's shape is kept raw and decoded to nothing, without
+// costing the other items. Of repeated OLDNAME or CHILDINFO items the first
+// that decodes is used.
+func readListExtendedData(dec *imapwire.Decoder) (ListData, error) {
+	var extended ListData
 	ok := true
 	if dec.PeekSpecial(' ') {
 		ok = dec.SP() && dec.ExpectList(func() error {
@@ -236,23 +254,117 @@ func readListExtendedData(dec *imapwire.Decoder) (string, error) {
 			if !dec.ExpectAstring(&tag) || !dec.ExpectSP() {
 				return dec.Err()
 			}
-			if !strings.EqualFold(tag, "OLDNAME") {
-				return dec.DiscardValue()
+			if tag == "" {
+				// The tag is an astring, which may be an empty quoted string,
+				// but its content must be a vendor or standard tag (RFC 5258
+				// section 6, mbox-list-extended-item-tag), never empty.
+				return errEmptyExtendedTag
 			}
-			return dec.ExpectList(func() error {
-				if !dec.ExpectMailbox(&oldName) {
-					return dec.Err()
+			raw, err := captureListExtendedValue(dec)
+			if err != nil {
+				return err
+			}
+			tag = strings.ToUpper(tag)
+			extended.Extended = append(extended.Extended, imap.ListExtendedItem{Tag: tag, Value: raw})
+			switch tag {
+			case "OLDNAME":
+				if extended.OldName == "" {
+					extended.OldName = parseOldName(raw, valueDecoderOptions(dec))
 				}
-				return nil
-			})
+			case "CHILDINFO":
+				if extended.ChildInfo == nil {
+					extended.ChildInfo = parseChildInfo(raw, valueDecoderOptions(dec))
+				}
+			}
+			return nil
 		}) == nil
 	}
 	if ok && dec.ExpectCRLF() {
-		return oldName, nil
+		return extended, nil
 	}
-	return "", dec.DiscardLine()
+	return ListData{}, dec.DiscardLine()
+}
+
+// valueDecoderOptions returns the options for decoding a value captured from
+// dec: the connection's own limits and its current mailbox-name encoding, so
+// the captured bytes decode exactly as they would have in place.
+func valueDecoderOptions(dec *imapwire.Decoder) *imapwire.Options {
+	opts := dec.Options()
+	opts.UTF8Accept = dec.UTF8Accept()
+	return &opts
+}
+
+// parseOldName reads an OLDNAME value, a parenthesised mailbox name, and
+// returns the name or "" when the value is malformed.
+func parseOldName(raw string, opts *imapwire.Options) string {
+	dec := imapwire.NewDecoderString(raw, opts)
+	var name string
+	count := 0
+	err := dec.ExpectList(func() error {
+		if count++; count > 1 || !dec.ExpectMailbox(&name) {
+			return errMalformedOldName
+		}
+		return nil
+	})
+	if err != nil || count != 1 || !dec.AtEOF() {
+		return ""
+	}
+	return name
+}
+
+var errMalformedOldName = errors.New("malformed OLDNAME")
+
+var errEmptyExtendedTag = errors.New("empty LIST extended data item tag")
+
+// captureListExtendedValue reads one tagged-ext-val as its wire bytes. A value
+// too large to keep is consumed and returned empty, as for FetchDataRaw.
+func captureListExtendedValue(dec *imapwire.Decoder) (string, error) {
+	var raw []byte
+	if err := dec.CaptureValue(&raw); err != nil {
+		if dec.Err() != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	return string(raw), nil
+}
+
+var errEmptyChildInfoOption = errors.New("CHILDINFO option without a name")
+
+// parseChildInfo reads a CHILDINFO value, a parenthesised list of selection
+// options (RFC 5258 section 6, childinfo-extended-item), and returns them with
+// each option's name upper-cased, or nil when the value is malformed. The
+// grammar quotes each option; a bare atom is accepted too.
+func parseChildInfo(raw string, opts *imapwire.Options) []string {
+	dec := imapwire.NewDecoderString(raw, opts)
+	var options []string
+	err := dec.ExpectList(func() error {
+		var option string
+		if !dec.ExpectAstring(&option) {
+			return dec.Err()
+		}
+		if name, _, _ := strings.Cut(option, " "); name == "" {
+			return errEmptyChildInfoOption
+		}
+		options = append(options, upperOptionName(option))
+		return nil
+	})
+	if err != nil || !dec.AtEOF() || len(options) == 0 {
+		return nil
+	}
+	return options
 }
 
 func isListKeyword(s string) bool {
 	return s != "" && !strings.ContainsAny(s, " (){%*\\\"")
+}
+
+// upperOptionName upper-cases a selection option's name and leaves any value
+// after it as sent: an option-extension is a tag, then optionally SP and a
+// value whose case may matter (RFC 5258 section 6).
+func upperOptionName(option string) string {
+	if i := strings.IndexByte(option, ' '); i >= 0 {
+		return strings.ToUpper(option[:i]) + option[i:]
+	}
+	return strings.ToUpper(option)
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -211,6 +212,45 @@ func Run(t *testing.T, harness *Harness) {
 		}
 		closeSession(t, instance, selecting)
 		closeSession(t, instance, mutating)
+	})
+
+	// RFC 5258 section 3.5: with RECURSIVEMATCH, a parent that is not
+	// subscribed is returned because a descendant is, and says so in
+	// ChildInfo. The framework accepts RECURSIVEMATCH for every backend, since
+	// LIST-EXTENDED needs no witness, so a backend that ignored the option
+	// would answer it wrongly rather than be refused.
+	t.Run("list-recursivematch", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		ctx := context.Background()
+		for _, name := range []string{"recursive", "recursive/child"} {
+			if err := session.Create(ctx, name, nil); err != nil {
+				t.Fatalf("Create %q: %v", name, err)
+			}
+		}
+		if err := session.Subscribe(ctx, "recursive/child", nil); err != nil {
+			t.Fatal(err)
+		}
+		list := func(options *imapserver.ListOptions) []*imap.ListData {
+			var listed []*imap.ListData
+			if err := session.List(ctx, &imapserver.ListWriter{WriteFunc: func(_ context.Context, data *imap.ListData) error {
+				listed = append(listed, data)
+				return nil
+			}}, "", []string{"recursive"}, options); err != nil {
+				t.Fatal(err)
+			}
+			return listed
+		}
+		if listed := list(&imapserver.ListOptions{Subscribed: true}); len(listed) != 0 {
+			t.Fatalf("LIST (SUBSCRIBED) returned the unsubscribed parent: %#v", listed[0])
+		}
+		listed := list(&imapserver.ListOptions{Subscribed: true, SelectRecursiveMatch: true})
+		if len(listed) != 1 || listed[0].Mailbox != "recursive" {
+			t.Fatalf("LIST (SUBSCRIBED RECURSIVEMATCH) returned %d results, want only the parent of a subscribed child", len(listed))
+		}
+		if !slices.ContainsFunc(listed[0].ChildInfo, func(option string) bool { return strings.EqualFold(option, "SUBSCRIBED") }) {
+			t.Fatalf("parent ChildInfo = %q, want SUBSCRIBED", listed[0].ChildInfo)
+		}
+		closeSession(t, instance, session)
 	})
 
 	t.Run("streaming-and-mutations", func(t *testing.T) {

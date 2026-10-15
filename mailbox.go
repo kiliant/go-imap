@@ -104,8 +104,45 @@ type ListData struct {
 	// rename this way (RFC 5465 section 5.4), and an IMAP4rev2 server uses it
 	// in the LIST answering a SELECT of a name that was not in canonical form
 	// (RFC 9051 section 6.3.2). "" cannot be a present value: no mailbox is
-	// renamed from, or selected as, the empty name.
+	// renamed from, or selected as, the empty name. The item itself is also
+	// in Extended.
 	OldName string
+
+	// ChildInfo is the CHILDINFO extended data item decoded: the base
+	// selection options that a descendant of this mailbox matched, each with
+	// its name upper-cased. It is why a LIST with the RECURSIVEMATCH
+	// selection option returns a mailbox that does not match itself, such as
+	// an unsubscribed parent of a subscribed child, with ChildInfo
+	// ["SUBSCRIBED"]. RFC 5258 section 3.5. The item itself is also in
+	// Extended.
+	//
+	// Nil means the item was absent or could not be decoded. A decoded item
+	// is never empty: its grammar requires at least one option (RFC 5258
+	// section 6).
+	ChildInfo []string
+
+	// Extended holds every extended data item received, in wire order,
+	// including those also decoded into a field of their own (OldName,
+	// ChildInfo). An item a later release learns to decode stays here as
+	// well, so code reading an item from Extended keeps working when it does.
+	// RFC 5258 section 6 (mbox-list-extended-item).
+	Extended []ListExtendedItem
+
+	_ struct{}
+}
+
+// ListExtendedItem is one LIST extended data item, as received. RFC 5258
+// section 6.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ListExtendedItem struct {
+	// Tag is the item's tag, upper-cased.
+	Tag string
+
+	// Value is the item's value (tagged-ext-val) exactly as it appeared on
+	// the wire. The wire cannot carry an empty value, so an empty Value means
+	// one too large to hold in memory, which was consumed but not kept.
+	Value string
 
 	_ struct{}
 }
