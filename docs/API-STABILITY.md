@@ -440,6 +440,28 @@ Per `CLAUDE.md`, this needed explicit written approval from the human before it
 became real, and it has that approval now. `imapserver/go.mod` and the root
 `go.work` are T25's to create, at v1.0.
 
+#### When the exception ends — APPROVED
+
+**Status: approved by the human on 2026-10-15** as milestone M7
+(`docs/ROADMAP.md`).
+
+The exception ends, and `imapserver` comes under the v1 promise, when all
+three of these hold:
+
+1. **A second backend.** One written against the exported API only, outside
+   the framework's own tasks: T32's Maildir backend.
+2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
+   first at or after the one that contains that backend, with no incompatible
+   change in `apidiff` and no BREAKING entry, including behaviour, in
+   `CHANGELOG.md`.
+3. **A full review.** An `api-guardian` review of the whole server surface,
+   with its findings resolved: T33.
+
+Feature completeness is deliberately not a criterion. The server was
+feature-complete at M6 and still broke its API twice afterwards. What the
+exception waits for is evidence that the backend contract holds for code
+its authors did not write.
+
 ## 10. The `imapserver` enforcement gates — added by T23, 2026-08-13
 
 Three mechanical gates in `imapserver/capability_test.go` enforce the rules above

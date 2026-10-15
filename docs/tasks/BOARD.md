@@ -74,6 +74,8 @@ call, not the originating task's.
 | [T29](T29-list-extdata-auth.md) | LIST extended data (CHILDINFO, raw items) in both directions, SELECT LIST claim only on rev2, opt-in password-only SASL | post-M6 | T27 | see spec | extensions + client-core + api-guardian |
 | [T30](T30-unsolicited-events.md) | CONTEXT and METADATA update delivery, interleaved NOTIFY routing | post-M6, next additive root release | T27, T29; after v1.2.1 and #34 | see spec and explicit ownership handovers | client-core + extensions + api-guardian |
 | [T31](T31-uidbatches.md) | UIDBATCHES (RFC 10022) in both directions | post-M6; one release: the root minor after v1.3.0 and imapserver v0.4.0 | T30 | new `uidbatches*` files in the root package, `internal/imapcodec`, `imapclient/ext_d_` and `imapserver/ext_d_`; see spec for handovers | extensions + server-core + api-guardian |
+| [T32](T32-maildir-backend.md) | Maildir backend: the backend contract proven from outside | M7 | T20 | `imapserver/maildir/**`; see spec | server-core + api-guardian |
+| [T33](T33-imapserver-v1.md) | `imapserver` v1: full API review, release window, tag | M7 | T32, then two quiet releases | see spec | api-guardian + docs-release |
 
 T16 is deliberately out of numeric order: it is the design task, it has no
 dependencies, and T17 depends on it. See "Why T16 moved" below.

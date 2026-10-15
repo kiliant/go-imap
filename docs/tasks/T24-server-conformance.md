@@ -105,3 +105,10 @@ does not reach any of them:
   targets) is green with no crasher, covering command decoding at minimum.
 - Every stateful security test in the list above exists, passes, and is
   wired into the same CI path as the client's `-race`/interop suites.
+
+## Hand-over to T32
+
+[T32](T32-maildir-backend.md) adds a second server configuration in
+`imapserver/interop/profile.go`, so that the existing imaptest and mbsync
+suites also run against the Maildir backend. The suites, their triage records
+and every other file under `imapserver/interop/` remain with T24.

@@ -248,6 +248,35 @@ The authentication refusal code in
 another consumer needs the distinction. The password-only SASL default remains
 a v2 candidate, not a prerequisite for this phase.
 
+## M7 — `imapserver` v1
+
+`imapserver` has been feature-complete since M6, but it stays on v0.x by the
+approved exception in `docs/API-STABILITY.md`. Most of its API consists of
+interfaces that backends implement, and adding a method to one breaks every
+backend. So far the only backend is `imapserver/memory`, written by the same
+tasks as the framework, and the server API broke in `imapserver/v0.2.0` and
+again in `v0.3.0`.
+
+**Exit.** The human approved these on 2026-10-15. All three must hold:
+
+1. **A second backend.** [T32](tasks/T32-maildir-backend.md), tracked by
+   [#53](https://github.com/kiliant/go-imap/issues/53): a persistent Maildir
+   backend written against the exported API only. It passes `backendtest`
+   and the server interop suite.
+2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
+   first at or after the one that contains T32, with no incompatibility in
+   `apidiff` and no BREAKING entry in `CHANGELOG.md`.
+3. **A full review.** An `api-guardian` review of the whole server surface,
+   with its findings resolved. [T33](tasks/T33-imapserver-v1.md), tracked by
+   [#54](https://github.com/kiliant/go-imap/issues/54), runs it as soon as
+   T32 is merged, so that breaking fixes land before the release window
+   opens. It then tags v1.
+
+T32 touches no file of T30 or T31 and can run in parallel with them. After
+the v1 tag, both modules carry the same promise and can be released
+together. Whether their version numbers also align is T33's decision.
+
+
 ## Sequencing
 
 ```

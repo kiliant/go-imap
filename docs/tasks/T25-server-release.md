@@ -94,3 +94,10 @@ is about catching *unintended* breaks, not enforcing v1 semantics prematurely).
 `go.sum` to require the root release containing the UIDBATCHES vocabulary,
 including the comment that names the floor. It follows the precedent of
 `0d38190`. The release sequence in `docs/RELEASING.md` is unchanged.
+
+## Hand-over to T33
+
+[T33](T33-imapserver-v1.md) takes `imapserver` doc comments for the findings
+of its full v1 review, and the `imapserver` parts of `docs/RELEASING.md`.
+Fixes that change behaviour or signatures still go through the owner of the
+affected file.
