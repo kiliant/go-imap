@@ -103,3 +103,10 @@ interop matrix's clients and from `imaptest`.
 - Fuzz targets are green over a recorded campaign, per `docs/tasks/T13`'s policy.
 - Full `-race` suite green, native interop matrix green, exported surface
   unchanged (`apidiff` reports no diff).
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes the portions of `internal/imapcodec`
+needed to decode and encode CONTEXT updates and metadata-change notifications
+from completed T18. Preserve shared vocabulary, round-trip tests and parser
+fuzz coverage; command decoding and streaming FETCH remain outside its scope.

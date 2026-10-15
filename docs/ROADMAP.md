@@ -209,6 +209,38 @@ gone, a raw loopback regression pins the wire ordering, and the unfiltered
 criterion are complete; the scripted-corpus skip remains the documented
 imaptest `LITERAL+` runner limitation, not a server finding. See `INTEROP.md`.
 
+## Post-M6 — reliability and event delivery
+
+The original milestones are complete. Root `v1.2.0` and server
+`imapserver/v0.3.0` are published; the two module lines remain independent.
+Current execution status lives on the issue tracker, not in this plan.
+
+The next work is ordered deliberately:
+
+1. Root `v1.2.1`: release the imapcli UID-summary race fix and UNSEEN-label
+   correction, with the persistent-backup-directory warning from
+   [#41](https://github.com/kiliant/go-imap/issues/41). Keep optional timestamp
+   refinements separate from this patch.
+2. [#34](https://github.com/kiliant/go-imap/issues/34): strengthen backend
+   conformance for RECURSIVEMATCH combined with REMOTE and SPECIAL-USE.
+   These checks belong to the independently versioned server module.
+3. [T30](tasks/T30-unsolicited-events.md), tracked by
+   [#44](https://github.com/kiliant/go-imap/issues/44): decode and route
+   interleaved responses safely, deliver CONTEXT updates and metadata-change
+   notifications, and document event/command cases indistinguishable on the
+   wire. Public API additions make this a candidate for root `v1.3.0`.
+
+**Exit:** the patch is fetchable and builds outside the workspace; backend
+conformance catches faulty option combinations; T30's scripted, race, fuzz,
+API-compatibility and supporting-server interop gates pass. Coverage must name
+remaining limitations instead of treating command serialization as a fix for
+lost events.
+
+The authentication refusal code in
+[#21](https://github.com/kiliant/go-imap/issues/21) stays lower priority until
+another consumer needs the distinction. The password-only SASL default remains
+a v2 candidate, not a prerequisite for this phase.
+
 ## Sequencing
 
 ```

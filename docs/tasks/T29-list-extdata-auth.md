@@ -346,3 +346,11 @@ Each is tracked as a GitHub issue; the bugs found along the way are #22 and
   - `apidiff` reports only compatible changes in both modules.
   - The guardian has approved.
   - Each item is a separate commit that builds on its own.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes event-delivery documentation in
+`UnilateralDataHandler.List` forward from completed T29. It must preserve the
+rev2 SELECT/EXAMINE LIST ownership and the indistinguishable-event exception
+documented here. The LIST extended-data representation and authentication
+selection are otherwise outside T30's scope.

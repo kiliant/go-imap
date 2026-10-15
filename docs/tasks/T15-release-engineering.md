@@ -83,6 +83,12 @@ explicitly. This is what makes the apidiff output reviewable rather than noise.
 empty — that assertion *is* the zero-dependency policy, and without it the policy
 erodes on the first convenient import.
 
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) owns its root-module event-delivery entries
+in `CHANGELOG.md`. Release automation and unrelated release notes remain with
+T15; the handover does not authorize changes to existing release history.
+
 ## Done when
 
 All jobs green on main, the apidiff gate has run on at least one PR, and a

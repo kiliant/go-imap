@@ -49,3 +49,11 @@ Runs in parallel with T11.
 Each verified against two servers where available. COMPRESS tested under `-race`
 with a large fetch, asserting no deadlock. `UTF8=ACCEPT` tested with a non-ASCII
 mailbox name and a non-ASCII search. Coverage rows updated.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes extended SORT collection in
+`imapclient/ext_c_sort.go` and MULTISEARCH response routing in
+`imapclient/ext_c_multisearch.go` from completed T10, including T27's extended
+SORT work. Plain SORT's pipelining behavior and unrelated group C extensions
+remain unchanged.

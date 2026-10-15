@@ -66,3 +66,10 @@ valid. No exported interfaces. All protocol errors are `*imap.Error`.
 Connects to Dovecot in the interop harness, completes the greeting, issues
 `CAPABILITY`, `NOOP` and `LOGOUT`, handles a mid-command `BYE` cleanly, and
 passes `-race`. `api-guardian` approves the method shape.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes untagged response routing in
+`imapclient/conn.go` and the UnilateralDataHandler declaration/documentation in
+`imapclient/client.go` from completed T03, only for event/command ownership.
+Authentication, transport and connection lifecycle remain outside that task.

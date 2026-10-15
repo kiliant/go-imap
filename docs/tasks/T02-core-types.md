@@ -86,3 +86,10 @@ No per-extension error types, ever. Extensions add codes, which is a data change
 `api-guardian` has reviewed and approved the three open-ended sets and the error
 type — explicitly, in writing, in `.state/progress/T02.md`. This sign-off gates the
 whole project; do not mark done without it.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) may add shared event response vocabulary in
+`metadata.go` and `searchdata.go` after API review. Existing types and semantics
+remain compatible; every shared addition must make sense in both protocol
+directions. No other root-package ownership passes from completed T02.

@@ -60,3 +60,11 @@ in `docs/RFC-COVERAGE.md`.
 
 `docs/RFC-COVERAGE.md` has no `planned` rows outside the explicitly `deferred`
 set. Cyrus is the reference server for METADATA and ACL; verify against it.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes `imapclient/ext_d_metadata.go`,
+`imapclient/ext_e_context.go`, and event-delivery documentation in
+`imapclient/ext_d_notify.go` from completed T11. It addresses the unsolicited
+response gaps recorded by T27; other group D/E extensions remain outside its
+scope.
