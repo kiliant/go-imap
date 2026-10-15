@@ -69,7 +69,7 @@ func TestSortExtendedRefusesWhatCannotBeEmulated(t *testing.T) {
 		&ESortOptions{ReturnOptions: []SearchReturnOption{SearchReturnSave}}); err == nil {
 		t.Fatal("RETURN (SAVE) was accepted")
 	}
-	extCReady(c, []string{"IMAP4REV1", "SORT", "ESORT", "CONTEXT=SORT"}, nil, true)
+	extCReady(c, []string{"IMAP4REV1", "SORT", "ESORT"}, nil, true)
 	if _, err := c.SortExtended(extCContext(t), []SortKeySpec{{Key: SortKeyDate}}, imap.SearchAll,
 		&ESortOptions{ReturnOptions: []SearchReturnOption{SearchReturnCount, SearchReturnUpdate}}); err == nil || !strings.Contains(err.Error(), "UPDATE") {
 		t.Fatalf("RETURN (UPDATE) error = %v", err)

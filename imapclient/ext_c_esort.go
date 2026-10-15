@@ -2,7 +2,6 @@ package imapclient
 
 import (
 	"context"
-	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -48,7 +47,11 @@ type ESortOptions struct {
 // has no faithful emulation and returns an [imap.Error] wrapping
 // [ErrCapabilityNotAdvertised] without writing anything.
 //
-// RETURN (SAVE) and RETURN (UPDATE) are not supported by this method.
+// RETURN (UPDATE) is never emulated. It requires CONTEXT=SORT, is always sent
+// as an extended SORT, and delivers its updates through
+// [UnilateralDataHandler.ContextUpdate]. The result's ContextTag can be
+// passed to [Client.CancelUpdate]. RETURN (SAVE) is not supported by this
+// method.
 func (c *Client) SortExtended(ctx context.Context, keys []SortKeySpec, criteria imap.SearchCriteria, options *ESortOptions) (*ESearchData, error) {
 	return c.sortExtended(ctx, false, keys, criteria, options)
 }
@@ -81,14 +84,9 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	if save {
 		return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "SORT RETURN (SAVE) is not supported by SortExtended"}
 	}
-	for _, keyword := range keywords {
-		if strings.EqualFold(keyword, string(SearchReturnUpdate)) {
-			// RFC 5267 section 4: UPDATE registers for unsolicited ESEARCH
-			// ADDTO/REMOVEFROM responses, which this client does not deliver
-			// yet. Accepting it would register for notifications that are
-			// then lost. Allowing it once they are delivered is compatible.
-			return nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: "SORT RETURN (UPDATE) is not supported by SortExtended: ESEARCH update responses are not delivered"}
-		}
+	update := hasSearchReturnKeyword(keywords, SearchReturnUpdate)
+	if update && !c.Supports("CONTEXT=SORT") {
+		return nil, capabilityError("SORT RETURN (UPDATE)", "CONTEXT=SORT")
 	}
 	if criteria == nil {
 		criteria = imap.SearchAll
@@ -112,7 +110,10 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	if charset == "" {
 		charset = "UTF-8"
 	}
-	if !c.Supports("ESORT") {
+	// CONTEXT=SORT does not imply ESORT's return options (RFC 5267 section
+	// 4.1); it selects the extended form only for UPDATE, which has no
+	// emulation and has already required CONTEXT=SORT above.
+	if !c.Supports("ESORT") && !update {
 		return c.sortExtendedEmulated(ctx, uid, keys, criteria, charset, keywords)
 	}
 	if c.searchPending() {
@@ -120,6 +121,9 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	}
 
 	cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}}, uid: uid}
+	if update {
+		cmd.registration = &searchContext{uid: uid, sorted: true}
+	}
 	write := func(enc *imapwire.Encoder) {
 		// RFC 5267 section 3: sort = ["UID" SP] "SORT" [sort-return-opts]
 		// SP sort-criteria SP search-criteria, so RETURN comes first.
@@ -142,7 +146,11 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 		write:          write,
 		collector:      esearchCollector(cmd),
 		answersESearch: true,
+		searchContext:  cmd.registration,
 	})
+	if update {
+		cmd.data.ContextTag = cmd.Command.Tag()
+	}
 	return cmd.Wait(ctx)
 }
 

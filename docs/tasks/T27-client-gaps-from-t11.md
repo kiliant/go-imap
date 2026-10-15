@@ -96,7 +96,8 @@ T27 is complete. Under BOARD's lock-passing rule, two pieces pass to
 
 [T30](T30-unsolicited-events.md) owns the CONTEXT and METADATA delivery gaps
 and the interleaved STATUS/LIST routing gaps recorded above. It takes the
-UnilateralDataHandler declaration, ESEARCH and extended SORT collection, and
+UnilateralDataHandler declaration, ESEARCH and extended SORT collection
+(including `imapclient/ext_c_esort.go`), and
 the affected event documentation forward from completed T27. The new task
 defines additive API and test requirements; this handover does not claim the
 gaps have already been fixed.
