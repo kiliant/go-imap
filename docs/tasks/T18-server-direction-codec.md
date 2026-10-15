@@ -110,3 +110,9 @@ interop matrix's clients and from `imaptest`.
 needed to decode and encode CONTEXT updates and metadata-change notifications
 from completed T18. Preserve shared vocabulary, round-trip tests and parser
 fuzz coverage; command decoding and streaming FETCH remain outside its scope.
+
+## Hand-over to T31
+
+[T31](T31-uidbatches.md) creates `internal/imapcodec/uidbatches.go` for the UIDBATCHES command and
+response codec. The codec stays bidirectional, with round-trip tests and fuzz
+targets. No other part of `internal/imapcodec` passes from completed T18.

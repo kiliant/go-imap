@@ -93,3 +93,10 @@ whole project; do not mark done without it.
 `metadata.go` and `searchdata.go` after API review. Existing types and semantics
 remain compatible; every shared addition must make sense in both protocol
 directions. No other root-package ownership passes from completed T02.
+
+## Hand-over to T31
+
+[T31](T31-uidbatches.md) adds the UIDBATCHES response vocabulary in a new root file,
+`uidbatches.go`, and the TOOFEW and TOOMANY response-code constants in
+`error.go`, after API review. Existing types are unchanged. No other
+root-package ownership passes from completed T02.

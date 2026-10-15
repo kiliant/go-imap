@@ -70,3 +70,10 @@ response gaps recorded by T27. The handover also includes only
 `listMetadataCollector` in `imapclient/ext_d_acl.go`, so the LIST-METADATA
 adapter can use the shared METADATA decoder. ACL, LIST-MYRIGHTS and other
 group D/E extensions remain outside its scope.
+
+## Hand-over to T31
+
+[T31](T31-uidbatches.md) creates `imapclient/ext_d_uidbatches.go` inside this task's `ext_d_*`
+pattern, for the UIDBATCHES command (RFC 10022). The handover covers that new
+file and its colocated tests only. No existing group D or E file passes from
+completed T11.

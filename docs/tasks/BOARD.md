@@ -73,6 +73,7 @@ call, not the originating task's.
 | [T28](T28-imapcli-backup.md) | imapcli backup mode: incremental Maildir mirror for restic | post-M6 | — | `cmd/imapcli/**`, `interop/imapcli/**` | client-core |
 | [T29](T29-list-extdata-auth.md) | LIST extended data (CHILDINFO, raw items) in both directions, SELECT LIST claim only on rev2, opt-in password-only SASL | post-M6 | T27 | see spec | extensions + client-core + api-guardian |
 | [T30](T30-unsolicited-events.md) | CONTEXT and METADATA update delivery, interleaved NOTIFY routing | post-M6, next additive root release | T27, T29; after v1.2.1 and #34 | see spec and explicit ownership handovers | client-core + extensions + api-guardian |
+| [T31](T31-uidbatches.md) | UIDBATCHES (RFC 10022) in both directions | post-M6; client in root v1.3.0, server in imapserver v0.4.0 | T30 | new `uidbatches.go`, `internal/imapcodec/uidbatches.go`, `imapclient/ext_d_uidbatches.go`, `imapserver/ext_d_uidbatches.go`; see spec for handovers | extensions + server-core + api-guardian |
 
 T16 is deliberately out of numeric order: it is the design task, it has no
 dependencies, and T17 depends on it. See "Why T16 moved" below.

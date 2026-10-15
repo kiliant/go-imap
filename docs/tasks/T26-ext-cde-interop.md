@@ -60,3 +60,9 @@ the census table above has run (not skipped) on at least two servers, and the
 coverage rows say so. No exported symbol changes: a defect found here is fixed
 in its own commit and goes through the normal API review if it touches the
 surface.
+
+## Hand-over to T31
+
+[T31](T31-uidbatches.md) owns the client cell and footnote of the new UIDBATCHES row in group D of
+`docs/RFC-COVERAGE.md`, and its live test. Existing group C–E cells remain as
+T26 verified them.

@@ -2,6 +2,9 @@
 
 Source of truth: the **IANA IMAP Capabilities registry**
 (<https://www.iana.org/assignments/imap-capabilities/>), retrieved 2026-07-31.
+Rechecked on 2026-10-15. Since then, the only change that affects this table is
+UIDBATCHES: RFC 10022 was published on the day of retrieval, and the
+capability has moved off the watch list.
 
 **Do not add a row from memory.** Several widely-cited RFC numbers are stale —
 `UTF8=ACCEPT` is RFC 9755 (not 6855, which it obsoletes) and `QUOTA` is RFC 9208
@@ -320,6 +323,7 @@ CONDSTORE `MODIFIED` on tagged OK.
 | MESSAGELIMIT= | 9738 | done | done |
 | SAVELIMIT= | 9738 | done | done |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
+| UIDBATCHES | 10022 | planned [^t31uidbatches] | planned |
 
 [^srvquotares]: Resource names cross the backend boundary as open
     `imap.QuotaResourceName` strings, so a server serving a resource this
@@ -395,6 +399,12 @@ CONDSTORE `MODIFIED` on tagged OK.
     to a watching session after another session's APPEND, with no command in
     between) on Dovecot and Cyrus; Cyrus needs its `idled` daemon for that,
     which the harness now starts.
+
+[^t31uidbatches]: Published as RFC 10022 on 2026-07-31, the day this table was
+    retrieved, so it stayed on the watch list as a draft until the 2026-10-15
+    recheck. [T31](tasks/T31-uidbatches.md) implements both directions. It
+    adds no emulation, because the UID SEARCH equivalent in Appendix A.1
+    needs sequence numbers, which UIDONLY forbids.
 
 ## Group E — legacy & niche (task T11, lower priority)
 
@@ -496,9 +506,13 @@ break the client; full command support is best-effort.
 
 ## Watch list
 
-`UIDBATCHES` is currently an IETF draft (`ietf-mailmaint-imap-uidbatches`), not
-yet an RFC. Do not implement against a draft before v1.0 — a draft that changes
-would force a post-v1.0 break. Re-check at each milestone.
+Nothing is waiting here. A capability whose specification is still a draft
+stays on this list. Do not implement against a draft: if it changes before
+publication, following it would break the frozen v1 API. Recheck the registry
+before each release.
+
+UIDBATCHES left the list when it was published as RFC 10022. Its row is in
+group D.
 
 [^srvscram]: Server side added by T23 through the optional `SCRAMCredentials`
     backend interface. The exchange, nonces and proof verification are
