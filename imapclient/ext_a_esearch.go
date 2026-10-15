@@ -99,6 +99,12 @@ type ESearchOptions struct {
 type ESearchData struct {
 	imap.ESearchData
 
+	// ContextTag is the original command tag when RETURN (UPDATE) was
+	// requested, for [Client.CancelUpdate]. It does not imply registration
+	// succeeded: watch [UnilateralDataHandler.StatusResponse] for NOUPDATE.
+	// It is empty when UPDATE was not requested, including emulated results.
+	ContextTag string
+
 	// Emulated reports that the value was computed from an ordinary SEARCH
 	// or SORT response rather than decoded from an ESEARCH one. See
 	// [Client.SearchExtended] and [Client.SortExtended].
@@ -211,6 +217,11 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 		cmd.Command = rejectedCommand(c, name, err.Error())
 		return cmd
 	}
+	update := hasSearchReturnKeyword(keywords, SearchReturnUpdate)
+	if update && !c.Supports("CONTEXT=SEARCH") {
+		cmd.Command = failedCommand(name, capabilityError("SEARCH RETURN (UPDATE)", "CONTEXT=SEARCH"))
+		return cmd
+	}
 	if err := validateSearchCriteria(criteria); err != nil {
 		cmd.Command = rejectedCommand(c, name, err.Error())
 		return cmd
@@ -237,12 +248,16 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 
 	// RFC 9051 section 6.4.4 makes ESEARCH the base rev2 behaviour, so an
 	// enabled rev2 session has it whether or not the capability was listed.
-	if !c.supportsAny("ESEARCH") && !c.rev2Enabled() {
+	if !c.supportsAny("ESEARCH", "CONTEXT=SEARCH") && !c.rev2Enabled() {
 		c.searchExtendedEmulated(cmd, name, criteria, o, keywords)
 		return cmd
 	}
 
-	cmd.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+	var registration *searchContext
+	if update {
+		registration = &searchContext{uid: uid}
+	}
+	cmd.Command = c.issue(name, commandOptions{allowed: stateSelected, searchContext: registration, collector: esearchCollector(cmd), write: func(enc *imapwire.Encoder) {
 		// RFC 4466 section 2.6: search = "SEARCH" [search-return-opts] SP
 		// search-program, and the CHARSET belongs to search-program. RETURN
 		// therefore precedes CHARSET, not the other way round.
@@ -252,7 +267,10 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 		}
 		enc.SP()
 		writeSearchCriteria(enc, criteria)
-	}, esearchCollector(cmd))
+	}})
+	if update {
+		cmd.data.ContextTag = cmd.Command.Tag()
+	}
 	return cmd
 }
 

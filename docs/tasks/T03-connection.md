@@ -72,4 +72,6 @@ passes `-race`. `api-guardian` approves the method shape.
 [T30](T30-unsolicited-events.md) takes untagged response routing in
 `imapclient/conn.go` and the UnilateralDataHandler declaration/documentation in
 `imapclient/client.go` from completed T03, only for event/command ownership.
-Authentication, transport and connection lifecycle remain outside that task.
+The handover includes narrow command registration/completion and cleanup hooks
+for CONTEXT registrations in those files. Authentication, transport and other
+connection lifecycle behavior remain outside that task.

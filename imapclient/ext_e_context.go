@@ -21,9 +21,9 @@ const (
 	SearchReturnContext SearchReturnOptionKeyword = "CONTEXT"
 
 	// SearchReturnUpdate asks for incremental ESEARCH updates to a CONTEXT.
-	// RFC 5267 section 4.3. This client does not deliver those updates yet:
-	// the unsolicited ESEARCH responses carrying them are discarded. See the
-	// CONTEXT=SEARCH row of docs/RFC-COVERAGE.md.
+	// RFC 5267 section 4.3. Requires CONTEXT=SEARCH for SearchExtended or
+	// CONTEXT=SORT for SortExtended. Updates arrive through
+	// [UnilateralDataHandler.ContextUpdate], independently of command results.
 	SearchReturnUpdate SearchReturnOptionKeyword = "UPDATE"
 
 	// SearchReturnESortAll is the ALL return option for ESORT. RFC 5267
@@ -44,6 +44,13 @@ type CancelUpdateOptions struct {
 //
 // tags are the command tags whose UPDATE contexts should be cancelled; at
 // least one is required. A nil options pointer selects the defaults.
+// Use ESearchCommand.Tag or the result's ESearchData.ContextTag. Updates may
+// still arrive before CANCELUPDATE's tagged OK; after OK these tags are no
+// longer delivered. A failed cancellation leaves registrations active.
+// NOUPDATE removes its named registration before StatusResponse is called.
+// SELECT/EXAMINE abandon all registrations when issued, even if they fail;
+// successful CLOSE/UNSELECT/UNAUTHENTICATE, BYE, logout and disconnect clear
+// them too. Nil update handlers still consume and validate notifications.
 func (c *Client) CancelUpdate(ctx context.Context, tags []string, options *CancelUpdateOptions) error {
 	_ = options
 	if ctx == nil {
@@ -60,11 +67,12 @@ func (c *Client) CancelUpdate(ctx context.Context, tags []string, options *Cance
 			return &imap.Error{Type: imap.ErrorTypeProtocol, Text: fmt.Sprintf("CANCELUPDATE tag %d must not be empty", i)}
 		}
 	}
-	cmd := c.beginCommand("CANCELUPDATE", stateSelected, func(enc *imapwire.Encoder) {
+	tags = append([]string(nil), tags...)
+	cmd := c.issue("CANCELUPDATE", commandOptions{allowed: stateSelected, cancelUpdates: tags, write: func(enc *imapwire.Encoder) {
 		for _, tag := range tags {
 			enc.SP().Quoted(tag)
 		}
-	}, nil)
+	}})
 	return cmd.Wait(ctx)
 }
 

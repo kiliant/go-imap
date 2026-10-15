@@ -13,10 +13,13 @@ rule. The originating specs name the same handover:
 
 - T03: untagged response routing in `imapclient/conn.go` and the
   `UnilateralDataHandler` declaration/documentation in `imapclient/client.go`.
+  This includes narrowly scoped command registration/completion and context
+  cleanup hooks in those files; transport and authentication remain unchanged.
 - T05: response collectors in `imapclient/{status,list}.go`; preserve mailbox
   encoding and the existing SELECT/EXAMINE ownership rules.
 - T08 and T27: ESEARCH collection/correlation in `imapclient/ext_a_esearch.go`.
 - T10 and T27: extended SORT collection in `imapclient/ext_c_sort.go` and
+  `imapclient/ext_c_esort.go`, and
   MULTISEARCH routing in `imapclient/ext_c_multisearch.go`.
 - T11 and T27: `imapclient/ext_d_metadata.go`, `imapclient/ext_e_context.go`,
   and event-delivery documentation in `imapclient/ext_d_notify.go`. T11 also

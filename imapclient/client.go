@@ -168,7 +168,14 @@ type UnilateralDataHandler struct {
 	// claim LIST. A pending LIST command claims LIST responses, including
 	// indistinguishable events; a legacy LSUB command does not claim LIST.
 	List func(data *ListData)
-	_    struct{}
+	// ContextUpdate receives ESEARCH notifications for registered SEARCH/SORT
+	// RETURN (UPDATE) contexts. Items and position/set pairs are in wire order.
+	// Delivery can precede the initial command's Wait returning, including
+	// between its initial response and tagged completion. Callbacks may retain
+	// the data; the client does not subsequently mutate it. Do not block or
+	// issue a command and wait here. See [Client.CancelUpdate] for lifecycle.
+	ContextUpdate func(data *ContextUpdate)
+	_             struct{}
 }
 
 // StatusResponse is an untagged status response delivered to
@@ -225,8 +232,11 @@ type Client struct {
 	nextTag  uint64
 	pending  map[string]*Command
 	pendingQ []*Command
-	closed   bool
-	closeErr error
+	// searchContexts contains only live UPDATE requests, never a history of
+	// old tags. Protected by mu; installed before a request reaches the wire.
+	searchContexts map[string]*searchContext
+	closed         bool
+	closeErr       error
 
 	greeting     chan struct{}
 	greetingOnce sync.Once
@@ -318,6 +328,8 @@ type Command struct {
 	// is an untagged ESEARCH: today, a SORT with a RETURN list (RFC 5267).
 	// It is set before the command is registered and never changes.
 	answersESearch bool
+	searchContext  *searchContext
+	cancelUpdates  []string
 }
 
 // taggedCompleteFunc is invoked on the reader goroutine with the tagged
@@ -516,6 +528,7 @@ func (c *Client) closeWith(err error) error {
 	pending := c.pendingQ
 	c.pendingQ = nil
 	c.pending = make(map[string]*Command)
+	c.searchContexts = nil
 	conn := c.conn
 	c.mu.Unlock()
 	for _, cmd := range pending {
@@ -564,6 +577,8 @@ type commandOptions struct {
 
 	// answersESearch is copied to Command.answersESearch.
 	answersESearch bool
+	searchContext  *searchContext
+	cancelUpdates  []string
 }
 
 func (c *Client) beginCommand(name string, allowed stateMask, write func(*imapwire.Encoder), collector commandCollector) *Command {
@@ -629,7 +644,7 @@ func (c *Client) beginCommandWithCompletion(name string, allowed stateMask, writ
 // blocks here until the server answers, and the reader goroutine must stay free
 // to deliver that answer.
 func (c *Client) issue(name string, opts commandOptions) *Command {
-	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: opts.collector, onComplete: opts.onComplete, answersESearch: opts.answersESearch}
+	cmd := &Command{client: c, name: name, done: make(chan struct{}), collector: opts.collector, onComplete: opts.onComplete, answersESearch: opts.answersESearch, searchContext: opts.searchContext, cancelUpdates: opts.cancelUpdates}
 
 	if !opts.ownsContinuation {
 		c.continuationOwnerMu.Lock()
@@ -671,6 +686,17 @@ func (c *Client) issue(name string, opts commandOptions) *Command {
 	}
 	c.nextTag++
 	cmd.tag = fmt.Sprintf("A%04d", c.nextTag)
+	if name == "SELECT" || name == "EXAMINE" {
+		// A new selection abandons the old one, even when selection fails.
+		// Stop old-context delivery at this request boundary, not at Wait.
+		c.searchContexts = nil
+	}
+	if cmd.searchContext != nil {
+		if c.searchContexts == nil {
+			c.searchContexts = make(map[string]*searchContext)
+		}
+		c.searchContexts[cmd.tag] = cmd.searchContext
+	}
 	if (name == "STARTTLS" || name == "COMPRESS") && c.paused != nil {
 		c.pauseTag = cmd.tag
 	}
@@ -829,6 +855,10 @@ func (c *Client) removePendingLocked(want *Command) {
 }
 
 func (c *Client) completeTagged(tag string, cond imapwire.RespCond) {
+	if err := c.observeContextCondition(cond); err != nil {
+		c.poison(protocolError(err))
+		return
+	}
 	if cond.Text.Code == "CAPABILITY" {
 		c.addCapabilities(strings.Fields(cond.Text.Args))
 	}
@@ -837,6 +867,7 @@ func (c *Client) completeTagged(tag string, cond imapwire.RespCond) {
 	if cmd != nil {
 		delete(c.pending, tag)
 		c.removePendingLocked(cmd)
+		c.finishContextCommandLocked(cmd, cond.Status == "OK")
 	}
 	startTLS := cmd != nil && c.pauseTag == tag
 	pause := startTLS && cond.Status == "OK"
