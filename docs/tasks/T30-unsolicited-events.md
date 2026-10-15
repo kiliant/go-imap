@@ -134,7 +134,8 @@ No automatic GETMETADATA refresh, unbounded event queue or background worker.
 
 ## Hand-over to T31
 
-Once this task is complete, [T31](T31-uidbatches.md) takes the UIDBATCHES case in
+Once this task is complete, [T31](T31-uidbatches.md) takes the UIDBATCHES
+case in `decodeData` and its field on `responseData`, both in
 `imapclient/response_data.go`. The UIDBATCHES collector then uses the same
 decode-once path and can decline a foreign correlator without advancing the
 decoder. No other part of this task's routing passes.

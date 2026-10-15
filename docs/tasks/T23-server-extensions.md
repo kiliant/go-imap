@@ -99,8 +99,8 @@ does not own) rather than reshaping the selection-scoped one.
 
 ## Hand-over to T31
 
-[T31](T31-uidbatches.md) creates `imapserver/ext_d_uidbatches.go` inside this task's `ext_*`
-pattern, for the server side of UIDBATCHES. The handover covers that new file
-and its colocated tests only, plus the server cell of the new UIDBATCHES row
-in `docs/RFC-COVERAGE.md`. No existing server extension file passes from
-completed T23.
+[T31](T31-uidbatches.md) creates the `imapserver/ext_d_uidbatches*` files
+inside this task's `ext_*` pattern: the server side of UIDBATCHES and its
+colocated tests and fuzz target. It also takes the server cell of the new
+UIDBATCHES row in `docs/RFC-COVERAGE.md`. No existing server extension file
+passes from completed T23.

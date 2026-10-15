@@ -402,9 +402,10 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 [^t31uidbatches]: Published as RFC 10022 on 2026-07-31, the day this table was
     retrieved, so it stayed on the watch list as a draft until the 2026-10-15
-    recheck. [T31](tasks/T31-uidbatches.md) implements both directions. It
-    adds no emulation, because the UID SEARCH equivalent in Appendix A.1
-    needs sequence numbers, which UIDONLY forbids.
+    recheck. [T31](tasks/T31-uidbatches.md) implements both directions. The
+    client offers no fallback in that release. The UID SEARCH equivalent in
+    Appendix A needs sequence numbers, which UIDONLY forbids, and a message
+    count the client does not keep. An opt-in fallback would be additive.
 
 ## Group E — legacy & niche (task T11, lower priority)
 

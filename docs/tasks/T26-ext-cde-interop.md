@@ -63,6 +63,7 @@ surface.
 
 ## Hand-over to T31
 
-[T31](T31-uidbatches.md) owns the client cell and footnote of the new UIDBATCHES row in group D of
-`docs/RFC-COVERAGE.md`, and its live test. Existing group C–E cells remain as
-T26 verified them.
+[T31](T31-uidbatches.md) owns the client cell and footnote of the new
+UIDBATCHES row in group D of `docs/RFC-COVERAGE.md`. Its live test is a new
+colocated file, `imapclient/ext_d_uidbatches_interop_test.go`. Existing
+group C–E cells and `imapclient/ext_cde_interop_test.go` remain with T26.

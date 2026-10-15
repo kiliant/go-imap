@@ -232,10 +232,10 @@ The next work is ordered deliberately:
 4. [T31](tasks/T31-uidbatches.md), tracked by
    [#51](https://github.com/kiliant/go-imap/issues/51): UIDBATCHES, published
    as RFC 10022 on 2026-07-31, the day of the coverage table's registry
-   snapshot. It
-   is the only registered capability that neither direction implements. The
-   client half joins T30 in root `v1.3.0`, and the server half follows in
-   `imapserver/v0.4.0`.
+   snapshot. Apart from the deliberately deferred capabilities, it is the only
+   registered capability that neither direction implements. Both directions
+   ship together, tagged the same day with the root first: the root minor
+   after T30's `v1.3.0`, and `imapserver/v0.4.0`. T30 does not wait for it.
 
 **Exit:** the patch is fetchable and builds outside the workspace; backend
 conformance catches faulty option combinations; T30's scripted, race, fuzz,

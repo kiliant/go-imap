@@ -73,7 +73,7 @@ group D/E extensions remain outside its scope.
 
 ## Hand-over to T31
 
-[T31](T31-uidbatches.md) creates `imapclient/ext_d_uidbatches.go` inside this task's `ext_d_*`
-pattern, for the UIDBATCHES command (RFC 10022). The handover covers that new
-file and its colocated tests only. No existing group D or E file passes from
-completed T11.
+[T31](T31-uidbatches.md) creates the `imapclient/ext_d_uidbatches*` files
+inside this task's `ext_d_*` pattern: the UIDBATCHES command (RFC 10022) and
+its colocated tests, example, fuzz target and live test. No existing group D
+or E file passes from completed T11.

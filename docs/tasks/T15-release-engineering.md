@@ -91,9 +91,9 @@ T15; the handover does not authorize changes to existing release history.
 
 ## Hand-over to T31
 
-[T31](T31-uidbatches.md) owns its UIDBATCHES entries in `CHANGELOG.md`, for both the root and the
-server module. Release automation and unrelated release notes remain with
-T15.
+[T31](T31-uidbatches.md) owns its UIDBATCHES entries in `CHANGELOG.md`, for
+both the root and the server module. Release automation and unrelated release
+notes remain with T15.
 
 ## Done when
 

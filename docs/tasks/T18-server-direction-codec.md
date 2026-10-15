@@ -113,6 +113,7 @@ fuzz coverage; command decoding and streaming FETCH remain outside its scope.
 
 ## Hand-over to T31
 
-[T31](T31-uidbatches.md) creates `internal/imapcodec/uidbatches.go` for the UIDBATCHES command and
-response codec. The codec stays bidirectional, with round-trip tests and fuzz
-targets. No other part of `internal/imapcodec` passes from completed T18.
+[T31](T31-uidbatches.md) creates the `internal/imapcodec/uidbatches*` files
+for the UIDBATCHES command and response codec. The codec stays bidirectional,
+with round-trip tests and a fuzz target. No other part of
+`internal/imapcodec` passes from completed T18.

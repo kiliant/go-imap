@@ -182,7 +182,8 @@ this is the mechanism, not merely documented policy.
 
 ## Hand-over to T31
 
-[T31](T31-uidbatches.md) adds one field to `selectedState` in `imapserver/session.go`. It records
-the last UIDBATCHES request for the selection, which the RFC 10022 resend rule
-needs. Like `savedSearch` and `contexts`, it is scoped to the selection and
-discarded with it. Nothing else in the server core passes from completed T19.
+[T31](T31-uidbatches.md) adds one field to `selectedState` in
+`imapserver/session.go`. It records the last UIDBATCHES request for the
+selection, which the RFC 10022 resend rule needs. Like `savedSearch` and
+`contexts`, it is scoped to the selection and discarded with it. Nothing else
+in the server core passes from completed T19.
