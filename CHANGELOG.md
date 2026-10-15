@@ -23,6 +23,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-15
+
 ### Root module — `github.com/kiliant/go-imap`
 
 #### Fixed
@@ -38,6 +40,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   and leaves it out when the server reports none. It printed `Unseen: N`,
   which read as a count of unseen messages but is the sequence number of the
   first one. A `main` package: no exported API change. (#37)
+
+#### Documentation
+
+- The `imapcli` manual warns that backup mirrors need persistent storage,
+  not `/tmp`, macOS `$TMPDIR`, or another automatically cleaned location.
+  No timestamp or backup behaviour change. (#41)
 
 ## [imapserver/v0.3.0] - 2026-10-15
 
@@ -748,7 +756,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/kiliant/go-imap/releases/tag/v1.2.1
 [imapserver/v0.3.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.3.0
 [1.2.0]: https://github.com/kiliant/go-imap/releases/tag/v1.2.0
 [imapserver/v0.2.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.2.0
