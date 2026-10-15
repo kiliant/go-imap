@@ -30,11 +30,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `imapclient.UnilateralDataHandler.ContextUpdate`, the shared types
   `imap.ContextUpdate`, `imap.ContextUpdateItem` and
   `imap.ContextUpdateChange`, the alias `imapclient.ContextUpdate`, the return
-  keys `imap.ESearchReturnKeyAddTo` and `imap.ESearchReturnKeyRemoveFrom`, and
-  `imapclient.ESearchData.ContextTag`: CONTEXT updates (RFC 5267 section 4.3)
-  are delivered. The unsolicited ESEARCH responses carrying ADDTO and
-  REMOVEFROM were discarded, or claimed by another pending extended SEARCH or
-  SORT, which then failed. They are now routed by the original command's tag
+  keys `imap.ESearchReturnKeyAddTo` and `imap.ESearchReturnKeyRemoveFrom` with
+  their `imapclient` mirrors, and `imapclient.ESearchData.ContextTag`: CONTEXT
+  updates (RFC 5267 section 4.3) are delivered. The unsolicited ESEARCH
+  responses carrying ADDTO and REMOVEFROM were discarded, or claimed by
+  another pending extended SEARCH or SORT, which then failed. They are now routed by the original command's tag
   before any command sees them. Each update keeps every return item in wire
   order, including repeated and unknown keys. Items carry their raw value,
   and ADDTO and REMOVEFROM also carry typed position/set pairs in UID or
@@ -51,9 +51,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   refuse RETURN (UPDATE) without CONTEXT=SEARCH instead of sending it. Without
   ESEARCH, `SearchExtended` used to emulate the search and drop UPDATE
   silently. A MULTISEARCH with UPDATE requires a selected mailbox (RFC 7377
-  section 2.2). CONTEXT=SEARCH and CONTEXT=SORT also select the extended
-  SEARCH and SORT syntax that RFC 5267 section 4.1 says they imply. No
-  signature change. (#44)
+  section 2.2). RETURN (UPDATE) is never emulated and is always sent in the
+  extended form. Every other return option keeps the documented fallback when
+  ESEARCH or ESORT is absent, even where CONTEXT=SEARCH or CONTEXT=SORT is
+  advertised, because RFC 5267 does not make those imply MIN, MAX, ALL or
+  COUNT. No signature change. (#44)
 
 #### Fixed
 

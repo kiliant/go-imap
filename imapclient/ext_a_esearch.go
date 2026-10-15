@@ -80,7 +80,7 @@ type ESearchOptions struct {
 }
 
 // ESearchData is the result of an extended SEARCH: the shared
-// [imap.ESearchData], plus the one observation only a client can make.
+// [imap.ESearchData], plus the observations only a client can make.
 //
 // The embedded fields and methods are promoted, so data.HasMin, data.AllUIDs,
 // data.Partial() and data.RelevancyScores() are used exactly as before. A keyed
@@ -93,16 +93,20 @@ type ESearchOptions struct {
 // SORT response, because the server does not advertise ESEARCH or ESORT. It is reachable from
 // [imap.MultiSearchResult.Data], which a server framework constructs, so
 // leaving it on the shared type would put a field there that one of the two
-// directions can never fill.
+// directions can never fill. ContextTag is client-only for the same reason: it
+// is this client's handle on its own UPDATE registration, not wire data.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type ESearchData struct {
 	imap.ESearchData
 
 	// ContextTag is the original command tag when RETURN (UPDATE) was
-	// requested, for [Client.CancelUpdate]. It does not imply registration
-	// succeeded: watch [UnilateralDataHandler.StatusResponse] for NOUPDATE.
-	// It is empty when UPDATE was not requested, including emulated results.
+	// requested, for [Client.CancelUpdate]. It is this client's handle on the
+	// registration, distinct from the wire correlator in the embedded Tag,
+	// which a server may omit. It does not imply that the server accepted the
+	// registration: a refusal arrives at [UnilateralDataHandler.StatusResponse]
+	// with [imap.CodeNoUpdate], whose tag [ParseNoUpdateArgs] extracts. It is
+	// empty when UPDATE was not requested, including emulated results.
 	ContextTag string
 
 	// Emulated reports that the value was computed from an ordinary SEARCH
@@ -187,6 +191,11 @@ func (cmd *ESearchCommand) SavedResult() *SavedSearchResult {
 // computation can create. Requesting it without SEARCHRES returns an
 // [imap.Error] wrapping [ErrCapabilityNotAdvertised] and writes nothing.
 //
+// RETURN (UPDATE) has no emulation either. It requires CONTEXT=SEARCH, is
+// always sent as an extended SEARCH, and delivers its updates through
+// [UnilateralDataHandler.ContextUpdate]. Without CONTEXT=SEARCH it returns an
+// [imap.Error] wrapping [ErrCapabilityNotAdvertised] and writes nothing.
+//
 // The OLDER and YOUNGER criteria of WITHIN (RFC 5032) are likewise gated: a
 // server that has not advertised WITHIN answers BAD, and this client refuses
 // before the command reaches the wire. There is no faithful fallback — BEFORE
@@ -252,7 +261,10 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 
 	// RFC 9051 section 6.4.4 makes ESEARCH the base rev2 behaviour, so an
 	// enabled rev2 session has it whether or not the capability was listed.
-	if !c.supportsAny("ESEARCH", "CONTEXT=SEARCH") && !c.rev2Enabled() {
+	// CONTEXT=SEARCH does not imply ESEARCH's return options (RFC 5267
+	// section 4.1), so it selects the extended form only for UPDATE, which
+	// has no emulation and has already required CONTEXT=SEARCH above.
+	if !c.supportsAny("ESEARCH") && !c.rev2Enabled() && !update {
 		c.searchExtendedEmulated(cmd, name, criteria, o, keywords)
 		return cmd
 	}

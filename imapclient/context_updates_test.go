@@ -610,3 +610,75 @@ func TestContextMalformedNoUpdateKeepsConnection(t *testing.T) {
 		}
 	}
 }
+
+// CONTEXT=SEARCH and CONTEXT=SORT do not imply ESEARCH's or ESORT's return
+// options (RFC 5267 section 4.1). Without ESEARCH or ESORT the documented v1
+// fallback still applies; only RETURN (UPDATE), which has no emulation, is
+// sent in the extended form.
+func TestContextCapabilityKeepsDocumentedFallback(t *testing.T) {
+	for _, sorted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("SORT=%t", sorted), func(t *testing.T) {
+			greeting := "* PREAUTH [CAPABILITY IMAP4REV1 CONTEXT=SEARCH] ready"
+			if sorted {
+				greeting = "* PREAUTH [CAPABILITY IMAP4REV1 SORT CONTEXT=SORT] ready"
+			}
+			c, ctx := newRoutingTestClient(t, greeting, nil, func(s *extAServer) {
+				s.selectInbox("INBOX", "101")
+				tag, sent := s.command()
+				if strings.Contains(sent, "RETURN") {
+					t.Errorf("MIN was not emulated: %q", sent)
+				}
+				if sorted {
+					s.reply("* SORT 5 2", tag+" OK sorted")
+				} else {
+					s.reply("* SEARCH 2 5", tag+" OK searched")
+				}
+				tag, sent = s.command()
+				if !strings.Contains(sent, "RETURN (UPDATE)") {
+					t.Errorf("UPDATE was not sent in the extended form: %q", sent)
+				}
+				s.reply(`* ESEARCH (TAG "`+tag+`")`, tag+" OK registered")
+			})
+			if _, err := c.Select("INBOX", nil).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+			search := func(returns ...SearchReturnOption) (*ESearchData, error) {
+				if sorted {
+					return c.SortExtended(ctx, []SortKeySpec{{Key: SortKeyDate}}, nil, &ESortOptions{ReturnOptions: returns})
+				}
+				return c.SearchExtended(imap.SearchAll, &ESearchOptions{ReturnOptions: returns}).Wait(ctx)
+			}
+			data, err := search(SearchReturnMin)
+			if err != nil || !data.Emulated || !data.HasMin {
+				t.Fatalf("MIN = %#v, %v", data, err)
+			}
+			data, err = search(SearchReturnUpdate)
+			if err != nil || data.Emulated || data.ContextTag == "" {
+				t.Fatalf("UPDATE = %#v, %v", data, err)
+			}
+		})
+	}
+}
+
+// An update for a tag nobody registered is discarded even when malformed: a
+// connection that never asked for UPDATE must not fail over one.
+func TestContextUnregisteredMalformedUpdatesAreDiscarded(t *testing.T) {
+	var updates int
+	c, ctx := newRoutingTestClient(t, contextCapabilities, &Options{UnilateralData: &UnilateralDataHandler{
+		ContextUpdate: func(*ContextUpdate) { updates++ },
+	}}, func(s *extAServer) {
+		tag, _ := s.command()
+		s.reply(`* ESEARCH (TAG "zz") ADDTO (0 0)`,
+			`* ESEARCH ADDTO (0 1)`,
+			`* ESEARCH (TAG "zz" TAG "zz") REMOVEFROM (0 1)`,
+			`* ESEARCH (TAG "zz" MAILBOX "INBOX") ADDTO (0 1)`,
+			`* ESEARCH (TAG "zz") UID REMOVEFROM (0 1)`,
+			tag+" OK fence")
+	})
+	if err := c.Noop(nil).Wait(ctx); err != nil {
+		t.Fatalf("connection failed over an unregistered update: %v", err)
+	}
+	if updates != 0 {
+		t.Fatalf("delivered %d updates without a registration", updates)
+	}
+}

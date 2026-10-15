@@ -106,46 +106,63 @@ func (c *Client) routeContextUpdate(resp *untaggedResponse) (bool, error) {
 	if !hasActions && (registration == nil || pending) {
 		return false, nil
 	}
-	labels := make(map[string]bool)
-	for _, label := range parsed.correlator {
-		if labels[label] {
-			return true, fmt.Errorf("duplicate CONTEXT correlator %q", label)
-		}
-		labels[label] = true
-	}
-	if tag == "" || !labels["TAG"] || labels["MAILBOX"] != labels["UIDVALIDITY"] {
-		return true, fmt.Errorf("CONTEXT update requires a TAG and paired MULTISEARCH correlators")
-	}
-	uid := parsed.result.Data.UID
-	if registration != nil {
-		// As for the initial result, a UID context tolerates a missing UID
-		// indicator; an explicit one on a sequence-number context fails.
-		if uid && !registration.uid {
-			return true, fmt.Errorf("CONTEXT update UID indicator does not match its searching command")
-		}
-		uid = registration.uid
-	}
-	update, err := decodeContextUpdate(parsed, uid)
+	update, err := c.validateContextUpdate(parsed, registration)
 	if err != nil {
+		if registration == nil {
+			// v1.2 discarded every unsolicited ESEARCH. An update nobody
+			// registered for must not fail a connection that may never have
+			// asked for UPDATE, any more than a malformed NOUPDATE does.
+			c.trace(TraceServer, "* ESEARCH UPDATE (discarded)")
+			return true, nil
+		}
 		return true, err
 	}
 	c.trace(TraceServer, "* ESEARCH UPDATE")
 	if registration == nil {
 		return true, nil // cancelled, refused, abandoned, or unsolicited tag
 	}
-	if registration.sorted {
-		for _, item := range update.Items {
-			for _, change := range item.Changes {
-				if change.Position == 0 {
-					return true, fmt.Errorf("SORT context update position must be non-zero")
-				}
-			}
-		}
-	}
 	if h := c.opts.UnilateralData; h != nil && h.ContextUpdate != nil {
 		h.ContextUpdate(update)
 	}
 	return true, nil
+}
+
+// validateContextUpdate checks the correlators and decodes the update. A live
+// registration also fixes the number mode and, for SORT, forbids position 0.
+func (c *Client) validateContextUpdate(parsed *esearchResponse, registration *searchContext) (*ContextUpdate, error) {
+	labels := make(map[string]bool)
+	for _, label := range parsed.correlator {
+		if labels[label] {
+			return nil, fmt.Errorf("duplicate CONTEXT correlator %q", label)
+		}
+		labels[label] = true
+	}
+	if parsed.result.Tag == "" || !labels["TAG"] || labels["MAILBOX"] != labels["UIDVALIDITY"] {
+		return nil, fmt.Errorf("CONTEXT update requires a TAG and paired MULTISEARCH correlators")
+	}
+	uid := parsed.result.Data.UID
+	if registration != nil {
+		// As for the initial result, a UID context tolerates a missing UID
+		// indicator; an explicit one on a sequence-number context fails.
+		if uid && !registration.uid {
+			return nil, fmt.Errorf("CONTEXT update UID indicator does not match its searching command")
+		}
+		uid = registration.uid
+	}
+	update, err := decodeContextUpdate(parsed, uid)
+	if err != nil {
+		return nil, err
+	}
+	if registration != nil && registration.sorted {
+		for _, item := range update.Items {
+			for _, change := range item.Changes {
+				if change.Position == 0 {
+					return nil, fmt.Errorf("SORT context update position must be non-zero")
+				}
+			}
+		}
+	}
+	return update, nil
 }
 
 // decodeContextUpdate interprets numbers in the given mode, which is the

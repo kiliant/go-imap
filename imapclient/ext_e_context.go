@@ -33,6 +33,13 @@ const (
 	SearchReturnESortAll = SearchReturnAll
 )
 
+// ESearchReturnKeyAddTo and ESearchReturnKeyRemoveFrom are the CONTEXT update
+// items, RFC 5267 sections 4.3.3 and 4.3.4. See [ContextUpdate].
+const (
+	ESearchReturnKeyAddTo      = imap.ESearchReturnKeyAddTo
+	ESearchReturnKeyRemoveFrom = imap.ESearchReturnKeyRemoveFrom
+)
+
 // CancelUpdateOptions configures CANCELUPDATE. A nil pointer selects the
 // defaults.
 //
@@ -57,20 +64,23 @@ type CancelUpdateOptions struct {
 //   - CancelUpdate: updates may still arrive before CANCELUPDATE's tagged OK
 //     and are not delivered after it. A failed cancellation leaves the
 //     registrations active.
-//   - Refusal: a NOUPDATE response code ends the registration it names, in
-//     an untagged NO before [UnilateralDataHandler.StatusResponse] sees it.
-//     A tagged NO or BAD ends the command's own.
+//   - Refusal: an [imap.CodeNoUpdate] response code ends the registration it
+//     names ([ParseNoUpdateArgs] extracts the tag), in an untagged NO before
+//     [UnilateralDataHandler.StatusResponse] sees it. A tagged NO or BAD
+//     ends the command's own.
 //   - A failed initial result: when Wait fails because the ESEARCH response
 //     correlates with another tag, the registration ends at tagged
 //     completion. The server may still hold the context; cancelling the
-//     command's tag releases it.
+//     command's tag releases it. When SortExtended returns that error, the
+//     tag is the error's [imap.Error] Tag field.
 //   - Selection: SELECT and EXAMINE end every registration when issued, even
 //     if they then fail. A successful CLOSE, UNSELECT or UNAUTHENTICATE ends
 //     them at its tagged OK.
 //   - The session: BYE, LOGOUT and disconnect end every registration.
 //
-// Updates for a tag with no live registration are still decoded and
-// validated, then discarded.
+// A response carrying ADDTO or REMOVEFROM for a tag with no live registration
+// is discarded. An update for a live registration that fails validation, such
+// as a zero position in a SORT context, fails the connection.
 func (c *Client) CancelUpdate(ctx context.Context, tags []string, options *CancelUpdateOptions) error {
 	_ = options
 	if ctx == nil {

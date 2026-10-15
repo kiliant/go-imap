@@ -38,14 +38,17 @@ const (
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type ContextUpdate struct {
-	// Tag identifies the original searching command, not a command currently
-	// in flight. UID is that command's number mode: as for its initial
+	// Tag is the originating searching command's tag. That command may still
+	// be in flight; Tag never names the command during which the update
+	// arrived. UID is the searching command's number mode: as for its initial
 	// result, an update for a UID context may omit the UID indicator.
 	Tag string
 	UID bool
 	// Mailbox and UIDValidity are the additional MULTISEARCH correlator
-	// fields, when present, read as for [MultiSearchResult]. UPDATE still
-	// applies only to the selected mailbox (RFC 7377 section 2.2).
+	// fields, read as for [MultiSearchResult]. Both are present or both are
+	// absent, and UIDValidity is non-zero exactly when they are present; a
+	// producer sets them together or not at all. UPDATE still applies only to
+	// the selected mailbox (RFC 7377 section 2.2).
 	Mailbox     string
 	UIDValidity uint32
 	// Items retains every return item, including repeated and unknown keys,
@@ -58,10 +61,13 @@ type ContextUpdate struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type ContextUpdateItem struct {
 	Key ESearchReturnKey
-	// Value retains the raw wire value, including for modelled keys.
+	// Value retains the raw wire value, including for decoded keys.
 	Value string
-	// Changes decodes the position/set pairs of ADDTO and REMOVEFROM. It is
-	// nil for other keys, whose Value is still available.
+	// Changes is the decoded view for keys this release decodes as
+	// position/set pairs, today ADDTO and REMOVEFROM. Switch on Key rather
+	// than testing Changes for nil: a later release may decode more keys.
+	// A producer writing the item encodes a non-nil Changes and otherwise
+	// writes Value.
 	Changes []ContextUpdateChange
 	_       struct{}
 }

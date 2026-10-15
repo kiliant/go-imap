@@ -170,16 +170,20 @@ type UnilateralDataHandler struct {
 	List func(data *ListData)
 	// ContextUpdate receives the unsolicited ESEARCH responses that update a
 	// RETURN (UPDATE) context of [Client.SearchExtended], [Client.SortExtended]
-	// or [Client.MultiSearch] (CONTEXT, RFC 5267 section 4.3). They are routed
-	// by the original command's tag and never become a pending command's
-	// result. Items and position/set pairs are in wire order; apply them in
+	// or [Client.MultiSearch] (CONTEXT, RFC 5267 section 4.3). Two kinds of
+	// ESEARCH response are routed by tag before any command sees them, and
+	// neither becomes a pending command's result: one carrying ADDTO or
+	// REMOVEFROM, and any one for a registration whose searching command has
+	// completed. Items and position/set pairs are in wire order; apply them in
 	// that order. Delivery can precede the initial command's Wait returning,
-	// including between its initial response and tagged completion. Updates
-	// for a tag with no live registration, and all updates while this field is
-	// nil, are still validated and then discarded. Callbacks may retain the
-	// data; the client does not subsequently mutate it. Do not block or issue
-	// a command and wait here. [Client.CancelUpdate] documents when a
-	// registration ends.
+	// including between its initial response and tagged completion.
+	//
+	// Updates for a live registration are validated even while this field is
+	// nil, and one that fails validation fails the connection. An update for
+	// a tag with no live registration is discarded, malformed or not.
+	// Callbacks may retain the data; the client does not subsequently mutate
+	// it. Do not block or issue a command and wait here.
+	// [Client.CancelUpdate] documents when a registration ends.
 	ContextUpdate func(data *ContextUpdate)
 	_             struct{}
 }

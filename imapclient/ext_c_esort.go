@@ -47,9 +47,11 @@ type ESortOptions struct {
 // has no faithful emulation and returns an [imap.Error] wrapping
 // [ErrCapabilityNotAdvertised] without writing anything.
 //
-// RETURN (UPDATE) requires CONTEXT=SORT and delivers notifications through
-// [UnilateralDataHandler.ContextUpdate]. The result's ContextTag can be passed
-// to [Client.CancelUpdate]. RETURN (SAVE) is not supported by this method.
+// RETURN (UPDATE) is never emulated. It requires CONTEXT=SORT, is always sent
+// as an extended SORT, and delivers its updates through
+// [UnilateralDataHandler.ContextUpdate]. The result's ContextTag can be
+// passed to [Client.CancelUpdate]. RETURN (SAVE) is not supported by this
+// method.
 func (c *Client) SortExtended(ctx context.Context, keys []SortKeySpec, criteria imap.SearchCriteria, options *ESortOptions) (*ESearchData, error) {
 	return c.sortExtended(ctx, false, keys, criteria, options)
 }
@@ -108,7 +110,10 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	if charset == "" {
 		charset = "UTF-8"
 	}
-	if !c.supportsAny("ESORT", "CONTEXT=SORT") {
+	// CONTEXT=SORT does not imply ESORT's return options (RFC 5267 section
+	// 4.1); it selects the extended form only for UPDATE, which has no
+	// emulation and has already required CONTEXT=SORT above.
+	if !c.Supports("ESORT") && !update {
 		return c.sortExtendedEmulated(ctx, uid, keys, criteria, charset, keywords)
 	}
 	if c.searchPending() {
