@@ -445,22 +445,29 @@ became real, and it has that approval now. `imapserver/go.mod` and the root
 **Status: approved by the human on 2026-10-15** as milestone M7
 (`docs/ROADMAP.md`).
 
-The exception ends, and `imapserver` comes under the v1 promise, when all
-three of these hold:
+`imapserver` may be tagged v1, and so come under the v1 promise, only when
+all three of these hold:
 
-1. **A second backend.** One written against the exported API only, outside
-   the framework's own tasks: T32's Maildir backend.
+1. **A second backend.** T32's persistent Maildir backend, built only from
+   the exported API and its documentation, passes `backendtest` and server
+   interop.
 2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
-   first at or after the one that contains that backend, with no incompatible
-   change in `apidiff` and no BREAKING entry, including behaviour, in
-   `CHANGELOG.md`.
+   first at or after the one containing T32 and the initial full review's
+   fixes. Every release from the first through the second minor, patches
+   included, has no incompatible change in `apidiff` and no BREAKING entry
+   in `CHANGELOG.md`, including behaviour changes. Each counted minor must
+   contain a server-module change beyond a root dependency bump; a release
+   cut only to advance the count does not count. Any break restarts the
+   window.
 3. **A full review.** An `api-guardian` review of the whole server surface,
    with its findings resolved: T33.
 
 Feature completeness is deliberately not a criterion. The server was
-feature-complete at M6 and still broke its API twice afterwards. What the
-exception waits for is evidence that the backend contract holds for code
-its authors did not write.
+feature-complete at M6 and still broke compatibility twice afterwards. The
+exception waits for evidence that the contract holds for a persistent
+backend built only from the exported API and its documentation. T32 first
+adds public message helpers, then uses them alongside the memory backend;
+T33 reviews both new packages before the release window.
 
 ## 10. The `imapserver` enforcement gates — added by T23, 2026-08-13
 

@@ -1,107 +1,204 @@
-# T32 — Maildir backend: prove the backend contract from outside
+# T32 — Public message helpers and a persistent Maildir backend
 
 **Issue:** [#53](https://github.com/kiliant/go-imap/issues/53)
 
 **Milestone:** M7, `imapserver` v1 (`../ROADMAP.md`). It ships in the next
 `imapserver` minor release after it lands.
-**Depends on:** completed T20. It touches no file of T30 or T31 and may run
-in parallel with them.
+**Depends on:** completed T20 and T21. Complete and review the public-helper
+step below before starting storage. T30 and T31 are not dependencies; any
+shared release-note edits must be coordinated with them.
 
 ## Why this task exists
 
-`imapserver` is feature-complete since M6 but deliberately stays on v0.x
-(`../API-STABILITY.md`, the `imapserver` exception). Most of its API consists
-of interfaces that a backend implements. Adding a method to one of them breaks
-every backend, so the base interfaces have to be right before v1 freezes
-them. So far they have been checked only from inside: the one backend is
-`imapserver/memory`, written alongside the framework by the same tasks.
+`imapserver` has been feature-complete since M6 but deliberately stays on
+v0.x (`../API-STABILITY.md`, the `imapserver` exception). Its three base
+interfaces must work for a persistent backend built only from the exported
+API and its documentation before v1 freezes them. So far the only backend
+is `imapserver/memory`, written alongside the framework.
 
-This task writes a second backend, persistent where the reference is not,
-and uses only what any third party could use. Every place where the contract
-is awkward or insufficient for real storage then shows up before the freeze.
-That is M7's first exit criterion. The result is also a useful backend in
-its own right.
+A known gap must be resolved first: `SelectedMailbox.Fetch` and `Search`
+require completed FETCH data and SEARCH results, but MIME analysis, section
+extraction, ENVELOPE/BODYSTRUCTURE generation and SEARCH evaluation exist
+only in `internal/imapmessage`. The memory backend imports that package.
+A third-party backend should be able to reuse these helpers through a
+supported public API rather than have to implement them all again.
+
+This task first supplies that API, then proves it and the backend contract
+with persistent storage. The Maildir backend is also useful in its own right.
 
 ## Ownership and scope
 
-- Owns `imapserver/maildir/**`: a new package in the server module, together
-  with its tests and examples. New parsers land with fuzz targets, which T24
-  owns afterwards.
-- From completed T24, narrowly: in `imapserver/interop/profile.go`, a second
-  server configuration that runs the existing imaptest and mbsync suites
-  against this backend. The suites themselves do not change.
-- This task's entries in `CHANGELOG.md`, under the server module.
+- Owns new `imapserver/{message,maildir}/**`, including tests, doc comments
+  and colocated runnable examples. New parsers land with fuzz targets; T24
+  owns those targets afterwards.
+- From completed T21: the public-helper boundary described below. The
+  implementation stays in `internal/imapmessage`; changes there are limited
+  to supporting that boundary, including cancellation. Its existing fuzz
+  targets remain with T13.
+- From completed T20: migrate the memory backend's message-analysis and
+  SEARCH-evaluation uses, including extension files and associated tests,
+  to the public helper. No unrelated memory or backendtest changes.
+- From completed T24, in `imapserver/interop/`: backend selection in
+  `profile.go` (`startOn` takes a backend factory), `serverForClients` in
+  `client_test.go`, the profile list in `main_test.go`, and per-backend
+  subtest loops in `imaptest_test.go` and `mbsync_test.go`. Suite assertions,
+  triage records and testdata remain with T24.
+- From completed T15: this task's server-module `CHANGELOG.md` entries and,
+  only if measured runtime requires it, the server-stage timeout in
+  `.github/scripts/run-interop.sh`. The current budget is `-timeout 75m`;
+  record the measurement and reason before increasing it.
 
-**Contract gaps** are the point of the task, but their fixes are not owned
-here. Each gap goes on the issue and is fixed in its own PR, through the
-owner of the affected file (T19 or T20), with that handover named on the
-issue. A breaking fix is allowed on v0.x. It must be marked BREAKING in the
-changelog, and it restarts M7's two-release count.
+**Other contract gaps** are the point of the task, but their fixes are not
+owned here. Each gets its own follow-up issue linked from #53 and its own
+PR, with a handover from the affected owner: T19, T20, T21 or T23. The
+CONDSTORE, QRESYNC and METADATA contracts belong to T23. A breaking fix is
+allowed on v0.x, must be marked BREAKING in the changelog, and restarts
+M7's two-release count. Record each gap's resolution or explicit deferral.
+A gap that prevents the required contract from working cannot be deferred.
 
-## Requirements
+## Step 1 — Public message helpers, before storage
 
-**Public API only.** The package may import the standard library, `imap`
-and `imapserver`, and in tests `imapserver/backendtest`. It must not import
-the root module's `internal/` packages (Go's path rules would allow it) or
-`imapserver/memory`. A test parses the package's imports and enforces this.
+Add `imapserver/message`, backed by `internal/imapmessage`. It provides:
 
-**Its own surface.** A constructor with an options struct, keyed-only option
-types and no exported interfaces. This API becomes part of `imapserver` v1,
-so it is reviewed like the rest of the server's surface.
+- analysis of a stored message from an `io.ReaderAt` and explicit byte size;
+- ENVELOPE, BODYSTRUCTURE and message size;
+- streaming BODY section extraction, with exact sizes, header-field filters
+  and partials;
+- SEARCH evaluation using a message, mailbox metadata and open
+  `imap.SearchCriteria`, with explicit charset options.
+
+The public message is a concrete type with unexported implementation fields.
+Do not alias internal types or expose them in signatures, fields or errors.
+Public options and metadata structs are guarded with `_ struct{}` and
+constructed with keyed fields. Blocking operations take `context.Context`
+first, options go in structs, and no new exported interface or protocol-error
+type is introduced. Review the exact public signatures before implementation;
+the helper is server-module API and will freeze at server v1.
+
+Document source ownership and lifetime, cancellation, concurrent use,
+unsupported criteria and charsets, malformed-message behaviour, and the
+lifetime of section readers. Analysis and section extraction must preserve
+streaming; a large FETCH cannot require buffering the message. Indexed
+backends remain free to evaluate SEARCH themselves.
+
+Migrate every memory-backend call to `Analyze`, `Match` and their associated
+internal types to this package, including extension paths. A direct-import
+test covers all memory source and test files and forbids
+`internal/imapmessage`. Existing memory conformance and loopback tests must
+still pass. Add external-package helper tests for exact sections, malformed
+MIME, metadata-dependent SEARCH, cancellation and a large streaming source.
+This step is a separately reviewable PR and must merge before storage work.
+T33 reviews the helper with both memory and Maildir as consumers.
+
+## Step 2 — Maildir backend through the public API
+
+**Imports.** Production code may import the standard library, `imap`,
+`imapserver` and `imapserver/message`. Tests may also import public
+`imapclient` and `imapserver/backendtest`. An AST-based test checks every
+source file, including `_test.go` and build-tagged files: no import path
+with an `internal` component, and no `imapserver/memory`. The public helper
+is the intentional internal boundary; Maildir cannot bypass it.
+
+**Its own surface.** Use a constructor with an options struct, keyed-only
+configuration types and no exported interfaces. Before storage, review its
+credential source, account-to-directory mapping and shutdown API. Support
+configured accounts through an extensible account options struct; document
+supported credential kinds and refuse unsupported kinds. Isolate each
+account beneath the root, reject traversal, and never expose passwords in
+paths or diagnostics. Any credential callback is context-first with an
+options struct. Construction and explicit shutdown may block and therefore
+take context first; shutdown stops polling and releases the root lock.
 
 **Storage.**
-- **Layout.** One directory per mailbox, nested like the hierarchy. Path
-  segments are escaped the way `cmd/imapcli` already writes a backup (T28):
-  `cur/ new/ tmp/`, and info flags `D F R S T` in the file name. Maildir++
-  compatibility is not a goal. This code may not import `cmd/imapcli`, so it
-  reimplements the escaping and documents it.
-- **Per-mailbox state.** A versioned state file holds UIDVALIDITY, the UID
-  map, UIDNEXT, keywords and MODSEQ. It is written atomically (temp file, then
-  rename). After a crash a mailbox comes back consistent, or with a new
-  UIDVALIDITY. It never assigns two messages the same UID.
-- **Messages.** Bytes are stored exactly as received, CRLF included, and
-  INTERNALDATE is the file's mtime. Delivery goes through `tmp/` and a rename.
-- **Locking.** One server process owns a root directory, enforced by an
-  exclusive lock file. Inside the process, sessions share mailbox state
-  safely under `-race`.
-- **External deliveries.** A message that an MTA places in `new/` reaches
-  every session that has the mailbox selected, through that selection's
-  `Updater`, within a bounded and configurable interval.
-  - Use polling only, with no dependencies.
-  - The contract has no NOOP-triggered refresh hook today: the backend
-    publishes changes by itself. Whether a persistent backend needs such a
-    hook is one of the contract questions this task answers, and goes on the
-    issue.
 
-**Contract coverage.** The base `Backend`, `Session` and `SelectedMailbox`
-contract, plus these optional interfaces:
-- `MoveMailbox`;
-- `CondStoreMailbox` and `QResyncMailbox`, because MODSEQ that survives a
-  restart is the hardest state a backend owns;
-- `MetadataSession`.
+- **Layout.** One directory per mailbox, nested like the hierarchy, beneath
+  its account. Use the path-segment escaping already used by `cmd/imapcli`
+  (T28), with `cur/`, `new/`, `tmp/` and filename info flags `D F R S T`.
+  Do not import `cmd/imapcli`; document and test the compatible escaping.
+  Maildir++ compatibility is not a goal.
+- **Mailbox state.** Persist UIDVALIDITY, message-to-UID mapping, UIDNEXT,
+  flags, keywords, MODSEQ, mailbox metadata and expunge tombstones with
+  their MODSEQ. QRESYNC must report removed UIDs across a restart; document
+  any conservative superset or bounded-history policy and test it.
+- **Account state.** Persist subscriptions and server-level METADATA
+  (mailbox `""`) outside individual mailboxes.
+- **Format evolution.** State files are versioned. Refuse newer versions
+  without modifying them; migrate supported older versions forward and
+  preserve unknown fields through updates. Document the migration policy as
+  part of the public storage contract.
+- **Crash consistency.** Write state through temporary files, flush data
+  and state as required for the documented durability guarantee, rename
+  atomically, and sync affected directories where the platform requires it.
+  Specify commit/recovery ordering for APPEND, STORE, EXPUNGE, COPY, MOVE
+  and mailbox RENAME. After interruption, recover a consistent state or
+  change UIDVALIDITY; never reuse a UID under the same UIDVALIDITY, even if
+  state is lost. Fault-injection tests cover the commit boundaries.
+- **Message bytes.** Preserve APPEND bytes exactly, including CRLF, and use
+  file mtime for INTERNALDATE. External delivery may use LF-only lines:
+  normalise those to CRLF on ingestion into `cur/`, preserving the delivery
+  mtime, then derive RFC822.SIZE, sections and structure from that same
+  canonical stored form. Delivery uses `tmp/` and atomic rename.
+- **Locking.** Only one backend process owns a root. Use an OS advisory
+  lock released on process exit, with standard-library platform files for
+  supported systems; unsupported platforms fail explicitly. Document and
+  test the platform/filesystem support. A stale `O_EXCL` lock file alone
+  is insufficient because a crash must permit restart. Sessions within the
+  process share state safely under `-race`.
+- **External deliveries.** Poll `new/` with a bounded, configurable interval,
+  using no dependencies. Each selected session receives an external
+  delivery through its `Updater`; ingestion and concurrent SELECT preserve
+  the atomic snapshot/update boundary and revision chain. Failed polls are
+  observable and shutdown stops the poller. The framework has no NOOP/CHECK
+  refresh hook today; record on #53 whether polling suffices or such a hook
+  is needed, through the normal contract-gap process.
 
-The in-memory backend implements the same set, so this is a second
-implementation, and the first persistent one. Others are optional.
+**Contract coverage.** Implement `Backend`, `Session` and `SelectedMailbox`,
+plus `MoveMailbox`, `CondStoreMailbox`, `QResyncMailbox` and
+`MetadataSession`. These stress persistent state rather than only message
+bytes. Advertise capabilities only with their required witnesses. The memory
+backend implements all of these and many more; other optional interfaces
+are not required here.
+
+The base interfaces and shared `Updater`, `UpdateBatch`, `FetchWriter`,
+`ExpungeWriter`, `Options` and `Limits` need persistent-backend evidence
+because an existing contract cannot be replaced compatibly. Other optional
+interfaces may freeze with memory-only evidence only if T33 confirms a
+successor interface can be added and preferred without changing the old one
+or silently withdrawing a capability.
+
+**Interop.** Keep the memory profile and add a separate Maildir profile with
+its own truthful capability floor, fresh root and cleanup. Register both
+with the harness and run the existing imaptest and mbsync suites as named,
+sequential subtests for each backend. Keep fixture and protocol assertions;
+skip only absent capabilities or tooling under the existing policy. Run the
+full suite in CI within the measured timeout, recording any skips and triage.
 
 ## Done when
 
-- `backendtest.Run` passes against the backend, and the race suite passes.
-- **Persistence tests:** UIDs, flags, keywords, MODSEQ and metadata survive a
-  restart. Simulated crashes leave a consistent store. An external delivery
-  into `new/` reaches a selected session within the configured interval. A second process is refused the
-  lock.
-- The import-restriction test is in place and passes.
-- The server interop suite (imaptest, mbsync) passes against this backend in
-  CI, in addition to the reference backend. Findings are triaged as for the
-  reference backend (`docs/INTEROP.md`).
-- Every contract gap found is recorded on the issue, with its resolution. The
-  CHANGELOG states whether any was breaking.
-- The package has doc comments, a runnable example and a changelog entry.
+- The helper step has merged, passed API review, and memory uses it without
+  importing `internal/imapmessage`.
+- `backendtest.Run` and race tests pass against Maildir; the import guards
+  pass for both packages as described above.
+- UIDs, UIDVALIDITY, UIDNEXT, flags, keywords, MODSEQ, tombstones,
+  subscriptions, mailbox metadata and server metadata survive restart.
+- Fault-injection tests prove recovery and UID non-reuse. Older state
+  migrates, newer state is refused unchanged, and unknown fields survive.
+- CRLF APPEND and LF external-delivery fixtures have correct bytes, size,
+  sections and structure. External delivery reaches every selected session
+  within the configured bound, including a concurrent SELECT.
+- A second process is refused the root lock; after the owner exits or is
+  killed, another process can open it. Shutdown leaves no poller or lock.
+- imaptest and mbsync pass for both backends in CI, with findings triaged
+  under `../INTEROP.md` and no unexplained skipped Maildir run.
+- Every contract gap is linked from #53 with its resolution or explicit
+  deferral; the changelog states whether any fix was breaking.
+- Both new packages have doc comments, runnable examples and changelog
+  entries, and T33 includes them in the v1 review.
 
 ## References
 
 - [Maildir](https://cr.yp.to/proto/maildir.html), D. J. Bernstein: the
-  `tmp`/`new`/`cur` delivery protocol and the info-flag convention.
-- `T28-imapcli-backup.md`: the layout and escaping already used in this
-  repository.
+  `tmp`/`new`/`cur` delivery protocol and info flags.
+- `T21-message-analysis.md`: the existing internal implementation.
+- `T28-imapcli-backup.md`: the existing layout and escaping.
 - `../SERVER-DESIGN.md`: the backend contract and its update path.

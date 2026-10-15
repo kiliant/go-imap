@@ -255,27 +255,40 @@ a v2 candidate, not a prerequisite for this phase.
 approved exception in `docs/API-STABILITY.md`. Most of its API consists of
 interfaces that backends implement, and adding a method to one breaks every
 backend. So far the only backend is `imapserver/memory`, written by the same
-tasks as the framework, and the server API broke in `imapserver/v0.2.0` and
-again in `v0.3.0`.
+tasks as the framework, and the server broke compatibility in
+`imapserver/v0.2.0` (signatures) and `v0.3.0` (behaviour).
 
-**Exit.** The human approved these on 2026-10-15. All three must hold:
+**Exit.** The human approved the three criteria on 2026-10-15. Their
+operational definition is `API-STABILITY.md`, "When the exception ends":
 
-1. **A second backend.** [T32](tasks/T32-maildir-backend.md), tracked by
-   [#53](https://github.com/kiliant/go-imap/issues/53): a persistent Maildir
-   backend written against the exported API only. It passes `backendtest`
-   and the server interop suite.
+1. **A second backend.** T32's persistent Maildir backend, built only from
+   the exported API and its documentation, passes `backendtest` and server
+   interop.
 2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
-   first at or after the one that contains T32, with no incompatibility in
-   `apidiff` and no BREAKING entry in `CHANGELOG.md`.
+   first at or after the one containing T32 and the initial full review's
+   fixes. Every release from the first through the second minor, patches
+   included, has no incompatible change in `apidiff` and no BREAKING entry
+   in `CHANGELOG.md`, including behaviour changes. Each counted minor must
+   contain a server-module change beyond a root dependency bump; a release
+   cut only to advance the count does not count. Any break restarts the
+   window.
 3. **A full review.** An `api-guardian` review of the whole server surface,
-   with its findings resolved. [T33](tasks/T33-imapserver-v1.md), tracked by
-   [#54](https://github.com/kiliant/go-imap/issues/54), runs it as soon as
-   T32 is merged, so that breaking fixes land before the release window
-   opens. It then tags v1.
+   with its findings resolved: T33.
 
-T32 touches no file of T30 or T31 and can run in parallel with them. After
-the v1 tag, both modules carry the same promise and can be released
-together. Whether their version numbers also align is T33's decision.
+[T32](tasks/T32-maildir-backend.md), tracked by
+[#53](https://github.com/kiliant/go-imap/issues/53), first adds the public
+`imapserver/message` helpers and migrates memory to them. Its persistent
+Maildir backend then uses only public API. The interop matrix and real-client
+suites run against both backends. T30 and T31 are not dependencies; shared
+release-note edits need coordination.
+
+[T33](tasks/T33-imapserver-v1.md), tracked by
+[#54](https://github.com/kiliant/go-imap/issues/54), starts the full review
+once T32 is merged and its contract gaps are resolved or explicitly deferred.
+Breaking review fixes land before the release window. It reviews the final
+diff before tagging v1. Both modules then carry the same compatibility
+promise. Whether their version numbers align is T33's decision, including
+what happens if their major versions later diverge.
 
 
 ## Sequencing

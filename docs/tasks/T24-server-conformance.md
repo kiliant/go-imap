@@ -108,7 +108,18 @@ does not reach any of them:
 
 ## Hand-over to T32
 
-[T32](T32-maildir-backend.md) adds a second server configuration in
-`imapserver/interop/profile.go`, so that the existing imaptest and mbsync
-suites also run against the Maildir backend. The suites, their triage records
-and every other file under `imapserver/interop/` remain with T24.
+[T32](T32-maildir-backend.md) takes these narrow integration points in
+`imapserver/interop/` so that both backends actually run:
+
+- `profile.go`: backend factories, memory and Maildir profiles, fresh storage
+  and cleanup; `startOn` accepts the chosen backend factory;
+- `client_test.go`: `serverForClients` uses that selection;
+- `main_test.go`: register both profiles with the harness;
+- `imaptest_test.go` and `mbsync_test.go`: named, sequential per-backend
+  subtest loops around the existing suites.
+
+Suite assertions, triage records, testdata and other interop files stay with
+T24. The current server-stage budget is `-timeout 75m`; any measured increase
+uses T15's explicit timeout handover in `T15-release-engineering.md`.
+New parsers under `imapserver/{message,maildir}/` land with fuzz targets in
+T32; afterwards those targets belong to T24.

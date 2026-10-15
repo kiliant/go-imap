@@ -165,3 +165,17 @@ minimalism.
 - `api-guardian` signs off on `backend.go`'s exported surface specifically —
   this is the interface every third-party backend implements, and it is the
   single most consequential freeze in the server project.
+
+## Hand-over to T32 and T33
+
+[T32](T32-maildir-backend.md) takes only the memory backend's uses of message
+analysis and SEARCH evaluation, including extension paths and associated tests,
+to migrate them from `internal/imapmessage` to the public
+`imapserver/message` wrapper. It adds the import guard against returning to
+the internal helper. Unrelated memory and backendtest behaviour stays here.
+
+[T33](T33-imapserver-v1.md) takes backendtest package documentation to define
+the v1 compatibility policy for additions to the conformance suite. New
+obligations need opt-in harness controls or capability witnesses; checks of
+existing documented obligations may expose backend bugs. Suite logic remains
+with T20 unless a separate handover is recorded.
