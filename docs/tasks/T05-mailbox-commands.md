@@ -41,3 +41,10 @@ Runs in parallel with T04 and T06.
 Full mailbox lifecycle passes against Dovecot and GreenMail: create with a
 non-ASCII name, list, subscribe, status, select, rename, delete. `UIDVALIDITY`
 change detection tested by recreating a mailbox.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes the response collectors in
+`imapclient/{status,list}.go` from completed T05 to separate command results
+from identifiable interleaved events. It preserves mailbox encoding and the
+existing SELECT/EXAMINE response ownership rules.

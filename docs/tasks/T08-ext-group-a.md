@@ -47,3 +47,10 @@ Runs in parallel with T09. Verify every RFC number against
 Each capability verified against **two** independent servers (Dovecot + Stalwart
 for most; check `docs/INTEROP.md` profiles). Fallback paths tested against
 GreenMail, which lacks several. Coverage rows updated to `verified`.
+
+## Hand-over to T30
+
+[T30](T30-unsolicited-events.md) takes ESEARCH collection and tag correlation
+in `imapclient/ext_a_esearch.go` from completed T08, as extended by completed
+T27. It must separate CONTEXT updates from pending command results without
+changing the other group A commands.
