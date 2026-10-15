@@ -45,6 +45,9 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 			if options != nil && options.Subscribed && !m.subscribed {
 				continue
 			}
+			if options != nil && options.SelectSpecialUse && len(m.specialUse) == 0 {
+				continue
+			}
 			if !matchesAnyMailbox(m.name, reference, patterns) {
 				continue
 			}

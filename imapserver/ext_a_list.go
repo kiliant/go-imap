@@ -225,6 +225,15 @@ func listResultChildInfo(args *listArgs, options *ListOptions, childInfo []strin
 	return values
 }
 
+// listResultSelected reports whether a backend's LIST result meets the
+// selection criteria the framework enforces itself. RFC 6154 section 2: with
+// the SPECIAL-USE selection option, LIST "MUST return only those mailboxes
+// that have a special-use attribute set". Dropping the rest here keeps a
+// backend that ignores SelectSpecialUse correct on the wire.
+func listResultSelected(options *ListOptions, data *imap.ListData) bool {
+	return !options.SelectSpecialUse || slices.ContainsFunc(data.Attrs, isSpecialUseAttr)
+}
+
 // wantsListStatus reports whether this LIST must be followed by STATUS
 // responses.
 func wantsListStatus(args *listArgs) bool {

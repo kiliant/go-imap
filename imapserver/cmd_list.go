@@ -154,6 +154,9 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if data == nil || data.Mailbox == "" {
 			return fmt.Errorf("imapserver: backend LIST returned an invalid mailbox")
 		}
+		if !listResultSelected(options, data) {
+			return nil
+		}
 		count++
 		if count > maxCommandListResults {
 			return commandLimitError("LIST result limit exceeded")

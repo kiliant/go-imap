@@ -148,6 +148,15 @@ Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
   base selection option. REMOTE is an independent option (RFC 5258 section
   6), and so is SPECIAL-USE (RFC 6154's formal syntax), so neither qualifies.
   SUBSCRIBED is the only base option the framework implements.
+- `LIST (SPECIAL-USE)` returns only mailboxes that have a use attribute, as
+  RFC 6154 section 2 requires. Before, it returned every matching mailbox,
+  and the selection option only made the use attributes visible. The
+  framework now drops results without a use attribute before writing them, so
+  every backend is correct on the wire. `imapserver/memory` also honours
+  `ListOptions.SelectSpecialUse` itself. The field's documentation says the
+  framework enforces it, and both `SelectSpecialUse` and `ReturnSpecialUse`
+  now cite section 2 instead of the examples in section 5. No exported API
+  change.
 
 ## [imapserver/v0.2.0] - 2026-10-03
 
