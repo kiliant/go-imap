@@ -19,7 +19,10 @@ rule. The originating specs name the same handover:
 - T10 and T27: extended SORT collection in `imapclient/ext_c_sort.go` and
   MULTISEARCH routing in `imapclient/ext_c_multisearch.go`.
 - T11 and T27: `imapclient/ext_d_metadata.go`, `imapclient/ext_e_context.go`,
-  and event-delivery documentation in `imapclient/ext_d_notify.go`.
+  and event-delivery documentation in `imapclient/ext_d_notify.go`. T11 also
+  hands over only `listMetadataCollector` in `imapclient/ext_d_acl.go`, the
+  existing LIST-METADATA adapter that must share METADATA response decoding;
+  all ACL and LIST-MYRIGHTS behavior remains outside T30.
 - T02: additive shared response vocabulary in `metadata.go` and
   `searchdata.go`, only if needed by the reviewed event representation.
 - T18: response decoding/encoding in `internal/imapcodec` only where needed

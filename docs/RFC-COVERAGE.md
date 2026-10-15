@@ -356,13 +356,18 @@ CONDSTORE `MODIFIED` on tagged OK.
     previous name in `imap.ListData.OldName`, from the `OLDNAME` extended data
     (section 5.4). This is verified on Cyrus. Dovecot 2.4 sends no MailboxName
     event for RENAME at all, so that check skips there. SubscriptionChange
-    (section 5.5) arrives through `.List` as well. Three gaps remain:
+    (section 5.5) arrives through `.List` as well. T30's decode-once routing
+    delivers STATUS for a different mailbox even during an active STATUS
+    command, and LIST during legacy LSUB. Scripted regressions cover this
+    interleaving; it is not yet live-verified. Remaining ownership limits:
     - MailboxMetadataChange and ServerMetadataChange arrive as unsolicited
       METADATA (RFC 5464 §4.4.2) and are still discarded. A `.Metadata`
-      handler would be additive.
-    - A STATUS event for another mailbox that arrives while a STATUS command
-      is in flight is merged into that command's result.
-    - A LIST event that arrives during a LIST command joins the listing.
+      handler would be additive. Names-only notifications are now decoded
+      separately, so they no longer fail GETMETADATA or LIST-METADATA.
+    - STATUS for the command's own mailbox is indistinguishable from a result
+      and stays with that command. LIST-STATUS still claims STATUS while pending.
+    - A LIST event that arrives during a LIST command joins the listing;
+      there is no tag or reliable local pattern matcher to distinguish it.
 
 [^t27inprogress]: Until T27 the response code was parsed but never delivered:
     an untagged `OK [INPROGRESS ...]` no command claimed was dropped, and so

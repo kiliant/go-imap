@@ -175,61 +175,63 @@ func listArguments(pattern string, options *ListOptions) ([]string, []string, []
 
 func listCollector(name string, data *[]*ListData, limit int) commandCollector {
 	count := 0
+	responseName := "LIST"
+	if name == "LSUB" {
+		responseName = "LSUB"
+	}
 	return func(resp *untaggedResponse) (bool, error) {
-		if resp.name != "LIST" && resp.name != "LSUB" {
-			return false, nil
-		}
-		if resp.hasNum || resp.cond != nil || !resp.dec.ExpectSP() {
-			if resp.dec.Err() != nil {
-				return true, resp.dec.Err()
-			}
+		if resp.name != responseName || resp.hasNum || resp.cond != nil {
 			return false, nil
 		}
 		if err := countUntaggedResponse(&count, limit, name); err != nil {
 			return true, err
 		}
-		var rawAttrs []string
-		if err := resp.dec.ExpectFlagList(&rawAttrs); err != nil {
+		if err := resp.decodeData(); err != nil {
 			return true, err
 		}
-		if !resp.dec.ExpectSP() {
-			return true, resp.dec.Err()
-		}
-		var rawDelimiter string
-		var nilDelimiter bool
-		if !resp.dec.ExpectNString(&rawDelimiter, &nilDelimiter) || !resp.dec.ExpectSP() {
-			return true, resp.dec.Err()
-		}
-		var mailbox string
-		if !resp.dec.ExpectMailbox(&mailbox) {
-			return true, resp.dec.Err()
-		}
-		extended, err := readListExtendedData(resp.dec)
-		if err != nil {
-			return true, err
-		}
-		attrs := make([]imap.MailboxAttr, len(rawAttrs))
-		for i, attr := range rawAttrs {
-			attrs[i] = imap.MailboxAttr(attr)
-		}
-		var delimiter rune
-		if !nilDelimiter {
-			var size int
-			delimiter, size = utf8.DecodeRuneInString(rawDelimiter)
-			if delimiter == utf8.RuneError && size == 1 || size != len(rawDelimiter) {
-				return true, fmt.Errorf("invalid LIST hierarchy delimiter %q", rawDelimiter)
-			}
-		}
-		*data = append(*data, &ListData{
-			Attrs:     attrs,
-			Delimiter: delimiter,
-			Mailbox:   mailbox,
-			OldName:   extended.OldName,
-			ChildInfo: extended.ChildInfo,
-			Extended:  extended.Extended,
-		})
+		*data = append(*data, resp.data.list)
 		return true, nil
 	}
+}
+
+func readListResponse(dec *imapwire.Decoder) (*ListData, error) {
+	if !dec.ExpectSP() {
+		return nil, dec.Err()
+	}
+	var rawAttrs []string
+	if err := dec.ExpectFlagList(&rawAttrs); err != nil {
+		return nil, err
+	}
+	if !dec.ExpectSP() {
+		return nil, dec.Err()
+	}
+	var rawDelimiter string
+	var nilDelimiter bool
+	if !dec.ExpectNString(&rawDelimiter, &nilDelimiter) || !dec.ExpectSP() {
+		return nil, dec.Err()
+	}
+	var mailbox string
+	if !dec.ExpectMailbox(&mailbox) {
+		return nil, dec.Err()
+	}
+	extended, err := readListExtendedData(dec)
+	if err != nil {
+		return nil, err
+	}
+	attrs := make([]imap.MailboxAttr, len(rawAttrs))
+	for i, attr := range rawAttrs {
+		attrs[i] = imap.MailboxAttr(attr)
+	}
+	var delimiter rune
+	if !nilDelimiter {
+		var size int
+		delimiter, size = utf8.DecodeRuneInString(rawDelimiter)
+		if delimiter == utf8.RuneError && size == 1 || size != len(rawDelimiter) {
+			return nil, fmt.Errorf("invalid LIST hierarchy delimiter %q", rawDelimiter)
+		}
+	}
+	return &ListData{Attrs: attrs, Delimiter: delimiter, Mailbox: mailbox,
+		OldName: extended.OldName, ChildInfo: extended.ChildInfo, Extended: extended.Extended}, nil
 }
 
 // readListExtendedData reads the rest of a LIST response after the mailbox

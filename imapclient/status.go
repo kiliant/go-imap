@@ -82,92 +82,113 @@ func statusItems(options *StatusOptions) ([]imap.StatusItemKeyword, error) {
 }
 
 func statusCollector(data *StatusData) commandCollector {
+	// Empty is used by LIST-STATUS and the connection-level handler to accept
+	// any mailbox. Ordinary STATUS captures its requested mailbox before any
+	// response can update data, and only INBOX is case-insensitive.
+	mailbox := normalisedMailbox(data.Mailbox)
 	return func(resp *untaggedResponse) (bool, error) {
 		if resp.name != "STATUS" || resp.hasNum || resp.cond != nil {
 			return false, nil
 		}
-		if !resp.dec.ExpectSP() {
-			return true, resp.dec.Err()
-		}
-		var mailbox string
-		if !resp.dec.ExpectMailbox(&mailbox) || !resp.dec.ExpectSP() {
-			return true, resp.dec.Err()
-		}
-		values := make(map[imap.StatusItemKeyword]any)
-		err := resp.dec.ExpectList(func() error {
-			var item string
-			if !resp.dec.ExpectAtom(&item) || !resp.dec.ExpectSP() {
-				return resp.dec.Err()
-			}
-			key := imap.StatusItemKeyword(strings.ToUpper(item))
-			if key == imap.StatusItemMailboxID {
-				// RFC 8474 section 7: "MAILBOXID" SP "(" objectid ")"
-				id, err := readFetchObjectID(resp.dec)
-				if err != nil {
-					return err
-				}
-				values[key] = id
-				return nil
-			}
-			var rawValue string
-			if !resp.dec.ExpectAstring(&rawValue) {
-				return resp.dec.Err()
-			}
-			if value, err := strconv.ParseUint(rawValue, 10, 64); err == nil {
-				values[key] = value
-			} else {
-				// STATUS extensions that return an astring rather than a
-				// number. Keep the text intact until the extension grows a
-				// typed convenience field.
-				values[key] = rawValue
-			}
-			return nil
-		})
-		if err != nil {
+		if err := resp.decodeData(); err != nil {
 			return true, err
 		}
-		if !resp.dec.ExpectCRLF() {
-			return true, resp.dec.Err()
+		parsed := resp.data.status
+		if mailbox != "" && normalisedMailbox(parsed.Mailbox) != mailbox {
+			return false, nil
 		}
-		data.Mailbox = mailbox
-		for item, value := range values {
-			data.Values[item] = value
-			number, isNumber := value.(uint64)
-			switch item {
-			case imap.StatusItemMessages:
-				if !isNumber || number > uint64(^uint32(0)) {
-					return true, fmt.Errorf("invalid numeric STATUS value for %s", item)
-				}
-				data.NumMessages = uint32(number)
-			case imap.StatusItemUIDNext:
-				if !isNumber || number > uint64(^uint32(0)) {
-					return true, fmt.Errorf("invalid numeric STATUS value for %s", item)
-				}
-				data.UIDNext = imap.UID(number)
-			case imap.StatusItemUIDValidity:
-				if !isNumber || number > uint64(^uint32(0)) {
-					return true, fmt.Errorf("invalid numeric STATUS value for %s", item)
-				}
-				data.UIDValidity = uint32(number)
-			case imap.StatusItemUnseen:
-				if !isNumber || number > uint64(^uint32(0)) {
-					return true, fmt.Errorf("invalid numeric STATUS value for %s", item)
-				}
-				data.NumUnseen = uint32(number)
-			case imap.StatusItemRecent:
-				if !isNumber || number > uint64(^uint32(0)) {
-					return true, fmt.Errorf("invalid numeric STATUS value for %s", item)
-				}
-				data.NumRecent = uint32(number)
-			case imap.StatusItemHighestModSeq:
-				if !isNumber {
-					return true, fmt.Errorf("invalid numeric STATUS value for %s", item)
-				}
-				data.HighestModSeq = number
-			}
-		}
-		return true, nil
+		data.Mailbox = parsed.Mailbox
+		return true, applyStatusValues(data, parsed.Values)
 	}
+}
+
+func readStatusResponse(dec *imapwire.Decoder) (*StatusData, error) {
+	if !dec.ExpectSP() {
+		return nil, dec.Err()
+	}
+	data := &StatusData{}
+	if !dec.ExpectMailbox(&data.Mailbox) || !dec.ExpectSP() {
+		return nil, dec.Err()
+	}
+	values := make(map[imap.StatusItemKeyword]any)
+	err := dec.ExpectList(func() error {
+		var item string
+		if !dec.ExpectAtom(&item) || !dec.ExpectSP() {
+			return dec.Err()
+		}
+		key := imap.StatusItemKeyword(strings.ToUpper(item))
+		if key == imap.StatusItemMailboxID {
+			id, err := readFetchObjectID(dec)
+			if err != nil {
+				return err
+			}
+			values[key] = id
+			return nil
+		}
+		var rawValue string
+		if !dec.ExpectAstring(&rawValue) {
+			return dec.Err()
+		}
+		if value, err := strconv.ParseUint(rawValue, 10, 64); err == nil {
+			values[key] = value
+		} else {
+			values[key] = rawValue
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !dec.ExpectCRLF() {
+		return nil, dec.Err()
+	}
+	if err := applyStatusValues(data, values); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func applyStatusValues(data *StatusData, values map[imap.StatusItemKeyword]any) error {
+	if data.Values == nil {
+		data.Values = make(map[imap.StatusItemKeyword]any)
+	}
+	for item, value := range values {
+		data.Values[item] = value
+		number, isNumber := value.(uint64)
+		switch item {
+		case imap.StatusItemMessages:
+			if !isNumber || number > uint64(^uint32(0)) {
+				return fmt.Errorf("invalid numeric STATUS value for %s", item)
+			}
+			data.NumMessages = uint32(number)
+		case imap.StatusItemUIDNext:
+			if !isNumber || number > uint64(^uint32(0)) {
+				return fmt.Errorf("invalid numeric STATUS value for %s", item)
+			}
+			data.UIDNext = imap.UID(number)
+		case imap.StatusItemUIDValidity:
+			if !isNumber || number > uint64(^uint32(0)) {
+				return fmt.Errorf("invalid numeric STATUS value for %s", item)
+			}
+			data.UIDValidity = uint32(number)
+		case imap.StatusItemUnseen:
+			if !isNumber || number > uint64(^uint32(0)) {
+				return fmt.Errorf("invalid numeric STATUS value for %s", item)
+			}
+			data.NumUnseen = uint32(number)
+		case imap.StatusItemRecent:
+			if !isNumber || number > uint64(^uint32(0)) {
+				return fmt.Errorf("invalid numeric STATUS value for %s", item)
+			}
+			data.NumRecent = uint32(number)
+		case imap.StatusItemHighestModSeq:
+			if !isNumber {
+				return fmt.Errorf("invalid numeric STATUS value for %s", item)
+			}
+			data.HighestModSeq = number
+		}
+	}
+	return nil
 }
 
 func failedCommand(name string, err error) *Command {
