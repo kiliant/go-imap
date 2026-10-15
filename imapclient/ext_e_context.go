@@ -21,14 +21,23 @@ const (
 	SearchReturnContext SearchReturnOptionKeyword = "CONTEXT"
 
 	// SearchReturnUpdate asks for incremental ESEARCH updates to a CONTEXT.
-	// RFC 5267 section 4.3. This client does not deliver those updates yet:
-	// the unsolicited ESEARCH responses carrying them are discarded. See the
-	// CONTEXT=SEARCH row of docs/RFC-COVERAGE.md.
+	// RFC 5267 section 4.3. Requires CONTEXT=SEARCH for SearchExtended and
+	// MultiSearch, or CONTEXT=SORT for SortExtended. Updates arrive through
+	// [UnilateralDataHandler.ContextUpdate], independently of command results.
+	// SearchPartial does not register a context, so updates for its tag are
+	// discarded.
 	SearchReturnUpdate SearchReturnOptionKeyword = "UPDATE"
 
 	// SearchReturnESortAll is the ALL return option for ESORT. RFC 5267
 	// section 3.1; identical spelling to [SearchReturnAll].
 	SearchReturnESortAll = SearchReturnAll
+)
+
+// ESearchReturnKeyAddTo and ESearchReturnKeyRemoveFrom are the CONTEXT update
+// items, RFC 5267 sections 4.3.3 and 4.3.4. See [ContextUpdate].
+const (
+	ESearchReturnKeyAddTo      = imap.ESearchReturnKeyAddTo
+	ESearchReturnKeyRemoveFrom = imap.ESearchReturnKeyRemoveFrom
 )
 
 // CancelUpdateOptions configures CANCELUPDATE. A nil pointer selects the
@@ -43,7 +52,35 @@ type CancelUpdateOptions struct {
 // section 4.3.5. Requires CONTEXT=SEARCH or CONTEXT=SORT.
 //
 // tags are the command tags whose UPDATE contexts should be cancelled; at
-// least one is required. A nil options pointer selects the defaults.
+// least one is required. Use the searching command's Tag or the result's
+// [ESearchData.ContextTag]. A nil options pointer selects the defaults.
+//
+// # Registration lifecycle
+//
+// A searching command with RETURN (UPDATE) registers its tag before the
+// request is written. [UnilateralDataHandler.ContextUpdate] receives that
+// tag's updates until the registration ends:
+//
+//   - CancelUpdate: updates may still arrive before CANCELUPDATE's tagged OK
+//     and are not delivered after it. A failed cancellation leaves the
+//     registrations active.
+//   - Refusal: an [imap.CodeNoUpdate] response code ends the registration it
+//     names ([ParseNoUpdateArgs] extracts the tag), in an untagged NO before
+//     [UnilateralDataHandler.StatusResponse] sees it. A tagged NO or BAD
+//     ends the command's own.
+//   - A failed initial result: when Wait fails because the ESEARCH response
+//     correlates with another tag, the registration ends at tagged
+//     completion. The server may still hold the context; cancelling the
+//     command's tag releases it. When SortExtended returns that error, the
+//     tag is the error's [imap.Error] Tag field.
+//   - Selection: SELECT and EXAMINE end every registration when issued, even
+//     if they then fail. A successful CLOSE, UNSELECT or UNAUTHENTICATE ends
+//     them at its tagged OK.
+//   - The session: BYE, LOGOUT and disconnect end every registration.
+//
+// A response carrying ADDTO or REMOVEFROM for a tag with no live registration
+// is discarded. An update for a live registration that fails validation, such
+// as a zero position in a SORT context, fails the connection.
 func (c *Client) CancelUpdate(ctx context.Context, tags []string, options *CancelUpdateOptions) error {
 	_ = options
 	if ctx == nil {
@@ -60,11 +97,12 @@ func (c *Client) CancelUpdate(ctx context.Context, tags []string, options *Cance
 			return &imap.Error{Type: imap.ErrorTypeProtocol, Text: fmt.Sprintf("CANCELUPDATE tag %d must not be empty", i)}
 		}
 	}
-	cmd := c.beginCommand("CANCELUPDATE", stateSelected, func(enc *imapwire.Encoder) {
+	tags = append([]string(nil), tags...)
+	cmd := c.issue("CANCELUPDATE", commandOptions{allowed: stateSelected, cancelUpdates: tags, write: func(enc *imapwire.Encoder) {
 		for _, tag := range tags {
 			enc.SP().Quoted(tag)
 		}
-	}, nil)
+	}})
 	return cmd.Wait(ctx)
 }
 

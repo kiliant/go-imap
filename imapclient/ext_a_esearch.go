@@ -80,7 +80,7 @@ type ESearchOptions struct {
 }
 
 // ESearchData is the result of an extended SEARCH: the shared
-// [imap.ESearchData], plus the one observation only a client can make.
+// [imap.ESearchData], plus the observations only a client can make.
 //
 // The embedded fields and methods are promoted, so data.HasMin, data.AllUIDs,
 // data.Partial() and data.RelevancyScores() are used exactly as before. A keyed
@@ -93,11 +93,21 @@ type ESearchOptions struct {
 // SORT response, because the server does not advertise ESEARCH or ESORT. It is reachable from
 // [imap.MultiSearchResult.Data], which a server framework constructs, so
 // leaving it on the shared type would put a field there that one of the two
-// directions can never fill.
+// directions can never fill. ContextTag is client-only for the same reason: it
+// is this client's handle on its own UPDATE registration, not wire data.
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type ESearchData struct {
 	imap.ESearchData
+
+	// ContextTag is the original command tag when RETURN (UPDATE) was
+	// requested, for [Client.CancelUpdate]. It is this client's handle on the
+	// registration, distinct from the wire correlator in the embedded Tag,
+	// which a server may omit. It does not imply that the server accepted the
+	// registration: a refusal arrives at [UnilateralDataHandler.StatusResponse]
+	// with [imap.CodeNoUpdate], whose tag [ParseNoUpdateArgs] extracts. It is
+	// empty when UPDATE was not requested, including emulated results.
+	ContextTag string
 
 	// Emulated reports that the value was computed from an ordinary SEARCH
 	// or SORT response rather than decoded from an ESEARCH one. See
@@ -119,6 +129,10 @@ type ESearchCommand struct {
 	emulated *[]uint32
 	wanted   map[ESearchReturnKey]bool
 	uid      bool
+
+	// registration is the RETURN (UPDATE) context, or nil. It is set before
+	// the command is issued and never changes.
+	registration *searchContext
 }
 
 // Wait waits for the extended SEARCH and returns its data.
@@ -177,6 +191,11 @@ func (cmd *ESearchCommand) SavedResult() *SavedSearchResult {
 // computation can create. Requesting it without SEARCHRES returns an
 // [imap.Error] wrapping [ErrCapabilityNotAdvertised] and writes nothing.
 //
+// RETURN (UPDATE) has no emulation either. It requires CONTEXT=SEARCH, is
+// always sent as an extended SEARCH, and delivers its updates through
+// [UnilateralDataHandler.ContextUpdate]. Without CONTEXT=SEARCH it returns an
+// [imap.Error] wrapping [ErrCapabilityNotAdvertised] and writes nothing.
+//
 // The OLDER and YOUNGER criteria of WITHIN (RFC 5032) are likewise gated: a
 // server that has not advertised WITHIN answers BAD, and this client refuses
 // before the command reaches the wire. There is no faithful fallback — BEFORE
@@ -211,6 +230,11 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 		cmd.Command = rejectedCommand(c, name, err.Error())
 		return cmd
 	}
+	update := hasSearchReturnKeyword(keywords, SearchReturnUpdate)
+	if update && !c.Supports("CONTEXT=SEARCH") {
+		cmd.Command = failedCommand(name, capabilityError("SEARCH RETURN (UPDATE)", "CONTEXT=SEARCH"))
+		return cmd
+	}
 	if err := validateSearchCriteria(criteria); err != nil {
 		cmd.Command = rejectedCommand(c, name, err.Error())
 		return cmd
@@ -237,12 +261,18 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 
 	// RFC 9051 section 6.4.4 makes ESEARCH the base rev2 behaviour, so an
 	// enabled rev2 session has it whether or not the capability was listed.
-	if !c.supportsAny("ESEARCH") && !c.rev2Enabled() {
+	// CONTEXT=SEARCH does not imply ESEARCH's return options (RFC 5267
+	// section 4.1), so it selects the extended form only for UPDATE, which
+	// has no emulation and has already required CONTEXT=SEARCH above.
+	if !c.supportsAny("ESEARCH") && !c.rev2Enabled() && !update {
 		c.searchExtendedEmulated(cmd, name, criteria, o, keywords)
 		return cmd
 	}
 
-	cmd.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+	if update {
+		cmd.registration = &searchContext{uid: uid}
+	}
+	cmd.Command = c.issue(name, commandOptions{allowed: stateSelected, searchContext: cmd.registration, collector: esearchCollector(cmd), write: func(enc *imapwire.Encoder) {
 		// RFC 4466 section 2.6: search = "SEARCH" [search-return-opts] SP
 		// search-program, and the CHARSET belongs to search-program. RETURN
 		// therefore precedes CHARSET, not the other way round.
@@ -252,7 +282,10 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 		}
 		enc.SP()
 		writeSearchCriteria(enc, criteria)
-	}, esearchCollector(cmd))
+	}})
+	if update {
+		cmd.data.ContextTag = cmd.Command.Tag()
+	}
 	return cmd
 }
 
@@ -355,10 +388,10 @@ func (cmd *ESearchCommand) reconstruct() {
 // It is the guard behind the "cannot be pipelined" rejection in
 // [Client.SearchExtended]. RFC 5182 example 8 shows a server answering two
 // pipelined extended searches in the opposite order, which is why the ESEARCH
-// response carries a correlator at all. Responses are now decoded before
-// collection, but ownership and lifecycle handling for concurrent searches and
-// CONTEXT updates are not implemented yet. Keep the existing exclusion until
-// that routing is in place, rather than misassigning a command's matches.
+// response carries a correlator at all. CONTEXT updates for completed searches
+// are routed by tag before any collector sees them, so a search may follow an
+// UPDATE context. Concurrent initial results are not routed by correlator yet:
+// keep the exclusion rather than misassigning a command's matches.
 func (c *Client) searchPending() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -418,6 +451,7 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 		if data.UID != cmd.uid {
 			return true, fmt.Errorf("ESEARCH response UID indicator %t does not match the command", data.UID)
 		}
+		cmd.registration.observeInitialTag(data.Tag)
 		cmd.data.ESearchData = data
 		return true, nil
 	}

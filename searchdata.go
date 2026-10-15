@@ -21,14 +21,72 @@ type ESearchReturnKey string
 
 // ESEARCH return data items this library models.
 const (
-	ESearchReturnKeyMin       ESearchReturnKey = "MIN"
-	ESearchReturnKeyMax       ESearchReturnKey = "MAX"
-	ESearchReturnKeyAll       ESearchReturnKey = "ALL"
-	ESearchReturnKeyCount     ESearchReturnKey = "COUNT"
-	ESearchReturnKeyModSeq    ESearchReturnKey = "MODSEQ"
-	ESearchReturnKeyPartial   ESearchReturnKey = "PARTIAL"
-	ESearchReturnKeyRelevancy ESearchReturnKey = "RELEVANCY"
+	ESearchReturnKeyMin        ESearchReturnKey = "MIN"
+	ESearchReturnKeyMax        ESearchReturnKey = "MAX"
+	ESearchReturnKeyAll        ESearchReturnKey = "ALL"
+	ESearchReturnKeyCount      ESearchReturnKey = "COUNT"
+	ESearchReturnKeyModSeq     ESearchReturnKey = "MODSEQ"
+	ESearchReturnKeyPartial    ESearchReturnKey = "PARTIAL"
+	ESearchReturnKeyRelevancy  ESearchReturnKey = "RELEVANCY"
+	ESearchReturnKeyAddTo      ESearchReturnKey = "ADDTO"
+	ESearchReturnKeyRemoveFrom ESearchReturnKey = "REMOVEFROM"
 )
+
+// ContextUpdate is an ESEARCH notification for a searching command that
+// requested RETURN (UPDATE). CONTEXT, RFC 5267 section 4.3. It is shared wire
+// vocabulary: neither its lifetime nor its construction depends on a client.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type ContextUpdate struct {
+	// Tag is the originating searching command's tag; that command may still
+	// be in flight. It never names another command that was in progress when
+	// the update arrived. UID is the searching command's number mode: as for
+	// its initial result, an update for a UID context may omit the UID
+	// indicator.
+	Tag string
+	UID bool
+	// Mailbox and UIDValidity are the additional MULTISEARCH correlator
+	// fields, read as for [MultiSearchResult]. Both are present or both are
+	// absent, and UIDValidity is non-zero exactly when they are present; a
+	// producer sets them together or not at all. UPDATE still applies only to
+	// the selected mailbox (RFC 7377 section 2.2).
+	Mailbox     string
+	UIDValidity uint32
+	// Items retains every return item, including repeated and unknown keys,
+	// in wire order. Process items and their Changes in that order.
+	Items []ContextUpdateItem
+	_     struct{}
+}
+
+// ContextUpdateItem is one ordered return item in a CONTEXT notification.
+// Construct with keyed fields only; fields may be added in a future release.
+type ContextUpdateItem struct {
+	Key ESearchReturnKey
+	// Value retains the raw wire value, including for decoded keys.
+	Value string
+	// Changes is the decoded view for keys this release decodes as
+	// position/set pairs, today ADDTO and REMOVEFROM. Switch on Key rather
+	// than testing Changes for nil: a later release may decode more keys.
+	// A producer writing the item encodes a non-nil Changes and otherwise
+	// writes Value.
+	Changes []ContextUpdateChange
+	_       struct{}
+}
+
+// ContextUpdateChange is one position/set pair of ADDTO or REMOVEFROM.
+// Construct with keyed fields only; fields may be added in a future release.
+type ContextUpdateChange struct {
+	// Position is 1-based; zero means mailbox-order insertion or removal by
+	// message number, and is allowed for SEARCH but not SORT contexts.
+	Position uint32
+	// Exactly one field carries the numbers, according to ContextUpdate.UID.
+	// Range order is significant; do not normalize or globally sort the set.
+	// Within each range, expand from the smaller endpoint to the larger one
+	// (RFC 5267 section 3.2), even if the wire endpoints are reversed.
+	SeqNums SeqSet
+	UIDs    UIDSet
+	_       struct{}
+}
 
 // PartialRange selects a slice of SEARCH or FETCH results by 1-based index into
 // the result set, not into mailbox sequence numbers. PARTIAL, RFC 9394.

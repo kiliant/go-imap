@@ -411,8 +411,8 @@ break the client; full command support is best-effort.
 | LANGUAGE | 5255 | done | done | |
 | I18NLEVEL=1 | 5255 | done | done | capability probe |
 | I18NLEVEL=2 | 5255 | done | done [^srvi18n2] | COMPARATOR command |
-| CONTEXT=SEARCH | 5267 | in progress [^t27context] | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
-| CONTEXT=SORT | 5267 | in progress [^t27context] | done [^srvcontext] | as above |
+| CONTEXT=SEARCH | 5267 | done [^t27context] | done [^srvcontext] | CANCELUPDATE + RETURN keywords |
+| CONTEXT=SORT | 5267 | done [^t27context] | done [^srvcontext] | as above |
 | ESORT | 5267 | verified [^esort] | done [^srvesort] | `SortExtended` / `SortExtendedUID` |
 | FILTERS | 5466 | done | done [^srvfilters] | UNDEFINED-FILTER parse |
 | CONVERT | 5259 | deferred | deferred | no known server support |
@@ -435,13 +435,26 @@ break the client; full command support is best-effort.
     strings. A request naming nothing servable returns BADCOMPARATOR rather than
     a generic NO, so a client can tell it apart and fall back.
 
-[^t27context]: The client sends the CONTEXT and UPDATE return options and
-    CANCELUPDATE, but discards the unsolicited ESEARCH responses with ADDTO and
-    REMOVEFROM that carry the updates (RFC 5267 §4.3). An update arriving while
-    another extended SEARCH or SORT is pending is claimed by that command and
-    fails it. `SortExtended` therefore refuses RETURN (UPDATE), which can be
-    allowed compatibly once updates are delivered. Delivering them needs a
-    handler field and the command tag for CANCELUPDATE, both additive.
+[^t27context]: Until T30 the client sent RETURN (UPDATE) and CANCELUPDATE but
+    discarded the unsolicited ESEARCH responses with ADDTO and REMOVEFROM that
+    carry the updates (RFC 5267 §4.3). One that arrived while another extended
+    SEARCH or SORT was pending was claimed by that command and failed it, so
+    `SortExtended` refused UPDATE. A searching command now registers its tag
+    before the request is written, and updates are routed by that tag before
+    any command sees them. They arrive at `UnilateralDataHandler.ContextUpdate`
+    as ordered items, repeated and unknown keys included, with typed
+    position/set pairs. `ESearchData.ContextTag` names the context for
+    `CancelUpdate`. `SortExtended` accepts UPDATE under CONTEXT=SORT, and
+    MULTISEARCH registers it for the selected mailbox (RFC 7377 §2.2).
+    `CancelUpdate` documents when a registration ends. Scripted tests
+    interleave old updates with extended SEARCH, extended SORT, MULTISEARCH
+    and other commands, and cover cancellation, NOUPDATE, selection changes,
+    logout and disconnect. Live, `TestContextUpdateRemovalInterop` receives
+    REMOVEFROM after an expunge on Dovecot 2.4.3, the only matrix server that
+    advertises CONTEXT=SEARCH. One server is not two, so the row stays `done`.
+    No matrix server advertises CONTEXT=SORT; sorted contexts are covered by
+    scripted tests only. Not covered: `SearchPartial` does not register UPDATE
+    (#48), and `*` in an update set fails in the generic value capture (#49).
 
 [^srvcontext]: `RETURN (UPDATE)` registers a search result and `CANCELUPDATE`
     drops it; removals are reported as `REMOVEFROM` on further untagged ESEARCH
