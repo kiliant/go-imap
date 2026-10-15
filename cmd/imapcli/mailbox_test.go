@@ -60,17 +60,11 @@ func TestWriteMessageSummary(t *testing.T) {
 
 func TestWriteMessageBody(t *testing.T) {
 	var buf bytes.Buffer
-	data := &imap.FetchMessageData{
-		Items: map[imap.FetchDataKey][]imap.FetchData{
-			"BODY[]": {&imap.FetchDataBodySection{
-				Literal: strings.NewReader("From: a\r\n\r\nhello\r\n"),
-			}},
-		},
-	}
-	if err := writeMessageBody(&buf, data); err != nil {
+	body := &imap.FetchDataBodySection{Literal: strings.NewReader("From: a\r\n\r\nhello\r\n")}
+	if err := writeMessageBody(&buf, body); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "hello") {
+	if buf.String() != "From: a\r\n\r\nhello\r\n" {
 		t.Fatalf("body = %q", buf.String())
 	}
 }

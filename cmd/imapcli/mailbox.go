@@ -76,65 +76,99 @@ func messageWindow(numMessages uint32, limit, offset uint) (start, stop imap.Seq
 	return imap.SeqNum(startN), imap.SeqNum(stopN), true
 }
 
+// printMessage prints the summary line of uid, then the message itself.
+//
+// The two come from separate commands. FetchCommand.Next hands a response over
+// as soon as its body literal starts, and the items a server sends after the
+// literal (RFC 3501 leaves the order to the server) are added to its Items
+// only once the body has been read. A summary taken from the body's response
+// could therefore miss UID, FLAGS or ENVELOPE, and reading them would race
+// with the client adding them. A response without a body is complete when it
+// is handed over.
 func printMessage(ctx context.Context, client *imapclient.Client, uid imap.UID, out, errOut io.Writer) error {
 	fmt.Fprintf(errOut, "imapcli: fetching UID %d (BODY.PEEK[])...\n", uid)
-	cmd := client.FetchUID(imap.UIDSetNum(uid), nil,
-		imap.FetchItemUID,
-		imap.FetchItemFlags,
-		imap.FetchItemEnvelope,
-		&imap.FetchItemBodySection{Peek: true},
-	)
-	var seen bool
+	summary, err := fetchSummary(ctx, client, uid)
+	if err != nil {
+		return err
+	}
+	if summary == nil {
+		return fmt.Errorf("no message with UID %d", uid)
+	}
+	if err := writeMessageSummary(out, summary); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	return printMessageBody(ctx, client, uid, out)
+}
+
+// fetchSummary returns the UID, FLAGS and ENVELOPE of uid, merged across every
+// response that carries them, or nil when the mailbox holds no such message.
+func fetchSummary(ctx context.Context, client *imapclient.Client, uid imap.UID) (*imap.FetchMessageData, error) {
+	cmd := client.FetchUID(imap.UIDSetNum(uid), nil, imap.FetchItemUID, imap.FetchItemFlags, imap.FetchItemEnvelope)
+	var summary *imap.FetchMessageData
 	for {
 		data, err := cmd.Next(ctx)
 		if err == io.EOF {
-			if !seen {
-				return fmt.Errorf("no message with UID %d", uid)
-			}
-			return nil
+			return summary, nil
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		seen = true
-		if err := writeMessageSummary(out, data); err != nil {
-			return err
+		if got, ok := fetchUID(data); !ok || got != uid {
+			continue // an unsolicited FETCH for another message
 		}
-		if _, err := fmt.Fprintln(out); err != nil {
-			return err
+		if summary == nil {
+			summary = &imap.FetchMessageData{SeqNum: data.SeqNum, Items: make(map[imap.FetchDataKey][]imap.FetchData)}
 		}
-		if err := writeMessageBody(out, data); err != nil {
-			return err
+		for key, values := range data.Items {
+			summary.Items[key] = append(summary.Items[key], values...)
 		}
 	}
 }
 
-func writeMessageBody(w io.Writer, data *imap.FetchMessageData) error {
-	var body *imap.FetchDataBodySection
-	for _, values := range data.Items {
-		for _, v := range values {
-			if s, ok := v.(*imap.FetchDataBodySection); ok {
-				body = s
-			}
+// printMessageBody streams BODY[] of uid to w. A response's Items are read
+// only to find the body, before its literal is consumed: until then the client
+// adds nothing to them.
+func printMessageBody(ctx context.Context, client *imapclient.Client, uid imap.UID, w io.Writer) error {
+	cmd := client.FetchUID(imap.UIDSetNum(uid), nil, &imap.FetchItemBodySection{Peek: true})
+	printed := false
+	for {
+		data, err := cmd.Next(ctx)
+		if err == io.EOF {
+			break
 		}
+		if err != nil {
+			return err
+		}
+		body := wholeMessageBody(data)
+		if body == nil || body.Literal == nil {
+			continue
+		}
+		if printed {
+			_ = closeLiteral(body.Literal) // a repeated body
+			continue
+		}
+		if err := writeMessageBody(w, body); err != nil {
+			return err
+		}
+		printed = true
 	}
-	if body == nil || body.Literal == nil {
+	if !printed {
 		return fmt.Errorf("server returned no BODY section")
 	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// writeMessageBody copies body's literal to w and closes it.
+func writeMessageBody(w io.Writer, body *imap.FetchDataBodySection) error {
 	_, err := io.Copy(w, body.Literal)
-	if c, ok := body.Literal.(io.Closer); ok {
-		closeErr := c.Close()
-		if err == nil {
-			err = closeErr
-		}
+	if closeErr := closeLiteral(body.Literal); err == nil {
+		err = closeErr
 	}
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func writeMailboxStatus(w io.Writer, status *imapclient.MailboxStatus) error {
