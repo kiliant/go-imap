@@ -167,8 +167,8 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeListDataExtended(c, writtenName, listResultAttrs(args, options, data.Attrs), data, listResultChildInfo(args, options, data.ChildInfo))
 	})
 	var err error
-	if options.SelectRecursiveMatch && options.Subscribed && !backendEvaluatesRecursiveMatch(ctx, c) {
-		err = listRecursiveMatch(ctx, c.state.session, writer, args.reference, args.patterns, options)
+	if options.SelectRecursiveMatch && !backendEvaluatesRecursiveMatch(ctx, c) {
+		err = listRecursiveMatch(ctx, c.state.session, writer, args, options)
 	} else {
 		err = c.state.session.List(ctx, writer, args.reference, args.patterns, options)
 	}

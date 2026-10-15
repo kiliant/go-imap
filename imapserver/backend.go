@@ -219,6 +219,13 @@ type MoveMailbox interface {
 // interface per capability: a future RFC is then a new token, which is a data
 // change, not a type change.
 //
+// A few tokens route rather than gate. Their capability is advertised by the
+// framework regardless, and true only says that the backend evaluates a
+// behaviour the framework would otherwise evaluate itself. false never
+// suppresses the advertisement. The one such token is "LIST-EXTENDED", for
+// RECURSIVEMATCH; see [ListOptions.SelectRecursiveMatch]. Whether a token
+// gates or routes is fixed when it is introduced and does not change.
+//
 // Backend implementations must make SupportsCapability safe for concurrent use.
 type CapabilitySupport interface {
 	SupportsCapability(ctx context.Context, name string, options *CapabilitySupportOptions) bool
@@ -306,14 +313,19 @@ type ListOptions struct {
 	// (RFC 5258 section 6).
 	//
 	// It also sets it only for a backend that witnesses "LIST-EXTENDED"
-	// through [CapabilitySupport], which says the backend evaluates it. For
-	// any other backend the framework evaluates RECURSIVEMATCH itself, from
-	// List calls for "*" with and without Subscribed, so a backend need not
-	// implement it. That evaluation takes the canonical pattern to be the
-	// reference followed by the pattern, unless the pattern starts with the
-	// hierarchy delimiter (RFC 3501 section 6.3.8). A backend that interprets
-	// the reference otherwise should witness "LIST-EXTENDED" and evaluate the
-	// option itself.
+	// through [CapabilitySupport], which says the backend evaluates it; a
+	// backend without the witness never receives it. For such a backend the
+	// framework evaluates RECURSIVEMATCH itself, from List calls without it.
+	// It starts from the backend's own answer to the command without the
+	// option, so the result never holds less than that, and adds the parents
+	// of descendants that meet the base options, found through List for "*".
+	// Two limits follow, and only the added parents are affected. The
+	// framework decides which parents match the patterns by taking the
+	// canonical pattern to be the reference followed by the pattern, unless
+	// the pattern starts with the hierarchy delimiter (RFC 3501 section
+	// 6.3.8). And a name the backend leaves out of "*" gets no added parents.
+	// A backend for which either matters evaluates the option itself and
+	// witnesses "LIST-EXTENDED".
 	SelectRecursiveMatch bool `imapfeature:"list-extended"`
 	// SelectSpecialUse restricts the result to special-use mailboxes: those
 	// with a use attribute such as \Archive. RFC 6154 section 2.

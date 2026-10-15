@@ -491,7 +491,7 @@ Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
 
-### A witness may choose who evaluates, not whether to advertise — added 2026-10-15
+### A routing witness chooses who evaluates, not whether to advertise — added 2026-10-15
 
 Some behaviour can neither be refused nor left to an unwitnessed backend. The
 first case is RECURSIVEMATCH (RFC 5258 section 3.1). LIST-EXTENDED enables it,
@@ -500,23 +500,39 @@ and IMAP4rev2's LIST incorporates it. A server advertising either therefore
 cannot answer it BAD. Before this rule, the framework handed it to every
 backend, so one that ignored it answered wrongly.
 
-**The rule: where the framework can evaluate a behaviour from data every
-backend already returns, it does so for a backend that has not witnessed the
-behaviour. The witness then routes the work to the backend, and does not gate
-the advertisement.** For RECURSIVEMATCH the token is `"LIST-EXTENDED"`, the
-capability that enables it. A backend witnessing it receives
-`ListOptions.SelectRecursiveMatch`. Any other backend never sees the field,
-and the framework derives the answer from plain `Session.List` calls
-(`imapserver/ext_a_list_recursive.go`). LIST-EXTENDED itself stays
-framework-witnessed.
+**The rule: a token may *route* instead of gate. A routing token's true says
+the backend evaluates a behaviour itself. Without it, the framework evaluates
+the behaviour and the backend never sees the option.** It applies only where
+all of these hold:
 
-The rule keeps both §10 properties. The token is still the wire token, and a
-future option is still a new token on its own capability. RFC 5258 section 3
-requires each option to be enabled by a capability string, which the
-descriptor table already gates. What changes is the failure direction. A
-backend that forgets the witness is correct and slower, not wrong.
-`backendtest` holds a backend that claims the witness to the native semantics
-and skips the case for one that does not.
+- The capability's advertisement is already decided by the framework alone.
+  A routing token therefore never appears in `rev2Incorporated` or in any
+  `RequiresBackend` witness. `TestRoutingTokensGateNothing` holds
+  `"LIST-EXTENDED"` to that.
+- The behaviour cannot be refused once the capability is advertised.
+- The framework's evaluation includes everything the backend itself returns
+  for the same command without the option, and only adds to it. That
+  condition, not "the framework could work it out", is what makes a backend
+  without the witness correct rather than wrong. Where the evaluation has to
+  decide something the backend would decide differently, such as how the
+  reference is read, it says so, and only for what it adds.
+
+**Whether a token gates or routes is fixed when the token is first released
+and never changes.** Flipping it changes what false means for every released
+backend, which is the silent break "Witness tokens are API" below describes.
+CHILDREN, for instance, could be worked out from `List "*"`, but it has gated
+since v0.1.0 and stays a gate.
+
+For RECURSIVEMATCH the token is `"LIST-EXTENDED"`, the capability that enables
+it. A backend witnessing it receives `ListOptions.SelectRecursiveMatch`. For
+any other backend, `imapserver/ext_a_list_recursive.go` starts from the
+backend's answer to the command without the option, then adds the parents of
+the descendants that meet the base options. A base selection option the
+evaluation does not handle is refused for such a backend, never passed on.
+`TestListRecursiveMatchCoversBaseOptions` keeps the two lists level when RFC
+5258 section 9.3 registers a new one. `backendtest` holds a backend that
+claims the witness to the native semantics, and skips the case for one that
+does not.
 
 ### An umbrella capability is witnessed by its members — added by T24, 2026-08-14
 

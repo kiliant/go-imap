@@ -1,6 +1,10 @@
 package imapserver
 
-import "testing"
+import (
+	"context"
+	"slices"
+	"testing"
+)
 
 func TestListWildcardMatch(t *testing.T) {
 	tests := []struct {
@@ -63,5 +67,45 @@ func TestListParents(t *testing.T) {
 	}
 	if got := listParents("Flat/Name", 0); got != nil {
 		t.Errorf("listParents without a delimiter = %q, want none", got)
+	}
+}
+
+// A base selection option the framework accepts must be one its own
+// RECURSIVEMATCH evaluation handles, or an unwitnessed backend gets a NO for
+// a valid command. Adding a base option to listSelectBaseOptions without
+// teaching listRecursiveMatch about it fails here.
+func TestListRecursiveMatchCoversBaseOptions(t *testing.T) {
+	for _, option := range listSelectBaseOptions {
+		if !slices.Contains(listRecursiveMatchBaseOptions, option) {
+			t.Errorf("base selection option %s is not evaluated by listRecursiveMatch", option)
+		}
+	}
+}
+
+// Until then, the evaluation refuses a base option it does not know rather
+// than passing RECURSIVEMATCH on to a backend that never witnessed it. The
+// refusal comes before any backend call, so no session is needed.
+func TestListRecursiveMatchRefusesUnknownBaseOption(t *testing.T) {
+	saved := listSelectBaseOptions
+	listSelectBaseOptions = append(slices.Clone(saved), "X-FUTURE-BASE")
+	defer func() { listSelectBaseOptions = saved }()
+	args := &listArgs{selection: []string{"X-FUTURE-BASE", "RECURSIVEMATCH"}, patterns: []string{"*"}}
+	if err := listRecursiveMatch(context.Background(), nil, nil, args, &ListOptions{SelectRecursiveMatch: true}); err == nil {
+		t.Fatal("listRecursiveMatch accepted a base option it does not evaluate")
+	}
+}
+
+// A routing token decides who evaluates a behaviour, never whether anything
+// is advertised. So it must gate nothing: not its own capability, and not
+// IMAP4rev2 through rev2Incorporated. Making it a gate later would change
+// what false means for every backend already released.
+func TestRoutingTokensGateNothing(t *testing.T) {
+	for _, token := range []string{listRecursiveMatchWitness} {
+		if capabilityWitness(token) != nil {
+			t.Errorf("%s is a routing token but gates its own advertisement", token)
+		}
+		if slices.Contains(rev2Incorporated, token) {
+			t.Errorf("%s is a routing token but gates IMAP4rev2", token)
+		}
 	}
 }

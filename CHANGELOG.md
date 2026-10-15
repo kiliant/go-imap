@@ -147,22 +147,30 @@ Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
   returns a hierarchy level that is not a mailbox as `\NonExistent`. Before,
   it ignored the option and returned no such parent. It witnesses
   `"LIST-EXTENDED"` to say it evaluates the option itself.
-- The framework evaluates RECURSIVEMATCH itself for a backend that does not
-  witness `"LIST-EXTENDED"` through `CapabilitySupport`. It derives the answer
-  from two `Session.List` calls for `"*"`, with and without `Subscribed`. Such
-  a backend never receives `ListOptions.SelectRecursiveMatch`. So every
-  backend answers `LIST (SUBSCRIBED RECURSIVEMATCH)` correctly; before, one
-  that ignored the option answered it wrongly. Refusing the option instead
-  was not possible: LIST-EXTENDED enables it (RFC 5258 section 3), and
-  IMAP4rev2's LIST incorporates it. The witness decides who evaluates the
-  option, not whether LIST-EXTENDED is advertised. No exported API change,
-  but a contract change for backends that implemented the option without
-  witnessing `"LIST-EXTENDED"`. They keep answering correctly, now through
-  the framework's evaluation. To keep receiving the option, they witness the
-  token.
-- `backendtest` checks RECURSIVEMATCH for a backend that witnesses
-  `"LIST-EXTENDED"`, so a backend that claims the witness and ignores the
-  option fails. It skips the case for any other backend.
+
+#### Changed
+
+- RECURSIVEMATCH reaches a backend only if it witnesses `"LIST-EXTENDED"`
+  through `CapabilitySupport`. Any other backend never receives
+  `ListOptions.SelectRecursiveMatch`, and the framework evaluates the option
+  for it from `Session.List` calls without it. That evaluation starts from the
+  backend's own answer to the command without RECURSIVEMATCH, so it never
+  returns less than that. It adds the parents of subscribed descendants found
+  through `List` for `"*"`. Only those added parents depend on the framework's
+  reading of the reference (reference followed by pattern, RFC 3501 section
+  6.3.8), and a name the backend leaves out of `"*"` gets none. Before, every
+  backend received the option, and one that ignored it answered wrongly.
+  Refusing the option was not possible: LIST-EXTENDED enables it (RFC 5258
+  section 3), and IMAP4rev2's LIST incorporates it. The token routes the
+  evaluation and does not gate the advertisement, which the
+  `CapabilitySupport` documentation now describes. No exported API change.
+  **BREAKING in behaviour** for a backend written against v0.2.0 that
+  implemented RECURSIVEMATCH: it stops receiving the option until it
+  witnesses `"LIST-EXTENDED"`, and is answered by the framework's evaluation
+  meanwhile.
+- `backendtest` checks RECURSIVEMATCH only for a backend that witnesses
+  `"LIST-EXTENDED"`, so one that claims the witness and ignores the option
+  fails. It skips the case for any other backend.
 
 #### Fixed
 
