@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,6 +53,11 @@ type InstanceOptions struct{ _ struct{} }
 // Construct with keyed fields only; fields may be added in a future release.
 type Harness struct {
 	// New returns a fresh, isolated instance for one subtest.
+	//
+	// Factories for backends with remote mailboxes should seed a remote child
+	// beneath an unsubscribed parent. The LIST conformance checks discover it
+	// through LIST with SelectRemote; the remote-descendant check skips when
+	// no such fixture is available. Ordinary CREATE cannot make remote mailboxes.
 	//
 	// It takes a context and returns an error because a real backend's setup
 	// can block and can fail: opening a store, migrating a schema, reaching a
@@ -214,48 +218,7 @@ func Run(t *testing.T, harness *Harness) {
 		closeSession(t, instance, mutating)
 	})
 
-	// RFC 5258 section 3.5: with RECURSIVEMATCH, a parent that is not
-	// subscribed is returned because a descendant is, and says so in
-	// ChildInfo. Only a backend witnessing "LIST-EXTENDED" receives the
-	// option; the framework evaluates it for any other. So a backend that
-	// claims the witness is held to it here, and one without it is skipped.
-	t.Run("list-recursivematch", func(t *testing.T) {
-		instance, session := newSession(t, harness)
-		if !supportsCapability(instance, session, "LIST-EXTENDED") {
-			closeSession(t, instance, session)
-			t.Skip(`backend does not witness "LIST-EXTENDED"; the framework evaluates RECURSIVEMATCH`)
-		}
-		ctx := context.Background()
-		for _, name := range []string{"recursive", "recursive/child"} {
-			if err := session.Create(ctx, name, nil); err != nil {
-				t.Fatalf("Create %q: %v", name, err)
-			}
-		}
-		if err := session.Subscribe(ctx, "recursive/child", nil); err != nil {
-			t.Fatal(err)
-		}
-		list := func(options *imapserver.ListOptions) []*imap.ListData {
-			var listed []*imap.ListData
-			if err := session.List(ctx, &imapserver.ListWriter{WriteFunc: func(_ context.Context, data *imap.ListData) error {
-				listed = append(listed, data)
-				return nil
-			}}, "", []string{"recursive"}, options); err != nil {
-				t.Fatal(err)
-			}
-			return listed
-		}
-		if listed := list(&imapserver.ListOptions{Subscribed: true}); len(listed) != 0 {
-			t.Fatalf("LIST (SUBSCRIBED) returned the unsubscribed parent: %#v", listed[0])
-		}
-		listed := list(&imapserver.ListOptions{Subscribed: true, SelectRecursiveMatch: true})
-		if len(listed) != 1 || listed[0].Mailbox != "recursive" {
-			t.Fatalf("LIST (SUBSCRIBED RECURSIVEMATCH) returned %d results, want only the parent of a subscribed child", len(listed))
-		}
-		if !slices.ContainsFunc(listed[0].ChildInfo, func(option string) bool { return strings.EqualFold(option, "SUBSCRIBED") }) {
-			t.Fatalf("parent ChildInfo = %q, want SUBSCRIBED", listed[0].ChildInfo)
-		}
-		closeSession(t, instance, session)
-	})
+	runList(t, harness)
 
 	t.Run("streaming-and-mutations", func(t *testing.T) {
 		instance, session := newSession(t, harness)
