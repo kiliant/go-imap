@@ -198,6 +198,16 @@ contain it.
 
 ### Quick start
 
+Choose a persistent directory, such as `~/MailBackup/mailbox.org`. Do not use
+`/tmp`, macOS `$TMPDIR`, or another automatically cleaned location: the
+operating system may remove files between runs. A message's file modification
+time records its IMAP INTERNALDATE, which can be years old; it does not say
+when the file was downloaded or protect it from cleanup.
+
+If local message files disappear, the next run downloads them again only if
+they still exist on the server. Keep the mirror on persistent storage and
+snapshot it with restic or another backup tool to retain deleted messages.
+
 Run the first backup by hand, so you can watch it and check the result:
 
 ```sh
