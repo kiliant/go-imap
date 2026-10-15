@@ -38,10 +38,11 @@ const (
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type ContextUpdate struct {
-	// Tag is the originating searching command's tag. That command may still
-	// be in flight; Tag never names the command during which the update
-	// arrived. UID is the searching command's number mode: as for its initial
-	// result, an update for a UID context may omit the UID indicator.
+	// Tag is the originating searching command's tag; that command may still
+	// be in flight. It never names another command that was in progress when
+	// the update arrived. UID is the searching command's number mode: as for
+	// its initial result, an update for a UID context may omit the UID
+	// indicator.
 	Tag string
 	UID bool
 	// Mailbox and UIDValidity are the additional MULTISEARCH correlator

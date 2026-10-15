@@ -180,7 +180,11 @@ type UnilateralDataHandler struct {
 	//
 	// Updates for a live registration are validated even while this field is
 	// nil, and one that fails validation fails the connection. An update for
-	// a tag with no live registration is discarded, malformed or not.
+	// a tag with no live registration is discarded, including one whose
+	// correlators or ADDTO/REMOVEFROM payload fail CONTEXT validation. A
+	// response that is not a well-formed ESEARCH response, such as one with an
+	// unrecognised correlator, still fails the connection like any other
+	// malformed response.
 	// Callbacks may retain the data; the client does not subsequently mutate
 	// it. Do not block or issue a command and wait here.
 	// [Client.CancelUpdate] documents when a registration ends.
