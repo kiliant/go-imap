@@ -305,8 +305,12 @@ type ListOptions struct {
 	// selection option it implements, and answers any other combination BAD
 	// (RFC 5258 section 6).
 	SelectRecursiveMatch bool `imapfeature:"list-extended"`
-	// SelectSpecialUse restricts the result to special-use mailboxes.
-	// RFC 6154 section 5.1.
+	// SelectSpecialUse restricts the result to special-use mailboxes: those
+	// with a use attribute such as \Archive. RFC 6154 section 2.
+	//
+	// The framework also drops every other result before writing it, so a
+	// backend that ignores the option is still correct on the wire. Honouring
+	// it saves producing results that are then discarded.
 	SelectSpecialUse bool `imapfeature:"list-special-use"`
 	// ReturnSubscribed asks for the \Subscribed attribute on returned
 	// mailboxes. RFC 5258 section 3.
@@ -315,7 +319,7 @@ type ListOptions struct {
 	// RFC 3348, incorporated into IMAP4rev2.
 	ReturnChildren bool `imapfeature:"list-children"`
 	// ReturnSpecialUse asks for special-use attributes such as \Archive.
-	// RFC 6154 section 5.2.
+	// RFC 6154 section 2.
 	ReturnSpecialUse bool `imapfeature:"list-special-use"`
 	_                struct{}
 }
