@@ -135,12 +135,12 @@ Incompatible changes deliberately deferred to v2. Each ships in v1 as an
 additive opt-in, so in v2 the change is a new default, not a new feature.
 
 - **Password-only SASL selection by default** (T29). With
-  `AuthenticateOptions.Credential` unset, `Client.Authenticate` can send a
+  `AuthenticateOptions.CredentialKind` unset, `Client.Authenticate` can send a
   password as a bearer token to a server that offers OAUTHBEARER or XOAUTH2
   beside PLAIN, and the server refuses it. v1 keeps that, because callers
   who pass a token as the password rely on it, and changing it would break
-  their logins without a compile error. In v2 an unset `Credential` could
-  mean `CredentialPassword`.
+  their logins without a compile error. In v2 an unset `CredentialKind`
+  could mean `CredentialPassword`.
 
 ## M6 — Server implementation (T18–T25) — after v1.0
 

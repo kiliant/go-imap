@@ -13,8 +13,8 @@ import (
 )
 
 // TestAuthenticateCredentialInterop logs in through automatic mechanism
-// selection, restricted by AuthenticateOptions.Credential. Stalwart is the
-// case that motivated it: it advertises OAUTHBEARER beside PLAIN, so the
+// selection, restricted by AuthenticateOptions.CredentialKind. Stalwart is
+// the case that motivated it: it advertises OAUTHBEARER beside PLAIN, so the
 // unrestricted default sends the password as a bearer token and is refused.
 func TestAuthenticateCredentialInterop(t *testing.T) {
 	for _, server := range harness.RunningServers() {
@@ -37,7 +37,7 @@ func TestAuthenticateCredentialInterop(t *testing.T) {
 	}
 }
 
-func testCredentialInterop(t *testing.T, server *harness.Server, kind imapclient.Credential) {
+func testCredentialInterop(t *testing.T, server *harness.Server, kind imapclient.CredentialKind) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -62,8 +62,8 @@ func testCredentialInterop(t *testing.T, server *harness.Server, kind imapclient
 	}
 
 	err = client.Authenticate(ctx, authInteropUsername, authInteropPassword, &imapclient.AuthenticateOptions{
-		Credential: kind,
-		Token:      token,
+		CredentialKind: kind,
+		Token:          token,
 	})
 	if err == nil && client.State() != imapclient.StateAuthenticated {
 		err = fmt.Errorf("state after %s authentication = %s, want authenticated", kind, client.State())

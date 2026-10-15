@@ -61,11 +61,11 @@ func sentMechanism(t *testing.T, line string) (string, string) {
 	return fields[2], string(payload)
 }
 
-// TestAuthenticateUnsetCredentialSendsPasswordAsBearerToken pins the v1
-// default that AuthenticateOptions.Credential exists to opt out of: with no
-// Token, a server offering OAUTHBEARER beside PLAIN is sent the password as
-// the bearer token. Changing this is a v2 decision.
-func TestAuthenticateUnsetCredentialSendsPasswordAsBearerToken(t *testing.T) {
+// TestAuthenticateUnsetCredentialKindSendsPasswordAsBearerToken pins the v1
+// default that AuthenticateOptions.CredentialKind exists to opt out of: with
+// no Token, a server offering OAUTHBEARER beside PLAIN is sent the password
+// as the bearer token. Changing this is a v2 decision.
+func TestAuthenticateUnsetCredentialKindSendsPasswordAsBearerToken(t *testing.T) {
 	for _, opts := range []*AuthenticateOptions{nil, {}} {
 		line, err := authenticateFirstLine(t, "AUTH=OAUTHBEARER AUTH=PLAIN", opts)
 		if err == nil {
@@ -85,15 +85,15 @@ func TestAuthenticateCredentialSelection(t *testing.T) {
 		opts         *AuthenticateOptions
 		want         string
 	}{
-		{"password skips OAuth for PLAIN", "AUTH=OAUTHBEARER AUTH=XOAUTH2 AUTH=PLAIN", &AuthenticateOptions{Credential: CredentialPassword}, "PLAIN"},
-		{"password keeps SCRAM first", "AUTH=OAUTHBEARER AUTH=PLAIN AUTH=SCRAM-SHA-256", &AuthenticateOptions{Credential: CredentialPassword}, "SCRAM-SHA-256"},
-		{"password keeps the default order", "AUTH=LOGIN AUTH=PLAIN AUTH=CRAM-MD5", &AuthenticateOptions{Credential: CredentialPassword}, "CRAM-MD5"},
-		{"password falls through to LOGIN", "AUTH=XOAUTH2 AUTH=LOGIN", &AuthenticateOptions{Credential: CredentialPassword}, "LOGIN"},
-		{"password allows an explicit password mechanism", "AUTH=OAUTHBEARER AUTH=PLAIN AUTH=CRAM-MD5", &AuthenticateOptions{Credential: CredentialPassword, Mechanism: "plain"}, "PLAIN"},
-		{"bearer skips SCRAM", "AUTH=SCRAM-SHA-256 AUTH=PLAIN AUTH=OAUTHBEARER", &AuthenticateOptions{Credential: CredentialBearerToken}, "OAUTHBEARER"},
-		{"bearer prefers OAUTHBEARER", "AUTH=XOAUTH2 AUTH=OAUTHBEARER", &AuthenticateOptions{Credential: CredentialBearerToken}, "OAUTHBEARER"},
-		{"bearer takes XOAUTH2", "AUTH=PLAIN AUTH=XOAUTH2", &AuthenticateOptions{Credential: CredentialBearerToken}, "XOAUTH2"},
-		{"bearer allows an explicit bearer mechanism", "AUTH=OAUTHBEARER AUTH=XOAUTH2", &AuthenticateOptions{Credential: CredentialBearerToken, Mechanism: "XOAUTH2"}, "XOAUTH2"},
+		{"password skips OAuth for PLAIN", "AUTH=OAUTHBEARER AUTH=XOAUTH2 AUTH=PLAIN", &AuthenticateOptions{CredentialKind: CredentialPassword}, "PLAIN"},
+		{"password keeps SCRAM first", "AUTH=OAUTHBEARER AUTH=PLAIN AUTH=SCRAM-SHA-256", &AuthenticateOptions{CredentialKind: CredentialPassword}, "SCRAM-SHA-256"},
+		{"password keeps the default order", "AUTH=LOGIN AUTH=PLAIN AUTH=CRAM-MD5", &AuthenticateOptions{CredentialKind: CredentialPassword}, "CRAM-MD5"},
+		{"password falls through to LOGIN", "AUTH=XOAUTH2 AUTH=LOGIN", &AuthenticateOptions{CredentialKind: CredentialPassword}, "LOGIN"},
+		{"password allows an explicit password mechanism", "AUTH=OAUTHBEARER AUTH=PLAIN AUTH=CRAM-MD5", &AuthenticateOptions{CredentialKind: CredentialPassword, Mechanism: "plain"}, "PLAIN"},
+		{"bearer skips SCRAM", "AUTH=SCRAM-SHA-256 AUTH=PLAIN AUTH=OAUTHBEARER", &AuthenticateOptions{CredentialKind: CredentialBearerToken}, "OAUTHBEARER"},
+		{"bearer prefers OAUTHBEARER", "AUTH=XOAUTH2 AUTH=OAUTHBEARER", &AuthenticateOptions{CredentialKind: CredentialBearerToken}, "OAUTHBEARER"},
+		{"bearer takes XOAUTH2", "AUTH=PLAIN AUTH=XOAUTH2", &AuthenticateOptions{CredentialKind: CredentialBearerToken}, "XOAUTH2"},
+		{"bearer allows an explicit bearer mechanism", "AUTH=OAUTHBEARER AUTH=XOAUTH2", &AuthenticateOptions{CredentialKind: CredentialBearerToken, Mechanism: "XOAUTH2"}, "XOAUTH2"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,7 +116,7 @@ func TestAuthenticateBearerCredentialToken(t *testing.T) {
 		{"", "top-secret"},
 		{"oauth-token", "oauth-token"},
 	} {
-		line, err := authenticateFirstLine(t, "AUTH=PLAIN AUTH=XOAUTH2", &AuthenticateOptions{Credential: CredentialBearerToken, Token: test.token})
+		line, err := authenticateFirstLine(t, "AUTH=PLAIN AUTH=XOAUTH2", &AuthenticateOptions{CredentialKind: CredentialBearerToken, Token: test.token})
 		if err == nil {
 			t.Fatal("Authenticate() succeeded against a server that answers NO")
 		}
@@ -128,12 +128,12 @@ func TestAuthenticateBearerCredentialToken(t *testing.T) {
 }
 
 // A mechanism the built-ins do not implement is the caller's own, supplied
-// through SASL, so a Credential does not second-guess it.
+// through SASL, so a CredentialKind does not second-guess it.
 func TestAuthenticateCredentialAllowsCustomMechanism(t *testing.T) {
-	for _, kind := range []Credential{CredentialPassword, CredentialBearerToken} {
+	for _, kind := range []CredentialKind{CredentialPassword, CredentialBearerToken} {
 		line, err := authenticateFirstLine(t, "AUTH=OAUTHBEARER AUTH=PLAIN AUTH=X-CUSTOM", &AuthenticateOptions{
-			Credential: kind,
-			Mechanism:  "X-CUSTOM",
+			CredentialKind: kind,
+			Mechanism:      "X-CUSTOM",
 			SASL: func(string) (*SASLMechanism, error) {
 				return &SASLMechanism{Next: func([]byte) ([]byte, error) { return []byte("custom"), nil }}, nil
 			},
@@ -142,7 +142,7 @@ func TestAuthenticateCredentialAllowsCustomMechanism(t *testing.T) {
 			t.Fatal("Authenticate() succeeded against a server that answers NO")
 		}
 		if mechanism, payload := sentMechanism(t, line); mechanism != "X-CUSTOM" || payload != "custom" {
-			t.Fatalf("Credential %q: sent %s %q, want X-CUSTOM", kind, mechanism, payload)
+			t.Fatalf("CredentialKind %q: sent %s %q, want X-CUSTOM", kind, mechanism, payload)
 		}
 	}
 }
@@ -154,14 +154,14 @@ func TestAuthenticateCredentialRefusedBeforeSending(t *testing.T) {
 		opts         *AuthenticateOptions
 		want         string
 	}{
-		{"password with a Token", "AUTH=PLAIN", &AuthenticateOptions{Credential: CredentialPassword, Token: "oauth-token"}, "Token"},
-		{"password with OAUTHBEARER", "AUTH=OAUTHBEARER AUTH=PLAIN", &AuthenticateOptions{Credential: CredentialPassword, Mechanism: "OAUTHBEARER"}, "OAUTHBEARER"},
-		{"password with xoauth2", "AUTH=XOAUTH2 AUTH=PLAIN", &AuthenticateOptions{Credential: CredentialPassword, Mechanism: "xoauth2"}, "XOAUTH2"},
-		{"bearer with PLAIN", "AUTH=OAUTHBEARER AUTH=PLAIN", &AuthenticateOptions{Credential: CredentialBearerToken, Mechanism: "PLAIN"}, "PLAIN"},
-		{"bearer with SCRAM", "AUTH=OAUTHBEARER AUTH=SCRAM-SHA-256", &AuthenticateOptions{Credential: CredentialBearerToken, Mechanism: "SCRAM-SHA-256"}, "SCRAM-SHA-256"},
-		{"unknown kind", "AUTH=PLAIN", &AuthenticateOptions{Credential: "certificate"}, `"certificate"`},
-		{"password, OAuth only", "AUTH=OAUTHBEARER AUTH=XOAUTH2", &AuthenticateOptions{Credential: CredentialPassword}, "password"},
-		{"bearer, passwords only", "AUTH=SCRAM-SHA-256 AUTH=PLAIN AUTH=LOGIN", &AuthenticateOptions{Credential: CredentialBearerToken}, "bearer-token"},
+		{"password with a Token", "AUTH=PLAIN", &AuthenticateOptions{CredentialKind: CredentialPassword, Token: "oauth-token"}, "Token"},
+		{"password with OAUTHBEARER", "AUTH=OAUTHBEARER AUTH=PLAIN", &AuthenticateOptions{CredentialKind: CredentialPassword, Mechanism: "OAUTHBEARER"}, "OAUTHBEARER"},
+		{"password with xoauth2", "AUTH=XOAUTH2 AUTH=PLAIN", &AuthenticateOptions{CredentialKind: CredentialPassword, Mechanism: "xoauth2"}, "XOAUTH2"},
+		{"bearer with PLAIN", "AUTH=OAUTHBEARER AUTH=PLAIN", &AuthenticateOptions{CredentialKind: CredentialBearerToken, Mechanism: "PLAIN"}, "PLAIN"},
+		{"bearer with SCRAM", "AUTH=OAUTHBEARER AUTH=SCRAM-SHA-256", &AuthenticateOptions{CredentialKind: CredentialBearerToken, Mechanism: "SCRAM-SHA-256"}, "SCRAM-SHA-256"},
+		{"unknown kind", "AUTH=PLAIN", &AuthenticateOptions{CredentialKind: "certificate"}, `"certificate"`},
+		{"password, OAuth only", "AUTH=OAUTHBEARER AUTH=XOAUTH2", &AuthenticateOptions{CredentialKind: CredentialPassword}, "password"},
+		{"bearer, passwords only", "AUTH=SCRAM-SHA-256 AUTH=PLAIN AUTH=LOGIN", &AuthenticateOptions{CredentialKind: CredentialBearerToken}, "bearer-token"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,8 +186,9 @@ func TestAuthenticateCredentialRefusedBeforeSending(t *testing.T) {
 }
 
 // Every mechanism automatic selection can choose must belong to exactly one
-// credential kind, or a Credential would silently exclude or double-count it.
-func TestSASLPreferenceIsPartitionedByCredential(t *testing.T) {
+// CredentialKind, or filtering by kind would silently exclude or double-count
+// it.
+func TestSASLPreferenceIsPartitionedByCredentialKind(t *testing.T) {
 	for _, name := range saslPreference {
 		if passwordMechanisms[name] == bearerMechanisms[name] {
 			t.Errorf("%s: password %t, bearer token %t; want exactly one", name, passwordMechanisms[name], bearerMechanisms[name])

@@ -42,25 +42,26 @@ type AuthenticateOptions struct {
 	// empty, password is used as the token for compatibility with simple
 	// credential stores.
 	//
-	// That fallback applies to automatic selection too: unless Credential is
-	// set, a server advertising OAUTHBEARER or XOAUTH2 is sent password as a
-	// bearer token in preference to CRAM-MD5, PLAIN and LOGIN, and rejects it
-	// if it is a real password. Set Credential to [CredentialPassword] when it
-	// is.
+	// That fallback applies to automatic selection too: unless
+	// CredentialKind is set, a server advertising OAUTHBEARER or XOAUTH2 is
+	// sent password as a bearer token in preference to CRAM-MD5, PLAIN and
+	// LOGIN, and rejects it if it is a real password. Set CredentialKind to
+	// [CredentialPassword] when it is.
 	Token string
 
-	// Credential, when set, says what Authenticate's password argument holds
-	// and restricts automatic selection to the mechanisms that take that kind
-	// of credential. Empty keeps the behaviour described on Mechanism and
-	// Token, under which a password can be sent as a bearer token.
+	// CredentialKind, when set, says what Authenticate's password argument
+	// holds and restricts automatic selection to the mechanisms that take
+	// that kind of credential. Empty keeps the behaviour described on
+	// Mechanism and Token, under which a password can be sent as a bearer
+	// token.
 	//
 	// Settings that contradict it are refused before anything is sent: with
 	// [CredentialPassword], a non-empty Token or a Mechanism of OAUTHBEARER or
 	// XOAUTH2; with [CredentialBearerToken], a Mechanism naming a built-in
 	// password mechanism. A Mechanism the built-ins do not implement is left
-	// to SASL under either kind. A Credential this release does not know is
+	// to SASL under either kind. A kind this release does not know is
 	// refused, never treated as one it does.
-	Credential Credential
+	CredentialKind CredentialKind
 
 	// OAuthHost and OAuthPort add the optional host and port fields to an
 	// OAUTHBEARER initial response.
@@ -86,22 +87,22 @@ type AuthenticateOptions struct {
 	_ struct{}
 }
 
-// Credential is the kind of secret Authenticate's password argument holds; see
-// [AuthenticateOptions.Credential]. It is a string-backed open type, so a
-// future kind, such as a client certificate for EXTERNAL, is a new constant
-// rather than a new field.
-type Credential string
+// CredentialKind is the kind of secret Authenticate's password argument
+// holds; see [AuthenticateOptions.CredentialKind]. It is a string-backed open
+// type, so a future kind, such as a client certificate for EXTERNAL, is a new
+// constant rather than a new field.
+type CredentialKind string
 
 const (
 	// CredentialPassword restricts selection to the built-in mechanisms that
 	// take a password, preferring, in order: SCRAM-SHA-256-PLUS,
 	// SCRAM-SHA-256, SCRAM-SHA-1-PLUS, SCRAM-SHA-1, CRAM-MD5, PLAIN, then
 	// LOGIN.
-	CredentialPassword Credential = "password"
+	CredentialPassword CredentialKind = "password"
 	// CredentialBearerToken restricts selection to OAUTHBEARER, then XOAUTH2.
 	// The token sent is [AuthenticateOptions.Token] when set, otherwise the
 	// password argument.
-	CredentialBearerToken Credential = "bearer-token"
+	CredentialBearerToken CredentialKind = "bearer-token"
 )
 
 // LoginOptions controls the RFC 3501 LOGIN command. A nil pointer selects the
@@ -160,9 +161,10 @@ func (c *Client) Login(ctx context.Context, username, password string, options *
 // The default selection ranks OAUTHBEARER and XOAUTH2 above CRAM-MD5, PLAIN
 // and LOGIN and, with no Token, sends password as the bearer token, so a
 // server that offers both kinds rejects a correct password. Set
-// [AuthenticateOptions.Credential] to [CredentialPassword] to keep the choice
-// to password mechanisms. If the server then advertises none, Authenticate
-// fails without sending anything, and [Client.Login] remains the fallback.
+// [AuthenticateOptions.CredentialKind] to [CredentialPassword] to keep the
+// choice to password mechanisms. If the server then advertises none,
+// Authenticate fails without sending anything, and [Client.Login] remains the
+// fallback.
 func (c *Client) Authenticate(ctx context.Context, username, password string, opts *AuthenticateOptions) error {
 	if opts == nil {
 		opts = &AuthenticateOptions{}
@@ -245,7 +247,7 @@ func (c *Client) prepareLogin() error {
 
 func (c *Client) selectSASL(username, password string, opts *AuthenticateOptions) (string, *SASLMechanism, error) {
 	name := strings.ToUpper(opts.Mechanism)
-	allowed, err := credentialMechanisms(opts.Credential, name, opts.Token)
+	allowed, err := credentialMechanisms(opts.CredentialKind, name, opts.Token)
 	if err != nil {
 		return "", nil, err
 	}
@@ -259,7 +261,7 @@ func (c *Client) selectSASL(username, password string, opts *AuthenticateOptions
 	}
 	if name == "" {
 		if allowed != nil {
-			return "", nil, authProtocolError("server advertises no supported SASL mechanism that takes a %s credential", opts.Credential)
+			return "", nil, authProtocolError("server advertises no supported SASL mechanism that takes a %s credential", opts.CredentialKind)
 		}
 		return "", nil, authProtocolError("server advertises no supported SASL mechanism")
 	}
@@ -319,7 +321,7 @@ var passwordMechanisms = map[string]bool{
 
 // bearerMechanisms lists the built-in mechanisms that send a bearer token.
 // Every entry of saslPreference is in exactly one of passwordMechanisms and
-// bearerMechanisms, so that each Credential kind can filter it.
+// bearerMechanisms, so that each CredentialKind can filter it.
 var bearerMechanisms = map[string]bool{
 	"OAUTHBEARER": true,
 	"XOAUTH2":     true,
@@ -332,7 +334,7 @@ var bearerMechanisms = map[string]bool{
 //
 // None of these errors may quote token: unlike the mechanism name, it is a
 // secret.
-func credentialMechanisms(kind Credential, mechanism, token string) (map[string]bool, error) {
+func credentialMechanisms(kind CredentialKind, mechanism, token string) (map[string]bool, error) {
 	switch kind {
 	case "":
 		return nil, nil

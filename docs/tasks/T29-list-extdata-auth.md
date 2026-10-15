@@ -234,26 +234,32 @@ PR.
 **Proposed API (additive; for api-guardian).**
 
 ```go
-// Credential says what Authenticate's password argument holds. It is an
-// open, string-backed type, so a future kind — a client certificate for
+// CredentialKind says what Authenticate's password argument holds. It is
+// an open, string-backed type, so a future kind — a client certificate for
 // EXTERNAL, say — is a new constant, not a new field.
-type Credential string
+type CredentialKind string
 
 const (
 	// CredentialPassword restricts the choice to mechanisms that take a
 	// password: SCRAM-*, CRAM-MD5, PLAIN and LOGIN.
-	CredentialPassword Credential = "password"
+	CredentialPassword CredentialKind = "password"
 	// CredentialBearerToken restricts it to OAUTHBEARER and XOAUTH2. The
 	// token is Token if set, otherwise the password argument.
-	CredentialBearerToken Credential = "bearer-token"
+	CredentialBearerToken CredentialKind = "bearer-token"
 )
 
 // on AuthenticateOptions:
-	// Credential, when set, restricts automatic mechanism selection to
+	// CredentialKind, when set, restricts automatic mechanism selection to
 	// mechanisms that take this kind of credential. Empty keeps the v1
 	// behaviour, which can send a password as a bearer token.
-	Credential Credential
+	CredentialKind CredentialKind
 ```
+
+**Name.** The guardian approved this as `Credential` (type and field) and
+called a rename optional. The maintainer chose `CredentialKind` before
+v1.2.0 froze it. The value is a kind, not the secret. The rename also keeps
+`Credential` free for a future type that carries the secret itself, such as a
+token source. The constants keep their names.
 
 **Semantics to decide and pin in tests.**
 - **Unset (`""`):** exactly today's behaviour, byte for byte. A test pins
@@ -277,7 +283,7 @@ const (
 
 **Docs.**
 - A warning on `Client.Authenticate` and `AuthenticateOptions.Token` that,
-  unset, a password can go out as a bearer token. Point to `Credential`.
+  unset, a password can go out as a bearer token. Point to `CredentialKind`.
 - CHANGELOG. A note in `docs/API-STABILITY.md` if the guardian thinks
   "opt-in now, default flip at v2" sets a precedent.
 
@@ -290,7 +296,7 @@ const (
   - The existing OAUTHBEARER test passes with `CredentialBearerToken`.
 
 **Follow-up.** `cmd/imapcli/auth.go` drops its own selection and sets
-`Credential: CredentialPassword`. That file belonged to T28, which is done;
+`CredentialKind: CredentialPassword`. That file belonged to T28, which is done;
 this spec and T28's both name the hand-over (BOARD's lock-passing rule).
 
 ## Follow-ups outside this task
@@ -313,7 +319,7 @@ Each is tracked as a GitHub issue; the bugs found along the way are #22 and
   witness and ignores the option fails there.
 - **imapclient: a code for "no mechanism takes this credential"** (#21).
   `Authenticate` refuses locally when no advertised mechanism takes the
-  `Credential` kind, but the `*imap.Error` it returns has no `Code`. A caller
+  `CredentialKind`, but the `*imap.Error` it returns has no `Code`. A caller
   can tell it apart only by its text. So `cmd/imapcli/auth.go` keeps its own
   copy of the password-mechanism list to decide when to fall back to LOGIN.
   If the library adds a password mechanism, such copies fall out of date:
@@ -334,7 +340,7 @@ Each is tracked as a GitHub issue; the bugs found along the way are #22 and
     support it, `goimap` included.
   - Fuzz seeds cover the new parse paths.
   - The LIST-EXTENDED coverage cells say what is true.
-- **Item 3:** `Credential` is in place with the semantics above. The unset
+- **Item 3:** `CredentialKind` is in place with the semantics above. The unset
   behaviour is pinned unchanged, and Stalwart password login is verified.
 - **All items:**
   - `apidiff` reports only compatible changes in both modules.

@@ -82,16 +82,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `imapclient.Client.SortExtended` refuses RETURN (UPDATE), because the
   unsolicited ESEARCH updates it asks for are not delivered yet. Allowing it
   later is compatible.
-- `imapclient.AuthenticateOptions.Credential`, the type `imapclient.Credential`
-  and its constants `CredentialPassword` and `CredentialBearerToken`: they say
-  what `Authenticate`'s password argument holds, and restrict automatic SASL
-  selection to the mechanisms that take it. With `CredentialPassword`, a server
-  offering OAUTHBEARER or XOAUTH2 beside PLAIN, as Stalwart does by default,
-  gets SCRAM, CRAM-MD5, PLAIN or LOGIN instead of the password as a bearer
-  token. Settings that contradict the kind, and kinds this release does not
-  know, are refused before anything is sent. Unset, selection is unchanged:
-  the default stays as documented in v1, and changing it is left for v2.
-  Additive.
+- `imapclient.AuthenticateOptions.CredentialKind`, the type
+  `imapclient.CredentialKind` and its constants `CredentialPassword` and
+  `CredentialBearerToken`: they say what `Authenticate`'s password argument
+  holds, and restrict automatic SASL selection to the mechanisms that take it.
+  With `CredentialPassword`, a server offering OAUTHBEARER or XOAUTH2 beside
+  PLAIN, as Stalwart does by default, gets SCRAM, CRAM-MD5, PLAIN or LOGIN
+  instead of the password as a bearer token. Settings that contradict the
+  kind, and kinds this release does not know, are refused before anything is
+  sent. Unset, selection is unchanged: the default stays as documented in v1,
+  and changing it is left for v2. Additive.
 
 #### Fixed
 

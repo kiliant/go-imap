@@ -371,8 +371,8 @@ The test is whether a correct server, given the data, could put it on the wire.
   part of the promise. If one is judged wrong after v1.0, it gets an additive
   opt-in on the existing options struct, and the flip is recorded under "v2
   candidates" in `docs/ROADMAP.md`. First exercised by
-  `imapclient.AuthenticateOptions.Credential`: unset, `Authenticate` can still
-  send a password as a bearer token, as v1 documents.
+  `imapclient.AuthenticateOptions.CredentialKind`: unset, `Authenticate` can
+  still send a password as a bearer token, as v1 documents.
 - Removal requires a deprecation notice for at least two minor releases, and
   never lands before v2.
 - CI will run `golang.org/x/exp/cmd/apidiff` against the previous tag on every

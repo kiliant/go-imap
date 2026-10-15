@@ -31,7 +31,7 @@ func authenticate(ctx context.Context, client *imapclient.Client, user, password
 		return client.Login(ctx, user, password, nil)
 	}
 	return client.Authenticate(ctx, user, password, &imapclient.AuthenticateOptions{
-		Credential: imapclient.CredentialPassword,
+		CredentialKind: imapclient.CredentialPassword,
 	})
 }
 

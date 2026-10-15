@@ -178,4 +178,4 @@ T28 is complete. Under BOARD's lock-passing rule, `cmd/imapcli/auth.go` and
 the test of its mechanism choice in `cmd/imapcli/backup_test.go` pass to
 [T29](T29-list-extdata-auth.md). They worked around imapclient's automatic
 SASL selection, which could send a password as a bearer token, and T29 adds
-`AuthenticateOptions.Credential` to make the workaround unnecessary.
+`AuthenticateOptions.CredentialKind` to make the workaround unnecessary.
