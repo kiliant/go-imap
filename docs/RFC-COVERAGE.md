@@ -141,11 +141,13 @@ servers, Dovecot and Stalwart.
     GreenMail do not offer LIST-EXTENDED.
 
 [^srvlistext]: CHILDINFO is written by the framework, only under
-    RECURSIVEMATCH and only for requested base selection options; the backend
-    supplies `ListData.ChildInfo`. RECURSIVEMATCH is accepted only beside
-    SUBSCRIBED, the one base option implemented; REMOTE and SPECIAL-USE are
-    independent options. `imapserver/memory` implements it, `backendtest`
-    checks it, and `goimap` passes the section 3.5 interop scenario.
+    RECURSIVEMATCH and only for requested base selection options. The
+    backend, or the framework's own evaluation, supplies `ListData.ChildInfo`.
+    RECURSIVEMATCH is accepted only beside SUBSCRIBED, the one base option
+    implemented; REMOTE and SPECIAL-USE are independent options. A backend
+    witnessing `"LIST-EXTENDED"` evaluates it, as `imapserver/memory` does and
+    `backendtest` checks. The framework evaluates it for any other backend,
+    from plain List calls. `goimap` passes the section 3.5 interop scenario.
 
 ## Group B — synchronisation & identity (task T09)
 

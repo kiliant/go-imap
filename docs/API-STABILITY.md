@@ -491,6 +491,33 @@ Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
 
+### A witness may choose who evaluates, not whether to advertise — added 2026-10-15
+
+Some behaviour can neither be refused nor left to an unwitnessed backend. The
+first case is RECURSIVEMATCH (RFC 5258 section 3.1). LIST-EXTENDED enables it,
+RFC 5258 section 3 allows BAD only for options the server does not recognise,
+and IMAP4rev2's LIST incorporates it. A server advertising either therefore
+cannot answer it BAD. Before this rule, the framework handed it to every
+backend, so one that ignored it answered wrongly.
+
+**The rule: where the framework can evaluate a behaviour from data every
+backend already returns, it does so for a backend that has not witnessed the
+behaviour. The witness then routes the work to the backend, and does not gate
+the advertisement.** For RECURSIVEMATCH the token is `"LIST-EXTENDED"`, the
+capability that enables it. A backend witnessing it receives
+`ListOptions.SelectRecursiveMatch`. Any other backend never sees the field,
+and the framework derives the answer from plain `Session.List` calls
+(`imapserver/ext_a_list_recursive.go`). LIST-EXTENDED itself stays
+framework-witnessed.
+
+The rule keeps both §10 properties. The token is still the wire token, and a
+future option is still a new token on its own capability. RFC 5258 section 3
+requires each option to be enabled by a capability string, which the
+descriptor table already gates. What changes is the failure direction. A
+backend that forgets the witness is correct and slower, not wrong.
+`backendtest` holds a backend that claims the witness to the native semantics
+and skips the case for one that does not.
+
 ### An umbrella capability is witnessed by its members — added by T24, 2026-08-14
 
 `IMAP4REV2` is not a capability a backend implements. It is a claim that every

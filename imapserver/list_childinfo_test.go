@@ -9,15 +9,42 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapclient"
+	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/imapserver/memory"
 )
 
 // TestLoopbackListRecursiveMatch runs RFC 5258 section 3.5's scenario end to
 // end: a parent is returned because a descendant is subscribed, and says so
 // with CHILDINFO, whether the parent is a mailbox or only a hierarchy level.
+//
+// It runs against memory, which evaluates RECURSIVEMATCH itself, and against
+// a backend without the "LIST-EXTENDED" witness, for which the framework
+// evaluates it. The two must answer alike.
 func TestLoopbackListRecursiveMatch(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		backend func(*testing.T, *memory.Backend) imapserver.Backend
+	}{
+		{"backend", func(_ *testing.T, b *memory.Backend) imapserver.Backend { return b }},
+		{"framework", func(t *testing.T, b *memory.Backend) imapserver.Backend {
+			return &withoutRecursiveMatchBackend{inner: b, t: t}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testListRecursiveMatch(t, func(b *memory.Backend) imapserver.Backend { return test.backend(t, b) })
+		})
+	}
+}
+
+func testListRecursiveMatch(t *testing.T, backend func(*memory.Backend) imapserver.Backend) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	client, _ := newGroupAClient(t, ctx)
+	inner := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend(inner), &imapserver.Options{AllowInsecureAuth: true})
+	client, _ := openLoopbackClient(t, ctx, server, &imapclient.Options{AllowInsecureAuth: true})
+	if err := client.Login(ctx, "alice", "secret", nil); err != nil {
+		t.Fatal(err)
+	}
 
 	// Deep and Deep/Er are never created, so they exist only as levels.
 	for _, mailbox := range []string{"Foo", "Foo/Bar", "Moo", "Deep/Er/Child", "Subbed", "Subbed/Too"} {
@@ -74,6 +101,18 @@ func TestLoopbackListRecursiveMatch(t *testing.T) {
 	}
 	if all["Moo"] != nil || all["INBOX"] != nil {
 		t.Errorf(`LIST "*" returned a mailbox with nothing subscribed in it: %v`, keys(all))
+	}
+
+	// The reference is prefixed to the pattern: "Deep/" and "%" select the
+	// level below Deep, which is not a mailbox either.
+	referenced, err := client.List("Deep/", "%", &imapclient.ListOptions{
+		SelectionOptions: []imapclient.ListSelectOption{imapclient.ListSelectSubscribed, imapclient.ListSelectRecursiveMatch},
+	}).Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(referenced) != 1 || referenced[0].Mailbox != "Deep/Er" || !reflect.DeepEqual(referenced[0].ChildInfo, childInfo) || !imap.ContainsAttr(referenced[0].Attrs, imap.MailboxAttrNonExistent) {
+		t.Errorf(`LIST "Deep/" "%%" = %#v, want only Deep/Er, \NonExistent with CHILDINFO (SUBSCRIBED)`, referenced)
 	}
 
 	plain, err := client.List("", "*", &imapclient.ListOptions{
@@ -154,4 +193,36 @@ func keys(m map[string]*imapclient.ListData) []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// withoutRecursiveMatchBackend hides the memory backend's "LIST-EXTENDED"
+// witness, so the framework evaluates RECURSIVEMATCH, and fails the test if
+// the option reaches the session anyway.
+type withoutRecursiveMatchBackend struct {
+	inner *memory.Backend
+	t     *testing.T
+}
+
+func (b *withoutRecursiveMatchBackend) Authenticate(ctx context.Context, info *imapserver.ConnInfo, credentials *imapserver.Credentials, options *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	session, err := b.inner.Authenticate(ctx, info, credentials, options)
+	if err != nil {
+		return nil, err
+	}
+	return &withoutRecursiveMatchSession{Session: session, t: b.t}, nil
+}
+
+func (b *withoutRecursiveMatchBackend) SupportsCapability(ctx context.Context, name string, options *imapserver.CapabilitySupportOptions) bool {
+	return name != "LIST-EXTENDED" && b.inner.SupportsCapability(ctx, name, options)
+}
+
+type withoutRecursiveMatchSession struct {
+	imapserver.Session
+	t *testing.T
+}
+
+func (s *withoutRecursiveMatchSession) List(ctx context.Context, writer *imapserver.ListWriter, reference string, patterns []string, options *imapserver.ListOptions) error {
+	if options != nil && options.SelectRecursiveMatch {
+		s.t.Errorf("SelectRecursiveMatch reached a backend without the LIST-EXTENDED witness")
+	}
+	return s.Session.List(ctx, writer, reference, patterns, options)
 }

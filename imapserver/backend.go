@@ -304,6 +304,16 @@ type ListOptions struct {
 	// The framework sets it only together with Subscribed, the one base
 	// selection option it implements, and answers any other combination BAD
 	// (RFC 5258 section 6).
+	//
+	// It also sets it only for a backend that witnesses "LIST-EXTENDED"
+	// through [CapabilitySupport], which says the backend evaluates it. For
+	// any other backend the framework evaluates RECURSIVEMATCH itself, from
+	// List calls for "*" with and without Subscribed, so a backend need not
+	// implement it. That evaluation takes the canonical pattern to be the
+	// reference followed by the pattern, unless the pattern starts with the
+	// hierarchy delimiter (RFC 3501 section 6.3.8). A backend that interprets
+	// the reference otherwise should witness "LIST-EXTENDED" and evaluate the
+	// option itself.
 	SelectRecursiveMatch bool `imapfeature:"list-extended"`
 	// SelectSpecialUse restricts the result to special-use mailboxes: those
 	// with a use attribute such as \Archive. RFC 6154 section 2.

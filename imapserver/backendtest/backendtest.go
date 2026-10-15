@@ -216,11 +216,15 @@ func Run(t *testing.T, harness *Harness) {
 
 	// RFC 5258 section 3.5: with RECURSIVEMATCH, a parent that is not
 	// subscribed is returned because a descendant is, and says so in
-	// ChildInfo. The framework accepts RECURSIVEMATCH for every backend, since
-	// LIST-EXTENDED needs no witness, so a backend that ignored the option
-	// would answer it wrongly rather than be refused.
+	// ChildInfo. Only a backend witnessing "LIST-EXTENDED" receives the
+	// option; the framework evaluates it for any other. So a backend that
+	// claims the witness is held to it here, and one without it is skipped.
 	t.Run("list-recursivematch", func(t *testing.T) {
 		instance, session := newSession(t, harness)
+		if !supportsCapability(instance, session, "LIST-EXTENDED") {
+			closeSession(t, instance, session)
+			t.Skip(`backend does not witness "LIST-EXTENDED"; the framework evaluates RECURSIVEMATCH`)
+		}
 		ctx := context.Background()
 		for _, name := range []string{"recursive", "recursive/child"} {
 			if err := session.Create(ctx, name, nil); err != nil {
@@ -301,7 +305,7 @@ func Run(t *testing.T, harness *Harness) {
 		if err != nil || copyData == nil || !copyData.HasUIDs || !copyData.SourceUIDs.Contains(remainingUID) {
 			t.Fatalf("COPY = %#v, %v", copyData, err)
 		}
-		if supportsMove(instance, session) {
+		if supportsCapability(instance, session, "MOVE") {
 			moveMailbox, ok := result.Mailbox.(imapserver.MoveMailbox)
 			if !ok {
 				t.Fatal("MOVE is advertised but selected mailbox does not implement MoveMailbox")
@@ -509,12 +513,14 @@ func waitForAddedUID(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notific
 	}
 }
 
-func supportsMove(instance *Instance, session imapserver.Session) bool {
+// supportsCapability asks the witness the framework would: the session's
+// CapabilitySupport when it has one, otherwise the backend's.
+func supportsCapability(instance *Instance, session imapserver.Session, name string) bool {
 	if support, ok := session.(imapserver.CapabilitySupport); ok {
-		return support.SupportsCapability(context.Background(), "MOVE", nil)
+		return support.SupportsCapability(context.Background(), name, nil)
 	}
 	support, ok := instance.Backend.(imapserver.CapabilitySupport)
-	return ok && support.SupportsCapability(context.Background(), "MOVE", nil)
+	return ok && support.SupportsCapability(context.Background(), name, nil)
 }
 
 func cloneBatch(batch *imapserver.UpdateBatch) *imapserver.UpdateBatch {
