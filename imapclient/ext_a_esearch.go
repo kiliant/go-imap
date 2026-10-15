@@ -355,13 +355,10 @@ func (cmd *ESearchCommand) reconstruct() {
 // It is the guard behind the "cannot be pipelined" rejection in
 // [Client.SearchExtended]. RFC 5182 example 8 shows a server answering two
 // pipelined extended searches in the opposite order, which is why the ESEARCH
-// response carries a correlator at all. Demultiplexing on that correlator needs
-// a collector chain that can hand a response to a command other than the one
-// that parsed it, and this client's chain cannot: each collector consumes from
-// the shared decoder, so a collector that reads a correlator and then declines
-// the response leaves the next collector mid-line. Refusing to create the
-// situation is the only interpretation that cannot silently deliver one
-// command's matches to another.
+// response carries a correlator at all. Responses are now decoded before
+// collection, but ownership and lifecycle handling for concurrent searches and
+// CONTEXT updates are not implemented yet. Keep the existing exclusion until
+// that routing is in place, rather than misassigning a command's matches.
 func (c *Client) searchPending() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -390,36 +387,25 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 		if resp.name != "ESEARCH" || resp.hasNum || resp.cond != nil {
 			return false, nil
 		}
-		dec := resp.dec
-		data := imap.ESearchData{UID: cmd.uid, Values: make(map[ESearchReturnKey]string)}
-		tokenPending := false
-		if dec.SP() {
-			if dec.PeekSpecial('(') {
-				// search-correlator = SP "(" "TAG" SP tag-string ")".
-				if !dec.ExpectSpecial('(') {
-					return true, dec.Err()
-				}
-				var label string
-				if !dec.ExpectAtom(&label) || !dec.ExpectSP() {
-					return true, dec.Err()
-				}
-				if !strings.EqualFold(label, "TAG") {
-					return true, fmt.Errorf("unexpected ESEARCH correlator %q", label)
-				}
-				if !dec.ExpectString(&data.Tag) || !dec.ExpectSpecial(')') {
-					return true, dec.Err()
-				}
-				// The correlator is compared against the command tag in
-				// ESearchCommand.Wait; see the comment there.
-			} else {
-				tokenPending = true
-			}
-		}
-		if err := readESearchItems(dec, &data, tokenPending); err != nil {
+		if err := resp.decodeData(); err != nil {
 			return true, err
 		}
-		if !dec.ExpectCRLF() {
-			return true, dec.Err()
+		parsed := resp.data.esearch
+		if len(parsed.correlator) != 0 && (len(parsed.correlator) != 1 || parsed.correlator[0] != "TAG") {
+			return true, fmt.Errorf("unexpected extended SEARCH correlator %q", parsed.correlator)
+		}
+		data := parsed.result.Data
+		data.Tag = parsed.result.Tag
+		// Preserve the existing tolerance of a missing UID indicator on a UID
+		// command. An explicit UID indicator on a sequence command still fails.
+		if cmd.uid && !data.UID {
+			data.UID = true
+			// The shared decoder cannot infer the command's number mode.
+			// Reinterpret its already-decoded ALL set without reading the wire.
+			for _, r := range data.All {
+				data.AllUIDs = append(data.AllUIDs, imap.UIDRange{Start: imap.UID(r.Start), Stop: imap.UID(r.Stop)})
+			}
+			data.All = nil
 		}
 		// RFC 4731 section 3.1 allows exactly one ESEARCH response per
 		// extended SEARCH. Amalgamating several is reserved for future
@@ -441,6 +427,10 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 // search-return-data items. tokenPending reports that the caller has already
 // consumed the space introducing the first token.
 func readESearchItems(dec *imapwire.Decoder, data *imap.ESearchData, tokenPending bool) error {
+	return readESearchItemsOrdered(dec, data, tokenPending, nil)
+}
+
+func readESearchItemsOrdered(dec *imapwire.Decoder, data *imap.ESearchData, tokenPending bool, items *[]esearchReturnItem) error {
 	for {
 		if !tokenPending && !dec.SP() {
 			return nil
@@ -464,6 +454,9 @@ func readESearchItems(dec *imapwire.Decoder, data *imap.ESearchData, tokenPendin
 			return err
 		}
 		value := string(raw)
+		if items != nil {
+			*items = append(*items, esearchReturnItem{key: key, value: value})
+		}
 		data.Values[key] = value
 		if err := applyESearchItem(data, key, value); err != nil {
 			return err

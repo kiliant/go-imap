@@ -109,13 +109,17 @@ func (c *Client) GetMetadata(ctx context.Context, mailbox string, entries []Meta
 		if resp.hasNum || resp.cond != nil || resp.name != "METADATA" {
 			return false, nil
 		}
+		if err := resp.decodeData(); err != nil {
+			return true, err
+		}
+		metadata := resp.data.metadata
+		if metadata.notification || normalisedMailbox(metadata.values.Mailbox) != normalisedMailbox(mailbox) {
+			return false, nil
+		}
 		if err := countUntaggedResponse(&count, limit, "GETMETADATA"); err != nil {
 			return true, err
 		}
-		parsed, err := readMetadataResponse(resp.dec)
-		if err != nil {
-			return true, err
-		}
+		parsed := metadata.values
 		// RFC 5464 permits multiple METADATA responses per GETMETADATA;
 		// merge entries rather than keeping only the last line.
 		if parsed.Mailbox != "" {
@@ -215,6 +219,23 @@ func validateMetadataDepth(depth string) error {
 }
 
 func readMetadataResponse(dec *imapwire.Decoder) (*MailboxMetadata, error) {
+	parsed, err := readMetadataData(dec)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.notification {
+		return nil, fmt.Errorf("METADATA notification has entry names without values")
+	}
+	return parsed.values, nil
+}
+
+type metadataResponse struct {
+	values       *MailboxMetadata
+	changes      []MetadataEntryName
+	notification bool
+}
+
+func readMetadataData(dec *imapwire.Decoder) (*metadataResponse, error) {
 	if !dec.ExpectSP() {
 		return nil, dec.Err()
 	}
@@ -222,14 +243,30 @@ func readMetadataResponse(dec *imapwire.Decoder) (*MailboxMetadata, error) {
 	if !dec.ExpectMailbox(&mailbox) || !dec.ExpectSP() {
 		return nil, dec.Err()
 	}
-	entries, err := readMetadataEntryValues(dec)
-	if err != nil {
-		return nil, err
+	parsed := &metadataResponse{values: &MailboxMetadata{Mailbox: mailbox}}
+	if dec.PeekSpecial('(') {
+		entries, err := readMetadataEntryValues(dec)
+		if err != nil {
+			return nil, err
+		}
+		parsed.values.Entries = entries
+	} else {
+		parsed.notification = true
+		for {
+			var entry string
+			if !dec.ExpectAstring(&entry) {
+				return nil, dec.Err()
+			}
+			parsed.changes = append(parsed.changes, MetadataEntryName(entry))
+			if !dec.SP() {
+				break
+			}
+		}
 	}
 	if !dec.ExpectCRLF() {
 		return nil, dec.Err()
 	}
-	return &MailboxMetadata{Mailbox: mailbox, Entries: entries}, nil
+	return parsed, nil
 }
 
 func readMetadataEntryValues(dec *imapwire.Decoder) ([]MetadataEntry, error) {

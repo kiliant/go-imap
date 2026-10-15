@@ -161,6 +161,7 @@ type untaggedResponse struct {
 	hasNum bool
 	dec    *imapwire.Decoder
 	cond   *imapwire.RespCond
+	data   responseData
 }
 
 func (c *Client) readResponses() {
@@ -315,6 +316,9 @@ func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.Re
 		}
 		return imapwire.RespCond{}, true, nil
 	}
+	if err := resp.decodeData(); err != nil {
+		return imapwire.RespCond{}, false, err
+	}
 	if c.offerCollector(&resp) {
 		return imapwire.RespCond{}, true, nil
 	}
@@ -460,6 +464,12 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 	}
 	// Unknown unsolicited responses are discarded without losing stream
 	// alignment. Command-specific parsers get the first opportunity above.
+	// Known buffered responses were already consumed by decodeData, including
+	// events whose public handlers have not been added yet. Never discard the
+	// following response when every collector declined one of these.
+	if resp.data.decoded {
+		return resp.data.err
+	}
 	return resp.dec.DiscardLine()
 }
 

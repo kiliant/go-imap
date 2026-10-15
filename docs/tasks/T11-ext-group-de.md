@@ -66,5 +66,7 @@ set. Cyrus is the reference server for METADATA and ACL; verify against it.
 [T30](T30-unsolicited-events.md) takes `imapclient/ext_d_metadata.go`,
 `imapclient/ext_e_context.go`, and event-delivery documentation in
 `imapclient/ext_d_notify.go` from completed T11. It addresses the unsolicited
-response gaps recorded by T27; other group D/E extensions remain outside its
-scope.
+response gaps recorded by T27. The handover also includes only
+`listMetadataCollector` in `imapclient/ext_d_acl.go`, so the LIST-METADATA
+adapter can use the shared METADATA decoder. ACL, LIST-MYRIGHTS and other
+group D/E extensions remain outside its scope.

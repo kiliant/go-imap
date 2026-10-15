@@ -536,15 +536,17 @@ func listMetadataCollector(metadata *ListReturnMetadata, limit int) commandColle
 		if metadata == nil || resp.hasNum || resp.cond != nil || resp.name != "METADATA" {
 			return false, nil
 		}
+		if err := resp.decodeData(); err != nil {
+			return true, err
+		}
+		if resp.data.metadata.notification {
+			return false, nil
+		}
 		if err := countUntaggedResponse(&count, limit, "METADATA"); err != nil {
 			return true, err
 		}
-		parsed, err := readMetadataResponse(resp.dec)
-		if err != nil {
-			return true, err
-		}
 		if metadata.Handler != nil {
-			metadata.Handler(parsed)
+			metadata.Handler(resp.data.metadata.values)
 		}
 		return true, nil
 	}

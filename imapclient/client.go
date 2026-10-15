@@ -151,7 +151,10 @@ type UnilateralDataHandler struct {
 	StatusResponse func(data *StatusResponse)
 	// Status receives an unsolicited STATUS response. After NOTIFY, it is how
 	// the server reports a change in a mailbox other than the selected one
-	// (RFC 5465 section 5).
+	// (RFC 5465 section 5). An in-flight STATUS command claims only its own
+	// mailbox's responses; only the whole name INBOX is case-insensitive.
+	// An event for that same mailbox is indistinguishable from a result and
+	// stays with the command. LIST-STATUS also claims STATUS while pending.
 	Status func(data *StatusData)
 	// List receives a LIST response no in-flight command claimed. After
 	// NOTIFY, it is how the server reports the MailboxName event — a mailbox
@@ -161,7 +164,9 @@ type UnilateralDataHandler struct {
 	// arrive here. The one exception no client can avoid: an event for the
 	// mailbox being selected that arrives before that LIST is identical to it
 	// on the wire, so the event is taken as the command's and the command's
-	// LIST arrives here in its place. On IMAP4rev1 every LIST arrives here.
+	// LIST arrives here in its place. On IMAP4rev1 SELECT/EXAMINE do not
+	// claim LIST. A pending LIST command claims LIST responses, including
+	// indistinguishable events; a legacy LSUB command does not claim LIST.
 	List func(data *ListData)
 	_    struct{}
 }

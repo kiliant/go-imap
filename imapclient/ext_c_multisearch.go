@@ -231,10 +231,10 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 		if err := countUntaggedResponse(&untagged, c.maxUntaggedResponses(), name); err != nil {
 			return true, err
 		}
-		one, err := readMultiSearchResponse(resp.dec)
-		if err != nil {
+		if err := resp.decodeData(); err != nil {
 			return true, err
 		}
+		one := resp.data.esearch.result
 		one.Data.UID = true // RFC 7377 section 2.1.
 		result.data.Results = append(result.data.Results, one)
 		return true, nil
@@ -338,8 +338,26 @@ func writeMultiSearchSource(enc *imapwire.Encoder, src MultiSearchSource) {
 }
 
 func readMultiSearchResponse(dec *imapwire.Decoder) (MultiSearchResult, error) {
-	var out MultiSearchResult
-	out.Data.Values = make(map[ESearchReturnKey]string)
+	parsed, err := readESearchResponse(dec)
+	return parsed.result, err
+}
+
+// Keep repeated return items in wire order as well as the legacy last-value
+// map. CONTEXT updates can repeat ADDTO/REMOVEFROM, which a map alone loses.
+type esearchReturnItem struct {
+	key   ESearchReturnKey
+	value string
+}
+
+type esearchResponse struct {
+	result     MultiSearchResult
+	correlator []string
+	items      []esearchReturnItem
+}
+
+func readESearchResponse(dec *imapwire.Decoder) (*esearchResponse, error) {
+	out := &esearchResponse{}
+	out.result.Data.Values = make(map[ESearchReturnKey]string)
 	tokenPending := false
 	if dec.SP() {
 		if dec.PeekSpecial('(') {
@@ -351,17 +369,19 @@ func readMultiSearchResponse(dec *imapwire.Decoder) (MultiSearchResult, error) {
 				if !dec.ExpectAtom(&label) || !dec.ExpectSP() {
 					return out, dec.Err()
 				}
-				switch strings.ToUpper(label) {
+				label = strings.ToUpper(label)
+				out.correlator = append(out.correlator, label)
+				switch label {
 				case "TAG":
-					if !dec.ExpectString(&out.Tag) {
+					if !dec.ExpectString(&out.result.Tag) {
 						return out, dec.Err()
 					}
 				case "MAILBOX":
-					if !dec.ExpectAstring(&out.Mailbox) {
+					if !dec.ExpectAstring(&out.result.Mailbox) {
 						return out, dec.Err()
 					}
 				case "UIDVALIDITY":
-					if !dec.ExpectNumber(&out.UIDValidity) {
+					if !dec.ExpectNumber(&out.result.UIDValidity) {
 						return out, dec.Err()
 					}
 				default:
@@ -378,7 +398,7 @@ func readMultiSearchResponse(dec *imapwire.Decoder) (MultiSearchResult, error) {
 			tokenPending = true
 		}
 	}
-	if err := readESearchItems(dec, &out.Data, tokenPending); err != nil {
+	if err := readESearchItemsOrdered(dec, &out.result.Data, tokenPending, &out.items); err != nil {
 		return out, err
 	}
 	if !dec.ExpectCRLF() {

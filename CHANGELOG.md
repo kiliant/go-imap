@@ -23,6 +23,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Root module — `github.com/kiliant/go-imap`
+
+#### Fixed
+
+- Decode STATUS, LIST and ESEARCH/METADATA response data once before command
+  collection. STATUS results stay with their requested mailbox, including
+  reversed pipelined replies; unrelated STATUS events reach the existing
+  callback. Legacy LSUB no longer consumes unsolicited LIST events. Names-only
+  METADATA notifications no longer fail GETMETADATA or LIST-METADATA, and
+  another mailbox's metadata values do not leak into GETMETADATA results.
+  No exported API change; CONTEXT and metadata-change callbacks remain future
+  T30 work. (#44)
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Added
