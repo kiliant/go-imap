@@ -53,7 +53,7 @@ mailbox name and a non-ASCII search. Coverage rows updated.
 ## Hand-over to T30
 
 [T30](T30-unsolicited-events.md) takes extended SORT collection in
-`imapclient/ext_c_sort.go` and MULTISEARCH response routing in
+`imapclient/ext_c_sort.go` and `imapclient/ext_c_esort.go`, and MULTISEARCH response routing in
 `imapclient/ext_c_multisearch.go` from completed T10, including T27's extended
 SORT work. Plain SORT's pipelining behavior and unrelated group C extensions
 remain unchanged.

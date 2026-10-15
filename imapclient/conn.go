@@ -271,6 +271,7 @@ func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.Re
 			return imapwire.RespCond{}, false, dec.Err()
 		}
 		resp := untaggedResponse{name: upper, dec: dec, cond: &cond}
+		c.observeContextCondition(cond)
 		if c.offerCollector(&resp) {
 			return cond, true, nil
 		}
@@ -318,6 +319,9 @@ func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.Re
 	}
 	if err := resp.decodeData(); err != nil {
 		return imapwire.RespCond{}, false, err
+	}
+	if claimed, err := c.routeContextUpdate(&resp); claimed || err != nil {
+		return imapwire.RespCond{}, true, err
 	}
 	if c.offerCollector(&resp) {
 		return imapwire.RespCond{}, true, nil
@@ -517,6 +521,7 @@ func parseFlagsFetch(resp *untaggedResponse) (*imap.FetchMessageData, bool, erro
 
 func (c *Client) completeAllExceptLogout(err error) {
 	c.mu.Lock()
+	c.searchContexts = nil
 	var complete []*Command
 	kept := c.pendingQ[:0]
 	for _, cmd := range c.pendingQ {

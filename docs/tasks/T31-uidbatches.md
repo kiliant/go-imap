@@ -5,8 +5,8 @@
 **Milestone:** post-M6.
 - **One release for both directions.** The root module's next minor after
   T30's `v1.3.0` (expected `v1.4.0`) carries the vocabulary, codec and client,
-  and `imapserver/v0.4.0` carries the server. Both are tagged the same day,
-  root first (`docs/RELEASING.md`).
+  and the next server minor (expected `imapserver/v0.4.0`) carries the
+  server. Both are tagged the same day, root first (`docs/RELEASING.md`).
 - **Why together.** Our own server may be the only implementation the client
   can be tested against before its API freezes.
 - **Why not in `v1.3.0`.** T30 does not wait for T31.
@@ -114,7 +114,9 @@ names 1-based batch indices, and batch 1 holds the highest UIDs.
 **Server obligations and options.**
 - MUST NOT put more than N messages in a batch, and SHOULD stay within 90%
   of N.
-- If N ≥ M, MUST return exactly one range spanning all messages.
+- If N ≥ M, MUST return exactly one range spanning all messages, provided
+  the mailbox is not empty and the request includes batch 1. An empty
+  mailbox, or a range starting after batch 1, gets an empty response.
 - MUST support spans of at least 100,000 messages.
 - Answers:
 
@@ -150,7 +152,7 @@ type UIDBatch struct {
 	_     struct{}
 }
 
-type UIDBatchRange struct { // the requested batch indices
+type UIDBatchIndexRange struct { // the requested batch indices
 	First, Last uint32 // zero means absent; set both or neither
 	_           struct{}
 }
@@ -158,8 +160,10 @@ type UIDBatchRange struct { // the requested batch indices
 
 - `UIDBatch` is a struct rather than a bare range so that per-batch data (a
   later CONDSTORE addition, for example) is a new field, not a parallel slice.
-- `UIDBatchRange` follows the `PartialRange` precedent and leaves room for a
-  later form that counts from the oldest batch.
+- `UIDBatchIndexRange` follows the `PartialRange` precedent and leaves room
+  for a later form that counts from the oldest batch. The name says "index":
+  `UIDBatch.Range` is already a range of UIDs, and the two must not be
+  confused.
 - `CodeTooFew` and `CodeTooMany` go on the open `ResponseCode` type.
   `CodeTooMany` is the top-level code RFC 10022 registered, for any command.
   Its doc says it is distinct from METADATA's `[METADATA TOOMANY]`, which is
@@ -183,8 +187,8 @@ type UIDBatchesData struct {
 }
 
 type UIDBatchesOptions struct {
-	Range imap.UIDBatchRange // zero value: every batch
-	_     struct{}
+	Indices imap.UIDBatchIndexRange // zero value: every batch
+	_       struct{}
 }
 
 func (c *Client) UIDBatches(ctx context.Context, size uint32,
@@ -224,7 +228,9 @@ the wrapper. Both are additive.
   data and a pipelined second UIDBATCHES are never misattributed.
 - Exactly one response per command. A second one is a protocol error, as in
   `esearchCollector`.
-- A response without TAG cannot be attributed and fails the connection.
+- A response without TAG cannot be attributed and fails the connection. A
+  well-formed response with a foreign tag is discarded, like other
+  unsolicited data.
 - `tag-string` is accepted as atom, quoted string or literal.
 - After a tagged OK, a missing response is a protocol error. After NO or BAD,
   the server's `*imap.Error` is returned.
@@ -240,14 +246,14 @@ the wrapper. Both are additive.
 - Batches can be smaller than requested and can name UIDs that do not exist.
 - The command is allowed under UIDONLY.
 
-### 2. Server (`imapserver/v0.4.0`, same day, after the root tag)
+### 2. Server (the next server minor, same day, after the root tag)
 
 **Advertisement** is decided by the framework alone, like UIDONLY. There is
 no `CapabilitySupport` token and no entry in `rev2Incorporated`. A future
 backend fast path, which is Appendix A.1's motivation, must be a routing
 token under `../API-STABILITY.md` §10, never a gate, because a gate would
 silently drop UIDBATCHES from every released backend. The changelog states
-that every backend advertises UIDBATCHES from `v0.4.0`.
+that every backend advertises UIDBATCHES from that release on.
 
 **Batches** are computed from the framework's selection UID slice; there is
 no backend surface.
@@ -255,7 +261,8 @@ no backend surface.
   max(1, M-iN+1).
 - Each batch is written high:low, as the UIDs at its two positions. The final
   batch ends at UID 1, which section 3.1.4 allows.
-- If N ≥ M, there is exactly one range.
+- If N ≥ M, there is exactly one range, when M > 0 and the request includes
+  batch 1.
 - Compute positions and the span in 64 bits. Check for a range beyond the end
   before indexing the slice. Iterate only over batches that exist, because
   `UIDBATCHES 500 4294967295:4294967295` is valid input.
@@ -277,8 +284,9 @@ no backend surface.
   least N/2 messages were added (UIDs above the recorded highest) or at least
   N/2 were expunged (derived from the counts). The threshold is "N/2 or
   more", so that a client following the RFC's MAY is never refused.
-- A request with a different range or size is allowed. That is section
-  3.1.5's paging.
+- A request with a different range is allowed: that is section 3.1.5's
+  paging. A request with a different size is allowed by this task's approved
+  policy, not by the RFC, and the doc comment says so.
 - A new selection starts afresh, including a reselection of the same mailbox.
   The RFC names only "a different mailbox", so this is deliberate leniency.
 - The file's doc comment records the trade-off. Alternating requests
@@ -322,7 +330,9 @@ Fuzz targets in the three new files.
 
 **Server tests.**
 - Exact boundaries for M divisible and not divisible by N.
-- N ≥ M giving exactly one range, and the final batch ending at 1.
+- N ≥ M giving exactly one range (M > 0, batch 1 requested), an empty
+  response for an empty mailbox or a later range, and the final batch ending
+  at 1.
 - Ranges beyond the end, and hostile indices.
 - Each error code.
 - The resend rule: a refused repeat; repeats allowed after N/2 additions and

@@ -134,6 +134,9 @@ func (cmd *MultiSearchCommand) SavedResult() *SavedSearchResult {
 // SEARCH RETURN) and may return several ESEARCH responses, one per mailbox
 // that had matches. An empty result list with a tagged OK means no mailbox
 // matched. Use [MultiSearchCommand.Wait] with a context for completion.
+// RETURN (UPDATE) requires CONTEXT=SEARCH and a selected mailbox; notifications
+// apply only to that mailbox, even when other mailboxes are searched (RFC 7377
+// section 2.2), and arrive through [UnilateralDataHandler.ContextUpdate].
 //
 // There is no atomic client-side fallback: SELECT+SEARCH per mailbox would
 // disrupt the selected state that this command is designed to preserve.
@@ -182,6 +185,11 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 		return result
 	}
 	selectedOnly := multiSearchSelectedOnly(o.Sources)
+	update := hasSearchReturnKeyword(keywords, SearchReturnUpdate)
+	if update && !c.Supports("CONTEXT=SEARCH") {
+		result.Command = failedCommand(name, capabilityError("ESEARCH RETURN (UPDATE)", "CONTEXT=SEARCH"))
+		return result
+	}
 	if save {
 		if !selectedOnly {
 			result.Command = rejectedCommand(c, name, "SEARCH RETURN (SAVE) is only valid with the selected mailbox (RFC 7377 section 2.2)")
@@ -197,7 +205,7 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 	}
 	needSelected := selectedOnly || len(o.Sources) == 0
 	state := stateAuthenticated | stateSelected
-	if needSelected {
+	if needSelected || update {
 		state = stateSelected
 	}
 	if c.searchPending() {
@@ -207,7 +215,11 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 
 	sources := o.Sources
 	untagged := 0
-	result.Command = c.beginCommand(name, state, func(enc *imapwire.Encoder) {
+	var registration *searchContext
+	if update {
+		registration = &searchContext{uid: true}
+	}
+	result.Command = c.issue(name, commandOptions{allowed: state, searchContext: registration, write: func(enc *imapwire.Encoder) {
 		if len(sources) > 0 {
 			enc.SP().Atom("IN").SP().Special('(')
 			for i, src := range sources {
@@ -224,7 +236,7 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 		}
 		enc.SP()
 		writeSearchCriteria(enc, criteria)
-	}, func(resp *untaggedResponse) (bool, error) {
+	}, collector: func(resp *untaggedResponse) (bool, error) {
 		if resp.name != "ESEARCH" || resp.hasNum || resp.cond != nil {
 			return false, nil
 		}
@@ -236,9 +248,10 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 		}
 		one := resp.data.esearch.result
 		one.Data.UID = true // RFC 7377 section 2.1.
+		registration.observeInitialTag(one.Tag)
 		result.data.Results = append(result.data.Results, one)
 		return true, nil
-	})
+	}})
 	return result
 }
 

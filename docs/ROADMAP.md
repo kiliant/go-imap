@@ -235,7 +235,8 @@ The next work is ordered deliberately:
    snapshot. Apart from the deliberately deferred capabilities, it is the only
    registered capability that neither direction implements. Both directions
    ship together, tagged the same day with the root first: the root minor
-   after T30's `v1.3.0`, and `imapserver/v0.4.0`. T30 does not wait for it.
+   after T30's `v1.3.0`, and the next `imapserver` minor. T30 does not wait
+   for it.
 
 **Exit:** the patch is fetchable and builds outside the workspace; backend
 conformance catches faulty option combinations; T30's scripted, race, fuzz,
