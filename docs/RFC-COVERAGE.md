@@ -449,9 +449,11 @@ break the client; full command support is best-effort.
     `CancelUpdate` documents when a registration ends. Scripted tests
     interleave old updates with extended SEARCH, extended SORT, MULTISEARCH
     and other commands, and cover cancellation, NOUPDATE, selection changes,
-    logout and disconnect. `TestContextUpdateRemovalInterop` checks REMOVEFROM
-    after an expunge on matrix servers that advertise the capability; it has
-    not run in CI yet. Not covered: `SearchPartial` does not register UPDATE
+    logout and disconnect. Live, `TestContextUpdateRemovalInterop` receives
+    REMOVEFROM after an expunge on Dovecot 2.4.3, the only matrix server that
+    advertises CONTEXT=SEARCH. One server is not two, so the row stays `done`.
+    No matrix server advertises CONTEXT=SORT; sorted contexts are covered by
+    scripted tests only. Not covered: `SearchPartial` does not register UPDATE
     (#48), and `*` in an update set fails in the generic value capture (#49).
 
 [^srvcontext]: `RETURN (UPDATE)` registers a search result and `CANCELUPDATE`
