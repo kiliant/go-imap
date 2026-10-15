@@ -26,10 +26,22 @@ func TestWriteMailboxStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	for _, want := range []string{"INBOX", "read-only", "Messages: 3", "UIDNEXT: 10"} {
+	for _, want := range []string{"INBOX", "read-only", "Messages: 3", "First unseen: seq 2", "UIDNEXT: 10"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, " Unseen:") {
+		t.Fatalf("the UNSEEN sequence number is labelled like a count:\n%s", got)
+	}
+
+	// Zero means the server reported no UNSEEN code, which says nothing.
+	buf.Reset()
+	if err := writeMailboxStatus(&buf, &imapclient.MailboxStatus{MailboxStatus: imap.MailboxStatus{Mailbox: "INBOX", NumMessages: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); strings.Contains(strings.ToLower(got), "unseen") {
+		t.Fatalf("status without an UNSEEN code mentions it:\n%s", got)
 	}
 }
 

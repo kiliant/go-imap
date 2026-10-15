@@ -176,8 +176,14 @@ func writeMailboxStatus(w io.Writer, status *imapclient.MailboxStatus) error {
 	if status.ReadOnly {
 		mode = "read-only"
 	}
-	_, err := fmt.Fprintf(w, "Mailbox: %s (%s)\nMessages: %d  Recent: %d  Unseen: %d\nUIDNEXT: %d  UIDVALIDITY: %d\n\n",
-		status.Mailbox, mode, status.NumMessages, status.NumRecent, status.Unseen, status.UIDNext, status.UIDValidity)
+	// Unseen is the UNSEEN response code: the sequence number of the first
+	// unseen message, not a count and not a UID. Zero means none was reported.
+	unseen := ""
+	if status.Unseen != 0 {
+		unseen = fmt.Sprintf("  First unseen: seq %d", status.Unseen)
+	}
+	_, err := fmt.Fprintf(w, "Mailbox: %s (%s)\nMessages: %d  Recent: %d%s\nUIDNEXT: %d  UIDVALIDITY: %d\n\n",
+		status.Mailbox, mode, status.NumMessages, status.NumRecent, unseen, status.UIDNext, status.UIDValidity)
 	return err
 }
 

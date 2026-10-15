@@ -34,6 +34,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   items that follow the body. Reading them there was also a data race. The
   summary now comes from its own command, before the body is fetched. A
   `main` package: no exported API change. (#36)
+- `imapcli -mailbox M` labels the UNSEEN response code `First unseen: seq N`
+  and leaves it out when the server reports none. It printed `Unseen: N`,
+  which read as a count of unseen messages but is the sequence number of the
+  first one. A `main` package: no exported API change. (#37)
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
