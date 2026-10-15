@@ -23,6 +23,18 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Added
+
+- `backendtest.Run` checks RECURSIVEMATCH combined with REMOTE and
+  SPECIAL-USE, including CHILDINFO from a subscribed descendant without a
+  special-use attribute. Remote descendants are checked when the harness
+  seeds a remote child beneath an unsubscribed parent; otherwise that case
+  explicitly skips. Backends without the LIST-EXTENDED witness are checked
+  for discovery of the harness names through `LIST "" "*"`, which the
+  framework's evaluation needs. No exported API change. (#34)
+
 ## [1.2.1] - 2026-10-15
 
 ### Root module — `github.com/kiliant/go-imap`
