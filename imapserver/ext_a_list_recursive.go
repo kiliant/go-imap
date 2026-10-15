@@ -33,6 +33,10 @@ const listRecursiveMatchWitness = "LIST-EXTENDED"
 // rather than passed to a backend that never agreed to evaluate it.
 // TestListRecursiveMatchCoversBaseOptions keeps this list level with
 // listSelectBaseOptions.
+//
+// Adding an entry is not enough to evaluate it: listRecursiveMatch finds
+// descendants with Subscribed and writes ChildInfo ["SUBSCRIBED"], so both
+// must learn the new option first.
 var listRecursiveMatchBaseOptions = []string{listSelectSubscribed}
 
 func backendEvaluatesRecursiveMatch(ctx context.Context, c *conn) bool {
@@ -56,20 +60,25 @@ func backendEvaluatesRecursiveMatch(ctx context.Context, c *conn) bool {
 //
 //   - the command itself, for the names it selects;
 //   - "*" with the base options, for the descendants that meet them.
-//     Independent options do not interact with RECURSIVEMATCH (RFC 5258
-//     section 6), so SPECIAL-USE is left out here and applied to the result
-//     like any LIST result. REMOTE is kept, so remote descendants count.
+//     SPECIAL-USE is left out here and applied to the result like any LIST
+//     result, because RFC 6154 section 2 has it restrict what LIST returns
+//     ("MUST return only those mailboxes that have a special-use attribute
+//     set"). That is a judgement call: had RECURSIVEMATCH extended to it, a
+//     parent without a use attribute would be returned for a subscribed
+//     descendant with one. It is also what imapserver/memory answers. REMOTE
+//     is kept, so remote descendants count.
 //   - the patterns without selection options, for the attributes of the
 //     parents to add, made only when there are some;
-//   - for each such parent that call did not return, the name alone, to tell
-//     a level that is not a mailbox from a mailbox the patterns do not select.
+//   - the parents that call did not return, by name in one call, to tell a
+//     level that is not a mailbox from a mailbox the patterns do not select.
 //
 // Which parents match the patterns is decided here. The canonical LIST
 // pattern, which RFC 5258 leaves to the server, is taken to be the reference
 // followed by the pattern, unless the pattern starts with the hierarchy
-// delimiter (RFC 3501 section 6.3.8). Only the added parents depend on that
-// rule. A name the backend hides from "*" is still returned when the command
-// selects it, but gets no added parents.
+// delimiter (RFC 3501 section 6.3.8), and it is matched case-sensitively, INBOX
+// included. Only the added parents depend on that rule. A name the backend
+// hides from "*" is still returned when the command selects it, but gets no
+// added parents.
 func listRecursiveMatch(ctx context.Context, session Session, writer *ListWriter, args *listArgs, options *ListOptions) error {
 	for _, option := range args.selection {
 		if slices.Contains(listSelectBaseOptions, option) && !slices.Contains(listRecursiveMatchBaseOptions, option) {
@@ -115,14 +124,24 @@ func listRecursiveMatch(ctx context.Context, session Session, writer *ListWriter
 		if err != nil {
 			return err
 		}
+		var unlisted []string
+		for _, name := range parents {
+			if existing[name] == nil {
+				unlisted = append(unlisted, name)
+			}
+		}
+		var named map[string]*imap.ListData
+		if len(unlisted) > 0 {
+			// Names may hold "*" or "%", so only exact matches count.
+			named, err = collectList(ctx, session, "", unlisted, &ListOptions{SelectRemote: options.SelectRemote})
+			if err != nil {
+				return err
+			}
+		}
 		for _, name := range parents {
 			data := existing[name]
 			if data == nil {
-				exists, err := listNameExists(ctx, session, name, options.SelectRemote)
-				if err != nil {
-					return err
-				}
-				if exists {
+				if found := named[name]; found != nil && !imap.ContainsAttr(found.Attrs, imap.MailboxAttrNonExistent) {
 					// A mailbox the patterns do not select, as the backend
 					// reads them: not a parent to add.
 					continue
@@ -174,16 +193,6 @@ func collectList(ctx context.Context, session Session, reference string, pattern
 	err := session.List(ctx, writer, reference, patterns, options)
 	writer.core.close()
 	return results, err
-}
-
-// listNameExists reports whether the backend lists name as a mailbox.
-func listNameExists(ctx context.Context, session Session, name string, remote bool) (bool, error) {
-	found, err := collectList(ctx, session, "", []string{name}, &ListOptions{SelectRemote: remote})
-	if err != nil {
-		return false, err
-	}
-	data := found[name]
-	return data != nil && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent), nil
 }
 
 // listParents returns the hierarchy levels above name, outermost first.

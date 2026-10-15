@@ -158,7 +158,8 @@ Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
   returns less than that. It adds the parents of subscribed descendants found
   through `List` for `"*"`. Only those added parents depend on the framework's
   reading of the reference (reference followed by pattern, RFC 3501 section
-  6.3.8), and a name the backend leaves out of `"*"` gets none. Before, every
+  6.3.8, matched case-sensitively, INBOX included), and a name the backend
+  leaves out of `"*"` gets none. Before, every
   backend received the option, and one that ignored it answered wrongly.
   Refusing the option was not possible: LIST-EXTENDED enables it (RFC 5258
   section 3), and IMAP4rev2's LIST incorporates it. The token routes the

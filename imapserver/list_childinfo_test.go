@@ -239,8 +239,8 @@ func (s *withoutRecursiveMatchSession) List(ctx context.Context, writer *imapser
 	}}, reference, patterns, options)
 }
 
-// RFC 5258 section 6 makes SPECIAL-USE an independent option, which does not
-// interact with RECURSIVEMATCH: a parent counts a subscribed descendant
+// SPECIAL-USE restricts what LIST returns (RFC 6154 section 2), and is read as
+// not extending RECURSIVEMATCH: a parent counts a subscribed descendant
 // whether or not that descendant is special-use, and SPECIAL-USE then
 // restricts the result like any other. Both evaluations must agree on that,
 // and must not report an existing parent as \NonExistent.

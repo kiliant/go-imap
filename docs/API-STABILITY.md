@@ -507,8 +507,9 @@ all of these hold:
 
 - The capability's advertisement is already decided by the framework alone.
   A routing token therefore never appears in `rev2Incorporated` or in any
-  `RequiresBackend` witness. `TestRoutingTokensGateNothing` holds
-  `"LIST-EXTENDED"` to that.
+  `RequiresBackend` witness. `TestRoutingTokensGateNothing` checks the
+  token's own descriptor and `rev2Incorporated`. A gate on the token in some
+  other descriptor is a closure the test cannot see, so review has to catch it.
 - The behaviour cannot be refused once the capability is advertised.
 - The framework's evaluation includes everything the backend itself returns
   for the same command without the option, and only adds to it. That

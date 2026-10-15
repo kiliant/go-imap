@@ -319,13 +319,13 @@ type ListOptions struct {
 	// It starts from the backend's own answer to the command without the
 	// option, so the result never holds less than that, and adds the parents
 	// of descendants that meet the base options, found through List for "*".
-	// Two limits follow, and only the added parents are affected. The
-	// framework decides which parents match the patterns by taking the
-	// canonical pattern to be the reference followed by the pattern, unless
-	// the pattern starts with the hierarchy delimiter (RFC 3501 section
-	// 6.3.8). And a name the backend leaves out of "*" gets no added parents.
-	// A backend for which either matters evaluates the option itself and
-	// witnesses "LIST-EXTENDED".
+	// Limits follow, and only the added parents are affected. The framework
+	// decides which parents match the patterns by taking the canonical
+	// pattern to be the reference followed by the pattern, unless the pattern
+	// starts with the hierarchy delimiter (RFC 3501 section 6.3.8), and
+	// matches it case-sensitively, INBOX included. And a name the backend
+	// leaves out of "*" gets no added parents. A backend for which any of
+	// this matters evaluates the option itself and witnesses "LIST-EXTENDED".
 	SelectRecursiveMatch bool `imapfeature:"list-extended"`
 	// SelectSpecialUse restricts the result to special-use mailboxes: those
 	// with a use attribute such as \Archive. RFC 6154 section 2.
