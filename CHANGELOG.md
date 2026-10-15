@@ -23,6 +23,48 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
+`v1.1.0`: tag the root module first and bump the `require`
+(`docs/RELEASING.md`).
+
+#### Added
+
+- LIST writes the CHILDINFO extended data item (RFC 5258 section 3.5) from
+  `imap.ListData.ChildInfo`. It is written only when the command used
+  RECURSIVEMATCH, and only for base selection options the command requested.
+  So LSUB, a plain LIST and the LIST answering SELECT never carry it.
+  `ListWriter.WriteList` documents this, and that `ListData.Extended` is
+  never written. `ListOptions.SelectRecursiveMatch` now documents what a
+  backend must return. No exported API change.
+- `imapserver/memory` implements `LIST (SUBSCRIBED RECURSIVEMATCH)`. It
+  returns a parent with a subscribed descendant and its CHILDINFO, and
+  returns a hierarchy level that is not a mailbox as `\NonExistent`. Before,
+  it ignored the option and returned no such parent.
+- `backendtest` checks RECURSIVEMATCH, so a backend that ignores it fails.
+  LIST-EXTENDED needs no backend witness, so the framework accepts the option
+  for every backend.
+
+#### Fixed
+
+- `LIST (REMOTE RECURSIVEMATCH)` and `LIST (SPECIAL-USE RECURSIVEMATCH)` are
+  answered BAD, as RFC 5258 section 3 requires. RECURSIVEMATCH modifies a
+  base selection option. REMOTE is an independent option (RFC 5258 section
+  6), and so is SPECIAL-USE (RFC 6154's formal syntax), so neither qualifies.
+  SUBSCRIBED is the only base option the framework implements.
+- `LIST (SPECIAL-USE)` returns only mailboxes that have a use attribute, as
+  RFC 6154 section 2 requires. Before, it returned every matching mailbox,
+  and the selection option only made the use attributes visible. The
+  framework now drops results without a use attribute before writing them, so
+  every backend is correct on the wire. `imapserver/memory` also honours
+  `ListOptions.SelectSpecialUse` itself. The field's documentation says the
+  framework enforces it, and both `SelectSpecialUse` and `ReturnSpecialUse`
+  now cite section 2 instead of the examples in section 5. No exported API
+  change.
+
+## [1.2.0] - 2026-10-15
+
 ### Root module — `github.com/kiliant/go-imap`
 
 #### Added
@@ -126,46 +168,6 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   flag "n", which RFC 5802 does not treat as a downgrade. An explicit -PLUS
   `Mechanism`, and a server offering only -PLUS variants, still fail as
   before. No exported API change.
-
-### Server module — `github.com/kiliant/go-imap/imapserver`
-
-Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
-`v1.1.0`: tag the root module first and bump the `require`
-(`docs/RELEASING.md`).
-
-#### Added
-
-- LIST writes the CHILDINFO extended data item (RFC 5258 section 3.5) from
-  `imap.ListData.ChildInfo`. It is written only when the command used
-  RECURSIVEMATCH, and only for base selection options the command requested.
-  So LSUB, a plain LIST and the LIST answering SELECT never carry it.
-  `ListWriter.WriteList` documents this, and that `ListData.Extended` is
-  never written. `ListOptions.SelectRecursiveMatch` now documents what a
-  backend must return. No exported API change.
-- `imapserver/memory` implements `LIST (SUBSCRIBED RECURSIVEMATCH)`. It
-  returns a parent with a subscribed descendant and its CHILDINFO, and
-  returns a hierarchy level that is not a mailbox as `\NonExistent`. Before,
-  it ignored the option and returned no such parent.
-- `backendtest` checks RECURSIVEMATCH, so a backend that ignores it fails.
-  LIST-EXTENDED needs no backend witness, so the framework accepts the option
-  for every backend.
-
-#### Fixed
-
-- `LIST (REMOTE RECURSIVEMATCH)` and `LIST (SPECIAL-USE RECURSIVEMATCH)` are
-  answered BAD, as RFC 5258 section 3 requires. RECURSIVEMATCH modifies a
-  base selection option. REMOTE is an independent option (RFC 5258 section
-  6), and so is SPECIAL-USE (RFC 6154's formal syntax), so neither qualifies.
-  SUBSCRIBED is the only base option the framework implements.
-- `LIST (SPECIAL-USE)` returns only mailboxes that have a use attribute, as
-  RFC 6154 section 2 requires. Before, it returned every matching mailbox,
-  and the selection option only made the use attributes visible. The
-  framework now drops results without a use attribute before writing them, so
-  every backend is correct on the wire. `imapserver/memory` also honours
-  `ListOptions.SelectSpecialUse` itself. The field's documentation says the
-  framework enforces it, and both `SelectSpecialUse` and `ReturnSpecialUse`
-  now cite section 2 instead of the examples in section 5. No exported API
-  change.
 
 ## [imapserver/v0.2.0] - 2026-10-03
 
@@ -701,7 +703,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/imapserver/v0.2.0...HEAD
+[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/kiliant/go-imap/releases/tag/v1.2.0
 [imapserver/v0.2.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.2.0
 [1.1.0]: https://github.com/kiliant/go-imap/releases/tag/v1.1.0
 [imapserver/v0.1.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.1.0
