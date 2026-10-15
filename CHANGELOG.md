@@ -41,10 +41,33 @@ Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against
 - `imapserver/memory` implements `LIST (SUBSCRIBED RECURSIVEMATCH)`. It
   returns a parent with a subscribed descendant and its CHILDINFO, and
   returns a hierarchy level that is not a mailbox as `\NonExistent`. Before,
-  it ignored the option and returned no such parent.
-- `backendtest` checks RECURSIVEMATCH, so a backend that ignores it fails.
-  LIST-EXTENDED needs no backend witness, so the framework accepts the option
-  for every backend.
+  it ignored the option and returned no such parent. It witnesses
+  `"LIST-EXTENDED"` to say it evaluates the option itself.
+
+#### Changed
+
+- RECURSIVEMATCH reaches a backend only if it witnesses `"LIST-EXTENDED"`
+  through `CapabilitySupport`. Any other backend never receives
+  `ListOptions.SelectRecursiveMatch`, and the framework evaluates the option
+  for it from `Session.List` calls without it. That evaluation starts from the
+  backend's own answer to the command without RECURSIVEMATCH, so it never
+  returns less than that. It adds the parents of subscribed descendants found
+  through `List` for `"*"`. Only those added parents depend on the framework's
+  reading of the reference (reference followed by pattern, RFC 3501 section
+  6.3.8, matched case-sensitively, INBOX included), and a name the backend
+  leaves out of `"*"` gets none. Before, every backend received the option,
+  and one that ignored it answered wrongly.
+  Refusing the option was not possible: LIST-EXTENDED enables it (RFC 5258
+  section 3), and IMAP4rev2's LIST incorporates it. The token routes the
+  evaluation and does not gate the advertisement, which the
+  `CapabilitySupport` documentation now describes. No exported API change.
+  **BREAKING in behaviour** for a backend written against v0.2.0 that
+  implemented RECURSIVEMATCH: it stops receiving the option until it
+  witnesses `"LIST-EXTENDED"`, and is answered by the framework's evaluation
+  meanwhile.
+- `backendtest` checks RECURSIVEMATCH only for a backend that witnesses
+  `"LIST-EXTENDED"`, so one that claims the witness and ignores the option
+  fails. It skips the case for any other backend.
 
 #### Fixed
 

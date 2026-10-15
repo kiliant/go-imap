@@ -13,10 +13,12 @@ import (
 // CREATE-SPECIAL-USE (RFC 6154), and WITHIN (RFC 5032).
 //
 // ESEARCH, SEARCHRES, LIST-EXTENDED and LIST-STATUS are answered entirely by the
-// framework from data this backend already returns, so they are not witnessed
-// here — a backend does not opt into them and cannot fail to support them. The
-// one exception is LIST-EXTENDED's RECURSIVEMATCH selection option, which only
-// the backend can evaluate; see listRecursiveSubscribedLocked.
+// framework from data this backend already returns, so their advertisement
+// needs no witness — a backend does not opt into them and cannot fail to
+// support them. LIST-EXTENDED's RECURSIVEMATCH selection option is the one
+// part a backend may evaluate itself. The framework can evaluate it too, but
+// this backend does natively (see listRecursiveSubscribedLocked), and says so
+// by witnessing "LIST-EXTENDED".
 
 // supportedCapabilities are the tokens this backend witnesses for group A.
 //
@@ -31,6 +33,7 @@ var supportedCapabilities = map[string]bool{
 	// filter UID EXPUNGE supplies.
 	"UIDPLUS":            true,
 	"CHILDREN":           true,
+	"LIST-EXTENDED":      true,
 	"SPECIAL-USE":        true,
 	"CREATE-SPECIAL-USE": true,
 	"WITHIN":             true,

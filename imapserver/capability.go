@@ -117,7 +117,11 @@ func init() {
 // The rest of the incorporated set — ESEARCH, SEARCHRES, LIST-EXTENDED,
 // LIST-STATUS, ENABLE, IDLE, SASL-IR, LITERAL-, UNSELECT — is answered by the
 // framework from data the backend already returns, so a backend cannot fail to
-// support it and there is nothing to witness.
+// support it and there is nothing to witness for its advertisement.
+// "LIST-EXTENDED" is also a routing token (ext_a_list_recursive.go): a backend
+// may witness it to evaluate RECURSIVEMATCH itself, which changes who
+// evaluates the option, never whether LIST-EXTENDED or IMAP4rev2 is
+// advertised. A routing token therefore never appears here.
 //
 // This is a list rather than a predicate on purpose. A future revision that
 // incorporates more extensions adds a token here, which is a data change; a
