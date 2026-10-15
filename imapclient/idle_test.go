@@ -148,17 +148,11 @@ func TestIdleReissuesBeforeConfiguredTimeout(t *testing.T) {
 	go func() {
 		defer serverConn.Close()
 		_, _ = serverConn.Write([]byte("* PREAUTH [CAPABILITY IDLE] ready\r\n"))
-		r := bufio.NewReader(serverConn)
-		for cycle := 0; cycle < 2; cycle++ {
-			line, _ := r.ReadString('\n')
-			tag := strings.Fields(line)[0]
-			_, _ = serverConn.Write([]byte("+ idling\r\n"))
-			if cycle == 1 {
+		serveIdle(serverConn, bufio.NewReader(serverConn), func(n int) {
+			if n == 2 {
 				close(second)
 			}
-			_, _ = r.ReadString('\n')
-			_, _ = serverConn.Write([]byte(tag + " OK idle terminated\r\n"))
-		}
+		})
 	}()
 	c := NewClient(clientConn, &Options{IdleTimeout: 10 * time.Millisecond})
 	defer c.Close()
@@ -177,6 +171,36 @@ func TestIdleReissuesBeforeConfiguredTimeout(t *testing.T) {
 	cancel()
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("IDLE Wait() = %v", err)
+	}
+}
+
+// serveIdle plays the server side of IDLE for as long as the client keeps
+// issuing it: a continuation for each IDLE, then a tagged OK for its DONE.
+// entered is called after the n-th continuation, counting from 1. It returns
+// when the client sends anything else or the connection closes.
+//
+// A test with a short IdleTimeout cannot control whether one more timeout
+// renewal fires before its cancellation is observed, so the fake server must
+// answer however many arrive. Closing after a fixed number of cycles turns
+// that renewal into a connection error; merely not reading it blocks Wait,
+// because net.Pipe is unbuffered.
+func serveIdle(conn net.Conn, r *bufio.Reader, entered func(n int)) {
+	for n := 1; ; n++ {
+		line, err := r.ReadString('\n')
+		if err != nil || !strings.HasSuffix(line, " IDLE\r\n") {
+			return
+		}
+		if _, err := conn.Write([]byte("+ idling\r\n")); err != nil {
+			return
+		}
+		entered(n)
+		if _, err := r.ReadString('\n'); err != nil {
+			return
+		}
+		tag := strings.Fields(line)[0]
+		if _, err := conn.Write([]byte(tag + " OK idle terminated\r\n")); err != nil {
+			return
+		}
 	}
 }
 
@@ -322,14 +346,11 @@ func TestIdleFirstDoneIntentWinsOverConcurrentDone(t *testing.T) {
 		close(firstDone)
 		<-allowFirstCompletion
 		_, _ = serverConn.Write([]byte(tag + " OK idle terminated\r\n"))
-		line, _ = r.ReadString('\n')
-		if strings.Contains(line, " IDLE\r\n") {
-			close(secondIdle)
-		}
-		tag = strings.Fields(line)[0]
-		_, _ = serverConn.Write([]byte("+ idling\r\n"))
-		_, _ = r.ReadString('\n')
-		_, _ = serverConn.Write([]byte(tag + " OK idle terminated\r\n"))
+		serveIdle(serverConn, r, func(n int) {
+			if n == 1 {
+				close(secondIdle)
+			}
+		})
 	}()
 	c := NewClient(clientConn, &Options{IdleTimeout: 5 * time.Millisecond})
 	defer c.Close()
