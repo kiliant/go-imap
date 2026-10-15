@@ -192,20 +192,31 @@ func TestMailboxUIDValidityChange(t *testing.T) {
 				failMailboxInterop(t, server, client, "DELETE original mailbox", err)
 			}
 			// GreenMail 2.1.9 derives a newly-created mailbox's UIDVALIDITY from
-			// the current Unix second. Wait for its clock to advance so this is a
-			// genuine recreation test rather than two folders created in the same
-			// UIDVALIDITY tick.
-			if server.Profile.Name == "greenmail" {
-				if delay := time.Until(time.Unix(int64(original.UIDValidity)+1, 0)); delay > 0 {
-					time.Sleep(delay)
+			// the current Unix second, so a mailbox recreated within the same
+			// second gets its predecessor's value. That second is on GreenMail's
+			// clock, which on macOS runs in the podman VM and can lag the host's,
+			// so a wait on the host clock does not cover it. Recreate until the
+			// value moves instead: about one second of server time, whatever the
+			// skew. Any other server must change it on the first recreation.
+			var recreated *imapclient.MailboxStatus
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
+					failMailboxInterop(t, server, client, "CREATE recreated mailbox", err)
 				}
-			}
-			if err := client.Create(mailbox, nil).Wait(ctx); err != nil {
-				failMailboxInterop(t, server, client, "CREATE recreated mailbox", err)
-			}
-			recreated, err := client.Examine(mailbox, nil).Wait(ctx)
-			if err != nil {
-				failMailboxInterop(t, server, client, "EXAMINE recreated mailbox", err)
+				recreated, err = client.Examine(mailbox, nil).Wait(ctx)
+				if err != nil {
+					failMailboxInterop(t, server, client, "EXAMINE recreated mailbox", err)
+				}
+				if server.Profile.Name != "greenmail" || recreated.UIDValidity != original.UIDValidity || time.Now().After(deadline) {
+					break
+				}
+				t.Logf("recreated within the same server second, UIDVALIDITY=%d; recreating again", recreated.UIDValidity)
+				leaveMailboxInterop(t, ctx, server, client)
+				if err := client.Delete(mailbox, nil).Wait(ctx); err != nil {
+					failMailboxInterop(t, server, client, "DELETE mailbox recreated with the same UIDVALIDITY", err)
+				}
+				time.Sleep(250 * time.Millisecond)
 			}
 			if recreated.UIDValidity == original.UIDValidity || !recreated.UIDValidityChanged {
 				t.Logf("UIDVALIDITY before recreation=%d after recreation=%d changed=%t", original.UIDValidity, recreated.UIDValidity, recreated.UIDValidityChanged)
