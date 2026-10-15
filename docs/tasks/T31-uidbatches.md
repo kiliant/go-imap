@@ -5,8 +5,8 @@
 **Milestone:** post-M6.
 - **One release for both directions.** The root module's next minor after
   T30's `v1.3.0` (expected `v1.4.0`) carries the vocabulary, codec and client,
-  and the next server minor (expected `imapserver/v0.4.0`) carries the server. Both are tagged the same day,
-  root first (`docs/RELEASING.md`).
+  and the next server minor (expected `imapserver/v0.4.0`) carries the
+  server. Both are tagged the same day, root first (`docs/RELEASING.md`).
 - **Why together.** Our own server may be the only implementation the client
   can be tested against before its API freezes.
 - **Why not in `v1.3.0`.** T30 does not wait for T31.
