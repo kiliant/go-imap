@@ -57,6 +57,9 @@
 // hours; a connection that stops delivering data still fails after five
 // minutes. The exit status is 0 when every mailbox was backed up, 1 when
 // anything failed, and 2 for a usage error.
+//
+// README.md in this directory is the user manual. It also covers scheduled
+// backups with restic under launchd or cron, and restoring.
 package main
 
 import (
