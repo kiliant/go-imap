@@ -146,7 +146,7 @@ lists only subscribed mailboxes.
 ```console
 $ imapcli -mailbox INBOX 2>/dev/null
 Mailbox: INBOX (read-only)
-Messages: 3  Recent: 0  Unseen: 3
+Messages: 3  Recent: 0  First unseen: seq 3
 UIDNEXT: 4  UIDVALIDITY: 1
 
    UID  DATE              FROM                          SUBJECT
@@ -159,9 +159,11 @@ UIDNEXT: 4  UIDVALIDITY: 1
   them.
 - `-offset N` skips the N newest first, so `-limit 20 -offset 20` shows
   messages 21 to 40 counted from the newest.
-- `Unseen` is the value of the server's UNSEEN response code. That is the
-  sequence number of the first unseen message, not a count. Above, message 3
-  is the first unseen one.
+- `First unseen` comes from the server's UNSEEN response code. It is the
+  sequence number of the first unseen message: its position in the mailbox,
+  counting the oldest as 1. It is not a UID and not a count. Above, the third
+  message is the first unseen one. The field is left out when the server does
+  not report it.
 - The date is the message's `Date:` header in local time, and the sender is
   the display name, or the address when there is no name.
 - Flags and keywords follow the subject in brackets.

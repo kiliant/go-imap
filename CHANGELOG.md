@@ -23,6 +23,22 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Root module — `github.com/kiliant/go-imap`
+
+#### Fixed
+
+- `imapcli -mailbox M -uid N` prints the message's summary line again on a
+  server that sends UID, FLAGS and ENVELOPE after `BODY[]`, as
+  `imapserver/memory` does. The line showed UID 0 and nothing else, because
+  it was read from the body's response before the client had added the
+  items that follow the body. Reading them there was also a data race. The
+  summary now comes from its own command, before the body is fetched. A
+  `main` package: no exported API change. (#36)
+- `imapcli -mailbox M` labels the UNSEEN response code `First unseen: seq N`
+  and leaves it out when the server reports none. It printed `Unseen: N`,
+  which read as a count of unseen messages but is the sequence number of the
+  first one. A `main` package: no exported API change. (#37)
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 Needs root `v1.2.0` for `imap.ListData.ChildInfo`, so it cannot ship against

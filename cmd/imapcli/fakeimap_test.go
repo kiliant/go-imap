@@ -108,16 +108,32 @@ func serveFakeIMAP(conn net.Conn) {
 			writeLine(w, `* 2 FETCH (UID 11 FLAGS () ENVELOPE ("01-Aug-2026 12:00:00 +0000" "Newer" (("Carol" NIL "carol" "example.com")) (("Carol" NIL "carol" "example.com")) (("Carol" NIL "carol" "example.com")) (("Bob" NIL "bob" "example.com")) NIL NIL NIL "<b@example.com>"))`)
 			writeLine(w, tag+" OK FETCH completed")
 		case "UID":
-			if !selected || len(fields) < 3 || !strings.EqualFold(fields[2], "FETCH") {
+			if !selected || len(fields) < 4 || !strings.EqualFold(fields[2], "FETCH") {
 				writeLine(w, tag+" BAD expected UID FETCH")
 				continue
 			}
-			body := "From: carol@example.com\r\nSubject: Newer\r\n\r\nhello from fake server\r\n"
-			writeLine(w, fmt.Sprintf(`* 2 FETCH (UID 11 FLAGS () ENVELOPE ("01-Aug-2026 12:00:00 +0000" "Newer" (("Carol" NIL "carol" "example.com")) (("Carol" NIL "carol" "example.com")) (("Carol" NIL "carol" "example.com")) (("Bob" NIL "bob" "example.com")) NIL NIL NIL "<b@example.com>") BODY[] {%d}`, len(body)))
-			if _, err := io.WriteString(w, body); err != nil {
-				return
+			if fields[3] != "11" {
+				writeLine(w, tag+" OK UID FETCH completed") // no such message
+				continue
 			}
-			writeLine(w, ")")
+			// Only UID 11 exists. The body comes first and the other items
+			// after it, which RFC 3501 allows and imapserver/memory does.
+			upper := strings.ToUpper(line)
+			items := "UID 11"
+			if strings.Contains(upper, "FLAGS") {
+				items += " FLAGS ()"
+			}
+			if strings.Contains(upper, "ENVELOPE") {
+				items += ` ENVELOPE ("01-Aug-2026 12:00:00 +0000" "Newer" (("Carol" NIL "carol" "example.com")) (("Carol" NIL "carol" "example.com")) (("Carol" NIL "carol" "example.com")) (("Bob" NIL "bob" "example.com")) NIL NIL NIL "<b@example.com>")`
+			}
+			if strings.Contains(upper, "BODY.PEEK[]") {
+				body := "From: carol@example.com\r\nSubject: Newer\r\n\r\nhello from fake server\r\n"
+				if _, err := fmt.Fprintf(w, "* 2 FETCH (BODY[] {%d}\r\n%s %s)\r\n", len(body), body, items); err != nil {
+					return
+				}
+			} else {
+				writeLine(w, "* 2 FETCH ("+items+")")
+			}
 			writeLine(w, tag+" OK UID FETCH completed")
 		case "LOGOUT":
 			writeLine(w, "* BYE fake closing")

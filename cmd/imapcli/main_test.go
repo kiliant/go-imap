@@ -103,10 +103,42 @@ func TestRunReadMessageUID(t *testing.T) {
 		t.Fatalf("exit = %d\nstderr:\n%s\nstdout:\n%s", code, stderr.String(), stdout.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"11", "Newer", "Carol", "hello from fake server"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("message body missing %q:\n%s", want, out)
+	// The fake server sends UID, FLAGS and ENVELOPE after the body, so the
+	// summary line is only right if it does not come from the body's response.
+	summary := ""
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "11 ") {
+			summary = line
 		}
+	}
+	if !strings.Contains(summary, "Carol") || !strings.Contains(summary, "Newer") {
+		t.Fatalf("summary line for UID 11 missing or incomplete: %q\n%s", summary, out)
+	}
+	if !strings.Contains(out, "\r\n\r\nhello from fake server\r\n") {
+		t.Fatalf("message not printed byte for byte:\n%s", out)
+	}
+	if strings.Index(out, summary) > strings.Index(out, "hello from fake server") {
+		t.Fatalf("summary printed after the message:\n%s", out)
+	}
+}
+
+func TestRunReadMessageUIDNotFound(t *testing.T) {
+	clearIMAPEnv(t)
+	addr, closeFn := startFakeIMAP(t)
+	defer closeFn()
+
+	var stdout, stderr bytes.Buffer
+	code := runIO([]string{
+		"-addr", addr,
+		"-user", "user",
+		"-pass", "secret",
+		"-plain",
+		"-mailbox", "INBOX",
+		"-uid", "99",
+		"-timeout", "5s",
+	}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "no message with UID 99") {
+		t.Fatalf("exit = %d, want 1 with a not-found error\nstderr:\n%s", code, stderr.String())
 	}
 }
 
