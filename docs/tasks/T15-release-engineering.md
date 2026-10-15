@@ -95,6 +95,14 @@ T15; the handover does not authorize changes to existing release history.
 both the root and the server module. Release automation and unrelated release
 notes remain with T15.
 
+## Hand-over to T32 and T33
+
+[T32](T32-maildir-backend.md) and [T33](T33-imapserver-v1.md) own their
+server-module entries in `CHANGELOG.md`. T32 also owns only the server-stage
+timeout in `.github/scripts/run-interop.sh` if measured runtime for both
+backends exceeds the current 75-minute budget; record the measurement and
+reason. Other release automation and unrelated release notes remain with T15.
+
 ## Done when
 
 All jobs green on main, the apidiff gate has run on at least one PR, and a

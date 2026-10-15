@@ -105,3 +105,21 @@ does not reach any of them:
   targets) is green with no crasher, covering command decoding at minimum.
 - Every stateful security test in the list above exists, passes, and is
   wired into the same CI path as the client's `-race`/interop suites.
+
+## Hand-over to T32
+
+[T32](T32-maildir-backend.md) takes these narrow integration points in
+`imapserver/interop/` so that both backends actually run:
+
+- `profile.go`: backend factories, memory and Maildir profiles, fresh storage
+  and cleanup; `startOn` accepts the chosen backend factory;
+- `client_test.go`: `serverForClients` uses that selection;
+- `main_test.go`: register both profiles with the harness;
+- `imaptest_test.go` and `mbsync_test.go`: named, sequential per-backend
+  subtest loops around the existing suites.
+
+Suite assertions, triage records, testdata and other interop files stay with
+T24. The current server-stage budget is `-timeout 75m`; any measured increase
+uses T15's explicit timeout handover in `T15-release-engineering.md`.
+New parsers under `imapserver/{message,maildir}/` land with fuzz targets in
+T32; afterwards those targets belong to T24.

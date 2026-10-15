@@ -9,7 +9,8 @@ Two modules, two version lines, one repository.
 
 The split and its reasoning are `SERVER-DESIGN.md` §9, approved with the design.
 The short version: one `go.mod` cannot carry two different compatibility
-promises, and the root API froze at v1.0 while the server's has not.
+promises, and the root API froze at v1.0 while the server's has not. The
+server line stays v0.x until milestone M7 (`ROADMAP.md`) is met.
 
 ## The ordering constraint
 

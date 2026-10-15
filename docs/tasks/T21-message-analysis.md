@@ -100,3 +100,12 @@ the counting errors unit tests miss.
   test that enumerates the concrete types and fails on an unhandled one is the
   gate that keeps this complete as new criteria are added.
 - Fuzz targets green over a recorded campaign, per T13's policy.
+
+## Hand-over to T32
+
+[T32](T32-maildir-backend.md) owns new `imapserver/message/**`: a public,
+server-module wrapper around these helpers, without aliases or internal types
+in its exported surface. It may make narrow internal changes needed for that
+boundary, including cancellation, but does not move or export the internal
+implementation. Existing fuzz targets remain with T13. The helper step is
+reviewed and merged before T32 starts Maildir storage; T33 reviews it for v1.
