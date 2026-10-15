@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -20,16 +21,26 @@ import (
 func authenticateFirstLine(t *testing.T, capabilities string, opts *AuthenticateOptions) (string, error) {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
+	return authenticateFirstLineOver(t, clientConn, serverConn, capabilities, opts)
+}
+
+// authenticateFirstLineOver is authenticateFirstLine over the given ends of a
+// connection, such as the two sides of a TLS session.
+func authenticateFirstLineOver(t *testing.T, clientConn, serverConn net.Conn, capabilities string, opts *AuthenticateOptions) (string, error) {
+	t.Helper()
 	defer serverConn.Close()
 	lines := make(chan string, 1)
 	go func() {
 		_, _ = serverConn.Write([]byte("* OK [CAPABILITY IMAP4rev1 SASL-IR " + capabilities + "] ready\r\n"))
 		// Close below ends a session that sends nothing with EOF.
-		line, _ := bufio.NewReader(serverConn).ReadString('\n')
+		r := bufio.NewReader(serverConn)
+		line, _ := r.ReadString('\n')
 		lines <- line
 		if fields := strings.Fields(line); len(fields) > 0 {
 			_, _ = serverConn.Write([]byte(fields[0] + " NO [AUTHENTICATIONFAILED] stop\r\n"))
 		}
+		// Read on until Close, which over TLS first sends close_notify.
+		_, _ = io.Copy(io.Discard, r)
 	}()
 	c := NewClient(clientConn, &Options{AllowInsecureAuth: true})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

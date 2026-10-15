@@ -35,7 +35,11 @@ type AuthenticateOptions struct {
 	// Mechanism explicitly selects a server-advertised SASL mechanism. It is
 	// case-insensitive. With an empty value Authenticate prefers, in order:
 	// SCRAM-SHA-256-PLUS, SCRAM-SHA-256, SCRAM-SHA-1-PLUS, SCRAM-SHA-1,
-	// OAUTHBEARER, XOAUTH2, CRAM-MD5, PLAIN, then LOGIN.
+	// OAUTHBEARER, XOAUTH2, CRAM-MD5, PLAIN, then LOGIN. It skips the -PLUS
+	// variants when the connection has no TLS channel binding to offer: over
+	// cleartext, or under TLS 1.2 without Extended Master Secret. An explicit
+	// -PLUS Mechanism is refused there, as is automatic selection when only
+	// -PLUS variants are left.
 	Mechanism string
 
 	// Token supplies the bearer token for XOAUTH2 or OAUTHBEARER. If it is
@@ -252,11 +256,28 @@ func (c *Client) selectSASL(username, password string, opts *AuthenticateOptions
 		return "", nil, err
 	}
 	if name == "" {
+		// A -PLUS variant needs a TLS channel binding, which a cleartext
+		// connection, or TLS 1.2 without Extended Master Secret, cannot export,
+		// so selection moves on. A plain SCRAM chosen instead sends the GS2
+		// flag "n", which says exactly that, so this is not a downgrade RFC
+		// 5802 would flag. When nothing else is left, the binding error is the
+		// useful one. An explicit Mechanism still fails loudly.
+		var bindingErr error
 		for _, candidate := range saslPreference {
-			if (allowed == nil || allowed[candidate]) && c.hasCapability("AUTH="+candidate) {
-				name = candidate
-				break
+			if (allowed != nil && !allowed[candidate]) || !c.hasCapability("AUTH="+candidate) {
+				continue
 			}
+			if strings.HasSuffix(candidate, "-PLUS") {
+				if _, err := c.tlsChannelBinding(); err != nil {
+					bindingErr = err
+					continue
+				}
+			}
+			name = candidate
+			break
+		}
+		if name == "" && bindingErr != nil {
+			return "", nil, bindingErr
 		}
 	}
 	if name == "" {

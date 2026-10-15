@@ -117,6 +117,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   the root with no resources instead of failing the command with a protocol
   error. `GetQuota` likewise reports the requested root with no resources when
   the server completes without any QUOTA response, as Apache James 3.8 does.
+- `imapclient.Client.Authenticate`'s automatic selection skips
+  SCRAM-SHA-256-PLUS and SCRAM-SHA-1-PLUS when the connection has no TLS
+  channel binding to offer: over cleartext, or under TLS 1.2 without Extended
+  Master Secret. Before, it chose them first and failed before sending
+  anything, so a cleartext connection to a server that also offers plain SCRAM
+  could not authenticate at all. The plain SCRAM chosen instead sends the GS2
+  flag "n", which RFC 5802 does not treat as a downgrade. An explicit -PLUS
+  `Mechanism`, and a server offering only -PLUS variants, still fail as
+  before. No exported API change.
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
