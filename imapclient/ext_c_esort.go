@@ -116,9 +116,8 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 	}
 
 	cmd := &ESearchCommand{data: &ESearchData{ESearchData: imap.ESearchData{UID: uid, Values: make(map[ESearchReturnKey]string)}}, uid: uid}
-	var registration *searchContext
 	if update {
-		registration = &searchContext{uid: uid, sorted: true}
+		cmd.registration = &searchContext{uid: uid, sorted: true}
 	}
 	write := func(enc *imapwire.Encoder) {
 		// RFC 5267 section 3: sort = ["UID" SP] "SORT" [sort-return-opts]
@@ -142,7 +141,7 @@ func (c *Client) sortExtended(ctx context.Context, uid bool, keys []SortKeySpec,
 		write:          write,
 		collector:      esearchCollector(cmd),
 		answersESearch: true,
-		searchContext:  registration,
+		searchContext:  cmd.registration,
 	})
 	if update {
 		cmd.data.ContextTag = cmd.Command.Tag()

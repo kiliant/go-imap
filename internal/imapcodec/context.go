@@ -14,7 +14,9 @@ func ReadContextUpdateChanges(dec *imapwire.Decoder, uid bool) ([]imap.ContextUp
 	err := dec.ExpectList(func() error {
 		var change imap.ContextUpdateChange
 		var raw string
-		if !dec.ExpectNumber(&change.Position) || !dec.ExpectSP() || !dec.ExpectAtom(&raw) {
+		// context-position SP sequence-set (RFC 5267 section 5). The set
+		// may contain "*", which is not an atom character.
+		if !dec.ExpectNumber(&change.Position) || !dec.ExpectSP() || !dec.ExpectSequenceSet(&raw) {
 			return dec.Err()
 		}
 		var err error

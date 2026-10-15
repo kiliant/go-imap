@@ -271,9 +271,7 @@ func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.Re
 			return imapwire.RespCond{}, false, dec.Err()
 		}
 		resp := untaggedResponse{name: upper, dec: dec, cond: &cond}
-		if err := c.observeContextCondition(cond); err != nil {
-			return cond, false, err
-		}
+		c.observeContextCondition(cond)
 		if c.offerCollector(&resp) {
 			return cond, true, nil
 		}

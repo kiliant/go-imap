@@ -347,37 +347,67 @@ func TestContextUpdatesWithoutPendingCommandAndDuringIdle(t *testing.T) {
 }
 
 func TestContextSortUpdateAndModeValidation(t *testing.T) {
-	for _, wire := range []string{"UID ADDTO (1 9,4:2)", "UID ADDTO (0 9)", "ADDTO (1 9)"} {
-		t.Run(wire, func(t *testing.T) {
+	for _, tc := range []struct {
+		uid  bool
+		wire string
+		want string // the delivered set; empty when the update must fail
+	}{
+		{true, "UID ADDTO (1 9,4:2)", "9,4:2"},
+		{true, "UID ADDTO (0 9)", ""},
+		// As for the initial result, a UID context tolerates a missing UID
+		// indicator; an explicit one on a sequence-number context fails.
+		{true, "ADDTO (1 9)", "9"},
+		{false, "UID ADDTO (1 9)", ""},
+		{false, "ADDTO (2 7:5)", "7:5"},
+	} {
+		t.Run(fmt.Sprintf("UID=%t/%s", tc.uid, tc.wire), func(t *testing.T) {
 			var updates []*ContextUpdate
+			mode, prefix := "", ""
+			if tc.uid {
+				mode, prefix = " UID", "UID "
+			}
 			c, ctx := newRoutingTestClient(t, "* PREAUTH [CAPABILITY IMAP4REV1 SORT CONTEXT=SORT] ready", &Options{UnilateralData: &UnilateralDataHandler{
 				ContextUpdate: func(data *ContextUpdate) { updates = append(updates, data) },
 			}}, func(s *extAServer) {
 				s.selectInbox("INBOX", "101")
 				old, sent := s.command()
-				if !strings.Contains(sent, "UID SORT RETURN (UPDATE COUNT)") {
+				if !strings.HasPrefix(sent, prefix+"SORT RETURN (UPDATE COUNT)") {
 					t.Errorf("sort wire = %q", sent)
 				}
-				s.reply(`* ESEARCH (TAG "`+old+`") UID COUNT 1`, old+" OK done")
+				s.reply(`* ESEARCH (TAG "`+old+`")`+mode+` COUNT 1`, old+" OK done")
 				tag, _ := s.command()
-				s.reply(`* ESEARCH (TAG "`+old+`") `+wire, tag+" OK fence")
+				s.reply(`* ESEARCH (TAG "`+old+`") `+tc.wire, tag+" OK fence")
 			})
 			if _, err := c.Select("INBOX", nil).Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
-			data, err := c.SortExtendedUID(ctx, []SortKeySpec{{Key: SortKeyDate}}, nil, &ESortOptions{
+			sort := c.SortExtended
+			if tc.uid {
+				sort = c.SortExtendedUID
+			}
+			data, err := sort(ctx, []SortKeySpec{{Key: SortKeyDate}}, nil, &ESortOptions{
 				ReturnOptions: []SearchReturnOption{SearchReturnUpdate, SearchReturnCount},
 			})
 			if err != nil || data.ContextTag == "" {
 				t.Fatalf("sort registration = %#v, %v", data, err)
 			}
 			err = c.Noop(nil).Wait(ctx)
-			if wire == "UID ADDTO (1 9,4:2)" {
-				if err != nil || len(updates) != 1 || updates[0].Tag != data.ContextTag || updates[0].Items[0].Changes[0].UIDs.String() != "9,4:2" {
-					t.Fatalf("sort update = %#v, %v", updates, err)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("invalid SORT update accepted")
 				}
-			} else if err == nil {
-				t.Fatal("invalid SORT update accepted")
+				return
+			}
+			if err != nil || len(updates) != 1 || updates[0].Tag != data.ContextTag || updates[0].UID != tc.uid {
+				t.Fatalf("sort update = %#v, %v", updates, err)
+			}
+			change := updates[0].Items[0].Changes[0]
+			got := change.SeqNums.String()
+			if tc.uid {
+				got = change.UIDs.String()
+			}
+			if got != tc.want || tc.uid != (change.UIDs != nil) || tc.uid == (change.SeqNums != nil) {
+				t.Fatalf("sort change = %#v", change)
 			}
 		})
 	}
@@ -485,5 +515,98 @@ func TestContextLogoutAndTransportLossCleanup(t *testing.T) {
 				t.Fatalf("registrations=%d delivered=%d", len(c.searchContexts), count)
 			}
 		})
+	}
+}
+
+// Wait fails when the initial result correlates with another tag. The server
+// accepted the request, but the caller has no result to which updates could
+// apply, so the registration ends with tagged completion rather than at Wait.
+func TestContextForeignInitialResultLeavesNoRegistration(t *testing.T) {
+	for _, multi := range []bool{false, true} {
+		t.Run(fmt.Sprintf("MULTISEARCH=%t", multi), func(t *testing.T) {
+			var updates int
+			c, ctx := newRoutingTestClient(t, contextCapabilities, &Options{UnilateralData: &UnilateralDataHandler{
+				ContextUpdate: func(*ContextUpdate) { updates++ },
+			}}, func(s *extAServer) {
+				s.selectInbox("INBOX", "101")
+				tag, _ := s.command()
+				if multi {
+					s.reply(`* ESEARCH (TAG "X0001" MAILBOX "INBOX" UIDVALIDITY 101) UID COUNT 1`, tag+" OK done")
+				} else {
+					s.reply(`* ESEARCH (TAG "X0001") COUNT 1`, tag+" OK done")
+				}
+				fence, _ := s.command()
+				if multi {
+					s.reply(`* ESEARCH (TAG "`+tag+`" MAILBOX "INBOX" UIDVALIDITY 101) UID ADDTO (0 9)`, fence+" OK fence")
+				} else {
+					s.reply(`* ESEARCH (TAG "`+tag+`") ADDTO (0 9)`, fence+" OK fence")
+				}
+				s.command() // keep the connection alive until registry assertions
+			})
+			if _, err := c.Select("INBOX", nil).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+			returns := []SearchReturnOption{SearchReturnCount, SearchReturnUpdate}
+			var err error
+			if multi {
+				_, err = c.MultiSearch(imap.SearchAll, &MultiSearchOptions{ReturnOptions: returns}).Wait(ctx)
+			} else {
+				_, err = c.SearchExtended(imap.SearchAll, &ESearchOptions{ReturnOptions: returns}).Wait(ctx)
+			}
+			if err == nil || !strings.Contains(err.Error(), `"X0001"`) {
+				t.Fatalf("foreign correlator error = %v", err)
+			}
+			if err := c.Noop(nil).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+			c.mu.Lock()
+			registered := len(c.searchContexts)
+			c.mu.Unlock()
+			if updates != 0 || registered != 0 {
+				t.Fatalf("updates=%d registrations=%d after a failed initial result", updates, registered)
+			}
+		})
+	}
+}
+
+// A NOUPDATE that names no tag identifies no registration. It must not fail a
+// connection that may never have asked for UPDATE; the condition is delivered
+// as before CONTEXT delivery existed, and live registrations stay live.
+func TestContextMalformedNoUpdateKeepsConnection(t *testing.T) {
+	for _, code := range []string{"[NOUPDATE]", "[NOUPDATE (bad)]"} {
+		for _, tagged := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/tagged=%t", code, tagged), func(t *testing.T) {
+				var updates, statuses int
+				c, ctx := newRoutingTestClient(t, contextCapabilities, &Options{UnilateralData: &UnilateralDataHandler{
+					ContextUpdate: func(*ContextUpdate) { updates++ },
+					StatusResponse: func(data *StatusResponse) {
+						if data.Code == imap.ResponseCode("NOUPDATE") {
+							statuses++
+						}
+					},
+				}}, func(s *extAServer) {
+					s.selectInbox("INBOX", "101")
+					old, _ := s.command()
+					s.reply(`* ESEARCH (TAG "` + old + `") COUNT 1`)
+					if tagged {
+						s.reply(old + " OK " + code + " done")
+					} else {
+						s.reply("* NO "+code+" refused", old+" OK done")
+					}
+					fence, _ := s.command()
+					s.reply(`* ESEARCH (TAG "`+old+`") ADDTO (0 9)`, fence+" OK fence")
+				})
+				if _, err := c.Select("INBOX", nil).Wait(ctx); err != nil {
+					t.Fatal(err)
+				}
+				contextSearch(t, ctx, c, false)
+				if err := c.Noop(nil).Wait(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if updates != 1 || statuses != boolInt(!tagged) {
+					t.Fatalf("updates=%d NOUPDATE callbacks=%d", updates, statuses)
+				}
+			})
+		}
 	}
 }

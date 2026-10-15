@@ -168,12 +168,18 @@ type UnilateralDataHandler struct {
 	// claim LIST. A pending LIST command claims LIST responses, including
 	// indistinguishable events; a legacy LSUB command does not claim LIST.
 	List func(data *ListData)
-	// ContextUpdate receives ESEARCH notifications for registered SEARCH/SORT
-	// RETURN (UPDATE) contexts. Items and position/set pairs are in wire order.
-	// Delivery can precede the initial command's Wait returning, including
-	// between its initial response and tagged completion. Callbacks may retain
-	// the data; the client does not subsequently mutate it. Do not block or
-	// issue a command and wait here. See [Client.CancelUpdate] for lifecycle.
+	// ContextUpdate receives the unsolicited ESEARCH responses that update a
+	// RETURN (UPDATE) context of [Client.SearchExtended], [Client.SortExtended]
+	// or [Client.MultiSearch] (CONTEXT, RFC 5267 section 4.3). They are routed
+	// by the original command's tag and never become a pending command's
+	// result. Items and position/set pairs are in wire order; apply them in
+	// that order. Delivery can precede the initial command's Wait returning,
+	// including between its initial response and tagged completion. Updates
+	// for a tag with no live registration, and all updates while this field is
+	// nil, are still validated and then discarded. Callbacks may retain the
+	// data; the client does not subsequently mutate it. Do not block or issue
+	// a command and wait here. [Client.CancelUpdate] documents when a
+	// registration ends.
 	ContextUpdate func(data *ContextUpdate)
 	_             struct{}
 }
@@ -695,6 +701,7 @@ func (c *Client) issue(name string, opts commandOptions) *Command {
 		if c.searchContexts == nil {
 			c.searchContexts = make(map[string]*searchContext)
 		}
+		cmd.searchContext.tag = cmd.tag
 		c.searchContexts[cmd.tag] = cmd.searchContext
 	}
 	if (name == "STARTTLS" || name == "COMPRESS") && c.paused != nil {
@@ -855,10 +862,7 @@ func (c *Client) removePendingLocked(want *Command) {
 }
 
 func (c *Client) completeTagged(tag string, cond imapwire.RespCond) {
-	if err := c.observeContextCondition(cond); err != nil {
-		c.poison(protocolError(err))
-		return
-	}
+	c.observeContextCondition(cond)
 	if cond.Text.Code == "CAPABILITY" {
 		c.addCapabilities(strings.Fields(cond.Text.Args))
 	}

@@ -21,9 +21,11 @@ const (
 	SearchReturnContext SearchReturnOptionKeyword = "CONTEXT"
 
 	// SearchReturnUpdate asks for incremental ESEARCH updates to a CONTEXT.
-	// RFC 5267 section 4.3. Requires CONTEXT=SEARCH for SearchExtended or
-	// CONTEXT=SORT for SortExtended. Updates arrive through
+	// RFC 5267 section 4.3. Requires CONTEXT=SEARCH for SearchExtended and
+	// MultiSearch, or CONTEXT=SORT for SortExtended. Updates arrive through
 	// [UnilateralDataHandler.ContextUpdate], independently of command results.
+	// SearchPartial does not register a context, so updates for its tag are
+	// discarded.
 	SearchReturnUpdate SearchReturnOptionKeyword = "UPDATE"
 
 	// SearchReturnESortAll is the ALL return option for ESORT. RFC 5267
@@ -43,14 +45,32 @@ type CancelUpdateOptions struct {
 // section 4.3.5. Requires CONTEXT=SEARCH or CONTEXT=SORT.
 //
 // tags are the command tags whose UPDATE contexts should be cancelled; at
-// least one is required. A nil options pointer selects the defaults.
-// Use ESearchCommand.Tag or the result's ESearchData.ContextTag. Updates may
-// still arrive before CANCELUPDATE's tagged OK; after OK these tags are no
-// longer delivered. A failed cancellation leaves registrations active.
-// NOUPDATE removes its named registration before StatusResponse is called.
-// SELECT/EXAMINE abandon all registrations when issued, even if they fail;
-// successful CLOSE/UNSELECT/UNAUTHENTICATE, BYE, logout and disconnect clear
-// them too. Nil update handlers still consume and validate notifications.
+// least one is required. Use the searching command's Tag or the result's
+// [ESearchData.ContextTag]. A nil options pointer selects the defaults.
+//
+// # Registration lifecycle
+//
+// A searching command with RETURN (UPDATE) registers its tag before the
+// request is written. [UnilateralDataHandler.ContextUpdate] receives that
+// tag's updates until the registration ends:
+//
+//   - CancelUpdate: updates may still arrive before CANCELUPDATE's tagged OK
+//     and are not delivered after it. A failed cancellation leaves the
+//     registrations active.
+//   - Refusal: a NOUPDATE response code ends the registration it names, in
+//     an untagged NO before [UnilateralDataHandler.StatusResponse] sees it.
+//     A tagged NO or BAD ends the command's own.
+//   - A failed initial result: when Wait fails because the ESEARCH response
+//     correlates with another tag, the registration ends at tagged
+//     completion. The server may still hold the context; cancelling the
+//     command's tag releases it.
+//   - Selection: SELECT and EXAMINE end every registration when issued, even
+//     if they then fail. A successful CLOSE, UNSELECT or UNAUTHENTICATE ends
+//     them at its tagged OK.
+//   - The session: BYE, LOGOUT and disconnect end every registration.
+//
+// Updates for a tag with no live registration are still decoded and
+// validated, then discarded.
 func (c *Client) CancelUpdate(ctx context.Context, tags []string, options *CancelUpdateOptions) error {
 	_ = options
 	if ctx == nil {

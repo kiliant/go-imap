@@ -39,11 +39,13 @@ const (
 // Construct with keyed fields only; fields may be added in a future release.
 type ContextUpdate struct {
 	// Tag identifies the original searching command, not a command currently
-	// in flight. UID is the response's number mode.
+	// in flight. UID is that command's number mode: as for its initial
+	// result, an update for a UID context may omit the UID indicator.
 	Tag string
 	UID bool
 	// Mailbox and UIDValidity are the additional MULTISEARCH correlator
-	// fields, when present. UPDATE still applies only to the selected mailbox.
+	// fields, when present, read as for [MultiSearchResult]. UPDATE still
+	// applies only to the selected mailbox (RFC 7377 section 2.2).
 	Mailbox     string
 	UIDValidity uint32
 	// Items retains every return item, including repeated and unknown keys,

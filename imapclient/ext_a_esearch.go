@@ -125,6 +125,10 @@ type ESearchCommand struct {
 	emulated *[]uint32
 	wanted   map[ESearchReturnKey]bool
 	uid      bool
+
+	// registration is the RETURN (UPDATE) context, or nil. It is set before
+	// the command is issued and never changes.
+	registration *searchContext
 }
 
 // Wait waits for the extended SEARCH and returns its data.
@@ -253,11 +257,10 @@ func (c *Client) searchExtended(uid bool, criteria imap.SearchCriteria, options 
 		return cmd
 	}
 
-	var registration *searchContext
 	if update {
-		registration = &searchContext{uid: uid}
+		cmd.registration = &searchContext{uid: uid}
 	}
-	cmd.Command = c.issue(name, commandOptions{allowed: stateSelected, searchContext: registration, collector: esearchCollector(cmd), write: func(enc *imapwire.Encoder) {
+	cmd.Command = c.issue(name, commandOptions{allowed: stateSelected, searchContext: cmd.registration, collector: esearchCollector(cmd), write: func(enc *imapwire.Encoder) {
 		// RFC 4466 section 2.6: search = "SEARCH" [search-return-opts] SP
 		// search-program, and the CHARSET belongs to search-program. RETURN
 		// therefore precedes CHARSET, not the other way round.
@@ -373,10 +376,10 @@ func (cmd *ESearchCommand) reconstruct() {
 // It is the guard behind the "cannot be pipelined" rejection in
 // [Client.SearchExtended]. RFC 5182 example 8 shows a server answering two
 // pipelined extended searches in the opposite order, which is why the ESEARCH
-// response carries a correlator at all. Responses are now decoded before
-// collection, but ownership and lifecycle handling for concurrent searches and
-// CONTEXT updates are not implemented yet. Keep the existing exclusion until
-// that routing is in place, rather than misassigning a command's matches.
+// response carries a correlator at all. CONTEXT updates for completed searches
+// are routed by tag before any collector sees them, so a search may follow an
+// UPDATE context. Concurrent initial results are not routed by correlator yet:
+// keep the exclusion rather than misassigning a command's matches.
 func (c *Client) searchPending() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -436,6 +439,7 @@ func esearchCollector(cmd *ESearchCommand) commandCollector {
 		if data.UID != cmd.uid {
 			return true, fmt.Errorf("ESEARCH response UID indicator %t does not match the command", data.UID)
 		}
+		cmd.registration.observeInitialTag(data.Tag)
 		cmd.data.ESearchData = data
 		return true, nil
 	}

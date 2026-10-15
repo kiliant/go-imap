@@ -25,6 +25,36 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Root module — `github.com/kiliant/go-imap`
 
+#### Added
+
+- `imapclient.UnilateralDataHandler.ContextUpdate`, the shared types
+  `imap.ContextUpdate`, `imap.ContextUpdateItem` and
+  `imap.ContextUpdateChange`, the alias `imapclient.ContextUpdate`, the return
+  keys `imap.ESearchReturnKeyAddTo` and `imap.ESearchReturnKeyRemoveFrom`, and
+  `imapclient.ESearchData.ContextTag`: CONTEXT updates (RFC 5267 section 4.3)
+  are delivered. The unsolicited ESEARCH responses carrying ADDTO and
+  REMOVEFROM were discarded, or claimed by another pending extended SEARCH or
+  SORT, which then failed. They are now routed by the original command's tag
+  before any command sees them. Each update keeps every return item in wire
+  order, including repeated and unknown keys. Items carry their raw value,
+  and ADDTO and REMOVEFROM also carry typed position/set pairs in UID or
+  sequence-number mode. `ContextTag` names the context for
+  `Client.CancelUpdate`, also from the blocking `SortExtended`. CancelUpdate
+  now documents when a registration ends. Additive. (#44)
+
+#### Changed
+
+- `imapclient.Client.SortExtended` and `SortExtendedUID` accept RETURN
+  (UPDATE) when the server advertises CONTEXT=SORT and refuse it with
+  `ErrCapabilityNotAdvertised` otherwise. Before, they always refused it,
+  because updates were not delivered. `SearchExtended` and `MultiSearch` now
+  refuse RETURN (UPDATE) without CONTEXT=SEARCH instead of sending it. Without
+  ESEARCH, `SearchExtended` used to emulate the search and drop UPDATE
+  silently. A MULTISEARCH with UPDATE requires a selected mailbox (RFC 7377
+  section 2.2). CONTEXT=SEARCH and CONTEXT=SORT also select the extended
+  SEARCH and SORT syntax that RFC 5267 section 4.1 says they imply. No
+  signature change. (#44)
+
 #### Fixed
 
 - Decode STATUS, LIST and ESEARCH/METADATA response data once before command
@@ -33,8 +63,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   callback. Legacy LSUB no longer consumes unsolicited LIST events. Names-only
   METADATA notifications no longer fail GETMETADATA or LIST-METADATA, and
   another mailbox's metadata values do not leak into GETMETADATA results.
-  No exported API change; CONTEXT and metadata-change callbacks remain future
-  T30 work. (#44)
+  No exported API change; metadata-change callbacks remain future T30 work.
+  (#44)
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 

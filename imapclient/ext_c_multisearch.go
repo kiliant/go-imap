@@ -136,7 +136,7 @@ func (cmd *MultiSearchCommand) SavedResult() *SavedSearchResult {
 // matched. Use [MultiSearchCommand.Wait] with a context for completion.
 // RETURN (UPDATE) requires CONTEXT=SEARCH and a selected mailbox; notifications
 // apply only to that mailbox, even when other mailboxes are searched (RFC 7377
-// section 2.2), and arrive through UnilateralDataHandler.ContextUpdate.
+// section 2.2), and arrive through [UnilateralDataHandler.ContextUpdate].
 //
 // There is no atomic client-side fallback: SELECT+SEARCH per mailbox would
 // disrupt the selected state that this command is designed to preserve.
@@ -248,6 +248,7 @@ func (c *Client) multiSearch(uid bool, criteria imap.SearchCriteria, options *Mu
 		}
 		one := resp.data.esearch.result
 		one.Data.UID = true // RFC 7377 section 2.1.
+		registration.observeInitialTag(one.Tag)
 		result.data.Results = append(result.data.Results, one)
 		return true, nil
 	}})

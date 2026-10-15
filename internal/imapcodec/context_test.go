@@ -49,3 +49,24 @@ func TestContextUpdateChangesRejectMalformed(t *testing.T) {
 		t.Fatal("mixed number modes accepted")
 	}
 }
+
+// context-position SP sequence-set admits "*", which is not an atom character.
+func TestContextUpdateChangesWildcard(t *testing.T) {
+	for _, wire := range []string{"(0 1:*)", "(3 *,7)"} {
+		changes, err := ReadContextUpdateChanges(imapwire.NewDecoderString(wire, nil), true)
+		if err != nil {
+			t.Fatalf("%q: %v", wire, err)
+		}
+		var out bytes.Buffer
+		enc := imapwire.NewEncoder(&out, &imapwire.EncoderOptions{ServerResponse: true})
+		if err := WriteContextUpdateChanges(enc, true, changes); err != nil {
+			t.Fatal(err)
+		}
+		if err := enc.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != wire {
+			t.Fatalf("round trip = %q, want %q", out.String(), wire)
+		}
+	}
+}
