@@ -386,8 +386,32 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			selectedUIDs = append(selectedUIDs, msg.UID)
 		}
 	}
+	marksSeen, err := fetchMarksSeen(items)
+	if err != nil {
+		return err
+	}
+	// The implicit \Seen is one commit and one update batch for the whole
+	// FETCH, before any response is written. One per message pushed a batch
+	// per message into every selected session's queue, which the framework
+	// drains only after the FETCH: past MaxQueuedUpdates the connection was
+	// closed. It also rewrote the whole account state once per message.
+	if marksSeen && !s.readOnly {
+		var unseen []imap.UID
+		fetched := make(map[imap.UID]bool, len(selectedUIDs))
+		for _, uid := range selectedUIDs {
+			fetched[uid] = true
+		}
+		for _, msg := range m.Messages {
+			if fetched[msg.UID] && !imap.ContainsFlag(msg.Flags, imap.FlagSeen) {
+				unseen = append(unseen, msg.UID)
+			}
+		}
+		if err := s.markSeen(ctx, name, unseen); err != nil {
+			return err
+		}
+	}
+	m = s.session.account.state.Mailboxes[name]
 	for _, uid := range selectedUIDs {
-		m = s.session.account.state.Mailboxes[name]
 		at := slices.IndexFunc(m.Messages, func(msg *messageRecord) bool { return msg.UID == uid })
 		msg := m.Messages[at]
 		f, err := openRegular(s.session.account.root, messagePath(name, msg))
@@ -399,19 +423,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			f.Close()
 			return err
 		}
-		data, seen, err := fetchData(ctx, msg, analysis, imap.SeqNum(at+1), items)
-		if err == nil && seen && !s.readOnly && !imap.ContainsFlag(msg.Flags, imap.FlagSeen) {
-			err = s.markSeen(ctx, name, uid)
-			if err == nil {
-				msg = s.session.account.state.Mailboxes[name].Messages[at]
-				if _, ok := data.Items["FLAGS"]; ok {
-					data.Items["FLAGS"] = []imap.FetchData{imap.FetchDataFlags(slices.Clone(msg.Flags))}
-				}
-				if _, ok := data.Items["MODSEQ"]; ok {
-					data.Items["MODSEQ"] = []imap.FetchData{imap.FetchDataModSeq(msg.ModSeq)}
-				}
-			}
-		}
+		data, _, err := fetchData(ctx, msg, analysis, imap.SeqNum(at+1), items)
 		if err == nil {
 			err = writer.WriteMessage(ctx, data)
 		}
@@ -422,15 +434,50 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 	}
 	return nil
 }
-func (s *selected) markSeen(ctx context.Context, name string, uid imap.UID) error {
+
+// fetchMarksSeen validates items before any side effect and reports whether
+// they set \Seen. It must accept exactly the items fetchData serves.
+func fetchMarksSeen(items []imap.FetchItem) (bool, error) {
+	seen := false
+	for _, item := range items {
+		switch item := item.(type) {
+		case imap.FetchItemKeyword:
+			switch item {
+			case imap.FetchItemUID, imap.FetchItemFlags, imap.FetchItemModSeq, imap.FetchItemInternalDate,
+				imap.FetchItemRFC822Size, imap.FetchItemEnvelope, imap.FetchItemRFC822Header:
+			case imap.FetchItemRFC822, imap.FetchItemRFC822Text:
+				seen = true
+			default:
+				return false, noError(imap.CodeCannot, fmt.Sprintf("unsupported FETCH item %q", item))
+			}
+		case *imap.FetchItemBodyStructure:
+		case *imap.FetchItemBodySection:
+			seen = seen || !item.Peek
+		default:
+			return false, noError(imap.CodeCannot, fmt.Sprintf("unsupported FETCH item %T", item))
+		}
+	}
+	return seen, nil
+}
+
+func (s *selected) markSeen(ctx context.Context, name string, uids []imap.UID) error {
+	if len(uids) == 0 {
+		return nil
+	}
 	a := s.session.account
 	next, err := cloneState(a.state)
 	if err != nil {
 		return err
 	}
 	m := next.Mailboxes[name]
+	mark := make(map[imap.UID]bool, len(uids))
+	for _, uid := range uids {
+		mark[uid] = true
+	}
+	var actions []fileAction
+	var changes []imapserver.Update
 	for _, msg := range m.Messages {
-		if msg.UID != uid {
+		if !mark[msg.UID] {
 			continue
 		}
 		old := messagePath(name, msg)
@@ -442,12 +489,16 @@ func (s *selected) markSeen(ctx context.Context, name string, uid imap.UID) erro
 		msg.ModSeq = modseq
 		base, _, _ := strings.Cut(msg.File, ":2,")
 		msg.File = base + flagSuffix(msg.Flags)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return a.publishCommit(next, []fileAction{{Kind: "rename", From: old, To: messagePath(name, msg)}}, map[uint32][]imapserver.Update{s.id: {&imapserver.UpdateFlags{UID: uid, Flags: slices.Clone(msg.Flags), ModSeq: modseq}}}, 0)
+		actions = append(actions, fileAction{Kind: "rename", From: old, To: messagePath(name, msg)})
+		changes = append(changes, &imapserver.UpdateFlags{UID: msg.UID, Flags: slices.Clone(msg.Flags), ModSeq: modseq})
 	}
-	return nil
+	if len(changes) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return a.publishCommit(next, actions, map[uint32][]imapserver.Update{s.id: changes}, 0)
 }
 
 type sizedReader struct {

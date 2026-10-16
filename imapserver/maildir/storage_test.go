@@ -771,3 +771,69 @@ func TestInvalidMetadataEntryNamesAreBad(t *testing.T) {
 		t.Fatal("an invalid entry name was stored")
 	}
 }
+
+// TestFetchMarksSeenInOneBatch pins the implicit \Seen of a non-PEEK FETCH to
+// one commit and one update batch. One batch per message overflowed every
+// selected session's update queue once a FETCH covered more messages than
+// Limits.MaxQueuedUpdates, since the framework drains only after the FETCH.
+func TestFetchMarksSeenInOneBatch(t *testing.T) {
+	ctx := context.Background()
+	s := loginTest(t, openTest(t, t.TempDir()))
+	const count = 5
+	for range count {
+		appendTest(t, s, "INBOX")
+	}
+	var batches []*imapserver.UpdateBatch
+	if _, err := s.Select(ctx, "INBOX", &imapserver.Updater{PushFunc: func(batch *imapserver.UpdateBatch) error {
+		batches = append(batches, batch)
+		return nil
+	}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	inbox := selectTest(t, s, "INBOX")
+	all := imap.UIDSet{imap.UIDRange{Start: 1, Stop: 0}}
+
+	// An unsupported item fails before anything is marked.
+	unsupported := []imap.FetchItem{&imap.FetchItemBodySection{}, imap.FetchItemKeyword("X-UNSUPPORTED")}
+	if err := inbox.Fetch(ctx, discardFetch(), all, &imapserver.FetchOptions{Items: unsupported}); err == nil {
+		t.Fatal("unsupported FETCH item accepted")
+	}
+	if len(batches) != 0 {
+		t.Fatalf("a refused FETCH published %d batches", len(batches))
+	}
+
+	var fetched []*imap.FetchMessageData
+	writer := &imapserver.FetchWriter{WriteFunc: func(_ context.Context, data *imap.FetchMessageData) error {
+		fetched = append(fetched, data)
+		return nil
+	}}
+	items := []imap.FetchItem{imap.FetchItemFlags, &imap.FetchItemBodySection{}}
+	if err := inbox.Fetch(ctx, writer, all, &imapserver.FetchOptions{Items: items}); err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) != 1 || len(batches[0].Changes) != count {
+		t.Fatalf("FETCH of %d unseen messages published %d batches, want one with %d changes", count, len(batches), count)
+	}
+	if len(fetched) != count {
+		t.Fatalf("FETCH wrote %d messages, want %d", len(fetched), count)
+	}
+	for _, data := range fetched {
+		flags, _ := data.Items["FLAGS"][0].(imap.FetchDataFlags)
+		if !imap.ContainsFlag([]imap.Flag(flags), imap.FlagSeen) {
+			t.Fatalf("FETCH response FLAGS %v lack the \\Seen it set", flags)
+		}
+	}
+	for _, msg := range s.account.state.Mailboxes["INBOX"].Messages {
+		if !imap.ContainsFlag(msg.Flags, imap.FlagSeen) || !strings.HasSuffix(msg.File, "S") {
+			t.Fatalf("message %d not durably \\Seen: %v %q", msg.UID, msg.Flags, msg.File)
+		}
+	}
+
+	// Already \Seen: nothing to commit, nothing to publish.
+	if err := inbox.Fetch(ctx, discardFetch(), all, &imapserver.FetchOptions{Items: items}); err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("FETCH of already-seen messages published %d more batches", len(batches)-1)
+	}
+}
