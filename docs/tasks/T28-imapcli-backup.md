@@ -179,3 +179,8 @@ the test of its mechanism choice in `cmd/imapcli/backup_test.go` pass to
 [T29](T29-list-extdata-auth.md). They worked around imapclient's automatic
 SASL selection, which could send a password as a bearer token, and T29 adds
 `AuthenticateOptions.CredentialKind` to make the workaround unnecessary.
+
+Follow-up #21 takes `cmd/imapcli/auth.go` and its mechanism-choice test forward
+from completed T29, whose spec records the same handover. It removes the copied
+password-mechanism list in favour of the library's distinguishable local
+automatic-selection refusal. No backup storage or synchronisation changes.

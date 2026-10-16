@@ -440,32 +440,6 @@ func TestBackupFlagValidation(t *testing.T) {
 	}
 }
 
-// TestOffersPasswordMechanism decides between AUTHENTICATE and the LOGIN
-// fallback: a server offering only OAuth mechanisms, or SASL mechanisms
-// imapclient does not implement, is logged in to with LOGIN.
-func TestOffersPasswordMechanism(t *testing.T) {
-	tests := []struct {
-		caps string
-		want bool
-	}{
-		{"AUTH=OAUTHBEARER AUTH=PLAIN", true},
-		{"AUTH=XOAUTH2 AUTH=SCRAM-SHA-1", true},
-		{"AUTH=CRAM-MD5", true},
-		{"AUTH=OAUTHBEARER AUTH=XOAUTH2", false},
-		{"AUTH=GSSAPI AUTH=SCRAM-SHA-512", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		caps := make(map[string]bool)
-		for _, c := range strings.Fields(tt.caps) {
-			caps[c] = true
-		}
-		if got := offersPasswordMechanism(caps); got != tt.want {
-			t.Errorf("offersPasswordMechanism(%q) = %t, want %t", tt.caps, got, tt.want)
-		}
-	}
-}
-
 // TestBackupPrefersPasswordOverOAuth is the Stalwart case: a server offering
 // OAUTHBEARER and PLAIN must get the password through PLAIN.
 func TestBackupPrefersPasswordOverOAuth(t *testing.T) {

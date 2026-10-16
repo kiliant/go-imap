@@ -221,6 +221,17 @@ known codes; unknown codes pass through as-is rather than being flattened to
 
 Callers match with `errors.As` and compare `Code`. No per-extension error types.
 
+### Client-local response codes
+
+`imapclient.CodeNoCompatibleAuthMechanism` is a synthetic local code, carried
+by the existing `*imap.Error` with `ErrorTypeProtocol` when automatic SASL
+selection exhausts the advertised compatible mechanisms before writing. Its
+constant belongs to the client because it describes a client observation,
+not shared wire vocabulary. Callers match both Type and Code; a remote NO/BAD
+with the same token must not authorize a fallback. Future SASL mechanisms can
+then be added without copying their registry into each caller. This adds no
+error type or closed set, and does not relax transport or credential checks.
+
 ## 6. internal/ never leaks
 
 The wire codec must not appear in any exported signature — not as a parameter,

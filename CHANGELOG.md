@@ -49,6 +49,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `Client.CancelUpdate`, also from the blocking `SortExtended`. CancelUpdate
   now documents when a registration ends. Additive. (#44)
 
+- `imapclient.CodeNoCompatibleAuthMechanism` identifies automatic SASL
+  selection exhaustion as a local `*imap.Error` with `ErrorTypeProtocol`,
+  before writing to the connection. `imapcli` now uses this discriminator
+  for its LOGIN fallback instead of copying the library's password-mechanism
+  list. Server refusals, privacy and channel-binding failures retain their
+  separate errors and do not trigger fallback. Additive. (#21)
+
 #### Changed
 
 - `imapclient.Client.SortExtended` and `SortExtendedUID` accept RETURN
