@@ -1,16 +1,22 @@
 package imapclient
 
+import (
+	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
+)
+
 // responseData is decoded once on the reader goroutine, before command
 // collectors choose whether they own the response. A collector can inspect it
 // and decline without advancing the shared decoder for the next collector.
 // FETCH deliberately stays on its existing streaming path.
 type responseData struct {
-	decoded  bool
-	err      error
-	status   *StatusData
-	list     *ListData
-	esearch  *esearchResponse
-	metadata *metadataResponse
+	decoded    bool
+	err        error
+	status     *StatusData
+	list       *ListData
+	esearch    *esearchResponse
+	metadata   *metadataResponse
+	uidbatches *imap.UIDBatchesData
 }
 
 func (resp *untaggedResponse) decodeData() error {
@@ -18,6 +24,8 @@ func (resp *untaggedResponse) decodeData() error {
 		return resp.data.err
 	}
 	switch resp.name {
+	case "UIDBATCHES":
+		resp.data.uidbatches, resp.data.err = imapcodec.ReadUIDBatchesResponse(resp.dec)
 	case "STATUS":
 		resp.data.status, resp.data.err = readStatusResponse(resp.dec)
 	case "LIST", "LSUB", "XLIST":

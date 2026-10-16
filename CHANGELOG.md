@@ -27,6 +27,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imap.UIDBatchesData`, `UIDBatch`, `UIDBatchIndexRange`, response codes
+  `CodeTooFew` and `CodeTooMany`, and `imapclient.Client.UIDBatches` with
+  client-owned `UIDBatchesData` and guarded `UIDBatchesOptions`: RFC 10022
+  client support. Requests validate batch size and range limits before I/O;
+  exactly one correlated response is required, including an empty result.
+  Pipelined replies are collected by tag. Supports UIDONLY, leaves SEARCHRES
+  unchanged, and has no fallback. Additive; intended for the root minor
+  following T30's release. (#51)
+
 - `imapclient.UnilateralDataHandler.Metadata`, shared `imap.MetadataChange`
   and its `imapclient.MetadataChange` alias deliver names-only METADATA
   notifications, including server metadata when the mailbox is empty.

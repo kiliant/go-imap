@@ -4,6 +4,11 @@
 
 **Owns:** `imapclient/client.go`, `imapclient/conn.go`, `imapclient/state.go`
 
+**Narrow T31 handover:** the private `commandOptions.collectorForTag` factory
+and its invocation immediately after tag allocation in `Client.issue` allow
+correlated UIDBATCHES collection to bind its tag before registration and I/O.
+This does not change the exported connection API or other response routing.
+
 ## Goal
 
 The connection layer and the command dispatch model. You are defining the method
