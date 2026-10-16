@@ -122,6 +122,7 @@ func writeTaggedCondition(c *conn, tag, status string, code imap.ResponseCode, a
 	if strings.ContainsAny(codeText, "[] \t\r\n") || strings.ContainsAny(args, "]\x00\r\n") {
 		codeText, args = string(imap.CodeServerBug), ""
 	}
+	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{
 		Status: status,
 		Text:   imapwire.RespText{Code: codeText, Args: args, Text: textValue},

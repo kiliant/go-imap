@@ -115,6 +115,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- An unsolicited EXPUNGE or VANISHED is no longer sent after the tagged
+  response of FETCH, STORE, SEARCH, SORT or THREAD. A command now stops being
+  in progress at its tagged response, as RFC 3501 §7.4.1 defines it, so a
+  client that sends its next sequence-numbered command immediately no longer
+  loses synchronisation. A withheld removal is delivered during the next
+  command that permits one: before the tagged response of the UID forms of
+  those commands (RFC 9051 §7.5.1), during IDLE, NOOP, CHECK and other
+  non-sequence commands. The plain forms still never carry one. No exported
+  API changes. (#69)
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables

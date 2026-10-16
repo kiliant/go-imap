@@ -331,6 +331,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := writeSortResponse(c, command, args, numbers); err != nil {
 		return err
 	}
+	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
+		return err
+	}
 	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
 		return err
 	}
@@ -372,6 +375,9 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	c.encoder.CRLF()
 	if err := c.encoder.Flush(); err != nil {
+		return err
+	}
+	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
 		return err
 	}
 	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
