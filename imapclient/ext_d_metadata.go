@@ -18,6 +18,8 @@ type (
 	MetadataEntry = imap.MetadataEntry
 	// MailboxMetadata is METADATA for one mailbox. See [imap.MailboxMetadata].
 	MailboxMetadata = imap.MailboxMetadata
+	// MetadataChange is a names-only change notification. See [imap.MetadataChange].
+	MetadataChange = imap.MetadataChange
 )
 
 // GetMetadataOptions configures GETMETADATA. A nil pointer selects the

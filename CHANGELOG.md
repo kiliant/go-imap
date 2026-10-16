@@ -27,6 +27,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapclient.UnilateralDataHandler.Metadata`, shared `imap.MetadataChange`
+  and its `imapclient.MetadataChange` alias deliver names-only METADATA
+  notifications, including server metadata when the mailbox is empty.
+  Callbacks receive changed entry names, separately from GETMETADATA's NIL,
+  empty and present values, and may retain the data. Notifications interleaved
+  with GETMETADATA or LIST-METADATA stay separate from command results. A nil
+  handler still consumes and validates them. Additive. (#44)
 - `imapclient.UnilateralDataHandler.ContextUpdate`, the shared types
   `imap.ContextUpdate`, `imap.ContextUpdateItem` and
   `imap.ContextUpdateChange`, the alias `imapclient.ContextUpdate`, the return
@@ -65,7 +72,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   callback. Legacy LSUB no longer consumes unsolicited LIST events. Names-only
   METADATA notifications no longer fail GETMETADATA or LIST-METADATA, and
   another mailbox's metadata values do not leak into GETMETADATA results.
-  No exported API change; metadata-change callbacks remain future T30 work.
+  No exported API change in the response decoding itself.
   (#44)
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`

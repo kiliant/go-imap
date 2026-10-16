@@ -31,3 +31,18 @@ type MailboxMetadata struct {
 	Entries []MetadataEntry
 	_       struct{}
 }
+
+// MetadataChange reports entry names changed in a names-only METADATA
+// notification (RFC 5464 section 4.4.2). An empty Mailbox identifies server
+// metadata; otherwise Mailbox is the decoded mailbox name.
+//
+// Entries are names to refresh, not entry/value pairs: a notification does not
+// say whether an entry is unset, empty, or has a value. Those states are
+// represented by [MetadataEntry] in a GETMETADATA result.
+//
+// Construct with keyed fields only; fields may be added in a future release.
+type MetadataChange struct {
+	Mailbox string
+	Entries []MetadataEntryName
+	_       struct{}
+}

@@ -26,6 +26,8 @@ func FuzzUnilateralStream(f *testing.F) {
 		"* 3 EXISTS\r\n* 1 EXPUNGE\r\n* 2 FETCH (FLAGS (\\Seen))\r\n",
 		"* VANISHED (EARLIER) 1:3\r\n",
 		"* STATUS\r\n* LIST\r\n* OK [\r\n",
+		"* METADATA INBOX /shared/comment /private/comment\r\n",
+		"* METADATA \"\" /shared/comment\r\n* METADATA INBOX (/shared/comment NIL)\r\n",
 	} {
 		f.Add(seed)
 	}
@@ -46,6 +48,7 @@ func FuzzUnilateralStream(f *testing.F) {
 			StatusResponse: func(*StatusResponse) {},
 			Status:         func(*StatusData) {},
 			List:           func(*ListData) {},
+			Metadata:       func(*imap.MetadataChange) {},
 		}})
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

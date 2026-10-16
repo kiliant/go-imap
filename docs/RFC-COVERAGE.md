@@ -363,11 +363,13 @@ CONDSTORE `MODIFIED` on tagged OK.
     (section 5.5) arrives through `.List` as well. T30's decode-once routing
     delivers STATUS for a different mailbox even during an active STATUS
     command, and LIST during legacy LSUB. Scripted regressions cover this
-    interleaving; it is not yet live-verified. Remaining ownership limits:
-    - MailboxMetadataChange and ServerMetadataChange arrive as unsolicited
-      METADATA (RFC 5464 §4.4.2) and are still discarded. A `.Metadata`
-      handler would be additive. Names-only notifications are now decoded
-      separately, so they no longer fail GETMETADATA or LIST-METADATA.
+    interleaving; it is not yet live-verified. Metadata delivery and ownership limits:
+    - MailboxMetadataChange and ServerMetadataChange arrive as names-only
+      METADATA (RFC 5464 §4.4.2) through `UnilateralDataHandler.Metadata`.
+      These carry changed entry names, distinct from GETMETADATA's unset,
+      empty and present values. Scripted tests cover mailbox/server changes,
+      retained callback data, nil handlers, and interleaving with GETMETADATA
+      and LIST-METADATA. Live verification is tracked by T30.
     - STATUS for the command's own mailbox is indistinguishable from a result
       and stays with that command. LIST-STATUS still claims STATUS while pending.
     - A LIST event that arrives during a LIST command joins the listing;
