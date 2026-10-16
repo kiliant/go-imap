@@ -59,10 +59,16 @@ func TestLegacySearchSortModSeq(t *testing.T) {
 					var v []imap.SeqNum
 					v, err = c.Search(criteria, nil).All(ctx)
 					count = len(v)
+					if err == nil && tc.count == 2 && fmt.Sprint(v) != "[1 3]" {
+						t.Errorf("number results changed: %v", v)
+					}
 				case "uid-search":
 					var v []imap.UID
 					v, err = c.SearchUID(criteria, nil).AllUID(ctx)
 					count = len(v)
+					if err == nil && tc.count == 2 && fmt.Sprint(v) != "[1 3]" {
+						t.Errorf("number results changed: %v", v)
+					}
 				case "esearch", "uid-esearch":
 					var v *ESearchData
 					opts := &ESearchOptions{ReturnOptions: []SearchReturnOption{SearchReturnCount, SearchReturnAll}}
@@ -73,6 +79,13 @@ func TestLegacySearchSortModSeq(t *testing.T) {
 					}
 					if err == nil {
 						count = int(v.Count)
+						all := v.All.String()
+						if mode == "uid-esearch" {
+							all = v.AllUIDs.String()
+						}
+						if tc.count == 2 && all != "1,3" {
+							t.Errorf("number results changed: %s", all)
+						}
 						if !v.Emulated {
 							t.Error("expected emulation")
 						}
@@ -90,6 +103,13 @@ func TestLegacySearchSortModSeq(t *testing.T) {
 					}
 					if err == nil {
 						count = len(v.SeqNums) + len(v.UIDs)
+						all := fmt.Sprint(v.SeqNums)
+						if mode == "uid-sort" {
+							all = fmt.Sprint(v.UIDs)
+						}
+						if tc.count == 2 && all != "[1 3]" {
+							t.Errorf("number results changed: %s", all)
+						}
 					}
 				}
 				if !tc.valid {
@@ -110,5 +130,37 @@ func TestLegacySearchSortModSeq(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A legacy suffix describes the full match set. For MIN/MAX-only emulation it
+// cannot stand in for the subset clock defined by RFC 4731 section 3.2.
+func TestLegacySearchModSeqDoesNotMislabelMinMaxClock(t *testing.T) {
+	for _, wanted := range [][]SearchReturnOption{{SearchReturnMin}, {SearchReturnMax}, {SearchReturnMin, SearchReturnMax}} {
+		t.Run(fmt.Sprint(wanted), func(t *testing.T) {
+			c, ctx := newExtATestClient(t, "* PREAUTH [CAPABILITY IMAP4rev1 CONDSTORE] ready", func(s *extAServer) {
+				s.selectInbox("INBOX", "1")
+				tag, _ := s.command()
+				s.reply("* SEARCH 1 2 3 (MODSEQ 42)", tag+" OK done")
+				tag, _ = s.command()
+				s.ok(tag)
+			})
+			if _, err := c.Select("INBOX", nil).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+			data, err := c.SearchExtended(imap.SearchModSeq{ModSeq: 1}, &ESearchOptions{ReturnOptions: wanted}).Wait(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if data.HasModSeq || data.Values[ESearchReturnKeyModSeq] != "" {
+				t.Errorf("full-set clock mislabeled as MIN/MAX subset clock: %#v", data)
+			}
+			if data.HasMin && data.Min != 1 || data.HasMax && data.Max != 3 {
+				t.Errorf("number results changed: %#v", data)
+			}
+			if err := c.Noop(nil).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

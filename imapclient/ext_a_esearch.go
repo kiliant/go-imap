@@ -319,7 +319,10 @@ func (c *Client) searchExtendedEmulated(cmd *ESearchCommand, name string, criter
 		}
 		result, modSeq, err := readSearchSortNumbers(resp.dec)
 		numbers = append(numbers, result...)
-		if modSeq != 0 {
+		// RFC 4731 section 3.2 gives MIN/MAX-only results a subset clock.
+		// A legacy suffix only supplies the full-set clock, so retain it
+		// only for ALL/COUNT emulation rather than mislabeling its scope.
+		if modSeq != 0 && (cmd.wanted[ESearchReturnKeyAll] || cmd.wanted[ESearchReturnKeyCount]) {
 			cmd.data.ModSeq, cmd.data.HasModSeq = modSeq, true
 			cmd.data.Values[ESearchReturnKeyModSeq] = fmt.Sprint(modSeq)
 		}
