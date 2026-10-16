@@ -29,6 +29,12 @@ func searchResponseModSeq(ctx context.Context, c *conn, args *searchArgs, result
 	subset := false
 	if args.extended || c.state.revision == revisionIMAP4rev2 {
 		requested := searchReturnSet(args)
+		// RFC 4731 3.2: the clock describes the messages being returned.
+		// RETURN (UPDATE) alone (RFC 5267) returns none, so there is no clock.
+		if !requested[searchReturnAll] && !requested[searchReturnCount] && !requested[searchReturnMin] &&
+			!requested[searchReturnMax] && !requested[searchReturnPartial] {
+			return 0, nil
+		}
 		if (requested[searchReturnMin] || requested[searchReturnMax] || requested[searchReturnPartial]) &&
 			!requested[searchReturnAll] && !requested[searchReturnCount] {
 			selected = nil
@@ -83,8 +89,17 @@ func searchResponseModSeq(ctx context.Context, c *conn, args *searchArgs, result
 	if err := c.state.selected.mailbox.Fetch(ctx, writer, imap.UIDSetNum(selected...), &FetchOptions{Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemModSeq}}); err != nil {
 		return 0, err
 	}
-	if len(seen) != len(wanted) {
-		return 0, fmt.Errorf("imapserver: SEARCH result changed before reading modification sequences")
+	// A message can be expunged between Search and this Fetch: the backend
+	// does not hold the mailbox across the two calls, and the client's view
+	// still lists the message because its removal is not yet announced. That
+	// is a race, not a backend fault, so the clock covers the messages that
+	// are still readable, and the backend's aggregate stands in only when
+	// none are.
+	if len(seen) == 0 {
+		if result.ModSeq == 0 || result.ModSeq > math.MaxInt64 {
+			return 0, fmt.Errorf("imapserver: SEARCH result changed before reading modification sequences")
+		}
+		return result.ModSeq, nil
 	}
 	return highest, nil
 }

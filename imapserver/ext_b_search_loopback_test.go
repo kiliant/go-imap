@@ -43,6 +43,9 @@ func TestLoopbackCondStoreSearchResponses(t *testing.T) {
 		{"SEARCH RETURN (COUNT PARTIAL 1:1) MODSEQ 1", fmt.Sprintf(" COUNT 3 PARTIAL (1:1 1) MODSEQ %d", highest)},
 		{"SEARCH RETURN (PARTIAL 4:4) MODSEQ 1", " PARTIAL (4:4 NIL)"},
 		{"SEARCH RETURN (COUNT) MODSEQ " + strconv.FormatUint(highest+1, 10), " COUNT 0"},
+		// Last, because it registers a context. UPDATE alone returns no
+		// messages, so RFC 4731 section 3.2 leaves nothing for a clock to describe.
+		{"SEARCH RETURN (UPDATE) MODSEQ 1", ""},
 	} {
 		t.Run(tt.command, func(t *testing.T) {
 			tag := fmt.Sprintf("S%d", i)
