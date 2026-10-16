@@ -588,9 +588,10 @@ func (c *conn) eventLoop() (retErr error) {
 }
 
 func (c *conn) execute(command *queuedCommand) error {
-	// A command is in progress for the whole of this call, which is what makes
-	// every drain below a legal moment to deliver an expunge. Set before the
-	// early returns so a BAD is not a window either.
+	// A command is in progress from here until its tagged response, which is
+	// what makes a drain in between a legal moment to deliver an expunge. Set
+	// before the early returns so a BAD is not a window either. It ends at the
+	// tagged response, not when this call returns — see completeCommand.
 	c.commandInProgress = true
 	defer func() { c.commandInProgress = false }()
 	if command.parseErr != nil {
@@ -605,10 +606,10 @@ func (c *conn) execute(command *queuedCommand) error {
 	// Scoped to the pre-command drain alone. For a sequence-sensitive command
 	// that arrived in a pipeline, delivering here is as unsafe as delivering
 	// mid-command: the client composed this command against the numbering it
-	// has now. The handler's own drain, after its tagged response, is the point
-	// at which delivery becomes correct — so the flag is cleared before the
-	// handler runs, or that drain would defer forever and the update would
-	// never be sent at all.
+	// has now. Handlers decide their own drains from here on. FETCH, STORE and
+	// SEARCH drain only after their tagged response, where no command is in
+	// progress and removals wait for a later command that permits them; UID
+	// COPY drains before its tagged response, where §7.4.1 permits them.
 	c.executingSeqSensitive = sequenceSensitiveCommands[command.name]
 	err := c.drainUpdates(updateAccounting{})
 	c.executingSeqSensitive = false
@@ -654,8 +655,24 @@ func (c *conn) writeGreeting() error {
 }
 
 func (c *conn) writeTagged(tag, status, text string) error {
+	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{Status: status, Text: imapwire.RespText{Text: text}}).CRLF()
 	return c.encoder.Flush()
+}
+
+// completeCommand ends the command in progress. Every tagged response is
+// written through a caller of this, because the tagged response is where
+// RFC 3501 §7.4.1's "in progress" ends: the client may send its next command
+// the moment it reads it, and imaptest does, before it reads anything else.
+// An EXPUNGE written after it can therefore arrive while that next command is
+// in progress, which is the window the section exists to close.
+//
+// Ending it when the handler returns instead left a drain after the tagged
+// response — FETCH, STORE and SEARCH all have one — free to deliver a removal
+// whenever the reader had not yet seen the next command. The queue cannot see
+// a command still on the wire. That was #69.
+func (c *conn) completeCommand() {
+	c.commandInProgress = false
 }
 
 func (c *conn) writeBad(tag, text string) error {
@@ -771,7 +788,9 @@ func (c *conn) expungeDeliveryDeferred() bool {
 	// command is in progress is what closes it: the client sees the EXPUNGE
 	// before that command's tagged response, so anything it sends afterwards is
 	// numbered against the new view, and anything it pipelined beforehand is
-	// caught by the two conditions below.
+	// caught by the two conditions below. "Between commands" starts at the
+	// tagged response, not when the handler returns — the drain FETCH, STORE
+	// and SEARCH run after their tagged OK is in that gap. See completeCommand.
 	//
 	// IDLE is not an exception to this, it is an instance of it: the IDLE
 	// command is in progress for as long as the client is idling, which is why
@@ -780,10 +799,9 @@ func (c *conn) expungeDeliveryDeferred() bool {
 		return true
 	}
 	// Three ways to still be behind the client: a command parsed and waiting,
-	// bytes read but not yet parsed, or the command running right now being one
-	// whose numbering the client is relying on. The last is what makes the
-	// *final* command of a pipeline safe — its own completion drain is the
-	// first moment both views are known to agree.
+	// bytes read but not yet parsed, or the command about to run being one
+	// whose numbering the client is relying on. The last keeps a pipelined
+	// FETCH, STORE or SEARCH from being renumbered by the drain just before it.
 	return len(c.commands) > 0 || c.inputPending.Load() || c.executingSeqSensitive
 }
 

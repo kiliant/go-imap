@@ -152,6 +152,19 @@ func (m *expungeOrderMailbox) Search(context.Context, *SearchQuery, *SearchOptio
 	return &SearchResult{UIDs: []imap.UID{2}}, nil
 }
 
+// TestExpungeUpdateWaitsForCommandCompletion pins RFC 3501 §7.4.1 across the
+// tagged response of FETCH, STORE and SEARCH, which is where #69 found it
+// broken.
+//
+// Each command's backend publishes an unrelated removal while the command is
+// running, so it cannot be sent then. It must not be sent straight after the
+// tagged OK either: from that moment no command is in progress, and a client
+// may already have sent its next sequence-numbered command. imaptest does
+// exactly that — it sends the next command from the handler of the tagged
+// reply, before it reads another line — and then reports the expunge as
+// "Referenced message expunged". The follow-up FETCH here is sent the same
+// way. The removal is owed to the first command that permits it, and must
+// arrive there.
 func TestExpungeUpdateWaitsForCommandCompletion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -184,21 +197,62 @@ func TestExpungeUpdateWaitsForCommandCompletion(t *testing.T) {
 			readUpdateOrderTag(t, reader, "A2 OK ")
 			writeUpdateOrderCommand(t, clientSide, "A3 "+tt.command+"\r\n")
 			readUpdateOrderTag(t, reader, "A3 OK ")
-
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				t.Fatal(err)
-			}
-			if line != "* 1 EXPUNGE\r\n" {
-				t.Fatalf("response after completion = %q, want EXPUNGE", line)
-			}
-
-			writeUpdateOrderCommand(t, clientSide, "A4 LOGOUT\r\n")
+			writeUpdateOrderCommand(t, clientSide, "A4 FETCH 2 (FLAGS)\r\n")
 			readUpdateOrderTag(t, reader, "A4 OK ")
+
+			requireNoResponseBetweenCommands(t, clientSide, reader)
+			requireExpungeDuringNoop(t, clientSide, reader, "A5")
+
+			writeUpdateOrderCommand(t, clientSide, "A6 LOGOUT\r\n")
+			readUpdateOrderTag(t, reader, "A6 OK ")
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// requireNoResponseBetweenCommands asserts that the server stays silent while
+// no command is in progress. The wait is bounded, so a regression can only make
+// this pass spuriously on a stalled host, never fail spuriously.
+func requireNoResponseBetweenCommands(t *testing.T, conn net.Conn, reader *bufio.Reader) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	switch line, err := reader.ReadString('\n'); {
+	case err == nil:
+		t.Fatalf("server sent %q with no command in progress", strings.TrimSpace(line))
+	case !isTimeout(err):
+		t.Fatalf("reading between commands: %v", err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// requireExpungeDuringNoop sends NOOP and asserts that it carries the withheld
+// removal before its tagged response. Holding the update forever would pass
+// every assertion about where it must not appear, and would be a worse bug: the
+// client would never learn the message was gone.
+func requireExpungeDuringNoop(t *testing.T, conn net.Conn, reader *bufio.Reader, tag string) {
+	t.Helper()
+	writeUpdateOrderCommand(t, conn, tag+" NOOP\r\n")
+	var expunges []string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(line, tag+" ") {
+			break
+		}
+		if strings.HasSuffix(line, " EXPUNGE\r\n") {
+			expunges = append(expunges, line)
+		}
+	}
+	if len(expunges) != 1 || expunges[0] != "* 1 EXPUNGE\r\n" {
+		t.Fatalf("NOOP delivered %q, want the withheld removal exactly once", expunges)
 	}
 }
 
@@ -229,16 +283,15 @@ func readUpdateOrderTag(t *testing.T, reader *bufio.Reader, prefix string) {
 }
 
 // TestExpungeUpdateWaitsForPipelinedCommands is the pipelined half of the rule
-// above, and the reason the rule above was not enough.
+// above.
 //
-// Deferring an expunge past a command's tagged completion is correct for a
-// client that waits. Dovecot's imaptest showed it is not correct for one that
-// pipelines: "after the tagged OK of command n" is simultaneously "while
-// command n+1 is in flight", so the expunge left one window RFC 3501 §7.4.1
-// forbids and entered the next. The transcript is in docs/INTEROP.md, and
-// imaptest's own diagnosis of the consequence was "Referenced message expunged
-// seq=4 uid=0" — the loss of sequence-number synchronisation the rule exists to
-// prevent.
+// Dovecot's imaptest showed that deferring an expunge until a command's tagged
+// completion is not enough for a client that pipelines: "after the tagged OK
+// of command n" is simultaneously "while command n+1 is in flight", so the
+// expunge left one window RFC 3501 §7.4.1 forbids and entered the next. The
+// transcript is in docs/INTEROP.md, and imaptest's own diagnosis of the
+// consequence was "Referenced message expunged seq=4 uid=0" — the loss of
+// sequence-number synchronisation the rule exists to prevent.
 //
 // Both FETCHes go out in a single write, so the second is queued before the
 // first finishes. Nothing untagged may appear until the last one completes.
@@ -294,17 +347,14 @@ func TestExpungeUpdateWaitsForPipelinedCommands(t *testing.T) {
 		}
 	}
 
-	// Once the pipeline has drained the update is owed, and must arrive.
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
-	}
-	if line != "* 1 EXPUNGE\r\n" {
-		t.Fatalf("response after the pipeline drained = %q, want EXPUNGE", line)
-	}
+	// A drained pipeline is not yet a moment to deliver it: after A4's tagged
+	// response no command is in progress. See
+	// TestExpungeUpdateWaitsForCommandCompletion.
+	requireNoResponseBetweenCommands(t, clientSide, reader)
+	requireExpungeDuringNoop(t, clientSide, reader, "A5")
 
-	writeUpdateOrderCommand(t, clientSide, "A5 LOGOUT\r\n")
-	readUpdateOrderTag(t, reader, "A5 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A6 LOGOUT\r\n")
+	readUpdateOrderTag(t, reader, "A6 OK ")
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
