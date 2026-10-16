@@ -113,6 +113,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+#### Fixed
+
+- An unsolicited EXPUNGE or VANISHED is no longer sent after the tagged
+  response of FETCH, STORE, SEARCH, SORT or THREAD. A command now stops being
+  in progress at its tagged response, as RFC 3501 §7.4.1 defines it, so a
+  client that sends its next sequence-numbered command immediately no longer
+  loses synchronisation. The removal is delivered during the next command
+  that permits it. No exported API changes. (#69)
+
 #### Added
 
 - UIDBATCHES (RFC 10022) is now advertised for every backend and computed
