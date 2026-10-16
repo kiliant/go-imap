@@ -354,3 +354,13 @@ Each is tracked as a GitHub issue; the bugs found along the way are #22 and
 rev2 SELECT/EXAMINE LIST ownership and the indistinguishable-event exception
 documented here. The LIST extended-data representation and authentication
 selection are otherwise outside T30's scope.
+
+## Hand-over to follow-up #21
+
+Completed T29 passes the automatic-selection refusal in `imapclient/auth.go`,
+its focused tests, and the previously transferred `cmd/imapcli/auth.go` and
+mechanism-choice test to #21. The follow-up adds a distinguishable local code
+and replaces the CLI's copied mechanism list with that refusal check. The
+synthetic-code precedent in `API-STABILITY.md` and its changelog entry are in
+scope; mechanism preference, credential defaults and transport rules are not.
+T28 records the same CLI handover.

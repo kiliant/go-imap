@@ -156,6 +156,17 @@ func (c *Client) Login(ctx context.Context, username, password string, options *
 	return c.requestCapability(ctx)
 }
 
+// CodeNoCompatibleAuthMechanism is a synthetic client response code for local
+// automatic SASL selection exhaustion. Authenticate returns it only with
+// imap.ErrorTypeProtocol, before writing anything to the connection, when no
+// advertised built-in mechanism accepts the requested credential kind.
+//
+// Match both Type and Code to distinguish it from a server's NO/BAD response.
+// It permits trying another strategy; it does not guarantee LOGIN is available.
+// The client does not assign it to credential validation, explicit-mechanism,
+// channel-binding, transport/privacy, or server authentication failures.
+const CodeNoCompatibleAuthMechanism imap.ResponseCode = "CLIENT-NO-COMPATIBLE-AUTH-MECHANISM"
+
 // Authenticate authenticates using a SASL mechanism advertised by the server.
 // password is used by password mechanisms; OAuth mechanisms use opts.Token
 // when supplied. A nil opts selects the strongest advertised built-in
@@ -167,8 +178,9 @@ func (c *Client) Login(ctx context.Context, username, password string, options *
 // server that offers both kinds rejects a correct password. Set
 // [AuthenticateOptions.CredentialKind] to [CredentialPassword] to keep the
 // choice to password mechanisms. If the server then advertises none,
-// Authenticate fails without sending anything, and [Client.Login] remains the
-// fallback.
+// Authenticate fails without sending anything, with ErrorTypeProtocol and
+// [CodeNoCompatibleAuthMechanism]. [Client.Login] remains a possible fallback;
+// its transport and LOGINDISABLED checks still apply.
 func (c *Client) Authenticate(ctx context.Context, username, password string, opts *AuthenticateOptions) error {
 	if opts == nil {
 		opts = &AuthenticateOptions{}
@@ -281,10 +293,14 @@ func (c *Client) selectSASL(username, password string, opts *AuthenticateOptions
 		}
 	}
 	if name == "" {
+		var refusal *imap.Error
 		if allowed != nil {
-			return "", nil, authProtocolError("server advertises no supported SASL mechanism that takes a %s credential", opts.CredentialKind)
+			refusal = authProtocolError("server advertises no supported SASL mechanism that takes a %s credential", opts.CredentialKind)
+		} else {
+			refusal = authProtocolError("server advertises no supported SASL mechanism")
 		}
-		return "", nil, authProtocolError("server advertises no supported SASL mechanism")
+		refusal.Code = CodeNoCompatibleAuthMechanism
+		return "", nil, refusal
 	}
 	if !c.hasCapability("AUTH=" + name) {
 		return "", nil, authProtocolError("server does not advertise SASL mechanism %s", name)

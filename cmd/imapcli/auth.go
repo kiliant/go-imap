@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapclient"
 )
 
@@ -16,39 +18,22 @@ import (
 // when it is offered, and the library picks the variant, so channel binding is
 // negotiated the way the library intends.
 func authenticate(ctx context.Context, client *imapclient.Client, user, password string) error {
-	caps := client.Capabilities()
-	if !hasAuthMechanism(caps) {
+	if !hasAuthMechanism(client.Capabilities()) {
 		// Some servers advertise mechanisms only after a CAPABILITY command.
 		if err := client.Capability(ctx, nil); err != nil {
 			return err
 		}
-		caps = client.Capabilities()
 	}
-	if !offersPasswordMechanism(caps) {
-		// With no mechanism that takes a password, Authenticate would refuse
-		// before sending anything, and LOGIN is the fallback imapclient
-		// documents for that case. Login itself refuses under LOGINDISABLED.
-		return client.Login(ctx, user, password, nil)
-	}
-	return client.Authenticate(ctx, user, password, &imapclient.AuthenticateOptions{
+	err := client.Authenticate(ctx, user, password, &imapclient.AuthenticateOptions{
 		CredentialKind: imapclient.CredentialPassword,
 	})
-}
-
-// passwordMechanisms are the SASL mechanisms imapclient selects with
-// CredentialPassword, as its documentation lists them.
-var passwordMechanisms = []string{
-	"SCRAM-SHA-256-PLUS", "SCRAM-SHA-256", "SCRAM-SHA-1-PLUS", "SCRAM-SHA-1",
-	"CRAM-MD5", "PLAIN", "LOGIN",
-}
-
-func offersPasswordMechanism(caps map[string]bool) bool {
-	for _, m := range passwordMechanisms {
-		if caps["AUTH="+m] {
-			return true
-		}
+	var protocol *imap.Error
+	if errors.As(err, &protocol) && protocol.Type == imap.ErrorTypeProtocol && protocol.Code == imapclient.CodeNoCompatibleAuthMechanism {
+		// The library confirms this request wrote nothing. Preserve every
+		// other failure, including a server refusal with the same code token.
+		return client.Login(ctx, user, password, nil)
 	}
-	return false
+	return err
 }
 
 func hasAuthMechanism(caps map[string]bool) bool {
