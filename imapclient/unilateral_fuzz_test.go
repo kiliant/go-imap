@@ -28,6 +28,9 @@ func FuzzUnilateralStream(f *testing.F) {
 		"* STATUS\r\n* LIST\r\n* OK [\r\n",
 		"* METADATA INBOX /shared/comment /private/comment\r\n",
 		"* METADATA \"\" /shared/comment\r\n* METADATA INBOX (/shared/comment NIL)\r\n",
+		"* ESEARCH (TAG \"zz\") ALL 1:*\r\n* OK fence\r\n",
+		"* ESEARCH (TAG \"zz\") ADDTO (0 5:*)\r\n* OK fence\r\n",
+		"* ESEARCH (TAG \"zz\" FOO 1) ADDTO (0 1)\r\n* OK fence\r\n",
 	} {
 		f.Add(seed)
 	}

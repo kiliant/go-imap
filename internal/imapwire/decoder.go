@@ -873,9 +873,9 @@ func (d *Decoder) ExpectText(dst *string) bool {
 }
 
 // DiscardValue skips exactly one syntactic element: a parenthesised list of any
-// shape, a literal of any size, a quoted string, a number or an atom. A client
-// uses it to step over response data it does not model, which is what keeps an
-// unknown FETCH item from desynchronising the stream.
+// shape, a literal of any size, a quoted string, a number, a sequence set or an
+// atom. A client uses it to step over response data it does not model, which is
+// what keeps an unknown FETCH item from desynchronising the stream.
 func (d *Decoder) DiscardValue() error {
 	if !d.ready("value") {
 		return d.errOrSyntax("value")
@@ -902,9 +902,12 @@ func (d *Decoder) DiscardValue() error {
 			return d.errOrSyntax("value")
 		}
 		return lr.Discard()
-	case isAstringChar(b):
+	case isAstringChar(b) || b == '*':
 		var s string
-		if !d.readTokenInto(&s, isAstringChar) {
+		// Generic extension values may contain sequence sets, including the
+		// wildcard in ALL and CONTEXT's nested ADDTO/REMOVEFROM values. Their
+		// semantic decoder validates the set; atom/astring parsing stays strict.
+		if !d.readTokenInto(&s, func(b byte) bool { return isAstringChar(b) || b == '*' }) {
 			return d.errOrSyntax("value")
 		}
 		return nil

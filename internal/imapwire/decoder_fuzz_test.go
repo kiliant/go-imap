@@ -108,6 +108,8 @@ func FuzzDecoderList(f *testing.F) {
 		"(one \"two\" (three NIL))",
 		"((((((((((((((((((((((((((((((((((NIL))))))))))))))))))))))))))))))))))",
 		"(unterminated",
+		"1:*",
+		"(0 5:*)",
 	} {
 		f.Add(seed)
 	}
