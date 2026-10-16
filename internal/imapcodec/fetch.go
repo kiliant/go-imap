@@ -15,7 +15,7 @@ import (
 // LiteralAdapter turns an imapwire literal into the reader exposed in a FETCH
 // value. wait, when non-nil, is called before semantic decoding resumes. The
 // client uses it to preserve streaming back-pressure: the response is emitted
-// at the literal and parsing waits for the caller to consume it. A nil wait
+// in immutable portions at each literal and parsing waits for the caller to consume it. A nil wait
 // means there is nothing to stream, and the response is emitted only once it
 // has been decoded completely.
 type LiteralAdapter func(*imapwire.LiteralReader) (reader io.Reader, wait func())
@@ -29,10 +29,14 @@ func ReadFetchResponse(dec *imapwire.Decoder, seqNum imap.SeqNum, adapt LiteralA
 	data := &imap.FetchMessageData{SeqNum: seqNum, Items: make(map[imap.FetchDataKey][]imap.FetchData)}
 	emitted := false
 	emitNow := func() {
-		if !emitted {
-			emitted = true
-			emit(data)
+		if len(data.Items) == 0 && emitted {
+			return
 		}
+		emit(data)
+		emitted = true
+		// Ownership has passed to the consumer. Later items, including
+		// repeated keys, need a fresh map and fresh value slices.
+		data = &imap.FetchMessageData{SeqNum: seqNum, Items: make(map[imap.FetchDataKey][]imap.FetchData)}
 	}
 	err := dec.ExpectList(func() error {
 		var key string
@@ -74,12 +78,9 @@ func ReadFetchResponse(dec *imapwire.Decoder, seqNum imap.SeqNum, adapt LiteralA
 			}
 			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
 			if wait != nil {
-				// Hand the response over at the body so its payload streams,
-				// and resume parsing only once the caller has consumed it. A
-				// NIL or zero-length body has nothing to stream, so its response
-				// is delivered complete, at the end, instead: delivering it now
-				// would leave the caller reading Items while the rest of the
-				// response is still being appended to it.
+				// Publish this portion before waiting for the literal. Later
+				// items are delivered separately, never added to a published map.
+				// Empty bodies do not need an early publication.
 				emitNow()
 				wait()
 			}
@@ -126,12 +127,9 @@ func ReadFetchResponse(dec *imapwire.Decoder, seqNum imap.SeqNum, adapt LiteralA
 			value = &imap.FetchDataLiteral{Literal: literal}
 			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], value)
 			if wait != nil {
-				// Hand the response over at the body so its payload streams,
-				// and resume parsing only once the caller has consumed it. A
-				// NIL or zero-length body has nothing to stream, so its response
-				// is delivered complete, at the end, instead: delivering it now
-				// would leave the caller reading Items while the rest of the
-				// response is still being appended to it.
+				// Publish this portion before waiting for the literal. Later
+				// items are delivered separately, never added to a published map.
+				// Empty bodies do not need an early publication.
 				emitNow()
 				wait()
 			}

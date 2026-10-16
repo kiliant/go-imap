@@ -13,12 +13,14 @@ import (
 
 // FetchCommand is an in-flight FETCH or UID FETCH command.
 //
-// Next yields each matching untagged FETCH response. A response containing a
+// Next yields matching FETCH data in wire order. A response containing a
 // body section is yielded as soon as its literal has been announced: consume
 // or discard the section before calling Next again. This deliberate
 // back-pressure keeps large messages out of memory and makes abandoning a
 // section a clear protocol error instead of silently desynchronising the
-// connection.
+// connection. Each yielded Items map is immutable from the library's side.
+// Items following a streamed literal are yielded by later Next calls with the
+// same SeqNum; consume Next until io.EOF to receive every item.
 type FetchCommand struct {
 	*Command
 	responses chan *imap.FetchMessageData
