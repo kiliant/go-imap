@@ -125,7 +125,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   normalized once to CRLF. Supports MOVE, CONDSTORE and QRESYNC without
   importing the memory backend or internal packages. Additive. The interop
   harness adds the build-tagged `MaildirProfile` and drives foreign clients
-  against both backends sequentially. (#53)
+  against both backends sequentially. Mailbox creation/rename rejects filesystem
+  case and normalization aliases before preparing a transaction; reopening
+  aliased state fails without merging identities. (#53)
 - UIDBATCHES (RFC 10022) is now advertised for every backend and computed
   from the framework's selection UID list, without a backend interface or
   capability witness. Responses preserve descending batch order, support

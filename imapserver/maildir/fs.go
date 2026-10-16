@@ -89,7 +89,8 @@ func checkedPath(root *os.Root, name string) error {
 	}
 	parts := strings.Split(filepath.Clean(name), string(filepath.Separator))
 	for i := range parts {
-		info, err := root.Lstat(filepath.Join(parts[:i+1]...))
+		prefix := filepath.Join(parts[:i+1]...)
+		info, err := root.Lstat(prefix)
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -101,6 +102,62 @@ func checkedPath(root *os.Root, name string) error {
 		}
 		if i+1 < len(parts) && !info.IsDir() {
 			return fmt.Errorf("maildir: storage parent is not a directory")
+		}
+		if info.IsDir() {
+			// Lstat accepts aliases on case/normalization-insensitive volumes.
+			// Directory entries must retain the exact spelling used by state.
+			parent, err := root.Open(filepath.Dir(prefix))
+			if err != nil {
+				return err
+			}
+			names, err := parent.Readdirnames(-1)
+			parent.Close()
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, name := range names {
+				if name == parts[i] {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("maildir: filesystem directory alias is not supported")
+			}
+		}
+	}
+	return nil
+}
+
+// Probe the complete proposed namespace on the storage filesystem before
+// preparing a transaction. This also detects aliases between paths that do not
+// exist yet, and filesystems that rewrite directory-entry spelling. Probes have
+// no durable meaning and are removed with other staging debris after a crash.
+func (a *account) checkMailboxLayout(state *accountState) error {
+	id, err := uniqueName()
+	if err != nil {
+		return err
+	}
+	probe := filepath.Join(".staging", "paths-"+id)
+	if err := a.root.Mkdir(probe, 0700); err != nil {
+		return err
+	}
+	defer removeTree(a.root, probe)
+	for name := range state.Mailboxes {
+		path := mailboxPath(name)
+		if err := checkedPath(a.root, path); err != nil {
+			return err
+		}
+		parts := strings.Split(path, string(filepath.Separator))
+		for i := range parts {
+			target := filepath.Join(probe, filepath.Join(parts[:i+1]...))
+			if err := a.root.Mkdir(target, 0700); err != nil && !os.IsExist(err) {
+				return err
+			}
+			if err := checkedPath(a.root, target); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

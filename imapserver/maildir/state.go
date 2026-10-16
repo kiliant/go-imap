@@ -250,6 +250,11 @@ func (a *account) newMailbox() (*mailboxState, error) {
 }
 
 func (a *account) commit(next *accountState, actions []fileAction) error {
+	if a.state == nil || !sameMailboxNames(a.state, next) {
+		if err := a.checkMailboxLayout(next); err != nil {
+			return noError(imap.CodeCannot, err.Error())
+		}
+	}
 	j := diskJournal{Version: stateVersion, State: next, Actions: actions}
 	raw, err := json.Marshal(j)
 	if err != nil {
@@ -270,6 +275,18 @@ func (a *account) commit(next *accountState, actions []fileAction) error {
 	}
 	a.state = next
 	return nil
+}
+
+func sameMailboxNames(a, b *accountState) bool {
+	if len(a.Mailboxes) != len(b.Mailboxes) {
+		return false
+	}
+	for name := range a.Mailboxes {
+		if b.Mailboxes[name] == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *account) replay(j *diskJournal) error {
@@ -502,14 +519,17 @@ func (a *account) load() error {
 	} else {
 		return idErr
 	}
+	if err := mkdirAll(a.root, ".staging"); err != nil {
+		return err
+	}
 	if pending != nil {
+		if err := a.checkMailboxLayout(pending.State); err != nil {
+			return err
+		}
 		if err := a.replay(pending); err != nil {
 			return err
 		}
 		state = pending.State
-	}
-	if err := mkdirAll(a.root, ".staging"); err != nil {
-		return err
 	}
 	if err := mkdirAll(a.root, "mailboxes"); err != nil {
 		return err
@@ -532,6 +552,9 @@ func (a *account) load() error {
 			}
 			state.Mailboxes[name] = m
 		}
+	}
+	if err := a.checkMailboxLayout(state); err != nil {
+		return err
 	}
 	for name, m := range state.Mailboxes {
 		if uint64(m.UIDValidity) >= a.identity.Next {

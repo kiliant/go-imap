@@ -8,6 +8,7 @@
 // userspace filesystems with weaker semantics are not supported. Open fails
 // explicitly on unsupported platforms or when another process owns the root.
 // Locks are released by the OS when the process exits, including an unclean exit.
+// Keep each account's staging and mailbox directories on the same filesystem.
 //
 // The root and its structural directories belong exclusively to this backend.
 // Do not rename them, edit cur/ files, or restore an older live snapshot while
@@ -24,7 +25,15 @@
 // and an initial dot or reserved cur/new/tmp name; an empty segment is %.
 // This is not Maildir++. Filename flags are D F R S T, sorted in that order;
 // keywords live in metadata, and applicable keywords remain registered after
-// their final message reference disappears. APPEND preserves all bytes exactly.
+// their final message reference disappears.
+//
+// Mailbox and hierarchy segments must retain their exact directory spelling.
+// CREATE/RENAME reject case or Unicode-normalization aliases on filesystems
+// that equate those names, before preparing a transaction. Distinct names are
+// allowed on filesystems that distinguish them. Open refuses aliased existing
+// state; it does not merge mailbox identities or rewrite that state.
+//
+// APPEND preserves all bytes exactly.
 // new/ ingestion normalizes LF to CRLF without duplicating existing CRLF and
 // preserves delivery mtime. INTERNALDATE is the stored file mtime. Message
 // size, sections, ENVELOPE, BODYSTRUCTURE and SEARCH use the same stored bytes.
@@ -71,5 +80,4 @@
 // errors remain observable through LastPollError and optional OnPollError.
 // Close stops polling and rejects new work, waits for operations/callbacks,
 // then releases roots and locks, without waiting for idle session lifetimes.
-
 package maildir
