@@ -19,6 +19,7 @@ type searchArgs struct {
 	// partial is PARTIAL's requested window. See ext_c_partial.go.
 	partial  *searchPartialRange
 	criteria imap.SearchCriteria
+	modSeq   uint64 // response data derived after SEARCH, never a return option
 }
 
 func parseSearch(decoder *imapwire.Decoder) (any, int64, error) {
@@ -69,6 +70,9 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	if searchHasModSeq(criteria) {
+		enableCondStoreSideEffect(c)
+	}
 	query := newSearchQuery(criteria, c.state.selected.uids)
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
 	if err != nil {
@@ -98,6 +102,12 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 			numbers = append(numbers, uint32(uid))
 		} else {
 			numbers = append(numbers, uint32(seqNum))
+		}
+	}
+	if searchHasModSeq(criteria) && len(present) > 0 {
+		args.modSeq, err = searchResponseModSeq(ctx, c, args, result, present)
+		if err != nil {
+			return writeBackendError(c, command.tag, command.name, err)
 		}
 	}
 	if err := writeSearchResponse(c, command, args, present, numbers); err != nil {

@@ -145,6 +145,9 @@ func writeSearchResponse(c *conn, command *queuedCommand, args *searchArgs, uids
 	for _, number := range numbers {
 		c.encoder.SP().Number(number)
 	}
+	if args.modSeq != 0 {
+		c.encoder.SP().Special('(').Atom("MODSEQ").SP().Number64(int64(args.modSeq)).Special(')')
+	}
 	c.encoder.CRLF()
 	return c.encoder.Flush()
 }
@@ -174,6 +177,9 @@ func writeESearchResponse(c *conn, command *queuedCommand, args *searchArgs, num
 	}
 	if requested[searchReturnPartial] {
 		writeSearchPartial(c, args, numbers)
+	}
+	if args.modSeq != 0 {
+		c.encoder.SP().Atom("MODSEQ").SP().Number64(int64(args.modSeq))
 	}
 	c.encoder.CRLF()
 	return c.encoder.Flush()

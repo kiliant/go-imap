@@ -113,6 +113,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+#### Fixed
+
+- CONDSTORE SEARCH now evaluates message modification sequences and reports
+  the matching result clock in SEARCH/ESEARCH, including nested criteria,
+  rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
+  CONDSTORE for the session. Uses the existing backend SEARCH/FETCH contract;
+  no exported API changes. (#66)
+
 #### Added
 
 - UIDBATCHES (RFC 10022) is now advertised for every backend and computed
