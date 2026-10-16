@@ -68,11 +68,23 @@ func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.M
 	if err != nil {
 		return err
 	}
+	changed := false
 	for _, entry := range entries {
 		if entry.Value == nil {
+			_, present := store[entry.Name]
+			changed = changed || present
 			delete(store, entry.Name)
 		} else {
+			old, present := store[entry.Name]
+			changed = changed || !present || old != *entry.Value
 			store[entry.Name] = *entry.Value
+		}
+	}
+	if changed && name != "" {
+		// QRESYNC also advances the mailbox clock for mailbox annotations;
+		// message modification sequences remain unchanged (RFC 7162 3.2).
+		if _, err := bump(next.Mailboxes[mailboxKey(name)]); err != nil {
+			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {

@@ -129,6 +129,77 @@ func TestRestartPreservesMailboxState(t *testing.T) {
 	}
 }
 
+func TestSearchReportsSurvivingMessageModSeq(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	b := openTest(t, root)
+	s := loginTest(t, b)
+	first := appendTest(t, s, "INBOX")
+	second := appendTest(t, s, "INBOX")
+	sel := selectTest(t, s, "INBOX")
+	if err := sel.Store(ctx, discardFetch(), imap.UIDSetNum(first.UID), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := sel.Search(ctx, nil, nil)
+	if err != nil || result.ModSeq != s.account.state.Mailboxes["INBOX"].Messages[0].ModSeq {
+		t.Fatalf("SEARCH omitted highest matching MODSEQ: %+v, %v", result, err)
+	}
+	want := s.account.state.Mailboxes["INBOX"].Messages[1].ModSeq
+	if err := sel.Expunge(ctx, discardExpunge(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Close(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	b = openTest(t, root)
+	sel = selectTest(t, loginTest(t, b), "INBOX")
+	result, err = sel.Search(ctx, nil, nil)
+	if err != nil || !slices.Equal(result.UIDs, []imap.UID{second.UID}) || result.ModSeq != want {
+		t.Fatalf("SEARCH used mailbox/tombstone MODSEQ instead of surviving matches: %+v, %v", result, err)
+	}
+}
+
+func TestMailboxMetadataAdvancesQResyncClock(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	b := openTest(t, root)
+	s := loginTest(t, b)
+	appendTest(t, s, "INBOX")
+	before := s.account.state.Mailboxes["INBOX"].HighestModSeq
+	value := "annotation"
+	entries := []imap.MetadataEntry{{Name: "/private/test", Value: &value}}
+	if err := s.SetMetadata(ctx, "inbox", entries, nil); err != nil {
+		t.Fatal(err)
+	}
+	clock := s.account.state.Mailboxes["INBOX"].HighestModSeq
+	if clock <= before {
+		t.Fatal("mailbox annotation did not advance QRESYNC clock")
+	}
+	for _, name := range []string{"INBOX", ""} {
+		if err := s.SetMetadata(ctx, name, entries, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.account.state.Mailboxes["INBOX"].HighestModSeq != clock {
+		t.Fatal("no-op or server metadata changed the mailbox clock")
+	}
+	if err := b.Close(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	b = openTest(t, root)
+	s = loginTest(t, b)
+	m := s.account.state.Mailboxes["INBOX"]
+	if m.HighestModSeq != clock || m.Messages[0].ModSeq != before {
+		t.Fatal("mailbox clock did not persist or message clock changed")
+	}
+	if err := s.SetMetadata(ctx, "INBOX", []imap.MetadataEntry{{Name: "/private/test"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if s.account.state.Mailboxes["INBOX"].HighestModSeq <= clock {
+		t.Fatal("removing annotation did not advance QRESYNC clock")
+	}
+}
+
 func TestRecoverEveryMutationBoundary(t *testing.T) {
 	for _, operation := range []string{"append", "store", "expunge", "copy", "move", "rename", "rename-inbox", "rename-ancestor"} {
 		stages := []string{"journal", "action", "state", "complete"}

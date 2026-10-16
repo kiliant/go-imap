@@ -359,6 +359,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 		}
 		if matched {
 			result.UIDs = append(result.UIDs, msg.UID)
+			result.ModSeq = max(result.ModSeq, msg.ModSeq)
 		}
 	}
 	return result, nil
