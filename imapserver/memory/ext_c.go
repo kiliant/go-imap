@@ -215,6 +215,7 @@ func (s *selected) matching(ctx context.Context, query *imapserver.SearchQuery, 
 			Flags:        cloneFlags(msg.flags),
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
+			ModSeq:       msg.modSeq,
 		}
 		ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
@@ -299,6 +300,7 @@ func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria 
 				Flags:        cloneFlags(msg.flags),
 				InternalDate: msg.internalDate,
 				RFC822Size:   int64(len(msg.raw)),
+				ModSeq:       msg.modSeq,
 			}
 			ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 			if err != nil {
