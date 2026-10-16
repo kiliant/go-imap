@@ -105,17 +105,9 @@ func (c *Client) search(name string, criteria imap.SearchCriteria, options *Sear
 		if err := countUntaggedResponse(&untaggedCount, c.maxUntaggedResponses(), name); err != nil {
 			return true, err
 		}
-		for resp.dec.SP() {
-			var n uint32
-			if !resp.dec.ExpectNumber(&n) {
-				return true, resp.dec.Err()
-			}
-			sc.numbers = append(sc.numbers, n)
-		}
-		if !resp.dec.ExpectCRLF() {
-			return true, resp.dec.Err()
-		}
-		return true, nil
+		numbers, _, err := readSearchSortNumbers(resp.dec)
+		sc.numbers = append(sc.numbers, numbers...)
+		return true, err
 	})
 	return sc
 }
@@ -166,4 +158,44 @@ func searchNeedsCharset(criterion imap.SearchCriteria) bool {
 
 func valueNeedsCharset(value string) bool {
 	return !utf8.ValidString(value) || strings.ContainsFunc(value, func(r rune) bool { return r > 127 })
+}
+
+// readSearchSortNumbers reads legacy SEARCH and SORT data. RFC 7162 section 7
+// permits a final MODSEQ only after at least one nz-number. Its value is a
+// positive unsigned 63-bit integer, so Number64 provides the exact upper bound.
+func readSearchSortNumbers(dec *imapwire.Decoder) ([]uint32, uint64, error) {
+	var numbers []uint32
+	var modSeq uint64
+	for dec.SP() {
+		if dec.PeekSpecial('(') {
+			if len(numbers) == 0 {
+				return nil, 0, fmt.Errorf("MODSEQ suffix on an empty result")
+			}
+			var name string
+			var value int64
+			if !dec.ExpectSpecial('(') || !dec.ExpectAtom(&name) {
+				return nil, 0, dec.Err()
+			}
+			if !strings.EqualFold(name, "MODSEQ") {
+				return nil, 0, fmt.Errorf("unexpected SEARCH/SORT suffix %q", name)
+			}
+			if !dec.ExpectSP() || !dec.ExpectNumber64(&value) || !dec.ExpectSpecial(')') {
+				return nil, 0, dec.Err()
+			}
+			if value == 0 {
+				return nil, 0, fmt.Errorf("MODSEQ suffix must be positive")
+			}
+			modSeq = uint64(value)
+			break
+		}
+		var n uint32
+		if !dec.ExpectUniqueID(&n) {
+			return nil, 0, dec.Err()
+		}
+		numbers = append(numbers, n)
+	}
+	if !dec.ExpectCRLF() {
+		return nil, 0, dec.Err()
+	}
+	return numbers, modSeq, nil
 }
