@@ -16,13 +16,18 @@ import (
 	"github.com/kiliant/go-imap/imapserver"
 )
 
-// AccountOptions configures one exact, case-sensitive username and its password
-// for PLAIN/LOGIN. Configuration is copied by Open. Passwords are never stored
-// in the Maildir or included in diagnostics.
+// AccountOptions configures one account. Configuration is copied by Open.
+// Passwords are never stored in the Maildir or included in diagnostics.
 // Construct with keyed fields only; fields may be added in a future release.
 type AccountOptions struct {
-	Username, Password string
-	_                  struct{}
+	// Username is the exact, case-sensitive authentication identity.
+	Username string
+	// Password enables PLAIN and LOGIN for this account. Empty means the
+	// account has no password credential: it never matches, not even an
+	// empty password. Open rejects an account with no credential, and
+	// Password is currently the only credential kind.
+	Password string
+	_        struct{}
 }
 
 // Options configures Open. Nil means no accounts and the default poll interval.
@@ -99,6 +104,9 @@ func Open(ctx context.Context, root string, options *Options) (_ *Backend, retEr
 	for _, config := range opts.Accounts {
 		if config.Username == "" || !utf8.ValidString(config.Username) || strings.ContainsAny(config.Username, "\x00\r\n") || seen[config.Username] {
 			return nil, fmt.Errorf("maildir: empty, invalid or duplicate account identity")
+		}
+		if config.Password == "" {
+			return nil, fmt.Errorf("maildir: account has no credential")
 		}
 		seen[config.Username] = true
 	}
@@ -311,7 +319,9 @@ func (b *Backend) Authenticate(ctx context.Context, conn *imapserver.ConnInfo, c
 		return nil, noError(imap.CodeAuthenticationFailed, "authentication failed")
 	}
 	a := b.accounts[credentials.Username]
-	if a == nil || subtle.ConstantTimeCompare([]byte(a.password), []byte(credentials.Password)) != 1 {
+	// An empty stored password is no credential. Open refuses one; refusing it
+	// here as well keeps an empty LOGIN password from ever matching it.
+	if a == nil || a.password == "" || subtle.ConstantTimeCompare([]byte(a.password), []byte(credentials.Password)) != 1 {
 		return nil, noError(imap.CodeAuthenticationFailed, "authentication failed")
 	}
 	return &session{account: a, selections: make(map[*selected]bool)}, nil

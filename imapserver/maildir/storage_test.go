@@ -495,10 +495,23 @@ func TestAccountIsolationAndConfigurationCopy(t *testing.T) {
 			t.Fatal("unsupported credentials accepted")
 		}
 	}
-	for _, accounts := range [][]AccountOptions{{{Username: ""}}, {{Username: "a"}, {Username: "a"}}} {
+	for _, accounts := range [][]AccountOptions{
+		{{Username: "", Password: "p"}},
+		{{Username: "a", Password: "p"}, {Username: "a", Password: "q"}},
+		// No credential: an empty Password must not mean "the empty password".
+		{{Username: "a"}},
+	} {
 		if value, err := Open(ctx, t.TempDir(), &Options{Accounts: accounts}); err == nil {
 			value.Close(ctx, nil)
-			t.Fatal("invalid accounts accepted")
+			t.Fatal("invalid accounts accepted", accounts)
+		}
+	}
+	// Defence in depth behind Open's check: an empty stored password never
+	// matches, so an empty LOGIN password cannot authenticate.
+	b.accounts["alice"].password = ""
+	for _, password := range []string{"", "secret"} {
+		if _, err := b.Authenticate(ctx, nil, &imapserver.Credentials{Mechanism: "LOGIN", Username: "alice", Password: password}, nil); err == nil {
+			t.Fatalf("password %q authenticated an account with no credential", password)
 		}
 	}
 	entries, err := os.ReadDir(root)
