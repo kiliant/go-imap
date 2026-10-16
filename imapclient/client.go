@@ -168,6 +168,18 @@ type UnilateralDataHandler struct {
 	// claim LIST. A pending LIST command claims LIST responses, including
 	// indistinguishable events; a legacy LSUB command does not claim LIST.
 	List func(data *ListData)
+	// Metadata receives names-only METADATA change notifications for a mailbox
+	// or, when Mailbox is empty, the server. Entry names carry no values; use
+	// GetMetadata outside the callback to refresh them. Value-bearing replies
+	// to GETMETADATA and LIST-METADATA remain command results.
+	//
+	// Installing this callback does not subscribe to changes. Enable METADATA
+	// or METADATA-SERVER, or request metadata events through Notify, according
+	// to the server's capabilities. The callback runs on the reader goroutine
+	// and must not block or issue a command and wait for it. The data may be
+	// retained after return; the client does not subsequently mutate it.
+	// A nil callback still consumes and validates notifications.
+	Metadata func(data *MetadataChange)
 	// ContextUpdate receives the unsolicited ESEARCH responses that update a
 	// RETURN (UPDATE) context of [Client.SearchExtended], [Client.SortExtended]
 	// or [Client.MultiSearch] (CONTEXT, RFC 5267 section 4.3). Two kinds of

@@ -122,11 +122,14 @@ type NotifyOptions struct {
 // [UnilateralDataHandler.List]. A rename carries the previous name in
 // [imap.ListData.OldName].
 //
-// Three limits remain. MailboxMetadataChange and ServerMetadataChange events
-// arrive as unsolicited METADATA responses (RFC 5464 section 4.4.2), which
-// are not delivered yet. A STATUS event that arrives while a STATUS command
-// is in flight is merged into that command's result, and a LIST event that
-// arrives during a LIST command joins its listing.
+// MailboxMetadataChange and ServerMetadataChange events arrive as names-only
+// METADATA responses through [UnilateralDataHandler.Metadata]. The callback
+// names entries to refresh; it does not carry their current values.
+//
+// A STATUS event for the mailbox of an in-flight STATUS command is
+// indistinguishable from a result and stays with that command; events for
+// other mailboxes reach the handler. A LIST event during a LIST command joins
+// its listing, since that response carries no command tag.
 func (c *Client) Notify(ctx context.Context, filters []NotifyFilter, options *NotifyOptions) error {
 	if ctx == nil {
 		return &imap.Error{Type: imap.ErrorTypeProtocol, Text: "NOTIFY requires a non-nil context"}

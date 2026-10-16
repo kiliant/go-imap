@@ -484,6 +484,17 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 		c.trace(TraceServer, "* VANISHED")
 		return nil
 	}
+	if !resp.hasNum && resp.name == "METADATA" {
+		if err := resp.decodeData(); err != nil {
+			return err
+		}
+		metadata := resp.data.metadata
+		if metadata.notification && h != nil && h.Metadata != nil {
+			h.Metadata(&MetadataChange{Mailbox: metadata.values.Mailbox, Entries: metadata.changes})
+		}
+		c.trace(TraceServer, "* METADATA")
+		return nil
+	}
 	// Unknown unsolicited responses are discarded without losing stream
 	// alignment. Command-specific parsers get the first opportunity above.
 	// Known buffered responses were already consumed by decodeData, including
