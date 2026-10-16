@@ -540,12 +540,15 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	if literal == nil {
 		return nil, noError(imap.CodeCannot, "nil message literal")
 	}
+	name = mailboxKey(name)
+	// Refused before reading a literal that would only be discarded. The
+	// commit below checks again, since the lock is released in between.
 	if err := s.enter(ctx); err != nil {
 		return nil, err
 	}
-	defer s.account.leave()
-	name = mailboxKey(name)
-	if s.account.state.Mailboxes[name] == nil {
+	exists := s.account.state.Mailboxes[name] != nil
+	s.account.leave()
+	if !exists {
 		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
 	}
 	date := time.Now()
@@ -558,11 +561,36 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 			date = options.InternalDate
 		}
 	}
+	// The literal is staged before the account lock is taken. Reading it waits
+	// on the client, and holding the lock meanwhile stalled every operation on
+	// the account, delivery polling included, for as long as the client took.
+	// A staged file has a unique name, no journal refers to it until the commit
+	// below, and Open sweeps .staging if the process dies first.
+	if err := s.account.backend.begin(ctx); err != nil {
+		return nil, err
+	}
+	defer s.account.backend.ops.Done()
 	stage, size, actualDate, err := s.account.stage(ctx, literal, date, false)
 	if err != nil {
 		return nil, err
 	}
+	// Already counted as an operation, so Close waits for this commit rather
+	// than refusing it; only the lock remains to be taken.
+	if err := s.account.acquire(ctx); err != nil {
+		_ = s.account.root.Remove(stage)
+		return nil, err
+	}
+	defer s.account.release()
 	defer s.account.discardStage(stage)
+	if s.account.failure != nil {
+		return nil, noError(imap.CodeUnavailable, "account requires recovery; reopen the backend")
+	}
+	if s.closed {
+		return nil, noError(imap.CodeClosed, "session is closed")
+	}
+	if s.account.state.Mailboxes[name] == nil {
+		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
+	}
 	next, err := cloneState(s.account.state)
 	if err != nil {
 		return nil, err

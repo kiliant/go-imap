@@ -62,6 +62,8 @@ type Backend struct {
 	lastPollError error
 	closeErr      error
 	onPollError   func(error)
+	// callbackMu serialises OnPollError across the per-account pollers.
+	callbackMu sync.Mutex
 	// Tests inject interruption at durable commit boundaries, never through
 	// the public API or a production environment variable.
 	faultHook func(string) error

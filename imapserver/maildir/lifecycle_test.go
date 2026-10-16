@@ -3,6 +3,7 @@ package maildir
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -227,4 +228,66 @@ func TestRootLockReleasedAfterProcessDeath(t *testing.T) {
 	cmd.Process = nil
 	b := openTest(t, root)
 	loginTest(t, b)
+}
+
+// TestSlowAppendDoesNotStallOtherAccountsDelivery pins delivery isolation. A
+// single poller waited on each account's lock in turn, and APPEND held its
+// account's lock while reading the client's literal, so one slow client
+// stopped new-mail delivery for every account.
+func TestSlowAppendDoesNotStallOtherAccountsDelivery(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	opts := testOptions()
+	opts.Accounts = append(opts.Accounts, AccountOptions{Username: "bob", Password: "bob-secret"})
+	opts.PollInterval = 5 * time.Millisecond
+	b, err := Open(ctx, root, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close(ctx, nil)
+	bob, err := b.Authenticate(ctx, nil, &imapserver.Credentials{Mechanism: "PLAIN", Username: "bob", Password: "bob-secret"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	added := make(chan struct{}, 1)
+	if _, err := bob.Select(ctx, "INBOX", &imapserver.Updater{PushFunc: func(batch *imapserver.UpdateBatch) error {
+		for _, change := range batch.Changes {
+			if _, ok := change.(*imapserver.UpdateAdd); ok {
+				select {
+				case added <- struct{}{}:
+				default:
+				}
+			}
+		}
+		return nil
+	}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		_, err := loginTest(t, b).Append(ctx, "INBOX", &blockingReader{entered: entered, release: release}, nil)
+		finished <- err
+	}()
+	<-entered
+	defer func() {
+		close(release)
+		if err := <-finished; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Several poll intervals, so a poller that waits on alice's lock is already
+	// stuck there: map order would otherwise let one tick reach bob first.
+	time.Sleep(20 * opts.PollInterval)
+	bobINBOX := filepath.Join(root, fmt.Sprintf("%x", sha256.Sum256([]byte("bob"))), mailboxPath("INBOX"), "new")
+	if err := os.WriteFile(filepath.Join(bobINBOX, "external"), []byte("Subject: external\n\nbody\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-added:
+	case <-time.After(3 * time.Second):
+		t.Fatal("bob's delivery waited for alice's APPEND")
+	}
 }

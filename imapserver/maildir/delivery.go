@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kiliant/go-imap"
@@ -139,8 +140,23 @@ func (a *account) stage(ctx context.Context, source io.Reader, date time.Time, n
 	return path, size, actualDate, nil
 }
 
+// poll runs one poller per account. A single poller walking the accounts in
+// turn waited on each account's lock, so an operation holding one account —
+// an APPEND whose client sends its literal slowly, a FETCH streaming to a slow
+// reader — stalled new-mail delivery for every account until it finished.
 func (b *Backend) poll(ctx context.Context, interval time.Duration) {
 	defer close(b.pollDone)
+	var pollers sync.WaitGroup
+	for _, a := range b.accounts {
+		pollers.Add(1)
+		go func() {
+			defer pollers.Done()
+			b.pollAccount(ctx, a, interval)
+		}()
+	}
+	pollers.Wait()
+}
+func (b *Backend) pollAccount(ctx context.Context, a *account, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -149,28 +165,32 @@ func (b *Backend) poll(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 		}
-		for _, a := range b.accounts {
-			if err := a.enter(ctx); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				b.reportPollError(err)
-				continue
+		if err := a.enter(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
 			}
-			err := a.reconcileContext(ctx)
-			a.leave()
-			if err != nil && ctx.Err() == nil {
-				b.reportPollError(err)
-			}
+			b.reportPollError(err)
+			continue
+		}
+		err := a.reconcileContext(ctx)
+		a.leave()
+		if err != nil && ctx.Err() == nil {
+			b.reportPollError(err)
 		}
 	}
 }
+
+// reportPollError keeps OnPollError's documented serial delivery now that
+// pollers run concurrently. callbackMu is held only around the callback, never
+// with an account or backend lock.
 func (b *Backend) reportPollError(err error) {
 	b.mu.Lock()
 	b.lastPollError = err
 	callback := b.onPollError
 	b.mu.Unlock()
 	if callback != nil {
+		b.callbackMu.Lock()
+		defer b.callbackMu.Unlock()
 		callback(err)
 	}
 }
