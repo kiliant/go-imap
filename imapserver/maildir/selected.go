@@ -406,6 +406,19 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 				unseen = append(unseen, msg.UID)
 			}
 		}
+		if len(unseen) > 0 {
+			// A supported item type can still name an unsupported section or a
+			// missing part. Use the response builder itself to validate every
+			// targeted message before changing any flags. Open one file at a
+			// time and discard its streaming readers without reading the body.
+			for i, msg := range m.Messages {
+				if fetched[msg.UID] {
+					if err := s.fetchMessage(ctx, nil, name, msg, imap.SeqNum(i+1), items); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		if err := s.markSeen(ctx, name, unseen); err != nil {
 			return err
 		}
@@ -414,29 +427,38 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 	for _, uid := range selectedUIDs {
 		at := slices.IndexFunc(m.Messages, func(msg *messageRecord) bool { return msg.UID == uid })
 		msg := m.Messages[at]
-		f, err := openRegular(s.session.account.root, messagePath(name, msg))
-		if err != nil {
-			return err
-		}
-		analysis, err := message.Analyze(ctx, f, msg.Size, nil)
-		if err != nil {
-			f.Close()
-			return err
-		}
-		data, _, err := fetchData(ctx, msg, analysis, imap.SeqNum(at+1), items)
-		if err == nil {
-			err = writer.WriteMessage(ctx, data)
-		}
-		f.Close()
-		if err != nil {
+		if err := s.fetchMessage(ctx, writer, name, msg, imap.SeqNum(at+1), items); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// fetchMarksSeen validates items before any side effect and reports whether
-// they set \Seen. It must accept exactly the items fetchData serves.
+// fetchMessage builds one response, keeping its file open until the writer
+// returns. A nil writer validates the request without emitting a response.
+func (s *selected) fetchMessage(ctx context.Context, writer *imapserver.FetchWriter, name string, msg *messageRecord, seq imap.SeqNum, items []imap.FetchItem) error {
+	f, err := openRegular(s.session.account.root, messagePath(name, msg))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	analysis, err := message.Analyze(ctx, f, msg.Size, nil)
+	if err != nil {
+		return err
+	}
+	data, _, err := fetchData(ctx, msg, analysis, seq, items)
+	if err != nil {
+		return err
+	}
+	if writer != nil {
+		return writer.WriteMessage(ctx, data)
+	}
+	return nil
+}
+
+// fetchMarksSeen checks supported item types and reports whether they set
+// \Seen. Section arguments also need per-message validation via fetchData
+// before any side effect.
 func fetchMarksSeen(items []imap.FetchItem) (bool, error) {
 	seen := false
 	for _, item := range items {

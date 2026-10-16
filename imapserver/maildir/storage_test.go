@@ -804,10 +804,15 @@ func TestFetchMarksSeenInOneBatch(t *testing.T) {
 
 	var fetched []*imap.FetchMessageData
 	writer := &imapserver.FetchWriter{WriteFunc: func(_ context.Context, data *imap.FetchMessageData) error {
+		body := data.Items["BODY[]"][0].(*imap.FetchDataBodySection)
+		got, err := io.ReadAll(body.Literal)
+		if err != nil || string(got) != sampleMessage {
+			t.Fatalf("FETCH body = %q, %v", got, err)
+		}
 		fetched = append(fetched, data)
 		return nil
 	}}
-	items := []imap.FetchItem{imap.FetchItemFlags, &imap.FetchItemBodySection{}}
+	items := []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags, imap.FetchItemModSeq, &imap.FetchItemBodySection{}}
 	if err := inbox.Fetch(ctx, writer, all, &imapserver.FetchOptions{Items: items}); err != nil {
 		t.Fatal(err)
 	}
@@ -817,10 +822,16 @@ func TestFetchMarksSeenInOneBatch(t *testing.T) {
 	if len(fetched) != count {
 		t.Fatalf("FETCH wrote %d messages, want %d", len(fetched), count)
 	}
-	for _, data := range fetched {
+	for i, data := range fetched {
 		flags, _ := data.Items["FLAGS"][0].(imap.FetchDataFlags)
 		if !imap.ContainsFlag([]imap.Flag(flags), imap.FlagSeen) {
 			t.Fatalf("FETCH response FLAGS %v lack the \\Seen it set", flags)
+		}
+		uid := data.Items["UID"][0].(imap.FetchDataUID)
+		modseq := data.Items["MODSEQ"][0].(imap.FetchDataModSeq)
+		msg := s.account.state.Mailboxes["INBOX"].Messages[i]
+		if msg.UID != imap.UID(uid) || msg.ModSeq != uint64(modseq) {
+			t.Fatalf("FETCH UID/MODSEQ = %d/%d, want committed values %d/%d", uid, modseq, msg.UID, msg.ModSeq)
 		}
 	}
 	for _, msg := range s.account.state.Mailboxes["INBOX"].Messages {
@@ -835,6 +846,86 @@ func TestFetchMarksSeenInOneBatch(t *testing.T) {
 	}
 	if len(batches) != 1 {
 		t.Fatalf("FETCH of already-seen messages published %d more batches", len(batches)-1)
+	}
+}
+
+// A rejected section must not mark any message as Seen, including messages
+// whose sections would have succeeded before a later message failed.
+func TestFetchInvalidSectionDoesNotMarkSeen(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		item *imap.FetchItemBodySection
+	}{
+		{"unknown specifier", &imap.FetchItemBodySection{Specifier: "X-UNSUPPORTED"}},
+		{"unknown peek specifier", &imap.FetchItemBodySection{Specifier: "X-UNSUPPORTED", Peek: true}},
+		{"missing part", &imap.FetchItemBodySection{Part: []int{2}}},
+		{"invalid part", &imap.FetchItemBodySection{Part: []int{0}}},
+		{"MIME without part", &imap.FetchItemBodySection{Specifier: imap.PartSpecifierMIME}},
+		{"conflicting filters", &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"Subject"}, HeaderFieldsNot: []string{"From"}}},
+		{"filter without HEADER", &imap.FetchItemBodySection{HeaderFields: []string{"Subject"}}},
+		{"negative offset", &imap.FetchItemBodySection{Partial: &imap.SectionPartial{Offset: -1, Size: 1}}},
+		{"zero partial size", &imap.FetchItemBodySection{Partial: &imap.SectionPartial{Size: 0}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			s := loginTest(t, openTest(t, root))
+			// Part 2 exists in the first message but not in the second.
+			multipart := "Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\none\r\n--b\r\n\r\ntwo\r\n--b--\r\n"
+			if _, err := s.Append(ctx, "INBOX", strings.NewReader(multipart), nil); err != nil {
+				t.Fatal(err)
+			}
+			appendTest(t, s, "INBOX")
+			batches := 0
+			result, err := s.Select(ctx, "INBOX", &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error {
+				batches++
+				return nil
+			}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := cloneState(s.account.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(accountPath(root), stateFile)
+			diskBefore, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			written := 0
+			writer := &imapserver.FetchWriter{WriteFunc: func(context.Context, *imap.FetchMessageData) error {
+				written++
+				return nil
+			}}
+			items := []imap.FetchItem{&imap.FetchItemBodySection{}, tc.item}
+			all := imap.UIDSet{imap.UIDRange{Start: 1, Stop: 0}}
+			if err := result.Mailbox.Fetch(ctx, writer, all, &imapserver.FetchOptions{Items: items}); err == nil {
+				t.Fatal("invalid section accepted")
+			}
+			if batches != 0 || written != 0 {
+				t.Errorf("rejected FETCH published %d batches and wrote %d messages", batches, written)
+			}
+			after, err := cloneState(s.account.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Error("rejected FETCH changed account state")
+			}
+			diskAfter, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(diskAfter) != string(diskBefore) {
+				t.Error("rejected FETCH changed durable state")
+			}
+			for _, msg := range before.Mailboxes["INBOX"].Messages {
+				if _, err := s.account.root.Lstat(messagePath("INBOX", msg)); err != nil {
+					t.Errorf("rejected FETCH changed message filename: %v", err)
+				}
+			}
+		})
 	}
 }
 

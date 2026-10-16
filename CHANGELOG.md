@@ -153,6 +153,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   for discovery of the harness names through `LIST "" "*"`, which the
   framework's evaluation needs. No exported API change. (#34)
 
+#### Fixed
+
+- `imapserver/maildir`: FETCH validates requested sections for every targeted
+  message before committing implicit `\Seen` flags. Unsupported sections,
+  missing MIME parts and invalid partials leave flags, MODSEQ and message
+  filenames unchanged. Successful FETCH still publishes one update batch and
+  streams message bodies. No exported API change. (#53)
+
 ## [1.2.1] - 2026-10-15
 
 ### Root module — `github.com/kiliant/go-imap`
