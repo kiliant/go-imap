@@ -323,7 +323,7 @@ CONDSTORE `MODIFIED` on tagged OK.
 | MESSAGELIMIT= | 9738 | done | done |
 | SAVELIMIT= | 9738 | done | done |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
-| UIDBATCHES | 10022 | done [^t31uidbatches] | planned |
+| UIDBATCHES | 10022 | done [^t31uidbatches] | done [^t31uidbatches] |
 
 [^srvquotares]: Resource names cross the backend boundary as open
     `imap.QuotaResourceName` strings, so a server serving a resource this
@@ -410,8 +410,12 @@ CONDSTORE `MODIFIED` on tagged OK.
     retrieved, so it stayed on the watch list as a draft until the 2026-10-15
     recheck. [T31](tasks/T31-uidbatches.md) implements both directions. The
     client is covered by scripted tests, including pipelined correlators,
-    UIDONLY and malformed responses; live capability probing is recorded on
-    its issue. This is not yet a claim of independently verified interop. The
+    UIDONLY and malformed responses, and loopback tests against our server.
+    The server computes batches without a backend interface and tests exact
+    boundaries, paging, limits, resend accounting and SEARCHRES preservation.
+    The 2026-10-16 native/emulated matrix probe found no UIDBATCHES capability
+    on Dovecot, Stalwart, GreenMail, Cyrus, Courier or James; live tests skip
+    explicitly. This is not a claim of independently verified interop. The
     client offers no fallback in that release. The UID SEARCH equivalent in
     Appendix A needs sequence numbers, which UIDONLY forbids, and a message
     count the client does not keep. An opt-in fallback would be additive.
