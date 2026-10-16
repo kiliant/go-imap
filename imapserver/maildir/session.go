@@ -91,7 +91,7 @@ func revision(n uint64) imapserver.MailboxRevision {
 	return imapserver.MailboxRevision(strconv.FormatUint(n, 10))
 }
 func bump(m *mailboxState) (uint64, error) {
-	if m.HighestModSeq == math.MaxUint64 {
+	if m.HighestModSeq >= math.MaxInt64 {
 		return 0, noError(imap.CodeLimit, "modification sequence exhausted")
 	}
 	m.HighestModSeq++

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -197,6 +198,31 @@ func TestMailboxMetadataAdvancesQResyncClock(t *testing.T) {
 	}
 	if s.account.state.Mailboxes["INBOX"].HighestModSeq <= clock {
 		t.Fatal("removing annotation did not advance QRESYNC clock")
+	}
+}
+
+func TestModificationSequenceExhaustion(t *testing.T) {
+	ctx := context.Background()
+	b := openTest(t, t.TempDir())
+	s := loginTest(t, b)
+	appendTest(t, s, "INBOX")
+	s.account.state.Mailboxes["INBOX"].HighestModSeq = math.MaxInt64
+	sel := selectTest(t, s, "INBOX")
+	err := sel.Store(ctx, discardFetch(), imap.UIDSetNum(1), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen}}, nil)
+	var protocolErr *imap.Error
+	if !errors.As(err, &protocolErr) || protocolErr.Code != imap.CodeLimit || s.account.failure != nil {
+		t.Fatalf("clock overflow did not fail safely: %v", err)
+	}
+	if imap.ContainsFlag(s.account.state.Mailboxes["INBOX"].Messages[0].Flags, imap.FlagSeen) {
+		t.Fatal("failed STORE changed flags")
+	}
+	s.account.state.Mailboxes["INBOX"].HighestModSeq++
+	raw, err := json.Marshal(s.account.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeState(raw); err == nil {
+		t.Fatal("out-of-range persistent modification sequence accepted")
 	}
 }
 

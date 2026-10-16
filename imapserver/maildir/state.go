@@ -177,7 +177,7 @@ func decodeState(raw []byte) (*accountState, error) {
 				m.Revision = 1
 			}
 		}
-		if m.Revision == 0 || m.HighestModSeq == 0 {
+		if m.Revision == 0 || m.HighestModSeq == 0 || m.HighestModSeq > math.MaxInt64 {
 			return nil, fmt.Errorf("maildir: invalid mailbox revision")
 		}
 		if m.Metadata == nil {
