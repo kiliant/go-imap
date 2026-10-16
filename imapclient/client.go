@@ -595,6 +595,9 @@ type commandOptions struct {
 	write      func(*imapwire.Encoder)
 	collector  commandCollector
 	onComplete taggedCompleteFunc
+	// collectorForTag constructs a collector before registration or I/O. It
+	// must not block or call back into Client. Used for correlated responses.
+	collectorForTag func(string) commandCollector
 
 	// ownsContinuation is set by AUTHENTICATE and IDLE, which install their
 	// own continuation handler before issuing the command and keep it for the
@@ -712,6 +715,9 @@ func (c *Client) issue(name string, opts commandOptions) *Command {
 	}
 	c.nextTag++
 	cmd.tag = fmt.Sprintf("A%04d", c.nextTag)
+	if opts.collectorForTag != nil {
+		cmd.collector = opts.collectorForTag(cmd.tag)
+	}
 	if name == "SELECT" || name == "EXAMINE" {
 		// A new selection abandons the old one, even when selection fails.
 		// Stop old-context delivery at this request boundary, not at Wait.

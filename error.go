@@ -66,6 +66,13 @@ type ResponseCode string
 // Codes not listed here are still usable: convert a string, or compare against
 // whatever the server sent.
 const (
+	// CodeTooFew reports a batch size below the server minimum (RFC 10022).
+	CodeTooFew ResponseCode = "TOOFEW"
+	// CodeTooMany is the top-level response code registered by RFC 10022.
+	// It differs from METADATA's [METADATA TOOMANY], which uses CodeMetadata
+	// with TOOMANY in Error.CodeArgs.
+	CodeTooMany ResponseCode = "TOOMANY"
+
 	// RFC 3501 section 7.1 / RFC 9051 section 7.1.
 	CodeAlert          ResponseCode = "ALERT"
 	CodeBadCharset     ResponseCode = "BADCHARSET"

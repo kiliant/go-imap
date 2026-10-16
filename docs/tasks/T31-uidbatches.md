@@ -50,6 +50,11 @@ New files, created and owned by this task:
 
 Narrow handovers from completed tasks, named in their specs:
 
+- **T03:** the private `commandOptions.collectorForTag` factory and its call
+  after tag allocation in `Client.issue`. A correlated collector must capture
+  its tag before registration and I/O; assigning a command pointer after
+  `issue` returns races a fast server. No other connection-core changes.
+
 - **T02:** the TOOFEW and TOOMANY response-code constants in `error.go`, and
   the new root file above. Nothing else in the root package.
 - **T11:** the new `imapclient/ext_d_uidbatches*` files inside its `ext_d_*`
