@@ -1,0 +1,184 @@
+// Package message analyses stored RFC 5322 messages for IMAP backends. It
+// produces ENVELOPE and BODYSTRUCTURE, streams exact BODY sections, and offers
+// a portable SEARCH evaluator. Indexed backends can evaluate SEARCH themselves.
+//
+// Sources remain owned by the caller: keep their bytes immutable and their
+// ReaderAt open until all operations and section readers finish. Message does
+// not close a source or retain a complete copy of its bytes. Analysis scans
+// bodies to locate MIME boundaries and count lines with bounded read buffers;
+// retained state consists of bounded headers and MIME part metadata.
+//
+// Concurrent operations and independent section readers are safe when the
+// source supports concurrent ReadAt calls. Metadata, criteria and options must
+// not change during an operation. Each section reader is used by one goroutine
+// at a time. Accessors return independent copies that callers may modify.
+//
+// Blocking calls require a non-nil context. Cancellation is checked between
+// source reads and criteria; it cannot interrupt a source already blocked in
+// ReadAt. No background goroutine is started. Cancelling Analyze's context
+// after it returns does not cancel later operations on the Message.
+package message
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapmessage"
+)
+
+// Message is an immutable analysed view over caller-owned message bytes.
+// Construct it with [Analyze]; its zero value is not an analysed message.
+type Message struct {
+	parsed *imapmessage.Message
+	source io.ReaderAt
+}
+
+// AnalyzeOptions configures [Analyze]. A nil pointer selects the defaults.
+// Construct with keyed fields only; fields may be added in a future release.
+type AnalyzeOptions struct {
+	_ struct{}
+}
+
+// Analyze examines exactly size octets from source. A nil source, negative size
+// or nil context is invalid; size zero represents an empty message. A source
+// shorter than size produces an I/O error. Malformed MIME and header syntax are
+// interpreted best-effort, with bounded nesting/parts/header retention, rather
+// than rejected. Message bytes and BODY sections are never normalised.
+// A nil options pointer selects the defaults.
+func Analyze(ctx context.Context, source io.ReaderAt, size int64, options *AnalyzeOptions) (*Message, error) {
+	_ = options
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	if source == nil || size < 0 {
+		return nil, fmt.Errorf("message: invalid message source")
+	}
+	reader := &operationSource{ctx: ctx, source: source}
+	if size > 0 {
+		// Opaque bodies need not be scanned. Verify their declared end with a
+		// one-byte probe so a short source cannot silently acquire a false size.
+		var last [1]byte
+		_, err := reader.ReadAt(last[:], size-1)
+		if err != nil && err != io.EOF {
+			return nil, operationError(ctx, reader, err)
+		}
+	}
+	parsed, err := imapmessage.Analyze(reader, size)
+	if err := operationError(ctx, reader, err); err != nil {
+		return nil, err
+	}
+	return &Message{parsed: parsed.WithReader(source), source: source}, nil
+}
+
+// Size returns the source's declared octet count, or zero for a nil/zero Message.
+func (m *Message) Size() int64 {
+	if m == nil || m.parsed == nil {
+		return 0
+	}
+	return m.parsed.Size()
+}
+
+// Envelope returns an independent deep copy, or nil for a nil/zero Message.
+// It performs no I/O.
+func (m *Message) Envelope() *imap.Envelope {
+	if m == nil || m.parsed == nil {
+		return nil
+	}
+	return cloneEnvelope(m.parsed.Envelope)
+}
+
+// BodyStructure returns an independent deep copy, or nil for a nil/zero Message.
+// It performs no I/O.
+func (m *Message) BodyStructure() imap.BodyStructure {
+	if m == nil || m.parsed == nil {
+		return nil
+	}
+	return cloneStructure(m.parsed.BodyStructure)
+}
+
+// OpenBodySection returns a streaming reader and its exact octet count. item
+// selects a part, HEADER/TEXT/MIME, header-field filters and optional partial.
+// It must be non-nil; an empty item selects the complete stored message.
+// Peek has no effect: this utility never changes mailbox flags.
+//
+// Missing parts and invalid requests return errors. Offsets beyond the section
+// produce an empty reader. The reader is bound to ctx for its entire lifetime,
+// owns no source copy, and needs no Close. Keep the source open and immutable
+// until reading finishes; other Message operations and readers remain usable
+// if this reader's context is cancelled. A nil/zero Message is invalid.
+func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodySection) (io.Reader, int64, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, 0, err
+	}
+	if m == nil || m.parsed == nil {
+		return nil, 0, fmt.Errorf("message: nil or unanalysed message")
+	}
+	source := &operationSource{ctx: ctx, source: m.source}
+	reader, size, err := m.parsed.WithReader(source).OpenBodySection(item)
+	if err := operationError(ctx, source, err); err != nil {
+		return nil, 0, err
+	}
+	return &sectionReader{ctx: ctx, reader: reader}, size, nil
+}
+
+type operationSource struct {
+	ctx    context.Context
+	source io.ReaderAt
+	err    error
+}
+
+func (r *operationSource) ReadAt(p []byte, offset int64) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		r.err = err
+		return 0, err
+	}
+	n, err := r.source.ReadAt(p, offset)
+	if n < len(p) && (err == nil || err == io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
+	if err != nil && err != io.EOF && r.err == nil {
+		r.err = err
+	}
+	return n, err
+}
+
+type sectionReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *sectionReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func checkContext(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("message: a non-nil context is required")
+	}
+	return ctx.Err()
+}
+
+func operationError(ctx context.Context, source *operationSource, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if source.err != nil {
+		return source.err // retain the caller's original I/O error identity
+	}
+	if errors.Is(err, imapmessage.ErrUnsupportedCriteria) {
+		return fmt.Errorf("%w%s", ErrUnsupportedCriteria, strings.TrimPrefix(err.Error(), imapmessage.ErrUnsupportedCriteria.Error()))
+	}
+	if err != nil {
+		// Parser implementation errors and sentinels are deliberately not
+		// exposed through Unwrap. Public errors use the supported vocabulary.
+		return fmt.Errorf("message: %s", strings.TrimPrefix(err.Error(), "imapmessage: "))
+	}
+	return nil
+}

@@ -86,6 +86,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver/message` provides the supported public message-analysis API:
+  `Analyze`, concrete `Message`, `AnalyzeOptions`, `Metadata`, `MatchOptions`,
+  `Match`, `ErrUnsupportedCriteria` and `ErrUnsupportedCharset`. It generates
+  ENVELOPE/BODYSTRUCTURE, streams exact BODY sections with filters/partials,
+  and evaluates SEARCH with explicit mailbox metadata and charset options.
+  Calls take contexts, preserve source I/O errors and never own the source.
+  Envelope/structure accessors return independent copies. The memory backend,
+  including extension paths, now uses this package rather than internal
+  message helpers. An AST guard enforces that boundary. Additive. (#53)
 - `backendtest.Run` checks RECURSIVEMATCH combined with REMOTE and
   SPECIAL-USE, including CHILDINFO from a subscribed descendant without a
   special-use attribute. Remote descendants are checked when the harness

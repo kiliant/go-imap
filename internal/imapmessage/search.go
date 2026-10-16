@@ -2,6 +2,7 @@ package imapmessage
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -38,6 +39,7 @@ type Metadata struct {
 
 // MatchOptions supplies connection-scoped SEARCH inputs.
 type MatchOptions struct {
+	ctx context.Context
 	// Charset names the charset of string arguments. Empty means US-ASCII or
 	// UTF-8 after UTF8=ACCEPT.
 	Charset string
@@ -63,6 +65,11 @@ func Match(message *Message, metadata Metadata, criterion imap.SearchCriteria, o
 }
 
 func match(message *Message, metadata Metadata, criterion imap.SearchCriteria, opts MatchOptions) (bool, error) {
+	if opts.ctx != nil {
+		if err := opts.ctx.Err(); err != nil {
+			return false, err
+		}
+	}
 	switch c := criterion.(type) {
 	case imap.SearchAnd:
 		for _, child := range c {
