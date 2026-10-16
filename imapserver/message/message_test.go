@@ -83,6 +83,7 @@ func TestMalformedMIME(t *testing.T) {
 
 func TestInvalidAndZeroInputs(t *testing.T) {
 	ctx := context.Background()
+	//lint:ignore SA1012 Deliberately verify the documented nil-context refusal.
 	if _, err := message.Analyze(nil, strings.NewReader(raw), int64(len(raw)), nil); err == nil {
 		t.Fatal("nil context accepted")
 	}
@@ -104,9 +105,11 @@ func TestInvalidAndZeroInputs(t *testing.T) {
 		}
 	}
 	m := analyze(t, raw)
+	//lint:ignore SA1012 Deliberately verify the documented nil-context refusal.
 	if _, _, err := m.OpenBodySection(nil, &imap.FetchItemBodySection{}); err == nil {
 		t.Fatal("nil section context accepted")
 	}
+	//lint:ignore SA1012 Deliberately verify the documented nil-context refusal.
 	if _, err := message.Match(nil, m, message.Metadata{}, imap.SearchAll, nil); err == nil {
 		t.Fatal("nil match context accepted")
 	}
