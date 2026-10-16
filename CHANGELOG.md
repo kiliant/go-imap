@@ -115,6 +115,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver/maildir`: a persistent backend built through the public server
+  and message APIs. Exports `Open`, concrete `Backend`, guarded `Options`,
+  `AccountOptions` and `CloseOptions`, plus `Backend.Authenticate`,
+  `SupportsCapability`, `Close` and `LastPollError`. It provides account
+  isolation, OS root locking, versioned journal recovery, durable UID identity,
+  flags/keywords, subscriptions, metadata and QRESYNC history, and polling of
+  external Maildir delivery. APPEND preserves bytes; external LF delivery is
+  normalized once to CRLF. Supports MOVE, CONDSTORE and QRESYNC without
+  importing the memory backend or internal packages. Additive. The interop
+  harness adds the build-tagged `MaildirProfile` and drives foreign clients
+  against both backends sequentially. (#53)
 - UIDBATCHES (RFC 10022) is now advertised for every backend and computed
   from the framework's selection UID list, without a backend interface or
   capability witness. Responses preserve descending batch order, support

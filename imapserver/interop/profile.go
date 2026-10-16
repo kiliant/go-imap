@@ -40,10 +40,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/imapserver/maildir"
 	"github.com/kiliant/go-imap/imapserver/memory"
 	"github.com/kiliant/go-imap/interop/definition"
 )
@@ -121,7 +123,7 @@ var Profile = definition.Profile{
 // start runs a server on an ephemeral loopback port, which is what the profile
 // registry wants: the harness dials it from this same process.
 func start(ctx context.Context, _ *definition.NativeOptions) (*definition.NativeServer, error) {
-	return startOn(ctx, "127.0.0.1:0")
+	return startOn(ctx, "127.0.0.1:0", memoryBackend)
 }
 
 // startOn runs a server on address. It is split out from start for the
@@ -129,10 +131,11 @@ func start(ctx context.Context, _ *definition.NativeOptions) (*definition.Native
 // container and so must bind every interface rather than loopback. Keeping one
 // server construction means those clients meet the same server the capability
 // matrix measures, not a second one configured by hand.
-func startOn(ctx context.Context, address string) (*definition.NativeServer, error) {
-	backend := memory.New(&memory.Options{
-		Users: map[string]string{interopUser: interopPassword},
-	})
+func startOn(ctx context.Context, address string, factory backendFactory) (*definition.NativeServer, error) {
+	backend, closeBackend, err := factory(ctx)
+	if err != nil {
+		return nil, err
+	}
 	server := imapserver.New(backend, &imapserver.Options{
 		// The harness authenticates in cleartext, as it does against every
 		// other profile's plain IMAP port.
@@ -150,6 +153,7 @@ func startOn(ctx context.Context, address string) (*definition.NativeServer, err
 
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
+		_ = closeBackend(context.Background())
 		return nil, fmt.Errorf("listen: %w", err)
 	}
 
@@ -175,6 +179,9 @@ func startOn(ctx context.Context, address string) (*definition.NativeServer, err
 		cancelServe()
 		_ = listener.Close()
 		err := server.Close(stopCtx, nil)
+		if backendErr := closeBackend(stopCtx); err == nil {
+			err = backendErr
+		}
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
@@ -195,5 +202,40 @@ func startOn(ctx context.Context, address string) (*definition.NativeServer, err
 		Address: listener.Addr().String(),
 		Stop:    stop,
 		Logs:    logs,
+	}, nil
+}
+
+// MaildirProfile runs the same framework against durable public-API storage.
+// Its floor contains only capabilities the Maildir backend actually supports.
+var MaildirProfile = definition.Profile{
+	Name: "goimap-maildir", Tier: definition.TierInProcess, FirstParty: true,
+	Native: func(ctx context.Context, _ *definition.NativeOptions) (*definition.NativeServer, error) {
+		return startOn(ctx, "127.0.0.1:0", maildirBackend)
+	},
+	ExpectedCapabilities: []string{"IMAP4REV1", "IMAP4REV2", "UIDPLUS", "MOVE", "CONDSTORE", "QRESYNC", "NAMESPACE", "CHILDREN", "SPECIAL-USE", "STATUS=SIZE", "METADATA", "IDLE", "UIDBATCHES"},
+}
+
+type backendFactory func(context.Context) (imapserver.Backend, func(context.Context) error, error)
+
+func memoryBackend(context.Context) (imapserver.Backend, func(context.Context) error, error) {
+	backend := memory.New(&memory.Options{Users: map[string]string{interopUser: interopPassword}})
+	return backend, func(context.Context) error { return nil }, nil
+}
+
+func maildirBackend(ctx context.Context) (imapserver.Backend, func(context.Context) error, error) {
+	root, err := os.MkdirTemp("", "go-imap-maildir-interop-")
+	if err != nil {
+		return nil, nil, err
+	}
+	backend, err := maildir.Open(ctx, root, &maildir.Options{Accounts: []maildir.AccountOptions{{Username: interopUser, Password: interopPassword}}})
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return nil, nil, err
+	}
+	return backend, func(ctx context.Context) error {
+		if err := backend.Close(ctx, nil); err != nil {
+			return err
+		}
+		return os.RemoveAll(root)
 	}, nil
 }
