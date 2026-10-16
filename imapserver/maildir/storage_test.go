@@ -651,3 +651,49 @@ func TestFlagFilenameAndPersistentKeyword(t *testing.T) {
 		}
 	}
 }
+
+// TestCopyAnnouncesNewestMailboxFlags pins the order of mailbox FLAGS updates
+// within one batch. Each carries the complete set, and a COPY that introduces
+// two keywords used to prepend both, leaving the older, smaller set to be
+// applied last: the selected view and its client then lacked a keyword that
+// a later FETCH reported (RFC 3501 section 7.2.6).
+func TestCopyAnnouncesNewestMailboxFlags(t *testing.T) {
+	ctx := context.Background()
+	s := loginTest(t, openTest(t, t.TempDir()))
+	if err := s.Create(ctx, "Target", nil); err != nil {
+		t.Fatal(err)
+	}
+	first := appendTest(t, s, "INBOX")
+	second := appendTest(t, s, "INBOX")
+	inbox := selectTest(t, s, "INBOX")
+	for uid, keyword := range map[imap.UID]imap.Flag{first.UID: "k1", second.UID: "k2"} {
+		if err := inbox.Store(ctx, discardFetch(), imap.UIDSetNum(uid), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{keyword}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var batches []*imapserver.UpdateBatch
+	if _, err := s.Select(ctx, "Target", &imapserver.Updater{PushFunc: func(batch *imapserver.UpdateBatch) error {
+		batches = append(batches, batch)
+		return nil
+	}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Copy(ctx, imap.UIDSetNum(first.UID, second.UID), "Target", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("COPY published %d batches to the destination, want 1", len(batches))
+	}
+	var flagUpdates []*imapserver.UpdateMailboxFlags
+	for i, change := range batches[0].Changes {
+		if update, ok := change.(*imapserver.UpdateMailboxFlags); ok {
+			if i != 0 {
+				t.Fatalf("mailbox FLAGS update at position %d, want it ahead of every message update", i)
+			}
+			flagUpdates = append(flagUpdates, update)
+		}
+	}
+	if len(flagUpdates) != 1 || !imap.ContainsFlag(flagUpdates[0].Flags, "k1") || !imap.ContainsFlag(flagUpdates[0].Flags, "k2") {
+		t.Fatalf("mailbox FLAGS updates = %v, want one carrying both k1 and k2", flagUpdates)
+	}
+}

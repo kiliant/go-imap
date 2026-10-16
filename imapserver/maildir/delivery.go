@@ -263,7 +263,7 @@ func (a *account) reconcileContext(ctx context.Context) error {
 				m.Messages = append(m.Messages, &messageRecord{UID: uid, File: file, Size: size, Date: date, Flags: flags, ModSeq: modseq})
 				changes[m.UIDValidity] = append(changes[m.UIDValidity], &imapserver.UpdateAdd{UIDs: []imap.UID{uid}})
 				if ensureFlags(m, flags) {
-					changes[m.UIDValidity] = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: slices.Clone(m.Flags)}}, changes[m.UIDValidity]...)
+					changes[m.UIDValidity] = withMailboxFlags(changes[m.UIDValidity], m.Flags)
 				}
 			}
 		}

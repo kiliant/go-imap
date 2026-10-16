@@ -79,7 +79,7 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 				actions = append(actions, fileAction{Kind: "rename", From: old, To: messagePath(name, msg)})
 			}
 			if ensureFlags(m, flags) {
-				changes = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: slices.Clone(m.Flags)}}, changes...)
+				changes = withMailboxFlags(changes, m.Flags)
 			}
 			changes = append(changes, &imapserver.UpdateFlags{UID: msg.UID, Flags: slices.Clone(flags), ModSeq: msg.ModSeq})
 		}
@@ -211,7 +211,7 @@ func (s *selected) copyMove(ctx context.Context, uids imap.UIDSet, destination s
 		msg.Flags = slices.Clone(original.Flags)
 		to.Messages = append(to.Messages, &msg)
 		if ensureFlags(to, msg.Flags) {
-			changes[to.UIDValidity] = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: slices.Clone(to.Flags)}}, changes[to.UIDValidity]...)
+			changes[to.UIDValidity] = withMailboxFlags(changes[to.UIDValidity], to.Flags)
 		}
 		changes[to.UIDValidity] = append(changes[to.UIDValidity], &imapserver.UpdateAdd{UIDs: []imap.UID{uid}})
 		actions = append(actions, fileAction{Kind: "rename", From: stage, To: messagePath(destination, &msg)})

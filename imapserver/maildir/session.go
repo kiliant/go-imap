@@ -115,6 +115,22 @@ func ensureFlags(m *mailboxState, flags []imap.Flag) bool {
 	}
 	return changed
 }
+
+// withMailboxFlags puts the mailbox's complete FLAGS list first in a batch,
+// ahead of every update that uses a keyword it introduces (RFC 3501 section
+// 7.2.6). Each list is the whole set, so a later one replaces an earlier one
+// from the same batch; prepending both would apply the older, smaller set last.
+func withMailboxFlags(changes []imapserver.Update, flags []imap.Flag) []imapserver.Update {
+	update := &imapserver.UpdateMailboxFlags{Flags: slices.Clone(flags)}
+	if len(changes) > 0 {
+		if _, ok := changes[0].(*imapserver.UpdateMailboxFlags); ok {
+			changes[0] = update
+			return changes
+		}
+	}
+	return append([]imapserver.Update{update}, changes...)
+}
+
 func uniqueFlags(flags []imap.Flag) []imap.Flag {
 	var result []imap.Flag
 	for _, flag := range flags {
@@ -565,7 +581,7 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	m.Messages = append(m.Messages, msg)
 	updates := []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}}
 	if ensureFlags(m, flags) {
-		updates = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: slices.Clone(m.Flags)}}, updates...)
+		updates = withMailboxFlags(updates, m.Flags)
 	}
 	actions := []fileAction{{Kind: "rename", From: stage, To: messagePath(name, msg)}}
 	if err := s.account.publishCommit(next, actions, map[uint32][]imapserver.Update{m.UIDValidity: updates}, origin); err != nil {
