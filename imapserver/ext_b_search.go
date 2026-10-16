@@ -26,11 +26,11 @@ func searchHasModSeq(criteria imap.SearchCriteria) bool {
 // be read through the existing FETCH contract without extending backend APIs.
 func searchResponseModSeq(ctx context.Context, c *conn, args *searchArgs, result *SearchResult, uids []imap.UID) (uint64, error) {
 	selected := uids
-	endpoints := false
+	subset := false
 	if args.extended || c.state.revision == revisionIMAP4rev2 {
 		requested := searchReturnSet(args)
-		if (requested[searchReturnMin] || requested[searchReturnMax]) &&
-			!requested[searchReturnAll] && !requested[searchReturnCount] && !requested[searchReturnPartial] {
+		if (requested[searchReturnMin] || requested[searchReturnMax] || requested[searchReturnPartial]) &&
+			!requested[searchReturnAll] && !requested[searchReturnCount] {
 			selected = nil
 			if requested[searchReturnMin] {
 				selected = append(selected, uids[0])
@@ -38,10 +38,22 @@ func searchResponseModSeq(ctx context.Context, c *conn, args *searchArgs, result
 			if requested[searchReturnMax] {
 				selected = append(selected, uids[len(uids)-1])
 			}
-			endpoints = true
+			if requested[searchReturnPartial] && args.partial != nil {
+				numbers := make([]uint32, len(uids))
+				for i, uid := range uids {
+					numbers[i] = uint32(uid)
+				}
+				for _, uid := range partialWindow(args.partial, numbers) {
+					selected = append(selected, imap.UID(uid))
+				}
+			}
+			subset = true
 		}
 	}
-	if !endpoints && len(uids) == len(result.UIDs) && result.ModSeq != 0 {
+	if len(selected) == 0 {
+		return 0, nil
+	}
+	if !subset && len(uids) == len(result.UIDs) && result.ModSeq != 0 {
 		if result.ModSeq > math.MaxInt64 {
 			return 0, fmt.Errorf("imapserver: invalid SEARCH modification sequence")
 		}

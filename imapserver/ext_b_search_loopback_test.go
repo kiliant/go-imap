@@ -38,6 +38,10 @@ func TestLoopbackCondStoreSearchResponses(t *testing.T) {
 		{"SEARCH RETURN (MAX) MODSEQ 1", fmt.Sprintf(" MAX 3 MODSEQ %d", last)},
 		{"SEARCH RETURN (MIN MAX) MODSEQ 1", fmt.Sprintf(" MIN 1 MAX 3 MODSEQ %d", max(first, last))},
 		{"SEARCH RETURN (MIN COUNT) MODSEQ 1", fmt.Sprintf(" MIN 1 COUNT 3 MODSEQ %d", highest)},
+		{"SEARCH RETURN (PARTIAL 1:1) MODSEQ 1", fmt.Sprintf(" PARTIAL (1:1 1) MODSEQ %d", first)},
+		{"SEARCH RETURN (MAX PARTIAL 1:1) MODSEQ 1", fmt.Sprintf(" MAX 3 PARTIAL (1:1 1) MODSEQ %d", max(first, last))},
+		{"SEARCH RETURN (COUNT PARTIAL 1:1) MODSEQ 1", fmt.Sprintf(" COUNT 3 PARTIAL (1:1 1) MODSEQ %d", highest)},
+		{"SEARCH RETURN (PARTIAL 4:4) MODSEQ 1", " PARTIAL (4:4 NIL)"},
 		{"SEARCH RETURN (COUNT) MODSEQ " + strconv.FormatUint(highest+1, 10), " COUNT 0"},
 	} {
 		t.Run(tt.command, func(t *testing.T) {
