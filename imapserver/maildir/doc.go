@@ -16,7 +16,8 @@
 // and atomically rename them into new/. Symlinks and nonregular message files
 // are refused. Account-root handles constrain file access; Go 1.24 uses a
 // checked-path rename fallback because os.Root.Rename was added in Go 1.25.
-// Structural ownership is also required by that fallback. Passwords are
+// That fallback also requires the root's ancestor paths to remain unchanged
+// while open, in addition to structural ownership. Passwords are
 // configuration only, never persistent storage data.
 //
 // Accounts are lowercase SHA256(username bytes) directories. Beneath each,

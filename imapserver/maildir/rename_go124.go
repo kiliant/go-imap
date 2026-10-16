@@ -8,7 +8,8 @@ import (
 )
 
 // Go 1.24's Root has no Rename. Structural directories must remain owned by
-// this backend; delivery may add/rename regular files inside tmp/ and new/.
+// this backend, and the root's ancestor paths must remain unchanged; delivery
+// may add/rename regular files inside tmp/ and new/.
 func renameFile(root *os.Root, from, to string) error {
 	if err := checkedPath(root, from); err != nil {
 		return err
