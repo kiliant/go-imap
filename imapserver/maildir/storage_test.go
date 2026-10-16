@@ -837,3 +837,35 @@ func TestFetchMarksSeenInOneBatch(t *testing.T) {
 		t.Fatalf("FETCH of already-seen messages published %d more batches", len(batches)-1)
 	}
 }
+
+// TestVanishedMessageFileIsNotJournalled pins the recovery hazard from the
+// T32 storage review. A STORE on a message whose cur/ file was removed outside
+// the backend journalled a rename that replay can never complete, and because
+// Open fails if any account fails to load, every later Open of the root failed.
+func TestVanishedMessageFileIsNotJournalled(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	b := openTest(t, root)
+	s := loginTest(t, b)
+	appended := appendTest(t, s, "INBOX")
+	inbox := selectTest(t, s, "INBOX")
+	msg := s.account.state.Mailboxes["INBOX"].Messages[0]
+	if err := os.Remove(filepath.Join(accountPath(root), messagePath("INBOX", msg))); err != nil {
+		t.Fatal(err)
+	}
+	err := inbox.Store(ctx, discardFetch(), imap.UIDSetNum(appended.UID), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagFlagged}}, nil)
+	var protocol *imap.Error
+	if !errors.As(err, &protocol) || protocol.Code != imap.CodeExpungeIssued {
+		t.Fatalf("STORE on a vanished message: %v, want NO [EXPUNGEISSUED]", err)
+	}
+	if _, err := os.Stat(filepath.Join(accountPath(root), journalFile)); !os.IsNotExist(err) {
+		t.Fatalf("a journal was left behind: %v", err)
+	}
+	if err := b.Close(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	s = loginTest(t, openTest(t, root))
+	if n := len(s.account.state.Mailboxes["INBOX"].Messages); n != 0 {
+		t.Fatalf("reopened INBOX has %d messages, want the vanished one reconciled away", n)
+	}
+}

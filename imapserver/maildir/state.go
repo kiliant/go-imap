@@ -255,6 +255,21 @@ func (a *account) commit(next *accountState, actions []fileAction) error {
 			return noError(imap.CodeCannot, err.Error())
 		}
 	}
+	// Replay fails closed on a rename whose source and destination are both
+	// missing, so a message file removed outside the backend after it was read
+	// would make this journal unreplayable on every Open, and Open fails if
+	// any account fails to load. Refusing before the journal exists keeps the
+	// account usable; the next poll reconciles the removal as an expunge.
+	for _, action := range actions {
+		if action.Kind != "rename" || strings.HasPrefix(action.From, ".staging") {
+			continue
+		}
+		if _, err := a.root.Lstat(action.From); os.IsNotExist(err) {
+			return noError(imap.CodeExpungeIssued, "message was removed outside the server")
+		} else if err != nil {
+			return err
+		}
+	}
 	j := diskJournal{Version: stateVersion, State: next, Actions: actions}
 	raw, err := json.Marshal(j)
 	if err != nil {
