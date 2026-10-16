@@ -369,7 +369,11 @@ CONDSTORE `MODIFIED` on tagged OK.
       These carry changed entry names, distinct from GETMETADATA's unset,
       empty and present values. Scripted tests cover mailbox/server changes,
       retained callback data, nil handlers, and interleaving with GETMETADATA
-      and LIST-METADATA. Live verification is tracked by T30.
+      and LIST-METADATA. The live probe found no supporting matrix server:
+      Cyrus 3.10.2 advertises METADATA and NOTIFY but omits METADATA from
+      ENABLED and explicitly refuses MailboxMetadataChange with BADEVENT;
+      James does not enable METADATA notifications. Other profiles lack
+      METADATA. Callback delivery remains scripted-only, not live-verified.
     - STATUS for the command's own mailbox is indistinguishable from a result
       and stays with that command. LIST-STATUS still claims STATUS while pending.
     - A LIST event that arrives during a LIST command joins the listing;

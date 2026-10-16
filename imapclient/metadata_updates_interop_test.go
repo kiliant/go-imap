@@ -4,6 +4,7 @@ package imapclient_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,11 @@ func TestMetadataChangeInterop(t *testing.T) {
 						Specifier: imapclient.NotifySelected,
 						Events:    []imapclient.NotifyEventName{imapclient.NotifyEventMailboxMetadataChange},
 					}}, nil); err != nil {
+						var protocol *imap.Error
+						if errors.As(err, &protocol) && protocol.Code == imap.CodeBadEvent &&
+							!strings.Contains(strings.ToUpper(protocol.CodeArgs), "MAILBOXMETADATACHANGE") {
+							t.Skipf("server does not support MailboxMetadataChange: %v", err)
+						}
 						t08Fail(t, server, watcher, "NOTIFY MailboxMetadataChange", err)
 					}
 				}
