@@ -52,7 +52,9 @@
 // mappings, flags/keywords, modification sequences, metadata, subscriptions and
 // all expunge tombstones. History is not pruned, so QRESYNC remains exact across
 // restart and state grows with expunges. Version 1 uses the same schema but may
-// omit revision/modification-sequence fields, which migrate to 1. Unknown fields
+// omit revision/modification-sequence fields, which migrate to 1. METADATA
+// values that are valid UTF-8 are JSON strings; any other value, which RFC 5464
+// permits, is an object {"base64": ...}, so binary octets survive. Unknown fields
 // at root/account/mailbox/message/tombstone boundaries survive rewrites. Newer
 // versions are refused without rewriting those files. Identity/root registry
 // formats are version 1. Metadata files are limited to 256 MiB when read.

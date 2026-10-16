@@ -697,3 +697,77 @@ func TestCopyAnnouncesNewestMailboxFlags(t *testing.T) {
 		t.Fatalf("mailbox FLAGS updates = %v, want one carrying both k1 and k2", flagUpdates)
 	}
 }
+
+// TestBinaryMetadataSurvivesRewriteAndRestart pins RFC 5464 section 3.2's
+// "binary data of zero or more octets". JSON strings cannot carry invalid
+// UTF-8, and encoding/json silently replaced it with U+FFFD: the value read
+// back correctly until the next state rewrite or restart.
+func TestBinaryMetadataSurvivesRewriteAndRestart(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	b := openTest(t, root)
+	s := loginTest(t, b)
+	values := map[imap.MetadataEntryName]string{
+		"/private/binary": "bin\xff\xfe\x80end",
+		"/private/text":   "line one\r\nline two\x00",
+	}
+	var entries []imap.MetadataEntry
+	for name, value := range values {
+		copy := value
+		entries = append(entries, imap.MetadataEntry{Name: name, Value: &copy})
+	}
+	for _, mailbox := range []string{"", "INBOX"} {
+		if err := s.SetMetadata(ctx, mailbox, entries, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(when string, s *session) {
+		t.Helper()
+		for _, mailbox := range []string{"", "INBOX"} {
+			got, err := s.GetMetadata(ctx, mailbox, []imap.MetadataEntryName{"/private"}, &imapserver.MetadataOptions{Depth: "infinity"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Entries) != len(values) {
+				t.Fatalf("%s: %q has %d entries, want %d", when, mailbox, len(got.Entries), len(values))
+			}
+			for _, entry := range got.Entries {
+				if entry.Value == nil {
+					t.Fatalf("%s: %q %s has no value", when, mailbox, entry.Name)
+				}
+				if *entry.Value != values[entry.Name] {
+					t.Fatalf("%s: %q %s = %q, want %q", when, mailbox, entry.Name, *entry.Value, values[entry.Name])
+				}
+			}
+		}
+	}
+	// Any later mutation rewrites the whole state through JSON.
+	appendTest(t, s, "INBOX")
+	check("after a rewrite", s)
+	if err := b.Close(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	check("after a restart", loginTest(t, openTest(t, root)))
+}
+
+// TestInvalidMetadataEntryNamesAreBad applies RFC 5464 section 3.2: invalid
+// entry names "result in a BAD response". A name outside ASCII would also not
+// survive as a JSON object key in the stored state.
+func TestInvalidMetadataEntryNamesAreBad(t *testing.T) {
+	ctx := context.Background()
+	s := loginTest(t, openTest(t, t.TempDir()))
+	value := "v"
+	for _, name := range []imap.MetadataEntryName{"/private/caf\xc3\xa9", "/private/\xff", "/private/a*", "/private/a%", "/private//a", "/private/a/", "/private/a\x19", ""} {
+		set := s.SetMetadata(ctx, "INBOX", []imap.MetadataEntry{{Name: name, Value: &value}}, nil)
+		_, get := s.GetMetadata(ctx, "INBOX", []imap.MetadataEntryName{name}, nil)
+		for _, err := range []error{set, get} {
+			var protocol *imap.Error
+			if !errors.As(err, &protocol) || protocol.Type != imap.ErrorTypeBad {
+				t.Fatalf("entry name %q: error = %v, want BAD", name, err)
+			}
+		}
+	}
+	if len(s.account.state.Mailboxes["INBOX"].Metadata) != 0 {
+		t.Fatal("an invalid entry name was stored")
+	}
+}

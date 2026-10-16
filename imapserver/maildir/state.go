@@ -23,23 +23,23 @@ const identityFile = ".imap-identity.json"
 type extraFields map[string]json.RawMessage
 
 type accountState struct {
-	Version       int                               `json:"version"`
-	Mailboxes     map[string]*mailboxState          `json:"mailboxes"`
-	Subscriptions map[string]bool                   `json:"subscriptions"`
-	Metadata      map[imap.MetadataEntryName]string `json:"metadata"`
-	Extra         extraFields                       `json:"-"`
+	Version       int                                      `json:"version"`
+	Mailboxes     map[string]*mailboxState                 `json:"mailboxes"`
+	Subscriptions map[string]bool                          `json:"subscriptions"`
+	Metadata      map[imap.MetadataEntryName]metadataValue `json:"metadata"`
+	Extra         extraFields                              `json:"-"`
 }
 type mailboxState struct {
-	UIDValidity   uint32                            `json:"uidvalidity"`
-	UIDNext       imap.UID                          `json:"uidnext"`
-	Revision      uint64                            `json:"revision"`
-	HighestModSeq uint64                            `json:"highestmodseq"`
-	Flags         []imap.Flag                       `json:"flags"`
-	SpecialUse    []imap.MailboxAttr                `json:"specialuse"`
-	Messages      []*messageRecord                  `json:"messages"`
-	Tombstones    []tombstone                       `json:"tombstones"`
-	Metadata      map[imap.MetadataEntryName]string `json:"metadata"`
-	Extra         extraFields                       `json:"-"`
+	UIDValidity   uint32                                   `json:"uidvalidity"`
+	UIDNext       imap.UID                                 `json:"uidnext"`
+	Revision      uint64                                   `json:"revision"`
+	HighestModSeq uint64                                   `json:"highestmodseq"`
+	Flags         []imap.Flag                              `json:"flags"`
+	SpecialUse    []imap.MailboxAttr                       `json:"specialuse"`
+	Messages      []*messageRecord                         `json:"messages"`
+	Tombstones    []tombstone                              `json:"tombstones"`
+	Metadata      map[imap.MetadataEntryName]metadataValue `json:"metadata"`
+	Extra         extraFields                              `json:"-"`
 }
 type messageRecord struct {
 	UID    imap.UID    `json:"uid"`
@@ -161,7 +161,7 @@ func decodeState(raw []byte) (*accountState, error) {
 		s.Subscriptions = make(map[string]bool)
 	}
 	if s.Metadata == nil {
-		s.Metadata = make(map[imap.MetadataEntryName]string)
+		s.Metadata = make(map[imap.MetadataEntryName]metadataValue)
 	}
 	seen := make(map[uint32]bool)
 	for name, m := range s.Mailboxes {
@@ -181,7 +181,7 @@ func decodeState(raw []byte) (*accountState, error) {
 			return nil, fmt.Errorf("maildir: invalid mailbox revision")
 		}
 		if m.Metadata == nil {
-			m.Metadata = make(map[imap.MetadataEntryName]string)
+			m.Metadata = make(map[imap.MetadataEntryName]metadataValue)
 		}
 		previous := imap.UID(0)
 		files := make(map[string]bool)
@@ -246,7 +246,7 @@ func (a *account) newMailbox() (*mailboxState, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mailboxState{UIDValidity: id, UIDNext: 1, Revision: 1, HighestModSeq: 1, Flags: defaultFlags(), Metadata: make(map[imap.MetadataEntryName]string)}, nil
+	return &mailboxState{UIDValidity: id, UIDNext: 1, Revision: 1, HighestModSeq: 1, Flags: defaultFlags(), Metadata: make(map[imap.MetadataEntryName]metadataValue)}, nil
 }
 
 func (a *account) commit(next *accountState, actions []fileAction) error {
@@ -535,7 +535,7 @@ func (a *account) load() error {
 		return err
 	}
 	if state == nil {
-		state = &accountState{Version: stateVersion, Mailboxes: make(map[string]*mailboxState), Subscriptions: make(map[string]bool), Metadata: make(map[imap.MetadataEntryName]string)}
+		state = &accountState{Version: stateVersion, Mailboxes: make(map[string]*mailboxState), Subscriptions: make(map[string]bool), Metadata: make(map[imap.MetadataEntryName]metadataValue)}
 		var names []string
 		if err := a.discover("mailboxes", nil, &names); err != nil {
 			return err
