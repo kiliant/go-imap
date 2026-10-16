@@ -10,7 +10,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
-	"github.com/kiliant/go-imap/internal/imapmessage"
+	servermessage "github.com/kiliant/go-imap/imapserver/message"
 )
 
 type session struct {
@@ -238,7 +238,7 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	if err != nil {
 		return nil, err
 	}
-	analysis, err := imapmessage.Analyze(bytes.NewReader(raw), int64(len(raw)))
+	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)
 	if err != nil {
 		return nil, err
 	}

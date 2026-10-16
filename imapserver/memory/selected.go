@@ -12,7 +12,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
-	"github.com/kiliant/go-imap/internal/imapmessage"
+	servermessage "github.com/kiliant/go-imap/imapserver/message"
 )
 
 type message struct {
@@ -20,7 +20,7 @@ type message struct {
 	flags        []imap.Flag
 	internalDate time.Time
 	raw          []byte
-	analysis     *imapmessage.Message
+	analysis     *servermessage.Message
 	// modSeq is the CONDSTORE modification sequence, bumped on every change to
 	// this message's flags. See ext_b.go.
 	modSeq uint64
@@ -77,7 +77,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 		if changedSince != 0 && msg.modSeq <= changedSince {
 			continue
 		}
-		data, marksSeen, err := fetchMessageData(msg, imap.SeqNum(i+1), items)
+		data, marksSeen, err := fetchMessageData(ctx, msg, imap.SeqNum(i+1), items)
 		if err != nil {
 			s.session.account.mu.Unlock()
 			return err
@@ -124,14 +124,14 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	}
 	var matches []imap.UID
 	for i, msg := range s.mailbox.messages {
-		metadata := imapmessage.Metadata{
+		metadata := servermessage.Metadata{
 			SeqNum:       imap.SeqNum(i + 1),
 			UID:          msg.uid,
 			Flags:        cloneFlags(msg.flags),
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
 		}
-		matched, err := imapmessage.Match(msg.analysis, metadata, criteria, &imapmessage.MatchOptions{Charset: charset})
+		matched, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
 			s.session.account.mu.Unlock()
 			return nil, err
@@ -400,7 +400,7 @@ func flagsFetchData(seqNum imap.SeqNum, msg *message) *imap.FetchMessageData {
 	}}
 }
 
-func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) (*imap.FetchMessageData, bool, error) {
+func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, items []imap.FetchItem) (*imap.FetchMessageData, bool, error) {
 	data := &imap.FetchMessageData{SeqNum: seqNum, Items: make(map[imap.FetchDataKey][]imap.FetchData)}
 	marksSeen := false
 	for _, item := range items {
@@ -433,7 +433,7 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 			case imap.FetchItemRFC822Size:
 				data.Items[key] = append(data.Items[key], imap.FetchDataRFC822Size(len(msg.raw)))
 			case imap.FetchItemEnvelope:
-				data.Items[key] = append(data.Items[key], &imap.FetchDataEnvelope{Envelope: msg.analysis.Envelope})
+				data.Items[key] = append(data.Items[key], &imap.FetchDataEnvelope{Envelope: msg.analysis.Envelope()})
 			case imap.FetchItemRFC822:
 				data.Items[key] = append(data.Items[key], &imap.FetchDataLiteral{Literal: bytes.NewReader(msg.raw)})
 				marksSeen = true
@@ -443,7 +443,7 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 					specifier = imap.PartSpecifierText
 					marksSeen = true
 				}
-				reader, _, err := msg.analysis.OpenBodySection(&imap.FetchItemBodySection{Specifier: specifier, Peek: item == imap.FetchItemRFC822Header})
+				reader, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: specifier, Peek: item == imap.FetchItemRFC822Header})
 				if err != nil {
 					return nil, false, err
 				}
@@ -456,12 +456,12 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 			if item.Extended {
 				key = "BODYSTRUCTURE"
 			}
-			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: msg.analysis.BodyStructure})
+			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: msg.analysis.BodyStructure()})
 		case *imap.FetchItemBinarySection:
 			// BINARY[] delivers the section with its content-transfer-encoding
 			// already undone, which is the whole point of RFC 3516: the client
 			// receives bytes rather than base64 it has to decode itself.
-			reader, err := openBinarySection(msg, item.Part)
+			reader, err := openBinarySection(ctx, msg, item.Part)
 			if err != nil {
 				return nil, false, err
 			}
@@ -472,7 +472,7 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 			})
 			marksSeen = marksSeen || !item.Peek
 		case *imap.FetchItemBinarySectionSize:
-			reader, err := openBinarySection(msg, item.Part)
+			reader, err := openBinarySection(ctx, msg, item.Part)
 			if err != nil {
 				return nil, false, err
 			}
@@ -483,7 +483,7 @@ func fetchMessageData(msg *message, seqNum imap.SeqNum, items []imap.FetchItem) 
 			key := imap.FetchDataKey(binarySectionKey(&imap.FetchItemBinarySection{Part: item.Part}, true))
 			data.Items[key] = append(data.Items[key], imap.FetchDataBinarySectionSize(size))
 		case *imap.FetchItemBodySection:
-			reader, _, err := msg.analysis.OpenBodySection(item)
+			reader, _, err := msg.analysis.OpenBodySection(ctx, item)
 			if err != nil {
 				return nil, false, err
 			}

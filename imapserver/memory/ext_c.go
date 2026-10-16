@@ -12,7 +12,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
-	"github.com/kiliant/go-imap/internal/imapmessage"
+	servermessage "github.com/kiliant/go-imap/imapserver/message"
 )
 
 // Group C support: SORT and THREAD (RFC 5256).
@@ -78,8 +78,8 @@ func compareBySortKey(a, b *message, key imap.SortKey) int {
 // sentDate is the Date header, falling back to the internal date when the
 // message carries none. RFC 5256 section 2.2.
 func sentDate(msg *message) time.Time {
-	if msg.analysis != nil && msg.analysis.Envelope != nil && !msg.analysis.Envelope.Date.IsZero() {
-		return msg.analysis.Envelope.Date
+	if envelope := msg.analysis.Envelope(); envelope != nil && !envelope.Date.IsZero() {
+		return envelope.Date
 	}
 	return msg.internalDate
 }
@@ -89,8 +89,8 @@ func sentDate(msg *message) time.Time {
 // comparison. Threading and subject ordering both key on it.
 func baseSubject(msg *message) string {
 	subject := ""
-	if msg.analysis != nil && msg.analysis.Envelope != nil {
-		subject = msg.analysis.Envelope.Subject
+	if envelope := msg.analysis.Envelope(); envelope != nil {
+		subject = envelope.Subject
 	}
 	subject = strings.ToLower(strings.Join(strings.Fields(subject), " "))
 	for {
@@ -115,10 +115,10 @@ func baseSubject(msg *message) string {
 // compare. RFC 5256 section 3 sorts on the first address of the header, and
 // RFC 5957's DISPLAY keys sort on its display name instead.
 func addressKey(msg *message, key imap.SortKey, from bool) string {
-	if msg.analysis == nil || msg.analysis.Envelope == nil {
+	envelope := msg.analysis.Envelope()
+	if envelope == nil {
 		return ""
 	}
-	envelope := msg.analysis.Envelope
 	var addresses []imap.Address
 	switch {
 	case from:
@@ -209,14 +209,14 @@ func (s *selected) matching(ctx context.Context, query *imapserver.SearchQuery, 
 	}
 	var matched []*message
 	for i, msg := range s.mailbox.messages {
-		metadata := imapmessage.Metadata{
+		metadata := servermessage.Metadata{
 			SeqNum:       imap.SeqNum(i + 1),
 			UID:          msg.uid,
 			Flags:        cloneFlags(msg.flags),
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
 		}
-		ok, err := imapmessage.Match(msg.analysis, metadata, criteria, &imapmessage.MatchOptions{Charset: charset})
+		ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
 			return nil, err
 		}
@@ -293,14 +293,14 @@ func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria 
 		}
 		var matches []imap.UID
 		for i, msg := range m.messages {
-			metadata := imapmessage.Metadata{
+			metadata := servermessage.Metadata{
 				SeqNum:       imap.SeqNum(i + 1),
 				UID:          msg.uid,
 				Flags:        cloneFlags(msg.flags),
 				InternalDate: msg.internalDate,
 				RFC822Size:   int64(len(msg.raw)),
 			}
-			ok, err := imapmessage.Match(msg.analysis, metadata, criteria, &imapmessage.MatchOptions{Charset: charset})
+			ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 			if err != nil {
 				return nil, err
 			}
@@ -322,21 +322,21 @@ var _ imapserver.MultiSearchSession = (*session)(nil)
 // openBinarySection answers a BINARY[] fetch: the part's bytes with its
 // content-transfer-encoding undone.
 //
-// The decoding is done here rather than in internal/imapmessage because it is
+// The decoding is done here rather than in imapserver/message because it is
 // backend work by the design's own split — the framework has no access to the
-// message — and because imapmessage belongs to another task. A backend with a
+// message — the public helper supplies raw BODY sections. A backend with a
 // store that already keeps decoded parts would answer this without decoding
 // anything.
 //
 // RFC 3516 section 4.3 requires an UNKNOWN-CTE failure rather than a guess when
 // the encoding cannot be undone; returning the raw bytes would hand the client
 // base64 it believes is binary.
-func openBinarySection(msg *message, part []int) (io.Reader, error) {
-	raw, _, err := msg.analysis.OpenBodySection(&imap.FetchItemBodySection{Part: part, Peek: true})
+func openBinarySection(ctx context.Context, msg *message, part []int) (io.Reader, error) {
+	raw, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Part: part, Peek: true})
 	if err != nil {
 		return nil, err
 	}
-	switch strings.ToLower(partEncoding(msg.analysis.BodyStructure, part)) {
+	switch strings.ToLower(partEncoding(msg.analysis.BodyStructure(), part)) {
 	case "", "7bit", "8bit", "binary":
 		return raw, nil
 	case "base64":

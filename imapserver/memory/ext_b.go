@@ -13,7 +13,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
-	"github.com/kiliant/go-imap/internal/imapmessage"
+	servermessage "github.com/kiliant/go-imap/imapserver/message"
 )
 
 // Group B capability support: CONDSTORE and QRESYNC (RFC 7162), plus the
@@ -245,7 +245,7 @@ func (s *selected) Replace(ctx context.Context, uid imap.UID, name string, liter
 	if err != nil {
 		return nil, err
 	}
-	analysis, err := imapmessage.Analyze(bytes.NewReader(raw), int64(len(raw)))
+	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)
 	if err != nil {
 		return nil, err
 	}
