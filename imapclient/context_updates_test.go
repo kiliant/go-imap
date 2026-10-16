@@ -359,6 +359,8 @@ func TestContextSortUpdateAndModeValidation(t *testing.T) {
 		{true, "ADDTO (1 9)", "9"},
 		{false, "UID ADDTO (1 9)", ""},
 		{false, "ADDTO (2 7:5)", "7:5"},
+		{false, "ADDTO (2 5:*)", "5:*"},
+		{true, "UID REMOVEFROM (2 *:5)", "*:5"},
 	} {
 		t.Run(fmt.Sprintf("UID=%t/%s", tc.uid, tc.wire), func(t *testing.T) {
 			var updates []*ContextUpdate

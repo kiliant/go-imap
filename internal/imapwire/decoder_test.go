@@ -1052,6 +1052,9 @@ func TestDiscardValue(t *testing.T) {
 		{name: "literal", in: "{3}\r\nabc rest", rest: " rest"},
 		{name: "list", in: "(A (B {1}\r\nx) C) rest", rest: " rest"},
 		{name: "nil", in: "NIL rest", rest: " rest"},
+		{name: "sequence-set", in: "1:*,5 rest", rest: " rest"},
+		{name: "star", in: "* rest", rest: " rest"},
+		{name: "context-update", in: "(0 5:*) rest", rest: " rest"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1061,6 +1064,24 @@ func TestDiscardValue(t *testing.T) {
 			}
 			if r := rest(t, d); r != tc.rest {
 				t.Errorf("left %q, want %q", r, tc.rest)
+			}
+		})
+	}
+}
+
+func TestCaptureValueSequenceSets(t *testing.T) {
+	for _, value := range []string{"*", "1:*", "*,3:5", "(0 5:*)", "((1 *:5) NIL)"} {
+		t.Run(value, func(t *testing.T) {
+			d := dec(value + " rest")
+			var got []byte
+			if err := d.CaptureValue(&got); err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != value {
+				t.Fatalf("captured %q, want %q", got, value)
+			}
+			if got := rest(t, d); got != " rest" {
+				t.Fatalf("remaining input = %q", got)
 			}
 		})
 	}
