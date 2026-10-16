@@ -59,6 +59,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Preserve sequence-set wildcards in generic response values, including
+  ESEARCH ALL and CONTEXT ADDTO/REMOVEFROM. Discard recoverably malformed
+  ESEARCH responses that no command or live context owns, including unknown
+  correlator labels, instead of closing the connection. Pending searches and
+  live contexts still reject malformed replies; fatal decoder errors still
+  close the connection. Fixes a regression since decode-once routing.
+  No exported API change. (#49)
+
 - Decode MULTISEARCH MAILBOX correlators using the negotiated mailbox
   encoding and normalise INBOX, consistently with LIST and STATUS. Both
   `imap.MultiSearchResult.Mailbox` and `imap.ContextUpdate.Mailbox` now contain

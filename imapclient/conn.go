@@ -318,6 +318,24 @@ func (c *Client) readUntagged(dec *imapwire.Decoder, greeting bool) (imapwire.Re
 		return imapwire.RespCond{}, true, nil
 	}
 	if err := resp.decodeData(); err != nil {
+		if resp.name == "ESEARCH" && !resp.hasNum && !dec.Fatal() {
+			// Before decode-once routing, unclaimed ESEARCH was discarded.
+			// Keep that tolerance for unknown correlators and other recoverable
+			// syntax, but retain errors for live contexts and command collectors.
+			c.mu.Lock()
+			registered := resp.data.esearch != nil && c.searchContexts[resp.data.esearch.result.Tag] != nil
+			c.mu.Unlock()
+			if !registered {
+				if c.offerCollector(&resp) {
+					return imapwire.RespCond{}, true, nil
+				}
+				if err := dec.DiscardLine(); err != nil {
+					return imapwire.RespCond{}, false, err
+				}
+				c.trace(TraceServer, "* ESEARCH (discarded)")
+				return imapwire.RespCond{}, true, nil
+			}
+		}
 		return imapwire.RespCond{}, false, err
 	}
 	if claimed, err := c.routeContextUpdate(&resp); claimed || err != nil {

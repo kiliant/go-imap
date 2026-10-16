@@ -53,6 +53,9 @@ func FuzzContextUpdateStream(f *testing.F) {
 		"* ESEARCH (TAG \"A1\") X-FUTURE (1 2)\r\n",
 		"* ESEARCH ADDTO (0 1)\r\n",
 		"* ESEARCH (TAG \"A1\" TAG \"A1\") ADDTO (0 1)\r\n",
+		"* ESEARCH (TAG \"A1\") ADDTO (0 5:*)\r\n",
+		"* ESEARCH (TAG \"A2\") UID REMOVEFROM (0 *:5)\r\n",
+		"* ESEARCH (TAG \"A1\" FOO 1) ADDTO (0 1)\r\n",
 	} {
 		f.Add(seed)
 	}
