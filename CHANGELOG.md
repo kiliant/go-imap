@@ -27,12 +27,6 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
-- `imapclient.CodeNoCompatibleAuthMechanism` identifies automatic SASL
-  selection exhaustion as a local `*imap.Error` with `ErrorTypeProtocol`,
-  before writing to the connection. `imapcli` now uses this discriminator
-  for its LOGIN fallback instead of copying the library's password-mechanism
-  list. Server refusals, privacy and channel-binding failures retain their
-  separate errors and do not trigger fallback. Additive. (#21)
 - `imapclient.UnilateralDataHandler.ContextUpdate`, the shared types
   `imap.ContextUpdate`, `imap.ContextUpdateItem` and
   `imap.ContextUpdateChange`, the alias `imapclient.ContextUpdate`, the return
@@ -47,6 +41,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   sequence-number mode. `ContextTag` names the context for
   `Client.CancelUpdate`, also from the blocking `SortExtended`. CancelUpdate
   now documents when a registration ends. Additive. (#44)
+
+- `imapclient.CodeNoCompatibleAuthMechanism` identifies automatic SASL
+  selection exhaustion as a local `*imap.Error` with `ErrorTypeProtocol`,
+  before writing to the connection. `imapcli` now uses this discriminator
+  for its LOGIN fallback instead of copying the library's password-mechanism
+  list. Server refusals, privacy and channel-binding failures retain their
+  separate errors and do not trigger fallback. Additive. (#21)
 
 #### Changed
 
