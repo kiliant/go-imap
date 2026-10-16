@@ -3,6 +3,7 @@ package imapcodec
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/kiliant/go-imap"
@@ -10,7 +11,18 @@ import (
 )
 
 func TestUIDBatchesResponseRoundTrip(t *testing.T) {
-	for _, wire := range []string{" (TAG A1)\r\n", " (TAG A1) 9:5,4:4,3:1\r\n", " (TAG A1) 1:4294967295,9:3\r\n", " (TAG \"A1\") 5\r\n", " (TAG {2}\r\nA1) 5:5\r\n"} {
+	if _, err := ReadUIDBatchesResponse(imapwire.NewDecoderString(" (TAG ~{1}\r\n\x00)\r\n", nil)); err == nil {
+		t.Fatal("accepted NUL tag")
+	}
+	var invalid bytes.Buffer
+	encInvalid := imapwire.NewEncoder(&invalid, nil)
+	if err := WriteUIDBatchesResponse(encInvalid, &imap.UIDBatchesData{Tag: "\x00"}); err == nil {
+		t.Fatal("wrote NUL tag")
+	}
+	if err := encInvalid.Flush(); err != nil || invalid.Len() != 0 {
+		t.Fatal("invalid tag emitted a prefix")
+	}
+	for _, wire := range []string{" (TAG A1) " + strings.Repeat("1,", 3000) + "1\r\n", " (TAG A1)\r\n", " (TAG A1) 9:5,4:4,3:1\r\n", " (TAG A1) 1:4294967295,9:3\r\n", " (TAG \"A1\") 5\r\n", " (TAG {2}\r\nA1) 5:5\r\n"} {
 		data, err := ReadUIDBatchesResponse(imapwire.NewDecoderString(wire, nil))
 		if err != nil {
 			t.Fatalf("%q: %v", wire, err)
@@ -23,7 +35,7 @@ func TestUIDBatchesResponseRoundTrip(t *testing.T) {
 		if err := enc.Flush(); err != nil {
 			t.Fatal(err)
 		}
-		got, err := ReadUIDBatchesResponse(imapwire.NewDecoderString(out.String(), nil))
+		got, err := ReadUIDBatchesResponse(imapwire.NewDecoderString(out.String(), &imapwire.Options{MaxLineLength: out.Len() + 1}))
 		if err != nil || !reflect.DeepEqual(got, data) {
 			t.Fatalf("roundtrip %q: %#v, %v", wire, got, err)
 		}

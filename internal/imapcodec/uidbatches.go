@@ -60,8 +60,8 @@ func ReadUIDBatchesResponse(dec *imapwire.Decoder) (*imap.UIDBatchesData, error)
 	if !dec.ExpectSP() || !dec.ExpectAstring(&data.Tag) || !dec.ExpectSpecial(')') {
 		return nil, dec.Err()
 	}
-	if data.Tag == "" {
-		return nil, fmt.Errorf("empty UIDBATCHES correlator")
+	if data.Tag == "" || strings.ContainsRune(data.Tag, 0) {
+		return nil, fmt.Errorf("invalid UIDBATCHES correlator")
 	}
 	if dec.SP() {
 		var raw string
@@ -108,7 +108,7 @@ func uidBatchEndpoint(raw string) (imap.UID, error) {
 // WriteUIDBatchesResponse writes after the UIDBATCHES atom, including CRLF.
 // A singleton is always written u:u, without NumRange.String normalization.
 func WriteUIDBatchesResponse(enc *imapwire.Encoder, data *imap.UIDBatchesData) error {
-	if data == nil || data.Tag == "" {
+	if data == nil || data.Tag == "" || strings.ContainsRune(data.Tag, 0) {
 		return fmt.Errorf("UIDBATCHES requires a TAG correlator")
 	}
 	for _, batch := range data.Batches {
