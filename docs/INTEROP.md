@@ -310,6 +310,20 @@ the way imaptest does. It and the pipelined case now require silence after the
 last tagged OK and delivery during the next NOOP. Before this fix they required
 the expunge straight after the OK.
 
+Independent review of that fix found the other edge of the same window. RFC
+9051 §7.5.1 permits an EXPUNGE "during a UID command", and imaptest
+classifies UID FETCH as expunge-permitting. The UID forms, however, defer in
+their pre-command drain, and their drain after the tagged OK now runs between
+commands. A client polling only with UID FETCH or UID SEARCH was never told of
+the removal, or of anything queued behind it, and was disconnected when the
+update queue overflowed. The UID forms now drain once more before their tagged
+response (`drainBeforeCompletion`), and IDLE drains once the reader is parked,
+because its pre-command drain can still see the reader settling. Pinned by
+`TestExpungeUpdateDeliveredDuringUIDCommands` and
+`TestIdleDeliversRemovalWithheldAcrossFetch`. A client that only ever sends the
+plain forms still waits, as §7.4.1 requires, and everything queued behind the
+removal waits with it. Bounding that is #73, not part of this fix.
+
 **Fixed — a keyword created by `STORE` was not re-announced in `FLAGS`.** The
 server reported `$Label1` in a `FETCH FLAGS` response although no untagged
 `FLAGS` response had listed it for the mailbox. RFC 3501 §7.2.6 makes that

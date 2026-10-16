@@ -712,6 +712,117 @@ func TestExpungeUpdateWaitsForACommandToBeInProgress(t *testing.T) {
 	}
 }
 
+// startUpdateOrderSession serves one connection on a pipe, logs in and selects
+// INBOX, and returns the client side with the mailbox the server selected.
+func startUpdateOrderSession(t *testing.T) (net.Conn, *bufio.Reader, *expungeOrderMailbox, <-chan error) {
+	t.Helper()
+	backend := &expungeOrderBackend{selected: make(chan *expungeOrderMailbox, 1)}
+	server := New(backend, &Options{AllowInsecureAuth: true})
+	serverSide, clientSide := net.Pipe()
+	t.Cleanup(func() { clientSide.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(ctx, serverSide, nil) }()
+	if err := clientSide.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(clientSide)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	writeUpdateOrderCommand(t, clientSide, "A1 LOGIN alice secret\r\n")
+	readUpdateOrderTag(t, reader, "A1 OK ")
+	writeUpdateOrderCommand(t, clientSide, "A2 SELECT INBOX\r\n")
+	readUpdateOrderTag(t, reader, "A2 OK ")
+	return clientSide, reader, <-backend.selected, done
+}
+
+// TestExpungeUpdateDeliveredDuringUIDCommands pins the other side of #69's fix.
+// RFC 9051 §7.5.1: "An EXPUNGE response MAY be sent during a UID command." The
+// UID forms defer in their pre-command drain and, once the command is complete,
+// in the drain after their tagged response too. Without a delivery point
+// between the two, a client that only ever sends UID commands would never be
+// told of the removal, nor of anything queued behind it, until its update queue
+// overflowed.
+func TestExpungeUpdateDeliveredDuringUIDCommands(t *testing.T) {
+	for _, command := range []string{
+		"UID FETCH 2 (FLAGS)",
+		"UID STORE 2 +FLAGS (\\Flagged)",
+		"UID SEARCH ALL",
+	} {
+		t.Run(command, func(t *testing.T) {
+			conn, reader, mailbox, done := startUpdateOrderSession(t)
+			if err := mailbox.pushExpunge(); err != nil {
+				t.Fatal(err)
+			}
+			requireNoResponseBetweenCommands(t, conn, reader)
+
+			writeUpdateOrderCommand(t, conn, "A3 "+command+"\r\n")
+			var expunges []string
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasPrefix(line, "A3 ") {
+					break
+				}
+				if strings.HasSuffix(line, " EXPUNGE\r\n") {
+					expunges = append(expunges, line)
+				}
+			}
+			if len(expunges) != 1 || expunges[0] != "* 1 EXPUNGE\r\n" {
+				t.Fatalf("%s delivered %q before its tagged response, want the withheld removal exactly once", command, expunges)
+			}
+			requireNoResponseBetweenCommands(t, conn, reader)
+
+			writeUpdateOrderCommand(t, conn, "A4 LOGOUT\r\n")
+			readUpdateOrderTag(t, reader, "A4 OK ")
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestIdleDeliversRemovalWithheldAcrossFetch pins the IDLE half of the review
+// of #69's fix. A removal withheld across a FETCH is the common case now, and
+// IDLE's pre-command drain may still defer it while the reader settles. The
+// update signal has already been consumed, so IDLE must drain once it knows the
+// reader is parked rather than wait for another update to arrive.
+func TestIdleDeliversRemovalWithheldAcrossFetch(t *testing.T) {
+	conn, reader, _, done := startUpdateOrderSession(t)
+	writeUpdateOrderCommand(t, conn, "A3 FETCH 2 (FLAGS)\r\n")
+	readUpdateOrderTag(t, reader, "A3 OK ")
+	requireNoResponseBetweenCommands(t, conn, reader)
+
+	writeUpdateOrderCommand(t, conn, "A4 IDLE\r\n")
+	idling, expunged := false, false
+	for !idling || !expunged {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("waiting for the withheld removal during IDLE: %v", err)
+		}
+		switch {
+		case strings.HasPrefix(line, "+ "):
+			idling = true
+		case line == "* 1 EXPUNGE\r\n":
+			expunged = true
+		default:
+			t.Fatalf("unexpected response during IDLE: %q", line)
+		}
+	}
+	writeUpdateOrderCommand(t, conn, "DONE\r\n")
+	readUpdateOrderTag(t, reader, "A4 OK ")
+
+	writeUpdateOrderCommand(t, conn, "A5 LOGOUT\r\n")
+	readUpdateOrderTag(t, reader, "A5 OK ")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func isTimeout(err error) bool {
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()

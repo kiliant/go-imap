@@ -441,6 +441,16 @@ func (c *conn) idleUntilDone(ctx context.Context) error {
 	if err := c.requestClientData(ctx, request); err != nil {
 		return err
 	}
+	// The pre-command drain may have deferred: the reader raises inputPending
+	// before queueing IDLE and lowers it only afterwards. The update signal
+	// that would wake the loop below may already have been consumed by an
+	// earlier drain that deferred too, so a removal withheld across an earlier
+	// FETCH, STORE or SEARCH would sit out the whole IDLE. The reader is now
+	// parked in waitBarrier, which cleared inputPending before accepting this
+	// request, so this drain sees the connection caught up.
+	if err := c.drainUpdates(updateAccounting{}); err != nil {
+		return err
+	}
 	for {
 		select {
 		case result := <-request.reply:
@@ -606,10 +616,11 @@ func (c *conn) execute(command *queuedCommand) error {
 	// Scoped to the pre-command drain alone. For a sequence-sensitive command
 	// that arrived in a pipeline, delivering here is as unsafe as delivering
 	// mid-command: the client composed this command against the numbering it
-	// has now. Handlers decide their own drains from here on. FETCH, STORE and
-	// SEARCH drain only after their tagged response, where no command is in
-	// progress and removals wait for a later command that permits them; UID
-	// COPY drains before its tagged response, where §7.4.1 permits them.
+	// has now. Handlers decide their own drains from here on. The plain forms of
+	// FETCH, STORE and SEARCH drain only after their tagged response, where no
+	// command is in progress and removals wait for a later command that permits
+	// them. Their UID forms and UID COPY also drain before it, where removals
+	// are permitted. See drainBeforeCompletion.
 	c.executingSeqSensitive = sequenceSensitiveCommands[command.name]
 	err := c.drainUpdates(updateAccounting{})
 	c.executingSeqSensitive = false
@@ -673,6 +684,25 @@ func (c *conn) writeTagged(tag, status, text string) error {
 // a command still on the wire. That was #69.
 func (c *conn) completeCommand() {
 	c.commandInProgress = false
+}
+
+// drainBeforeCompletion is the in-progress delivery point of FETCH, STORE,
+// SEARCH, SORT and THREAD: after their untagged responses, before their tagged
+// one. It drains only for the UID forms. §7.4.1 forbids an EXPUNGE while
+// responding to the plain forms, and RFC 9051 §7.5.1 permits one "during a UID
+// command"; imaptest classifies UID FETCH the same way.
+//
+// Without it the UID forms would have no legal delivery point at all: their
+// pre-command drain defers because "UID" is sequence-sensitive, and the drain
+// after their tagged response runs once no command is in progress. A client
+// that polls only with UID FETCH or UID SEARCH, which RFC 5465 §5.3 tells
+// NOTIFY clients to do, would never be told of an expunge or of anything
+// queued behind one.
+func (c *conn) drainBeforeCompletion(command *queuedCommand, accounting updateAccounting) error {
+	if !commandUsesUIDs(command) {
+		return nil
+	}
+	return c.drainUpdates(accounting)
 }
 
 func (c *conn) writeBad(tag, text string) error {
