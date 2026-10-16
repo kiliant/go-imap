@@ -115,6 +115,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- UIDBATCHES (RFC 10022) is now advertised for every backend and computed
+  from the framework's selection UID list, without a backend interface or
+  capability witness. Responses preserve descending batch order, support
+  paging and UIDONLY, and leave SEARCHRES unchanged. Invalid requests receive
+  TOOFEW, TOOMANY or CLIENTBUG; identical repeats receive LIMIT until at least
+  half a batch was added or expunged. Different sizes/ranges and reselections
+  are deliberately allowed. No exported API change. The server release must
+  require the published root release containing the shared vocabulary. (#51)
 - `imapserver/message` provides the supported public message-analysis API:
   `Analyze`, concrete `Message`, `AnalyzeOptions`, `Metadata`, `MatchOptions`,
   `Match`, `ErrUnsupportedCriteria` and `ErrUnsupportedCharset`. It generates

@@ -563,6 +563,8 @@ type selectedState struct {
 	// contexts are the CONTEXT=SEARCH registrations, also scoped to this
 	// selection. See ext_e_context.go.
 	contexts []*searchContext
+	// uidBatches records the last successful UIDBATCHES request for this selection.
+	uidBatches *uidBatchesRequest
 }
 
 //lint:ignore U1000 T22's SELECT handler is the first production caller; T19 owns the atomic attachment primitive.
