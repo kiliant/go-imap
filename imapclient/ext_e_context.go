@@ -21,11 +21,9 @@ const (
 	SearchReturnContext SearchReturnOptionKeyword = "CONTEXT"
 
 	// SearchReturnUpdate asks for incremental ESEARCH updates to a CONTEXT.
-	// RFC 5267 section 4.3. Requires CONTEXT=SEARCH for SearchExtended and
-	// MultiSearch, or CONTEXT=SORT for SortExtended. Updates arrive through
+	// RFC 5267 section 4.3. Requires CONTEXT=SEARCH for SearchExtended,
+	// SearchPartial and MultiSearch, or CONTEXT=SORT for SortExtended. Updates arrive through
 	// [UnilateralDataHandler.ContextUpdate], independently of command results.
-	// SearchPartial does not register a context, so updates for its tag are
-	// discarded.
 	SearchReturnUpdate SearchReturnOptionKeyword = "UPDATE"
 
 	// SearchReturnESortAll is the ALL return option for ESORT. RFC 5267

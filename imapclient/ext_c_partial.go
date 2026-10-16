@@ -83,6 +83,9 @@ type PartialSearchOptions struct {
 // [SavedSearchResult] is non-nil only when SearchReturnSave was among
 // [PartialSearchOptions.ReturnOptions] and the command completed; see
 // [ESearchCommand.SavedResult].
+// With [SearchReturnUpdate], CONTEXT=SEARCH is required and the returned
+// [ESearchData.ContextTag] identifies the live context for [Client.CancelUpdate].
+// Updates arrive through [UnilateralDataHandler.ContextUpdate].
 func (c *Client) SearchPartial(ctx context.Context, criteria imap.SearchCriteria, options *PartialSearchOptions) (*ESearchData, *PartialSearchData, *SavedSearchResult, error) {
 	return c.searchPartial(ctx, false, criteria, options)
 }
@@ -122,6 +125,10 @@ func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.Sear
 	if err != nil {
 		return nil, nil, nil, &imap.Error{Type: imap.ErrorTypeProtocol, Text: err.Error()}
 	}
+	update := hasSearchReturnKeyword(returnOpts, SearchReturnUpdate)
+	if update && !c.Supports("CONTEXT=SEARCH") {
+		return nil, nil, nil, capabilityError("SEARCH RETURN (UPDATE)", "CONTEXT=SEARCH")
+	}
 	if save && !c.supportsAny("SEARCHRES") {
 		return nil, nil, nil, capabilityError("SEARCH RETURN (SAVE)", "SEARCHRES")
 	}
@@ -135,7 +142,10 @@ func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.Sear
 	if save {
 		cmd.saved = c.newSavedSearchResult(uid)
 	}
-	cmd.Command = c.beginCommand(name, stateSelected, func(enc *imapwire.Encoder) {
+	if update {
+		cmd.registration = &searchContext{uid: uid}
+	}
+	cmd.Command = c.issue(name, commandOptions{allowed: stateSelected, searchContext: cmd.registration, collector: esearchCollector(cmd), write: func(enc *imapwire.Encoder) {
 		enc.SP().Atom("RETURN").SP().Special('(').Atom("PARTIAL").SP()
 		writePartialRange(enc, rng)
 		for _, tok := range returnOpts {
@@ -147,7 +157,10 @@ func (c *Client) searchPartial(ctx context.Context, uid bool, criteria imap.Sear
 		}
 		enc.SP()
 		writeSearchCriteria(enc, criteria)
-	}, esearchCollector(cmd))
+	}})
+	if update {
+		cmd.data.ContextTag = cmd.Command.Tag()
+	}
 	data, err := cmd.Wait(ctx)
 	if err != nil {
 		return nil, nil, nil, err

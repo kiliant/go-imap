@@ -59,6 +59,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- `imapclient.Client.SearchPartial` and `SearchPartialUID` now register
+  RETURN (UPDATE) contexts, expose their tag in `ESearchData.ContextTag`, and
+  deliver their updates through `UnilateralDataHandler.ContextUpdate`.
+  UPDATE requires CONTEXT=SEARCH and is refused locally without it. Previously
+  these methods sent UPDATE but discarded every update. No signature change.
+  (#48)
 - Decode STATUS, LIST and ESEARCH/METADATA response data once before command
   collection. STATUS results stay with their requested mailbox, including
   reversed pipelined replies; unrelated STATUS events reach the existing
