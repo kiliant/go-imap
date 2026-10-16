@@ -390,7 +390,7 @@ func readESearchResponse(dec *imapwire.Decoder) (*esearchResponse, error) {
 						return out, dec.Err()
 					}
 				case "MAILBOX":
-					if !dec.ExpectAstring(&out.result.Mailbox) {
+					if !dec.ExpectMailbox(&out.result.Mailbox) {
 						return out, dec.Err()
 					}
 				case "UIDVALIDITY":
