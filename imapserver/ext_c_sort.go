@@ -305,6 +305,10 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	usesModSeq := sortHasModSeqCriterion(criteria)
+	if err := validateCondStoreUse(c, usesModSeq, "SORT MODSEQ"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	query := newSearchQuery(criteria, c.state.selected.uids)
 	uids, err := mailbox.Sort(ctx, query, args.keys, &SortOptions{Charset: args.charset})
 	if err != nil {
@@ -317,18 +321,27 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	// rather than sorted. A message that vanished between the search and the
 	// response is dropped rather than reported at a stale sequence number.
 	numbers := make([]uint32, 0, len(uids))
+	matchedUIDs := make([]imap.UID, 0, len(uids))
 	for _, uid := range uids {
 		seqNum, present := c.state.selected.sequence(uid)
 		if !present {
 			continue
 		}
+		matchedUIDs = append(matchedUIDs, uid)
 		if commandUsesUIDs(command) {
 			numbers = append(numbers, uint32(uid))
 		} else {
 			numbers = append(numbers, uint32(seqNum))
 		}
 	}
-	if err := writeSortResponse(c, command, args, numbers); err != nil {
+	var modSeq uint64
+	if usesModSeq && !args.extended && len(matchedUIDs) != 0 {
+		modSeq, err = sortResultModSeq(ctx, c, matchedUIDs)
+		if err != nil {
+			return writeBackendError(c, command.tag, command.name, err)
+		}
+	}
+	if err := writeSortResponse(c, command, args, numbers, modSeq); err != nil {
 		return err
 	}
 	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
@@ -393,11 +406,14 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 // The ordered result is what makes MIN and MAX meaningful here: they are the
 // first and last of the *sorted* order, not the numerically smallest and
 // largest, which is exactly why RFC 5267 defines them separately for SORT.
-func writeSortResponse(c *conn, command *queuedCommand, args *sortArgs, numbers []uint32) error {
+func writeSortResponse(c *conn, command *queuedCommand, args *sortArgs, numbers []uint32, modSeq uint64) error {
 	if !args.extended {
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("SORT")
 		for _, number := range numbers {
 			c.encoder.SP().Number(number)
+		}
+		if modSeq != 0 {
+			c.encoder.SP().Special('(').Atom("MODSEQ").SP().Number64(int64(modSeq)).Special(')')
 		}
 		c.encoder.CRLF()
 		return c.encoder.Flush()
@@ -470,4 +486,52 @@ func writeThreadNode(c *conn, node *imap.ThreadNode, uidMode bool) {
 		writeThreadNode(c, &node.Children[i], uidMode)
 	}
 	c.encoder.Special(')')
+}
+
+func sortHasModSeqCriterion(criteria imap.SearchCriteria) bool {
+	return imapcodec.SearchCriteriaMentions(criteria, func(node imap.SearchCriteria) bool {
+		_, ok := node.(imap.SearchModSeq)
+		return ok
+	})
+}
+
+// sortResultModSeq obtains clocks for exactly the returned UIDs through the
+// existing FETCH contract. SORT's UID-only backend interface stays unchanged;
+// a mailbox-wide HIGHESTMODSEQ could include messages outside this result.
+func sortResultModSeq(ctx context.Context, c *conn, uids []imap.UID) (uint64, error) {
+	wanted := imap.UIDSetNum(uids...)
+	seen := make(map[imap.UID]bool, len(uids))
+	var highest uint64
+	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
+		uid, ok := extractFetchUID(data)
+		if !ok || !wanted.Contains(uid) {
+			return fmt.Errorf("imapserver: SORT clock FETCH returned an unexpected UID")
+		}
+		for key, values := range data.Items {
+			if !strings.EqualFold(string(key), "MODSEQ") {
+				continue
+			}
+			for _, value := range values {
+				if clock, ok := value.(imap.FetchDataModSeq); ok {
+					if clock == 0 || uint64(clock) > 1<<63-1 {
+						return fmt.Errorf("imapserver: SORT clock FETCH returned an invalid MODSEQ")
+					}
+					seen[uid] = true
+					highest = max(highest, uint64(clock))
+				}
+			}
+		}
+		return nil
+	})
+	err := c.state.selected.mailbox.Fetch(ctx, writer, wanted, &FetchOptions{Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemModSeq}})
+	writer.core.close()
+	if err != nil {
+		return 0, err
+	}
+	for _, uid := range uids {
+		if !seen[uid] {
+			return 0, fmt.Errorf("imapserver: SORT clock FETCH omitted a result's MODSEQ")
+		}
+	}
+	return highest, nil
 }
