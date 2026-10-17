@@ -124,25 +124,21 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   to retain advertisement and AUTHENTICATE support. Password-only backends no
   longer offer unusable bearer mechanisms. No exported signatures changed. (#72)
 
-#### Fixed
-
-- An unsolicited EXPUNGE or VANISHED is no longer sent after the tagged
-  response of FETCH, STORE, SEARCH, SORT or THREAD. A command now stops being
-  in progress at its tagged response, as RFC 3501 §7.4.1 defines it, so a
-  client that sends its next sequence-numbered command immediately no longer
-  loses synchronisation. A withheld removal is delivered during the next
-  command that permits one: before the tagged response of the UID forms of
-  those commands (RFC 9051 §7.5.1), during IDLE, NOOP, CHECK and other
-  non-sequence commands. The plain forms still never carry one. No exported
-  API changes. (#69)
-- CONDSTORE SEARCH now evaluates message modification sequences and reports
-  the matching result clock in SEARCH/ESEARCH, including nested criteria,
-  rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
-  CONDSTORE for the session. Uses the existing backend SEARCH/FETCH contract;
-  no exported API changes. (#66)
-
 #### Added
 
+- `imapserver/maildir`: a persistent backend built through the public server
+  and message APIs. Exports `Open`, concrete `Backend`, guarded `Options`,
+  `AccountOptions` and `CloseOptions`, plus `Backend.Authenticate`,
+  `SupportsCapability`, `Close` and `LastPollError`. It provides account
+  isolation, OS root locking, versioned journal recovery, durable UID identity,
+  flags/keywords, subscriptions, metadata and QRESYNC history, and polling of
+  external Maildir delivery. APPEND preserves bytes; external LF delivery is
+  normalized once to CRLF. Supports MOVE, CONDSTORE and QRESYNC without
+  importing the memory backend or internal packages. Additive. The interop
+  harness adds the build-tagged `MaildirProfile` and drives foreign clients
+  against both backends sequentially. Mailbox creation/rename rejects filesystem
+  case and normalization aliases before preparing a transaction; reopening
+  aliased state fails without merging identities. (#53)
 - UIDBATCHES (RFC 10022) is now advertised for every backend and computed
   from the framework's selection UID list, without a backend interface or
   capability witness. Responses preserve descending batch order, support
@@ -170,6 +166,27 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- CONDSTORE SEARCH now evaluates message modification sequences and reports
+  the matching result clock in SEARCH/ESEARCH, including nested criteria,
+  rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
+  CONDSTORE for the session. Uses the existing backend SEARCH/FETCH contract;
+  no exported API changes. (#66)
+
+- An unsolicited EXPUNGE or VANISHED is no longer sent after the tagged
+  response of FETCH, STORE, SEARCH, SORT or THREAD. A command now stops being
+  in progress at its tagged response, as RFC 3501 §7.4.1 defines it, so a
+  client that sends its next sequence-numbered command immediately no longer
+  loses synchronisation. A withheld removal is delivered during the next
+  command that permits one: before the tagged response of the UID forms of
+  those commands (RFC 9051 §7.5.1), during IDLE, NOOP, CHECK and other
+  non-sequence commands. The plain forms still never carry one. No exported
+  API changes. (#69)
+
+- `imapserver/maildir`: FETCH validates requested sections for every targeted
+  message before committing implicit `\Seen` flags. Unsupported sections,
+  missing MIME parts and invalid partials leave flags, MODSEQ and message
+  filenames unchanged. Successful FETCH still publishes one update batch and
+  streams message bodies. No exported API change. (#53)
 - **imapserver tests:** isolate the suite temporary namespace so FETCH spool leak checks cannot see other package processes' files (#70).
 - **imapserver:** report REPLACE removals as EXPUNGE or VANISHED before command completion instead of suppressing them (#76).
 - **imapserver:** consume REPLACE literal terminators on success and refusal, and honor UID REPLACE's reader barrier (#77).

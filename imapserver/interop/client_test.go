@@ -85,10 +85,10 @@ func runtimeForTests(t *testing.T) containerRuntime {
 // serverForClients starts the same server the capability matrix measures, bound
 // so a container can reach it, and returns the port. Binding every interface
 // rather than loopback is the one difference from the profile's own listener.
-func serverForClients(t *testing.T) string {
+func serverForClients(t *testing.T, factory backendFactory) string {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	server, err := startOn(ctx, "0.0.0.0:0")
+	server, err := startOn(ctx, "0.0.0.0:0", factory)
 	if err != nil {
 		cancel()
 		t.Fatalf("starting the server: %v", err)
@@ -263,4 +263,12 @@ func imagePresent(ctx context.Context, runtime containerRuntime, ref string) boo
 	// image inspect is shared by Docker and Podman; Podman's image exists is
 	// convenient but would make the Docker path pull on every run.
 	return exec.CommandContext(lookCtx, runtime.binary, "image", "inspect", ref).Run() == nil
+}
+
+// Every foreign-client workload runs sequentially against both backends.
+var clientBackends = []struct {
+	name    string
+	factory backendFactory
+}{
+	{"memory", memoryBackend}, {"maildir", maildirBackend},
 }

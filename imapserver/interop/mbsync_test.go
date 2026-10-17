@@ -64,9 +64,15 @@ SyncState *
 // prior state instead of re-downloading, which is the bug class that makes a
 // server unusable with real clients while every unit test still passes.
 func TestMbsyncFullSyncAndResync(t *testing.T) {
+	for _, backend := range clientBackends {
+		t.Run(backend.name, func(t *testing.T) { testMbsyncFullSyncAndResync(t, backend.factory) })
+	}
+}
+
+func testMbsyncFullSyncAndResync(t *testing.T, factory backendFactory) {
 	runtime := runtimeForTests(t)
 	buildImage(t, runtime, mbsyncImage, "testdata/mbsync")
-	port := serverForClients(t)
+	port := serverForClients(t, factory)
 	const seeded = 12
 	seed(t, port, "INBOX", seeded)
 

@@ -74,9 +74,15 @@ func mboxFixture(count int) string {
 // test reported PASS on that very abort, because a tool refusing to start looks
 // identical to a tool finding nothing wrong.
 func TestImaptestScriptedConformance(t *testing.T) {
+	for _, backend := range clientBackends {
+		t.Run(backend.name, func(t *testing.T) { testImaptestScriptedConformance(t, backend.factory) })
+	}
+}
+
+func testImaptestScriptedConformance(t *testing.T, factory backendFactory) {
 	runtime := runtimeForTests(t)
 	buildImage(t, runtime, imaptestImage, "testdata/imaptest")
-	port := serverForClients(t)
+	port := serverForClients(t, factory)
 
 	// imaptest wants an empty account: the scripts append their own messages
 	// and assert on the resulting sequence numbers and UIDs.
@@ -117,9 +123,15 @@ echo "=== done ==="
 // bar is the fuzz targets' — no crash, no hang, no protocol complaint — rather
 // than a pass count.
 func TestImaptestStress(t *testing.T) {
+	for _, backend := range clientBackends {
+		t.Run(backend.name, func(t *testing.T) { testImaptestStress(t, backend.factory) })
+	}
+}
+
+func testImaptestStress(t *testing.T, factory backendFactory) {
 	runtime := runtimeForTests(t)
 	buildImage(t, runtime, imaptestImage, "testdata/imaptest")
-	port := serverForClients(t)
+	port := serverForClients(t, factory)
 
 	// Recorded, so imaptest's command mix seeds the fuzz corpus too. It reaches
 	// command shapes no client in this repository generates, which is the whole

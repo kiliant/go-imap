@@ -16,5 +16,5 @@ import (
 // registry importing this package is exactly the module cycle the package
 // documentation explains.
 func TestMain(m *testing.M) {
-	os.Exit(harness.Run(m, []definition.Profile{serverinterop.Profile}))
+	os.Exit(harness.Run(m, []definition.Profile{serverinterop.Profile, serverinterop.MaildirProfile}))
 }
