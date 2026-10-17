@@ -374,11 +374,9 @@ func listServerMessages(ctx context.Context, client *imapclient.Client) (map[ima
 // pendingMessage is a body already on disk in tmp/ whose UID and INTERNALDATE
 // are not read yet.
 //
-// They cannot be read when the body arrives. FetchCommand.Next hands over a
-// response as soon as its body literal starts. Items the server sends after the
-// literal are appended to the same Items map on the reader goroutine, once
-// the literal has been consumed. Reading that map is only ordered after those
-// writes once the following Next has returned, or the command has ended.
+// FetchCommand.Next yields immutable portions when a response contains a
+// streamed literal. The backup consumer combines those portions by sequence
+// number, then finalises the message once the next message arrives or FETCH ends.
 type pendingMessage struct {
 	data    *imap.FetchMessageData
 	tmpPath string
@@ -402,6 +400,7 @@ func (r *backupRun) fetchMessages(ctx context.Context, mailbox, dir string, uidV
 
 	received := make(map[imap.UID]bool, len(uids))
 	var pending *pendingMessage
+	var current *imap.FetchMessageData
 	var firstErr error
 	fail := func(err error) {
 		if firstErr == nil {
@@ -423,8 +422,8 @@ func (r *backupRun) fetchMessages(ctx context.Context, mailbox, dir string, uidV
 			if err == io.EOF {
 				finish()
 			} else {
-				// The command did not end cleanly, so nothing orders a read of
-				// the pending message's items after the reader's writes.
+				// The command did not end cleanly, so the pending message may
+				// still be missing metadata after its body.
 				if pending != nil {
 					_ = os.Remove(pending.tmpPath)
 					pending = nil
@@ -433,7 +432,13 @@ func (r *backupRun) fetchMessages(ctx context.Context, mailbox, dir string, uidV
 			}
 			break
 		}
-		finish()
+		if current == nil || current.SeqNum != data.SeqNum {
+			finish()
+			current = &imap.FetchMessageData{SeqNum: data.SeqNum, Items: make(map[imap.FetchDataKey][]imap.FetchData)}
+		}
+		for key, values := range data.Items {
+			current.Items[key] = append(current.Items[key], values...)
+		}
 		body := wholeMessageBody(data)
 		if body == nil {
 			continue
@@ -442,7 +447,15 @@ func (r *backupRun) fetchMessages(ctx context.Context, mailbox, dir string, uidV
 			_ = closeLiteral(body.Literal)
 			continue
 		}
-		p, err := receiveBody(dir, data, body)
+		if pending != nil {
+			// Keep the first body while later portions supply its metadata.
+			// A repeated body must not replace its only temp-file reference.
+			if err := closeLiteral(body.Literal); err != nil {
+				fail(err)
+			}
+			continue
+		}
+		p, err := receiveBody(dir, current, body)
 		if err != nil {
 			fail(err)
 			continue
