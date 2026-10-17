@@ -47,6 +47,9 @@
 // account directories or allocators, or a missing existing root registry, fail
 // closed rather than risk reusing an identity. Preserve the complete root in
 // backups; erasing the entire root is provisioning a different store.
+// Interrupted first-time setup can resume when only the root lock, an empty
+// lost+found directory and unpublished atomic-write temporary files remain.
+// Recognized atomic-write temporaries are removed under the root lock.
 //
 // Account state is version 2. It holds mailbox identities, UIDNEXT, message
 // mappings, flags/keywords, modification sequences, metadata, subscriptions and

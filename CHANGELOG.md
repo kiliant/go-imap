@@ -166,6 +166,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapserver/maildir:** Resume interrupted initial setup and clean unpublished atomic-write temporaries while preserving registered-identity checks. No exported API change. (#95)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
