@@ -83,6 +83,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 #### Fixed
 
 - **imapclient:** publish immutable streaming FETCH portions, preserving later fields and bounded memory; adapt backup to combine portions and discard duplicate bodies without leaking temporary files (#64).
+- **imapclient:** accept RFC 7162 legacy SEARCH and SORT MODSEQ suffixes without changing number results or exported APIs (#67).
 
 - `imapclient.Client.SearchPartial` and `SearchPartialUID` now register
   RETURN (UPDATE) contexts, expose their tag in `ESearchData.ContextTag`, and

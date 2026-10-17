@@ -173,17 +173,9 @@ func (c *Client) sort(ctx context.Context, uid bool, keys []SortKeySpec, criteri
 		if err := countUntaggedResponse(&untagged, c.maxUntaggedResponses(), name); err != nil {
 			return true, err
 		}
-		for resp.dec.SP() {
-			var n uint32
-			if !resp.dec.ExpectNumber(&n) {
-				return true, resp.dec.Err()
-			}
-			numbers = append(numbers, n)
-		}
-		if !resp.dec.ExpectCRLF() {
-			return true, resp.dec.Err()
-		}
-		return true, nil
+		result, _, err := readSearchSortNumbers(resp.dec)
+		numbers = append(numbers, result...)
+		return true, err
 	})
 	if err := cmd.Wait(ctx); err != nil {
 		return nil, err
