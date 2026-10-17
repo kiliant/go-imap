@@ -166,6 +166,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapserver/maildir:** Fresh UIDVALIDITY allocators start at current Unix time; persisted allocator values remain unchanged. No exported API change. (#93)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables

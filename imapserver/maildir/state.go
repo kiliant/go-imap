@@ -526,7 +526,8 @@ func (a *account) load() error {
 		if len(entries) != 0 {
 			return fmt.Errorf("maildir: identity allocator missing; refusing possible UIDVALIDITY reuse")
 		}
-		a.identity = identityState{Version: 1, Next: 1}
+		// Existing allocators retain their durable monotonic value.
+		a.identity = identityState{Version: 1, Next: uint64(time.Now().Unix())}
 		raw, _ := json.Marshal(a.identity)
 		if err := atomicFile(a.root, identityFile, raw); err != nil {
 			return err
