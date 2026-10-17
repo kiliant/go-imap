@@ -80,9 +80,9 @@ var capabilityDescriptors = []capabilityDescriptor{
 			return state != nil && (state.tls || (server != nil && !server.options.RequireTLS && server.options.AllowInsecureAuth))
 		}},
 	{Name: "AUTH=XOAUTH2", RequiresFramework: []frameworkComponent{frameworkAuth}, States: stateMaskNotAuthenticated,
-		RequiresBackend: hasAuthenticationBackend, RequiresTLS: tlsOnly},
+		RequiresBackend: backendSupportsCapability("AUTH=XOAUTH2"), RequiresTLS: tlsOnly},
 	{Name: "AUTH=OAUTHBEARER", RequiresFramework: []frameworkComponent{frameworkAuth}, States: stateMaskNotAuthenticated,
-		RequiresBackend: hasAuthenticationBackend, RequiresTLS: tlsOnly},
+		RequiresBackend: backendSupportsCapability("AUTH=OAUTHBEARER"), RequiresTLS: tlsOnly},
 	{Name: "UTF8=ACCEPT", RequiresFramework: []frameworkComponent{frameworkUTF8}, States: stateMaskAuthenticated | stateMaskSelected,
 		Enable: func(state *sessionState) bool { return state.enable("UTF8=ACCEPT") }},
 	{Name: "IDLE", RequiresFramework: []frameworkComponent{frameworkIdle}, States: stateMaskAuthenticated | stateMaskSelected},

@@ -186,4 +186,16 @@ this is the mechanism, not merely documented policy.
 `imapserver/session.go`. It records the last UIDBATCHES request for the
 selection, which the RFC 10022 resend rule needs. Like `savedSearch` and
 `contexts`, it is scoped to the selection and discarded with it. Nothing else
-in the server core passes from completed T19.
+in the server core passes from completed T19 to T31.
+
+## Hand-over to follow-up #72
+
+[#72](https://github.com/kiliant/go-imap/issues/72) takes the two bearer-SASL
+descriptor predicates in `imapserver/capability.go`, the corresponding
+`CapabilitySupport` documentation in `imapserver/backend.go`, and focused
+capability/authentication tests. The decision recorded on #53 is to require
+separate `AUTH=XOAUTH2` and `AUTH=OAUTHBEARER` witnesses on the Backend before
+authentication, with the existing TLS requirement. It changes the advertised
+defaults on v0.x and must have a server BREAKING changelog entry and an updated
+AUTHENTICATE paragraph in `docs/SERVER-DESIGN.md`. No interface methods or
+unrelated core machinery pass to this follow-up.

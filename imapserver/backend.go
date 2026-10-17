@@ -215,6 +215,11 @@ type MoveMailbox interface {
 // capability whose behaviour the backend must implement unless this returns
 // true for it, so a backend that does not recognise a name must return false.
 //
+// Bearer authentication requires a Backend witness before any Session exists:
+// return true for "AUTH=XOAUTH2" or "AUTH=OAUTHBEARER" only when Authenticate
+// accepts that mechanism's token credentials. Each token opts in separately;
+// the mechanisms are offered only over TLS. PLAIN and LOGIN need no witness.
+//
 // This witness is deliberately keyed by an open string rather than by one
 // interface per capability: a future RFC is then a new token, which is a data
 // change, not a type change.
