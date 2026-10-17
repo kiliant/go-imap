@@ -261,6 +261,11 @@ func (a *account) commit(next *accountState, actions []fileAction) error {
 	// any account fails to load. Refusing before the journal exists keeps the
 	// account usable; the next poll reconciles the removal as an expunge.
 	for _, action := range actions {
+		if action.Kind == "merge" || action.Kind == "relocate" {
+			if err := checkMergeTree(a.root, action.From, action.To); err != nil {
+				return noError(imap.CodeCannot, err.Error())
+			}
+		}
 		if action.Kind != "rename" || strings.HasPrefix(action.From, ".staging") {
 			continue
 		}
@@ -680,6 +685,37 @@ func (a *account) discover(path string, parts []string, names *[]string) error {
 			return err
 		}
 		if err := a.discover(filepath.Join(path, entry.Name()), append(append([]string(nil), parts...), segment), names); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Check the complete relocation before preparing a roll-forward journal.
+func checkMergeTree(root *os.Root, from, to string) error {
+	entries, err := readDir(root, from)
+	if err != nil {
+		return err
+	}
+	info, err := root.Lstat(to)
+	destinationMissing := os.IsNotExist(err)
+	if err != nil && !destinationMissing {
+		return err
+	}
+	if !destinationMissing && !info.IsDir() {
+		return fmt.Errorf("maildir: rename destination is not a directory")
+	}
+	for _, entry := range entries {
+		src, dst := filepath.Join(from, entry.Name()), filepath.Join(to, entry.Name())
+		if entry.IsDir() {
+			if err := checkMergeTree(root, src, dst); err != nil {
+				return err
+			}
+		} else if !entry.Type().IsRegular() {
+			return fmt.Errorf("maildir: rename source contains a nonregular file")
+		} else if _, err := root.Lstat(dst); err == nil {
+			return fmt.Errorf("maildir: rename destination collision")
+		} else if !os.IsNotExist(err) {
 			return err
 		}
 	}
