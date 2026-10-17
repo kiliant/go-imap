@@ -175,7 +175,7 @@ func handleReplace(ctx context.Context, c *conn, command *queuedCommand) error {
 	if backendErr != nil {
 		return writeBackendError(c, command.tag, command.name, backendErr)
 	}
-	if err := c.drainUpdates(updateAccounting{origin: origin, effect: effectExpunge}); err != nil {
+	if err := c.drainUpdatesThrough(updateAccounting{origin: origin}); err != nil {
 		return err
 	}
 	if data != nil && data.HasUID && data.UIDValidity != 0 && data.UID != 0 {
