@@ -250,3 +250,14 @@ func handleUnselect(ctx context.Context, c *conn, command *queuedCommand) error 
 	}
 	return c.writeTagged(command.tag, "OK", "UNSELECT completed")
 }
+
+// commandIsBarrier includes UID subcommands whose payload is read by their
+// handler, such as UID REPLACE. The reader must park for those just as it does
+// for the corresponding non-UID command.
+func commandIsBarrier(command *queuedCommand) bool {
+	if command.descriptor != nil && command.descriptor.barrier {
+		return true
+	}
+	args, ok := command.args.(*uidCommandArgs)
+	return ok && args != nil && args.descriptor != nil && args.descriptor.barrier
+}

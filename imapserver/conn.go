@@ -314,7 +314,7 @@ func (c *conn) readCommands() error {
 			return err
 		}
 		c.inputPending.Store(pending)
-		if descriptor != nil && descriptor.barrier {
+		if commandIsBarrier(command) {
 			if err := c.waitBarrier(decoder, command); err != nil {
 				return err
 			}
