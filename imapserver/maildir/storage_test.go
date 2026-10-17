@@ -614,7 +614,7 @@ func TestSegmentsMatchBackupLayout(t *testing.T) {
 	}
 }
 
-func TestSymlinksRefused(t *testing.T) {
+func TestDeliverySymlinkSkipped(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -624,15 +624,21 @@ func TestSymlinksRefused(t *testing.T) {
 	if err := os.Symlink(outside, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.account.reconcile(); err == nil {
-		t.Fatal("delivery symlink accepted")
+	if err := s.account.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if s.account.deliveryError == nil || len(s.account.state.Mailboxes["INBOX"].Messages) != 0 {
+		t.Fatal("delivery symlink was not skipped with a diagnostic")
 	}
 	if err := b.Close(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if next, err := Open(ctx, root, testOptions()); err == nil {
-		next.Close(ctx, nil)
-		t.Fatal("symlink accepted on reopen")
+	next := openTest(t, root)
+	if next.LastPollError() == nil || len(next.accounts["alice"].state.Mailboxes["INBOX"].Messages) != 0 {
+		t.Fatal("reopen did not skip delivery symlink with a diagnostic")
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("skipped symlink was changed: %v, %v", info, err)
 	}
 }
 
