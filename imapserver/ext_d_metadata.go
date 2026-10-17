@@ -220,6 +220,11 @@ func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	if !ok {
 		return c.writeBad(command.tag, "METADATA is not available")
 	}
+	for _, entry := range args.entries {
+		if err := validateMetadataEntryName(string(entry)); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
+	}
 	options := args.options
 	data, err := session.GetMetadata(ctx, args.mailbox, args.entries, &options)
 	if err != nil {
@@ -255,8 +260,30 @@ func handleSetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	if !ok {
 		return c.writeBad(command.tag, "METADATA is not available")
 	}
+	// Validate the entire request before the backend can change any entry.
+	for _, entry := range args.entries {
+		if err := validateMetadataEntryName(string(entry.Name)); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
+	}
 	if err := session.SetMetadata(ctx, args.mailbox, args.entries, nil); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
+}
+
+// validateMetadataEntryName applies RFC 5464 section 3.2's structural and byte
+// restrictions. Namespace registration and access rights remain backend policy;
+// GETMETADATA may also name a parent entry when using DEPTH.
+func validateMetadataEntryName(name string) error {
+	if !strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") || strings.Contains(name, "//") {
+		return fmt.Errorf("invalid METADATA entry name")
+	}
+	for i := range len(name) {
+		b := name[i]
+		if b <= 0x19 || b >= 0x80 || b == '*' || b == '%' {
+			return fmt.Errorf("invalid METADATA entry name")
+		}
+	}
+	return nil
 }

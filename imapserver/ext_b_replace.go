@@ -58,7 +58,7 @@ func init() {
 	)
 	registerCommand("REPLACE", stateMaskSelected, true, parseReplace, handleReplace)
 	uidCommandDescriptors["REPLACE"] = &commandDescriptor{
-		name: "REPLACE", states: stateMaskSelected, parse: parseReplace, handle: handleReplace,
+		name: "REPLACE", states: stateMaskSelected, barrier: true, parse: parseReplace, handle: handleReplace,
 	}
 }
 
@@ -122,12 +122,25 @@ func handleReplace(ctx context.Context, c *conn, command *queuedCommand) error {
 	literal := &appendLiteral{reader: args.literal, remaining: args.literal.Size()}
 	// The literal is on the wire whatever happens next, so every failure path
 	// below must still drain it or the connection desynchronises.
+	terminated := false
 	drain := func() error {
-		if literal.remaining == 0 {
+		if terminated {
 			return nil
 		}
+		if err := args.literal.Discard(); err != nil {
+			return err
+		}
 		literal.remaining = 0
-		return args.literal.Discard()
+		// The reader owns the decoder. Both REPLACE forms are barriers, so
+		// it services this request before parsing the next command.
+		_, err := c.readClientData(ctx, func(decoder *imapwire.Decoder) (any, error) {
+			if !decoder.ExpectCRLF() {
+				return nil, decoder.Err()
+			}
+			return nil, nil
+		})
+		terminated = err == nil
+		return err
 	}
 	if err := requireCapability(c, "REPLACE"); err != nil {
 		if drainErr := drain(); drainErr != nil {
@@ -175,7 +188,7 @@ func handleReplace(ctx context.Context, c *conn, command *queuedCommand) error {
 	if backendErr != nil {
 		return writeBackendError(c, command.tag, command.name, backendErr)
 	}
-	if err := c.drainUpdates(updateAccounting{origin: origin, effect: effectExpunge}); err != nil {
+	if err := c.drainUpdatesThrough(updateAccounting{origin: origin}); err != nil {
 		return err
 	}
 	if data != nil && data.HasUID && data.UIDValidity != 0 && data.UID != 0 {

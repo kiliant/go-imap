@@ -317,17 +317,16 @@ func (c *Client) searchExtendedEmulated(cmd *ESearchCommand, name string, criter
 		if err := countUntaggedResponse(&untaggedCount, c.maxUntaggedResponses(), name); err != nil {
 			return true, err
 		}
-		for resp.dec.SP() {
-			var n uint32
-			if !resp.dec.ExpectNumber(&n) {
-				return true, resp.dec.Err()
-			}
-			numbers = append(numbers, n)
+		result, modSeq, err := readSearchSortNumbers(resp.dec)
+		numbers = append(numbers, result...)
+		// RFC 4731 section 3.2 gives MIN/MAX-only results a subset clock.
+		// A legacy suffix only supplies the full-set clock, so retain it
+		// only for ALL/COUNT emulation rather than mislabeling its scope.
+		if modSeq != 0 && (cmd.wanted[ESearchReturnKeyAll] || cmd.wanted[ESearchReturnKeyCount]) {
+			cmd.data.ModSeq, cmd.data.HasModSeq = modSeq, true
+			cmd.data.Values[ESearchReturnKeyModSeq] = fmt.Sprint(modSeq)
 		}
-		if !resp.dec.ExpectCRLF() {
-			return true, resp.dec.Err()
-		}
-		return true, nil
+		return true, err
 	})
 }
 

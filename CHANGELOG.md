@@ -82,6 +82,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapclient:** publish immutable streaming FETCH portions, preserving later fields and bounded memory; adapt backup to combine portions and discard duplicate bodies without leaking temporary files (#64).
+- **imapclient:** accept RFC 7162 legacy SEARCH and SORT MODSEQ suffixes without changing number results or exported APIs (#67).
+
 - `imapclient.Client.SearchPartial` and `SearchPartialUID` now register
   RETURN (UPDATE) contexts, expose their tag in `ESearchData.ContextTag`, and
   deliver their updates through `UnilateralDataHandler.ContextUpdate`.
@@ -112,6 +115,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   (#44)
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Changed
+
+- **BREAKING:** `AUTH=XOAUTH2` and `AUTH=OAUTHBEARER` now require separate
+  `CapabilitySupport` witnesses on the Backend, in addition to TLS. Backends
+  accepting bearer credentials must return true for each supported wire token
+  to retain advertisement and AUTHENTICATE support. Password-only backends no
+  longer offer unusable bearer mechanisms. No exported signatures changed. (#72)
 
 #### Added
 
@@ -155,11 +166,26 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- An unsolicited EXPUNGE or VANISHED is no longer sent after the tagged
+  response of FETCH, STORE, SEARCH, SORT or THREAD. A command now stops being
+  in progress at its tagged response, as RFC 3501 §7.4.1 defines it, so a
+  client that sends its next sequence-numbered command immediately no longer
+  loses synchronisation. A withheld removal is delivered during the next
+  command that permits one: before the tagged response of the UID forms of
+  those commands (RFC 9051 §7.5.1), during IDLE, NOOP, CHECK and other
+  non-sequence commands. The plain forms still never carry one. No exported
+  API changes. (#69)
+
 - `imapserver/maildir`: FETCH validates requested sections for every targeted
   message before committing implicit `\Seen` flags. Unsupported sections,
   missing MIME parts and invalid partials leave flags, MODSEQ and message
   filenames unchanged. Successful FETCH still publishes one update batch and
   streams message bodies. No exported API change. (#53)
+- **imapserver tests:** isolate the suite temporary namespace so FETCH spool leak checks cannot see other package processes' files (#70).
+- **imapserver:** report REPLACE removals as EXPUNGE or VANISHED before command completion instead of suppressing them (#76).
+- **imapserver:** consume REPLACE literal terminators on success and refusal, and honor UID REPLACE's reader barrier (#77).
+- **imapserver:** reject invalid METADATA entry names with BAD before calling the backend (#78).
+- **imapserver:** evaluate MODSEQ in memory SORT, THREAD and MULTISEARCH, and append the highest matching MODSEQ to nonempty legacy SORT results (#79).
 
 ## [1.2.1] - 2026-10-15
 

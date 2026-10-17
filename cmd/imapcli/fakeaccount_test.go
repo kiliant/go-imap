@@ -24,6 +24,8 @@ type fakeAccount struct {
 	// uidAfterBody makes body responses carry UID, INTERNALDATE and
 	// RFC822.SIZE after the BODY[] literal rather than before it.
 	uidAfterBody bool
+	// repeatBody sends each body response twice, as duplicate FETCH data.
+	repeatBody bool
 	// failExamine names mailboxes whose EXAMINE is refused.
 	failExamine map[string]bool
 	// extraCaps are advertised beside AUTH=PLAIN, e.g. "AUTH=OAUTHBEARER".
@@ -274,17 +276,23 @@ func (a *fakeAccount) uidFetch(w *bufio.Writer, m *fakeMailbox, setText string, 
 			continue
 		}
 		meta := fmt.Sprintf(`UID %d INTERNALDATE "%s" RFC822.SIZE %d`, msg.uid, msg.date.Format("02-Jan-2006 15:04:05 -0700"), len(msg.body))
-		var err error
-		if a.uidAfterBody {
-			_, err = fmt.Fprintf(w, "* %d FETCH (BODY[] {%d}\r\n%s %s)\r\n", seq, len(msg.body), msg.body, meta)
-		} else {
-			_, err = fmt.Fprintf(w, "* %d FETCH (%s BODY[] {%d}\r\n%s)\r\n", seq, meta, len(msg.body), msg.body)
+		copies := 1
+		if a.repeatBody {
+			copies = 2
 		}
-		if err != nil {
-			return err
-		}
-		if err := w.Flush(); err != nil {
-			return err
+		for range copies {
+			var err error
+			if a.uidAfterBody {
+				_, err = fmt.Fprintf(w, "* %d FETCH (BODY[] {%d}\r\n%s %s)\r\n", seq, len(msg.body), msg.body, meta)
+			} else {
+				_, err = fmt.Fprintf(w, "* %d FETCH (%s BODY[] {%d}\r\n%s)\r\n", seq, meta, len(msg.body), msg.body)
+			}
+			if err != nil {
+				return err
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

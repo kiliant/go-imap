@@ -184,6 +184,11 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 			return err
 		}
 	}
+	// UID STORE's MODIFIED code carries UIDs, so an expunge delivered here
+	// cannot invalidate it.
+	if err := c.drainBeforeCompletion(command, updateAccounting{origin: origin, effect: effectStore}); err != nil {
+		return err
+	}
 	// RFC 7162 section 3.1.3: rejected messages are reported on a successful
 	// tagged OK through MODIFIED, not as a command failure.
 	if modified, ok := condStoreModifiedArgs(condStore); ok {

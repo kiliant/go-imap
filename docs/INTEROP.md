@@ -293,6 +293,37 @@ removed from `imaptest_test.go`'s triaged table rather than left behind, since a
 triaged finding that outlives its bug is a permanent blindfold.
 `TestImaptestStress` completes the full workload under that design.
 
+**Fixed after T32 (#69) — the queue cannot see a command on the wire.** A
+later CI run reported `Referenced message expunged seq=13 uid=0` once in about
+5,300 imaptest sessions. T25 had modelled "in progress" as the whole of the
+handler call, and FETCH, STORE and SEARCH drain updates *after* writing their
+tagged OK. In that drain the condition was satisfied, and whether a removal
+went out depended on whether the reader had already seen the client's next
+command. imaptest sends its next command from the handler of the tagged
+reply, before it reads another line (`imap_client_cmd_reply_finish` in its
+`client-state.c`), so the expunge could land while that command was in
+progress even though the server's queue was empty. "In progress" now ends where
+§7.4.1 says it does, at the tagged response: both tagged writers end the
+command first, so a later drain withholds removals until a command that permits
+them. `TestExpungeUpdateWaitsForCommandCompletion` sends the follow-up FETCH
+the way imaptest does. It and the pipelined case now require silence after the
+last tagged OK and delivery during the next NOOP. Before this fix they required
+the expunge straight after the OK.
+
+Independent review of that fix found the other edge of the same window. RFC
+9051 §7.5.1 permits an EXPUNGE "during a UID command", and imaptest
+classifies UID FETCH as expunge-permitting. The UID forms, however, defer in
+their pre-command drain, and their drain after the tagged OK now runs between
+commands. A client polling only with UID FETCH or UID SEARCH was never told of
+the removal, or of anything queued behind it, and was disconnected when the
+update queue overflowed. The UID forms now drain once more before their tagged
+response (`drainBeforeCompletion`), and IDLE drains once the reader is parked,
+because its pre-command drain can still see the reader settling. Pinned by
+`TestExpungeUpdateDeliveredDuringUIDCommands` and
+`TestIdleDeliversRemovalWithheldAcrossFetch`. A client that only ever sends the
+plain forms still waits, as §7.4.1 requires, and everything queued behind the
+removal waits with it. Bounding that is #73, not part of this fix.
+
 **Fixed — a keyword created by `STORE` was not re-announced in `FLAGS`.** The
 server reported `$Label1` in a `FETCH FLAGS` response although no untagged
 `FLAGS` response had listed it for the mailbox. RFC 3501 §7.2.6 makes that

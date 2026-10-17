@@ -118,6 +118,9 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
+		return err
+	}
 	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
 		return err
 	}
