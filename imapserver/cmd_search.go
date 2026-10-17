@@ -70,8 +70,8 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if searchHasModSeq(criteria) {
-		enableCondStoreSideEffect(c)
+	if err := validateSelectedCondStoreUse(c, searchHasModSeq(criteria), "SEARCH MODSEQ"); err != nil {
+		return c.writeBad(command.tag, err.Error())
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids)
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})

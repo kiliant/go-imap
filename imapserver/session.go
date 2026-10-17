@@ -553,6 +553,7 @@ type selectedState struct {
 	flags    []imap.Flag
 	revision MailboxRevision
 	readOnly bool
+	noModSeq bool
 	maxUIDs  int
 	queue    *updateQueue
 	updater  *Updater
@@ -653,6 +654,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		flags:    slices.Clone(flags),
 		revision: result.Snapshot.Revision,
 		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
+		noModSeq: result.Snapshot.NoModSeq || result.Snapshot.Status.NoModSeq,
 		maxUIDs:  limits.MaxSelectedMessages,
 		queue:    queue,
 		updater:  updater,
