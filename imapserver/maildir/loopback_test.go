@@ -46,7 +46,7 @@ func TestMaildirClientLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := client.FetchUID(imap.UIDSetNum(appended.UID), nil, &imap.FetchItemBodySection{Peek: true}, imap.FetchItemEnvelope, imap.FetchItemRFC822Size)
-	count := 0
+	bodies, envelopes, sizes := 0, 0, 0
 	for {
 		data, err := command.Next(ctx)
 		if err == io.EOF {
@@ -55,21 +55,36 @@ func TestMaildirClientLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		count++
-		// The client resumes decoding after the literal drains; inspect its
-		// known key before reading, then leave the response map alone.
-		values := data.Items["BODY[]"]
-		if len(values) != 1 {
-			t.Fatal("missing body literal")
+		if data.SeqNum != 1 {
+			t.Fatalf("FETCH sequence number = %d, want 1", data.SeqNum)
 		}
-		body := values[0].(*imap.FetchDataBodySection)
-		got, err := io.ReadAll(body.Literal)
-		if err != nil || string(got) != raw {
-			t.Fatalf("streamed body: %q, %v", got, err)
+		// Consume through EOF: metadata after a streamed literal arrives in
+		// another immutable portion with the same sequence number.
+		for _, values := range data.Items {
+			for _, value := range values {
+				switch value := value.(type) {
+				case *imap.FetchDataBodySection:
+					bodies++
+					got, err := io.ReadAll(value.Literal)
+					if err != nil || string(got) != raw {
+						t.Fatalf("streamed body: %q, %v", got, err)
+					}
+				case *imap.FetchDataEnvelope:
+					envelopes++
+					if value.Envelope == nil || value.Envelope.Subject != "streamed" {
+						t.Fatalf("FETCH envelope = %#v", value.Envelope)
+					}
+				case imap.FetchDataRFC822Size:
+					sizes++
+					if int64(value) != int64(len(raw)) {
+						t.Fatalf("FETCH size = %d, want %d", value, len(raw))
+					}
+				}
+			}
 		}
 	}
-	if count != 1 {
-		t.Fatalf("FETCH returned %d messages", count)
+	if bodies != 1 || envelopes != 1 || sizes != 1 {
+		t.Fatalf("FETCH returned bodies=%d envelopes=%d sizes=%d, want one of each", bodies, envelopes, sizes)
 	}
 	if _, err := client.UIDBatches(ctx, 500, nil); err != nil {
 		t.Fatal(err)
