@@ -157,6 +157,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapserver tests:** isolate the suite temporary namespace so FETCH spool leak checks cannot see other package processes' files (#70).
 - **imapserver:** evaluate MODSEQ in memory SORT, THREAD and MULTISEARCH, and append the highest matching MODSEQ to nonempty legacy SORT results (#79).
 
 ## [1.2.1] - 2026-10-15

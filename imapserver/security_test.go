@@ -35,6 +35,21 @@ import (
 // several goroutines that unwind independently, so the only point at which
 // "nothing is left behind" is unambiguous is after every test has finished.
 func TestMain(m *testing.M) {
+	// Spool filenames are shared with every other package's test process.
+	// Give this suite a private namespace before any tests create files, so
+	// overlap cannot be mistaken for a leak (and cannot hide one either).
+	tempDir, err := os.MkdirTemp("", "go-imap-server-tests-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create private test temp directory:", err)
+		os.Exit(1)
+	}
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if err := os.Setenv(name, tempDir); err != nil {
+			fmt.Fprintln(os.Stderr, "set private test temp directory:", err)
+			_ = os.RemoveAll(tempDir)
+			os.Exit(1)
+		}
+	}
 	before := tempSpoolFiles()
 	code := m.Run()
 	if code == 0 {
@@ -50,6 +65,10 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "FETCH spool files leaked: %v\n", after)
 			code = 1
 		}
+	}
+	if err := os.RemoveAll(tempDir); err != nil {
+		fmt.Fprintln(os.Stderr, "remove private test temp directory:", err)
+		code = 1
 	}
 	os.Exit(code)
 }
