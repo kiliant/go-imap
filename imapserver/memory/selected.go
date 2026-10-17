@@ -123,6 +123,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 		charset = options.Charset
 	}
 	var matches []imap.UID
+	var highest uint64
 	for i, msg := range s.mailbox.messages {
 		metadata := servermessage.Metadata{
 			SeqNum:       imap.SeqNum(i + 1),
@@ -130,6 +131,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 			Flags:        cloneFlags(msg.flags),
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
+			ModSeq:       msg.modSeq,
 		}
 		matched, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
@@ -138,10 +140,11 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 		}
 		if matched {
 			matches = append(matches, msg.uid)
+			highest = max(highest, msg.modSeq)
 		}
 	}
 	s.session.account.mu.Unlock()
-	return &imapserver.SearchResult{UIDs: matches}, nil
+	return &imapserver.SearchResult{UIDs: matches, ModSeq: highest}, nil
 }
 
 func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, store *imapserver.StoreFlags, options *imapserver.StoreOptions) error {
