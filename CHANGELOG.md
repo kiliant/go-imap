@@ -160,6 +160,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - **imapserver tests:** isolate the suite temporary namespace so FETCH spool leak checks cannot see other package processes' files (#70).
 - **imapserver:** report REPLACE removals as EXPUNGE or VANISHED before command completion instead of suppressing them (#76).
 - **imapserver:** consume REPLACE literal terminators on success and refusal, and honor UID REPLACE's reader barrier (#77).
+- **imapserver:** reject invalid METADATA entry names with BAD before calling the backend (#78).
 - **imapserver:** evaluate MODSEQ in memory SORT, THREAD and MULTISEARCH, and append the highest matching MODSEQ to nonempty legacy SORT results (#79).
 
 ## [1.2.1] - 2026-10-15
