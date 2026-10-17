@@ -993,7 +993,7 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 				imap.FetchDataKey("FLAGS"): {imap.FetchDataFlags(update.flags)},
 			},
 		}
-		if update.modSeq != 0 {
+		if update.modSeq != 0 && condStoreEnabled(c) {
 			data.Items[imap.FetchDataKey("MODSEQ")] = []imap.FetchData{imap.FetchDataModSeq(update.modSeq)}
 		}
 		if err := ensureFetchFlagsAdvertised(c, data); err != nil {
