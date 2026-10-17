@@ -113,6 +113,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+#### Changed
+
+- **BREAKING:** `AUTH=XOAUTH2` and `AUTH=OAUTHBEARER` now require separate
+  `CapabilitySupport` witnesses on the Backend, in addition to TLS. Backends
+  accepting bearer credentials must return true for each supported wire token
+  to retain advertisement and AUTHENTICATE support. Password-only backends no
+  longer offer unusable bearer mechanisms. No exported signatures changed. (#72)
+
 #### Fixed
 
 - An unsolicited EXPUNGE or VANISHED is no longer sent after the tagged

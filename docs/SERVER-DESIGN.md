@@ -538,8 +538,13 @@ it on restart, which is the exact case QRESYNC exists to serve.
 **AUTHENTICATE.** The framework owns every SASL mechanism state machine
 (`internal/imapsasl`); the backend answers the credential question. That works for
 PLAIN, LOGIN, XOAUTH2 and OAUTHBEARER, where the backend receives extracted
-credentials. It does **not** work for SCRAM, which needs stored key material
-(salt, iteration count, StoredKey, ServerKey) that only the backend has — so
+credentials. Bearer mechanisms are offered only over TLS and require the Backend
+to witness each supported wire token (`AUTH=XOAUTH2`, `AUTH=OAUTHBEARER`) through
+`CapabilitySupport` before authentication. PLAIN and LOGIN need no such witness.
+This became an explicit opt-in on the server v0.x line in follow-up #72, before
+the v1 contract freezes advertisement defaults.
+The credential-extraction model does **not** work for SCRAM, which needs stored
+key material (salt, iteration count, StoredKey, ServerKey) that only the backend has — so
 SCRAM is an optional interface returning those, and `AUTH=SCRAM-*` is advertised
 only when the backend implements it. Channel binding (`-PLUS`) stays framework-side
 via `tls.ConnectionState.ExportKeyingMaterial`.
