@@ -447,6 +447,14 @@ func (r *backupRun) fetchMessages(ctx context.Context, mailbox, dir string, uidV
 			_ = closeLiteral(body.Literal)
 			continue
 		}
+		if pending != nil {
+			// Keep the first body while later portions supply its metadata.
+			// A repeated body must not replace its only temp-file reference.
+			if err := closeLiteral(body.Literal); err != nil {
+				fail(err)
+			}
+			continue
+		}
 		p, err := receiveBody(dir, current, body)
 		if err != nil {
 			fail(err)
