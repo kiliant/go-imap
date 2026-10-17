@@ -318,9 +318,20 @@ func storeCondStore(ctx context.Context, c *conn, writer *FetchWriter, uids imap
 
 // condStoreModifiedArgs renders the MODIFIED response code arguments, or reports
 // that there is nothing to report.
-func condStoreModifiedArgs(result *CondStoreResult) (string, bool) {
+func condStoreModifiedArgs(c *conn, result *CondStoreResult, uidMode bool) (string, bool) {
 	if result == nil || result.Modified.IsEmpty() || result.Modified.Dynamic() {
 		return "", false
 	}
-	return result.Modified.String(), true
+	if uidMode {
+		return result.Modified.String(), true
+	}
+	// The backend always reports UIDs. Plain STORE must instead name messages
+	// in the client's current sequence view, including any withheld expunges.
+	var numbers []uint32
+	for i, uid := range c.state.selected.uids {
+		if uidSetContains(result.Modified, uid, 0) {
+			numbers = append(numbers, uint32(i+1))
+		}
+	}
+	return numberSetString(numbers), len(numbers) != 0
 }
