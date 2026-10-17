@@ -55,8 +55,13 @@ func TestFetchBodySectionStreamsAndParsesHeaderFields(t *testing.T) {
 	if got, err := io.ReadAll(section.Literal); err != nil || string(got) != "From" {
 		t.Fatalf("literal = %q, %v", got, err)
 	}
-	if err := cmd.Wait(ctx); err != nil {
-		t.Fatal(err)
+	// FLAGS follows the literal and is delivered as a separate immutable portion.
+	trailing, err := cmd.Next(ctx)
+	if err != nil || len(trailing.Items[imap.FetchDataKey("FLAGS")]) != 1 {
+		t.Fatalf("trailing FLAGS = %v, %v", trailing, err)
+	}
+	if _, err := cmd.Next(ctx); err != io.EOF {
+		t.Fatalf("Next after FLAGS = %v", err)
 	}
 }
 

@@ -105,6 +105,9 @@ func TestLoopbackBaseCommandSet(t *testing.T) {
 			t.Fatalf("FETCH sequence number = %d", message.SeqNum)
 		}
 		values := message.Items[imap.FetchDataKey("BODY[]")]
+		if len(values) == 0 {
+			continue // Metadata following a streamed body is a separate portion.
+		}
 		if len(values) != 1 {
 			t.Fatalf("FETCH BODY[] values = %#v", values)
 		}
