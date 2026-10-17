@@ -168,6 +168,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
 
+- **imapserver:** NOMODSEQ mailboxes refuse MODSEQ, CHANGEDSINCE and UNCHANGEDSINCE before backend access; selecting a clock-tracking mailbox restores support. No exported API change. (#91)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables

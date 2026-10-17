@@ -83,7 +83,13 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return c.writeBad(command.tag, "invalid FETCH message set")
 	}
-	if err := validateCondStoreUse(c, args.changedSince != 0, "FETCH CHANGEDSINCE"); err != nil {
+	usesModSeq := args.changedSince != 0
+	for _, item := range args.items {
+		if keyword, ok := item.(imap.FetchItemKeyword); ok && strings.EqualFold(string(keyword), string(imap.FetchItemModSeq)) {
+			usesModSeq = true
+		}
+	}
+	if err := validateSelectedCondStoreUse(c, usesModSeq, "FETCH MODSEQ/CHANGEDSINCE"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	items, requestedUID := withFetchUID(args.items)

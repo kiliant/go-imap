@@ -99,7 +99,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return c.writeBad(command.tag, "invalid STORE message set")
 	}
-	if err := validateCondStoreUse(c, args.hasUnchangedSince, "STORE UNCHANGEDSINCE"); err != nil {
+	if err := validateSelectedCondStoreUse(c, args.hasUnchangedSince, "STORE UNCHANGEDSINCE"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	origin := nextCommandOrigin()
