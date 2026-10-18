@@ -219,6 +219,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
 
+- **imapserver:** unsupported SEARCH charsets return NO [BADCHARSET] with the
+  message helper's supported charset list, including in empty memory mailboxes.
+  `message.ErrUnsupportedCharset` remains identifiable through errors.Is;
+  `message.Match` now returns an *imap.Error wrapping it. Document the backend
+  error contract and client-visible versus private error fields in the package
+  doc. No exported signatures change. (#135)
+
 - **imapserver:** GETMETADATA MAXSIZE filters values in the framework and
   reports the largest omitted size with the required METADATA LONGENTRIES
   response code. MAXSIZE 0 retains empty values; DEPTH and server/mailbox

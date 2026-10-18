@@ -122,6 +122,16 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	if options != nil {
 		charset = options.Charset
 	}
+	// Validate the request even when the mailbox has no messages. Charset
+	// support must not depend on whether the per-message loop runs.
+	empty, err := servermessage.Analyze(ctx, bytes.NewReader(nil), 0, nil)
+	if err == nil {
+		_, err = servermessage.Match(ctx, empty, servermessage.Metadata{}, criteria, &servermessage.MatchOptions{Charset: charset})
+	}
+	if err != nil {
+		s.session.account.mu.Unlock()
+		return nil, err
+	}
 	var matches []imap.UID
 	var highest uint64
 	for i, msg := range s.mailbox.messages {

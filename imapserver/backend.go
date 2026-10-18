@@ -31,6 +31,20 @@
 // [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
 // and is supported, not a toy — it is the backend this project's own conformance
 // and interoperability suites run against.
+//
+// # Backend errors
+//
+// The framework finds *imap.Error values with errors.As. It sends their Code,
+// CodeArgs and Text to the client in the current command's tagged response:
+// Type BAD produces BAD, and every other Type produces NO. Empty Text becomes
+// "<operation> failed". Backend authors must keep secrets out of these fields,
+// especially Text, because they are client-visible.
+//
+// Without an *imap.Error, context.Canceled and context.DeadlineExceeded produce
+// NO [UNAVAILABLE]; other errors produce NO [SERVERBUG]. Both use the generic
+// "<operation> failed" text. The underlying error text is not sent to clients.
+// Wrapped errors retain these mappings; an *imap.Error takes precedence over a
+// cancellation error in the same chain.
 package imapserver
 
 import (
