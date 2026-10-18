@@ -82,6 +82,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapcodec:** accept atom, quoted and literal astring arguments for SEARCH
+  string keys and HEADER values, allowing commands such as `SEARCH FROM alice`.
+  No exported API change. (#127)
+
 - **imapclient tests:** Stream fuzz targets confirm reader completion before
   reporting an expired deadline, avoiding false shutdown failures when both
   channels are ready after scheduling delays. Readers still running when a
