@@ -168,6 +168,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
 
+- **imapserver:** Consecutive additions and expunges use compact storage within
+  atomic update batches, avoiding queue overflow caused by per-message object
+  overhead during bulk delivery and removal. EXPUNGE ordering, revision/origin
+  accounting, and aggregate queue limits remain enforced. Typed-nil update
+  entries also count toward the retained-byte bound. No exported API change. (#75)
+
 - **imapserver:** NOMODSEQ mailboxes refuse MODSEQ, CHANGEDSINCE and UNCHANGEDSINCE before backend access; selecting a clock-tracking mailbox restores support. No exported API change. (#91)
 
 - **imapserver:** Plain STORE reports MODIFIED in message sequence numbers; UID STORE continues to report UIDs, including after expunges. No exported API change. (#89)
