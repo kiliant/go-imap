@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kiliant/go-imap"
 )
 
 // These are the same byte-for-byte segment rules as cmd/imapcli. Keeping a
@@ -229,10 +231,38 @@ func readFile(root *os.Root, path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, 256<<20))
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStateFileSize(info.Size(), maxStateFileBytes); err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxStateFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStateFileSize(int64(len(raw)), maxStateFileBytes); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func atomicFile(root *os.Root, path string, data []byte) error {
+	return atomicFileWithLimit(root, path, data, maxStateFileBytes)
+}
+
+func checkStateFileSize(size, maxBytes int64) error {
+	if size > maxBytes {
+		return noError(imap.CodeLimit, "maildir: serialized state exceeds storage limit")
+	}
+	return nil
+}
+
+func atomicFileWithLimit(root *os.Root, path string, data []byte, maxBytes int64) error {
+	if err := checkStateFileSize(int64(len(data)), maxBytes); err != nil {
+		return err
+	}
 	id, err := uniqueName()
 	if err != nil {
 		return err
