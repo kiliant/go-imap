@@ -40,7 +40,8 @@
 // size, sections, ENVELOPE, BODYSTRUCTURE and SEARCH use the same stored bytes.
 //
 // .imap-root.json registers previously initialized accounts. Each account's
-// .imap-identity.json is a monotonic UIDVALIDITY allocator, separate from
+// .imap-identity.json is a monotonic UIDVALIDITY allocator, seeded from Unix
+// time for new accounts and separate from
 // recoverable .imap-state.json. Missing account state reconstructs messages
 // from cur/ and new/ with fresh UIDVALIDITY; keywords, metadata, subscriptions
 // and tombstones lost with that state cannot be recovered. Missing registered
