@@ -87,6 +87,7 @@ func FuzzContextUpdateStream(f *testing.F) {
 				}
 			},
 		}})
+		defer c.Close()
 		// The pipe is synchronous, so nothing is read before the writer runs.
 		c.mu.Lock()
 		c.searchContexts = make(map[string]*searchContext)
@@ -103,11 +104,8 @@ func FuzzContextUpdateStream(f *testing.F) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = c.WaitGreeting(ctx, nil)
-		select {
-		case <-c.readerDone:
-		case <-ctx.Done():
+		if !fuzzReaderFinished(ctx, c.readerDone) {
 			t.Fatal("reader did not finish on a closed connection")
 		}
-		_ = c.Close()
 	})
 }
