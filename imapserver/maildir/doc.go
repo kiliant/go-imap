@@ -13,8 +13,11 @@
 // The root and its structural directories belong exclusively to this backend.
 // Do not rename them, edit cur/ files, or restore an older live snapshot while
 // it is open. External delivery may write regular files in a mailbox's tmp/
-// and atomically rename them into new/. Symlinks and nonregular message files
-// are refused. Account-root handles constrain file access; Go 1.24 uses a
+// and atomically rename them into new/. Invalid or unreadable entries in new/
+// are skipped and left for repair; valid deliveries continue. Initial skips
+// appear in LastPollError, and polling also reports them through OnPollError.
+// Symlinks and nonregular stored messages are refused. Account-root handles
+// constrain file access; Go 1.24 uses a
 // checked-path rename fallback because os.Root.Rename was added in Go 1.25.
 // That fallback also requires the root's ancestor paths to remain unchanged
 // while open, in addition to structural ownership. Passwords are

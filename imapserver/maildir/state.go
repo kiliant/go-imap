@@ -594,6 +594,13 @@ func (a *account) load() error {
 	if err := a.reconcile(); err != nil {
 		return err
 	}
+	// Construction records skipped deliveries without invoking user callbacks
+	// before Open returns. Subsequent polls report them outside account locks.
+	if a.deliveryError != nil {
+		a.backend.mu.Lock()
+		a.backend.lastPollError = a.deliveryError
+		a.backend.mu.Unlock()
+	}
 	staged, err := readDir(a.root, ".staging")
 	if err != nil {
 		return err

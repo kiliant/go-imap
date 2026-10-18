@@ -79,6 +79,8 @@ type account struct {
 	existing bool
 	watchers map[uint32]map[*selected]*imapserver.Updater
 	failure  error
+	// deliveryError records skipped new/ entries under the account gate.
+	deliveryError error
 }
 
 // Open opens or creates root, locks it, recovers pending transactions, and
