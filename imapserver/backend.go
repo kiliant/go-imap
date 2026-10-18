@@ -66,9 +66,9 @@ type Session interface {
 	// requires, with the selection already installed. An error returned from
 	// that call fails the SELECT.
 	List(ctx context.Context, writer *ListWriter, reference string, patterns []string, options *ListOptions) error
-	// Status answers STATUS for a mailbox that is not selected. Only the items
-	// options requests need be populated; the framework writes what it asked
-	// for and nothing else.
+	// Status answers STATUS for any mailbox, including the selected mailbox.
+	// Only the items options requests need be populated; the framework writes
+	// what it asked for and nothing else.
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
 	// Create makes a mailbox. Creating one that exists is an error, and
 	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
@@ -134,9 +134,6 @@ type SessionCloseOptions struct{ _ struct{} }
 // Backends receive UIDs only. Sequence numbers are resolved by the framework
 // before any method here is called.
 type SelectedMailbox interface {
-	// Status answers STATUS for this selection, which a client may ask for even
-	// while the mailbox is selected.
-	Status(ctx context.Context, options *StatusOptions) (*imap.MailboxStatus, error)
 	// Fetch streams the requested items through writer, one message at a time.
 	//
 	// Streaming is the contract, not an optimisation: a backend that buffers a

@@ -292,8 +292,11 @@ func Run(t *testing.T, harness *Harness) {
 			if err != nil || moveData == nil || !moveData.HasUIDs || !moveData.SourceUIDs.Contains(remainingUID) {
 				t.Fatalf("MOVE = %#v, %v", moveData, err)
 			}
-			status, err := result.Mailbox.Status(context.Background(), nil)
-			if err != nil || status.NumMessages != 0 {
+			status, err := session.Status(context.Background(), mailbox, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
+			if err != nil || status == nil {
+				t.Fatalf("source status after MOVE = %#v, %v", status, err)
+			}
+			if count, ok := status.Number(imap.StatusItemMessages); !ok || count != 0 {
 				t.Fatalf("source status after MOVE = %#v, %v", status, err)
 			}
 		}

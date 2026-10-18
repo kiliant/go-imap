@@ -124,6 +124,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** remove the unused `SelectedMailbox.Status` method before the
+  server v1 freeze. `Session.Status` handles every STATUS request, including
+  requests for the selected mailbox; its documentation now states that contract.
+  Remove the redundant implementations and move the backend conformance check
+  to `Session.Status`, retaining numeric STATUS item validation. (#119)
+
 - **BREAKING, Maildir storage policy:** account state/journals migrate to
   version 3, preserving identities and unknown fields; older readers refuse
   its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to

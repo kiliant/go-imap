@@ -97,7 +97,6 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"Expunge(ctx context.Context, writer *ExpungeWriter, uids *imap.UIDSet, options *ExpungeOptions) error",
 			"Fetch(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, options *FetchOptions) error",
 			"Search(ctx context.Context, query *SearchQuery, options *SearchOptions) (*SearchResult, error)",
-			"Status(ctx context.Context, options *StatusOptions) (*imap.MailboxStatus, error)",
 			"Store(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) error",
 			"Unselect(ctx context.Context, options *UnselectOptions) error",
 		},

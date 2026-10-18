@@ -57,9 +57,6 @@ func (*externalSession) Close(context.Context, *imapserver.SessionCloseOptions) 
 
 type externalSelectedMailbox struct{}
 
-func (*externalSelectedMailbox) Status(context.Context, *imapserver.StatusOptions) (*imap.MailboxStatus, error) {
-	return &imap.MailboxStatus{}, nil
-}
 func (*externalSelectedMailbox) Fetch(context.Context, *imapserver.FetchWriter, imap.UIDSet, *imapserver.FetchOptions) error {
 	return nil
 }
