@@ -124,6 +124,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **Server v1 preparation:** document backendtest's prospective compatibility
+  policy: checks may enforce existing obligations, while new obligations need
+  harness opt-in or a witnessed optional interface. Extend the configuration
+  guard and options-parameter gates to public server subpackages and their
+  constructors. Retain independent versions, targeting `imapserver/v1.0.0`
+  after the full review and two compatible substantive minor releases. No
+  exported signatures change. (#54)
+
 - **BREAKING:** `AUTH=XOAUTH2` and `AUTH=OAUTHBEARER` now require separate
   `CapabilitySupport` witnesses on the Backend, in addition to TLS. Backends
   accepting bearer credentials must return true for each supported wire token

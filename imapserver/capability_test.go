@@ -314,16 +314,19 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 // caller's literal. Each needs a reason, because "it seemed fine" is how an
 // exception list stops meaning anything.
 var unguardedByDesign = map[string]string{
-	"Server":        "constructed by New, never by a caller",
-	"SearchQuery":   "constructed by the framework from parsed criteria; has no exported fields",
-	"ListWriter":    "framework-provided writer; callers receive one, never build one",
-	"FetchWriter":   "framework-provided writer",
-	"ExpungeWriter": "framework-provided writer",
-	"Updater":       "framework-provided; callers receive one from Select",
+	"Server":          "constructed by New, never by a caller",
+	"SearchQuery":     "constructed by the framework from parsed criteria; has no exported fields",
+	"ListWriter":      "framework-provided writer; callers receive one, never build one",
+	"FetchWriter":     "framework-provided writer",
+	"ExpungeWriter":   "framework-provided writer",
+	"Updater":         "framework-provided; callers receive one from Select",
+	"maildir.Backend": "constructed by maildir.Open, never by a caller",
+	"memory.Backend":  "constructed by memory.New, never by a caller",
+	"message.Message": "constructed by message.Analyze, never by a caller",
 }
 
 // TestGrowableConfigurationStructsAreGuarded requires every exported struct in
-// the package to carry an unexported sentinel field.
+// every public server package to carry an unexported sentinel field.
 //
 // It walks the package rather than iterating a hand-written list. A list is a
 // judgement call per struct, and API-STABILITY.md section 7 says the point of
@@ -331,8 +334,8 @@ var unguardedByDesign = map[string]string{
 // unguarded options struct and forgetting to list it would otherwise pass
 // green, which is exactly the failure the guard exists to prevent.
 func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
-	files := parseServerFiles(t, 0)
-	for _, file := range files {
+	files := parsePublicServerFiles(t, token.NewFileSet())
+	for path, file := range files {
 		for _, declaration := range file.Decls {
 			general, ok := declaration.(*ast.GenDecl)
 			if !ok || general.Tok != token.TYPE {
@@ -347,12 +350,13 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if _, exempt := unguardedByDesign[typeSpec.Name.Name]; exempt {
+				name := publicServerName(path, typeSpec.Name.Name)
+				if _, exempt := unguardedByDesign[name]; exempt {
 					continue
 				}
 				if !hasSentinelField(structure) {
 					t.Errorf("%s has no unexported sentinel guard; add `_ struct{}` or an entry in unguardedByDesign with a reason",
-						typeSpec.Name.Name)
+						name)
 				}
 			}
 		}
@@ -360,14 +364,17 @@ func TestGrowableConfigurationStructsAreGuarded(t *testing.T) {
 	// An exemption for a struct that no longer exists is a stale claim, so the
 	// list is checked in both directions.
 	declared := make(map[string]bool)
-	for _, file := range files {
+	for path, file := range files {
 		for _, declaration := range file.Decls {
 			general, ok := declaration.(*ast.GenDecl)
 			if !ok || general.Tok != token.TYPE {
 				continue
 			}
 			for _, spec := range general.Specs {
-				declared[spec.(*ast.TypeSpec).Name.Name] = true
+				typeSpec := spec.(*ast.TypeSpec)
+				if _, ok := typeSpec.Type.(*ast.StructType); ok {
+					declared[publicServerName(path, typeSpec.Name.Name)] = true
+				}
 			}
 		}
 	}
@@ -425,16 +432,20 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 		"FetchWriter.WriteMessage": true,
 		"Updater.Push":             true,
 		"SessionUpdater.Push":      true,
+
+		// Cached analysis and diagnostics: no I/O or blocking operation.
+		"maildir.Backend.LastPollError": true,
+		"message.Message.Size":          true,
+		"message.Message.Envelope":      true,
+		"message.Message.BodyStructure": true,
+		// The section request and suite harness are guarded, growable
+		// payloads, like the writer payloads above.
+		"message.Message.OpenBodySection": true,
+		"backendtest.Run":                 true,
 	}
 
 	fset := token.NewFileSet()
-	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
-		name := info.Name()
-		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	files := parsePublicServerFiles(t, fset)
 	// Exported methods on exported concrete types, not only interface methods.
 	// The three a user actually calls — Serve, ServeConn, Close — are methods on
 	// *Server, so an interface-only walk left the entry points outside the gate
@@ -445,14 +456,18 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 	// options, so the exemptions can be checked in both directions below.
 	seen := make(map[string]bool)
 
-	for _, file := range packages["imapserver"].Files {
+	for path, file := range files {
 		for _, declaration := range file.Decls {
 			if fn, ok := declaration.(*ast.FuncDecl); ok {
 				receiver, isMethod := receiverTypeName(fn)
-				if !isMethod || !ast.IsExported(receiver) || !ast.IsExported(fn.Name.Name) {
+				if !ast.IsExported(fn.Name.Name) || isMethod && !ast.IsExported(receiver) {
 					continue
 				}
-				qualified := receiver + "." + fn.Name.Name
+				name := fn.Name.Name
+				if isMethod {
+					name = receiver + "." + name
+				}
+				qualified := publicServerName(path, name)
 				seen[qualified] = optionsParameter(fset, fn.Type)
 				if exempt[qualified] || seen[qualified] {
 					continue
@@ -479,7 +494,7 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 						continue
 					}
 					for _, name := range method.Names {
-						qualified := typeSpec.Name.Name + "." + name.Name
+						qualified := publicServerName(path, typeSpec.Name.Name+"."+name.Name)
 						seen[qualified] = optionsParameter(fset, fn)
 						if exempt[qualified] || seen[qualified] {
 							continue
@@ -509,6 +524,44 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 				"rather than leaving it to mask the next method that should have had one", name)
 		}
 	}
+}
+
+// Discover new public packages too: a fixed list would leave the next helper
+// outside the v1 gate. Internal code, fixture trees and build-tagged interop
+// scaffolding have the same exclusions as the released API diff.
+func parsePublicServerFiles(t *testing.T, fset *token.FileSet) map[string]*ast.File {
+	t.Helper()
+	files := make(map[string]*ast.File)
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != "." && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "internal" || entry.Name() == "testdata" || entry.Name() == "interop") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err == nil {
+			files[path] = file
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+func publicServerName(path, name string) string {
+	if dir := filepath.Dir(path); dir != "." {
+		return filepath.ToSlash(dir) + "." + name
+	}
+	return name
 }
 
 // receiverTypeName returns the type a method is declared on, without its

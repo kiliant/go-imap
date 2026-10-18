@@ -28,6 +28,7 @@ type Options struct {
 }
 
 // Backend is an in-memory implementation of [imapserver.Backend].
+// Construct it with [New]; its zero value is not an initialized backend.
 type Backend struct {
 	mu       sync.RWMutex
 	accounts map[string]*account

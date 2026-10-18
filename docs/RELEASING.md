@@ -12,6 +12,34 @@ The short version: one `go.mod` cannot carry two different compatibility
 promises, and the root API froze at v1.0 while the server's has not. The
 server line stays v0.x until milestone M7 (`ROADMAP.md`) is met.
 
+## Graduating the server to v1
+
+The first stable server tag will be **`imapserver/v1.0.0`**, with independent
+version lines retained. Each module has its own compatibility surface and
+release needs; matching their version numbers would require empty releases
+and could force an unaffected module to change import paths when the other
+needs v2. A future major transition therefore applies only to the module
+that needs it. The root-first dependency ordering below still applies.
+
+Maildir supplies the second backend required by M7. It does not by itself
+freeze the server API. Before opening the stability window, resolve or
+explicitly defer the storage contract gaps and complete the full review in
+`tasks/T33-imapserver-v1.md`, including the message helper, backendtest and
+documented defaults. Land any breaking corrections while still on v0.x.
+
+Then publish two consecutive substantive server minor releases that preserve
+the reviewed contract. Every release between them, including patches, must
+have no incompatible API diff and no BREAKING behaviour entry. A minor that
+only bumps the root dependency does not count; a break restarts the window.
+Record the API-diff and changelog evidence on issue #54 for each release.
+The existing pre-Maildir releases cannot count toward that window.
+
+Immediately before the v1 tag, review every addition since the initial review
+and compare against the second quiet release. Update the module promise in
+API-STABILITY, this file, CLAUDE and ROADMAP only in the actual release PR.
+The standalone build, clean-consumer and signed-tag gates below remain
+required. No tag or release is created automatically by this plan.
+
 ## The ordering constraint
 
 **The root module must be released before the server module can be, and this is

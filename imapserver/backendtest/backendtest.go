@@ -1,6 +1,21 @@
 // Package backendtest provides a reusable conformance suite for IMAP server
 // backends. Backend authors run Run from their own test package with a fresh
 // backend factory and optional test-only controls.
+//
+// # Compatibility
+//
+// At server v1, this package is covered by the server module's compatibility
+// promise, including the obligations Run checks. A compatible suite upgrade
+// may add checks of existing documented backend obligations; such checks can
+// expose defects in a backend that passed an earlier version. Passing Run is
+// evidence for the exercised cases, not a replacement for the backend contract.
+//
+// New obligations must be opt-in through an extensible harness control or an
+// optional interface and its capability witness. A backend that does not opt
+// in must keep its existing requirements and advertised capabilities. New test
+// cases must not infer that consent merely from a backend's concrete type or
+// impose new requirements on every existing Harness. Controls remain test-only
+// fixtures; implementing a control does not grant production capabilities.
 package backendtest
 
 import (
