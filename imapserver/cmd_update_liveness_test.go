@@ -3,6 +3,7 @@ package imapserver
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/kiliant/go-imap"
 )
 
-type updateLivenessBackend struct{ add bool }
+type updateLivenessBackend struct{ add, failFetch bool }
 
 func (b *updateLivenessBackend) SupportsCapability(_ context.Context, name string, _ *CapabilitySupportOptions) bool {
 	return name == "CONDSTORE" || name == "QRESYNC"
@@ -29,7 +30,7 @@ type updateLivenessSession struct {
 
 func (s *updateLivenessSession) Select(_ context.Context, _ string, updater *Updater, _ *SelectOptions) (*SelectResult, error) {
 	return &SelectResult{
-		Mailbox: &updateLivenessMailbox{updater: updater, add: s.backend.add, revision: 1},
+		Mailbox: &updateLivenessMailbox{updater: updater, add: s.backend.add, failFetch: s.backend.failFetch, revision: 1},
 		Snapshot: SelectSnapshot{
 			UIDs: []imap.UID{1, 2, 3}, Revision: "r1", HighestModSeq: 10,
 			Status: imap.MailboxStatus{NumMessages: 3, UIDValidity: 1, UIDNext: 4, HighestModSeq: 10},
@@ -39,9 +40,10 @@ func (s *updateLivenessSession) Select(_ context.Context, _ string, updater *Upd
 
 type updateLivenessMailbox struct {
 	stubSelectedMailbox
-	updater  *Updater
-	add      bool
-	revision int
+	updater   *Updater
+	add       bool
+	failFetch bool
+	revision  int
 }
 
 func (m *updateLivenessMailbox) push(origin ChangeToken, changes ...Update) error {
@@ -69,6 +71,9 @@ func (m *updateLivenessMailbox) Fetch(ctx context.Context, writer *FetchWriter, 
 				return err
 			}
 		}
+	}
+	if m.failFetch {
+		return errors.New("failure after FETCH response")
 	}
 	return nil
 }
@@ -175,7 +180,12 @@ func TestPipelinedCommandsKeepViewWhileUpdatesAdvance(t *testing.T) {
 
 func openLivenessSession(t *testing.T, add, qresync bool) (net.Conn, *bufio.Reader) {
 	t.Helper()
-	server := New(&updateLivenessBackend{add: add}, &Options{AllowInsecureAuth: true, Limits: Limits{MaxQueuedUpdates: 4}})
+	return openLivenessBackend(t, &updateLivenessBackend{add: add}, qresync)
+}
+
+func openLivenessBackend(t *testing.T, backend *updateLivenessBackend, qresync bool) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	server := New(backend, &Options{AllowInsecureAuth: true, Limits: Limits{MaxQueuedUpdates: 4}})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	client, peer := net.Pipe()
 	t.Cleanup(func() { client.Close(); cancel(); server.Close(context.Background(), nil) })
@@ -196,4 +206,30 @@ func openLivenessSession(t *testing.T, add, qresync bool) (net.Conn, *bufio.Read
 	writeUpdateOrderCommand(t, client, "S SELECT INBOX\r\n")
 	readLivenessTag(t, reader, "S", false)
 	return client, reader
+}
+
+func TestFailedFetchFencesQueuedRemoval(t *testing.T) {
+	connection, reader := openLivenessBackend(t, &updateLivenessBackend{failFetch: true}, true)
+	writeUpdateOrderCommand(t, connection, "F FETCH 2 (FLAGS)\r\n")
+	var wire strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire.WriteString(line)
+		if strings.Contains(line, " VANISHED") {
+			t.Fatalf("removal sent during failed FETCH: %s", wire.String())
+		}
+		if strings.HasPrefix(line, "F ") {
+			if !strings.HasPrefix(line, "F NO") || !strings.Contains(wire.String(), "MODSEQ (22)") || !strings.Contains(wire.String(), "[HIGHESTMODSEQ 10]") {
+				t.Fatalf("failed FETCH advanced past queued removal: %s", wire.String())
+			}
+			break
+		}
+	}
+	writeUpdateOrderCommand(t, connection, "N NOOP\r\n")
+	if wire := readLivenessTag(t, reader, "N", true); strings.Count(wire, "* VANISHED 1\r\n") != 1 {
+		t.Fatalf("failed command lost removal: %s", wire)
+	}
 }
