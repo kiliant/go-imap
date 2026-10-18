@@ -173,15 +173,12 @@ func (s *selected) copyMove(ctx context.Context, uids imap.UIDSet, destination s
 	changes := make(map[uint32][]imapserver.Update)
 	var sourceUIDs, destinationUIDs []imap.UID
 	var retained []*messageRecord
-	for _, original := range source.Messages {
+	for i, original := range source.Messages {
 		if !uids.Contains(original.UID) {
 			if move {
-				for _, msg := range from.Messages {
-					if msg.UID == original.UID {
-						retained = append(retained, msg)
-						break
-					}
-				}
+				// cloneState preserves message order; looking up every retained
+				// UID again made a one-message MOVE quadratic in mailbox size.
+				retained = append(retained, from.Messages[i])
 			}
 			continue
 		}
@@ -306,9 +303,25 @@ func (s *selected) Resync(ctx context.Context, params *imapserver.QResyncSelect,
 	if params == nil || params.UIDValidity != m.UIDValidity {
 		return result, nil
 	}
+	if params.KnownUIDs.Dynamic() || params.SeqMatchUIDs.Dynamic() || params.SeqMatchSeqNums.Dynamic() {
+		return nil, noError(imap.CodeCannot, "QRESYNC known UIDs must not contain a wildcard")
+	}
 	for _, dead := range m.Tombstones {
 		if dead.ModSeq > params.ModSeq && (params.KnownUIDs.IsEmpty() || params.KnownUIDs.Contains(dead.UID)) {
 			result.Vanished.AddNum(dead.UID)
+		}
+	}
+	if params.ModSeq < m.TombstoneFloor {
+		result.Vanished = missingUIDs(m)
+		if !params.KnownUIDs.IsEmpty() {
+			result.Vanished = intersectUIDs(result.Vanished, params.KnownUIDs)
+		}
+	}
+	if floor := knownMatchFloor(m, params); floor != 0 {
+		if floor >= m.UIDNext-1 {
+			result.Vanished = nil
+		} else {
+			result.Vanished = intersectUIDs(result.Vanished, imap.UIDSetRange(floor+1, m.UIDNext-1))
 		}
 	}
 	for _, msg := range m.Messages {

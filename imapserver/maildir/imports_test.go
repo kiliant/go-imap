@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,7 +12,17 @@ import (
 )
 
 func TestOnlyPublicImports(t *testing.T) {
-	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+	output, err := exec.Command("go", "list", "std").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	standard := make(map[string]bool)
+	for _, name := range strings.Fields(string(output)) {
+		if !strings.Contains("/"+name+"/", "/internal/") && !strings.HasPrefix(name, "vendor/") {
+			standard[name] = true
+		}
+	}
+	err = filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -27,13 +38,13 @@ func TestOnlyPublicImports(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			for _, component := range strings.Split(imported, "/") {
-				if component == "internal" {
-					t.Errorf("%s imports internal package %s", path, imported)
-				}
+			allowed := imported == "github.com/kiliant/go-imap" || imported == "github.com/kiliant/go-imap/imapserver" || imported == "github.com/kiliant/go-imap/imapserver/message"
+			if strings.HasSuffix(path, "_test.go") {
+				allowed = allowed || imported == "github.com/kiliant/go-imap/imapclient" || imported == "github.com/kiliant/go-imap/imapserver/backendtest" || imported == "github.com/kiliant/go-imap/imapserver/maildir"
 			}
-			if imported == "github.com/kiliant/go-imap/imapserver/memory" {
-				t.Errorf("%s imports reference backend", path)
+			allowed = allowed || standard[imported]
+			if !allowed {
+				t.Errorf("%s imports %s outside its public-package allowlist", path, imported)
 			}
 		}
 		return nil

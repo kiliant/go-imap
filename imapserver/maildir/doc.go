@@ -15,7 +15,8 @@
 // it is open. External delivery may write regular files in a mailbox's tmp/
 // and atomically rename them into new/. Invalid or unreadable entries in new/
 // are skipped and left for repair; valid deliveries continue. Initial skips
-// appear in LastPollError, and polling also reports them through OnPollError.
+// appear in PollFailures and LastPollError. Polling reports them through
+// OnPollFailure (or the legacy OnPollError callback).
 // Symlinks and nonregular stored messages are refused. Account-root handles
 // constrain file access; Go 1.24 uses a
 // checked-path rename fallback because os.Root.Rename was added in Go 1.25.
@@ -48,18 +49,29 @@
 // recoverable .imap-state.json. Missing account state reconstructs messages
 // from cur/ and new/ with fresh UIDVALIDITY; keywords, metadata, subscriptions
 // and tombstones lost with that state cannot be recovered. Missing registered
-// account directories or allocators, or a missing existing root registry, fail
-// closed rather than risk reusing an identity. Preserve the complete root in
+// account directories or allocators fail that account closed rather than risk
+// reusing an identity. Open fails by default; IsolateAccountErrors instead
+// keeps healthy accounts available and rejects authentication to failed ones
+// until storage is repaired and the backend reopened. It never reprovisions
+// a registered account or hides its failure. Root registry and locking errors
+// always fail Open. Preserve the complete root in
 // backups; erasing the entire root is provisioning a different store.
 // Interrupted first-time setup can resume when only the root lock, an empty
 // lost+found directory and unpublished atomic-write temporary files remain.
 // Recognized atomic-write temporaries are removed under the root lock.
 //
-// Account state is version 2. It holds mailbox identities, UIDNEXT, message
+// Account state is version 3. It holds mailbox identities, UIDNEXT, message
 // mappings, flags/keywords, modification sequences, metadata, subscriptions and
-// all expunge tombstones. History is not pruned, so QRESYNC remains exact across
-// restart and state grows with expunges. Version 1 uses the same schema but may
-// omit revision/modification-sequence fields, which migrate to 1. METADATA
+// a bounded expunge history. MaxTombstones defaults to 10000 per mailbox.
+// Pruning persists the highest forgotten expunge mod-sequence. A QRESYNC
+// request below that checkpoint receives every currently missing UID in the
+// requested scope, as a conservative superset; live UIDs are never reported
+// vanished. Known sequence/UID match samples restrict that set. At or above
+// the checkpoint, retained history remains exact, including across restarts.
+// Version 2 migrates to 3 without changing mailbox identities. Version 1 also
+// supplies missing revision/modification-sequence fields as 1. Prepared older
+// journals are recovered before migration. Older releases refuse version 3
+// rather than ignore its history checkpoint. METADATA
 // values that are valid UTF-8 are JSON strings; any other value, which RFC 5464
 // permits, is an object {"base64": ...}, so binary octets survive. Unknown fields
 // at root/account/mailbox/message/tombstone boundaries survive rewrites. Newer
@@ -67,8 +79,12 @@
 // formats are version 1. State, journal, identity and root-registry files are
 // limited to 256 MiB on both reads and writes. A mutation whose serialized
 // journal exceeds that budget returns NO [LIMIT] before preparing a transaction,
-// leaving the previous state usable. Tombstone history is not automatically
-// pruned to fit this budget.
+// leaving the previous state usable. MaxMetadataValueBytes defaults to 65536
+// octets and MaxMetadataEntries to 1024 per mailbox/server scope. A SETMETADATA
+// exceeding either returns METADATA MAXSIZE or TOOMANY atomically, without a
+// journal or partial update. Existing values remain readable after limits are
+// lowered; deletions can reduce an over-limit entry count. Tombstones are
+// pruned to their configured count before journal preparation.
 //
 // Mutations first fsync staged message data, then atomically publish and fsync
 // .imap-journal.json. Recovery rolls this prepared transaction forward using
@@ -77,6 +93,11 @@
 // that sequence. Once preparation is durable, cancellation or an I/O error may
 // still leave the operation committed. A later commit error disables that
 // account until reopen/recovery; no subsequent reader observes partial state.
+// If both names of a journalled cur-to-cur message rename have vanished,
+// recovery records that UID as expunged with a newer modification sequence,
+// retaining UIDVALIDITY and UIDNEXT. Missing staged APPEND/COPY bytes and
+// structural/identity corruption remain errors requiring operator repair;
+// IsolateAccountErrors can keep other accounts serving during that repair.
 //
 // APPEND and COPY stage bytes before publishing their new mappings. MOVE's
 // destination mappings, source removal and tombstones share one transaction.
@@ -95,7 +116,31 @@
 // that vanish before opening are skipped. Close still waits for streaming.
 // Polling and SELECT share the state lock: every delivery is in the atomic
 // snapshot or a subsequent revision-chained update, never missed between them. Poll
-// errors remain observable through LastPollError and optional OnPollError.
+// errors remain observable through PollFailures and optional OnPollFailure.
+// Each current diagnostic identifies its account and, when known, mailbox.
+// Successful polls clear that account's current failure; LastPollError remains
+// a sticky last-event accessor. Callbacks run serially outside locks with a
+// cancellation context, may retain their copied diagnostic, and must not call
+// Close synchronously. OnPollFailure takes precedence over OnPollError.
 // Close stops polling and rejects new work, waits for operations/callbacks,
 // then releases roots and locks, without waiting for idle session lifetimes.
+//
+// # Scale and measurement
+//
+// This backend targets small accounts: around 1000 live messages per account
+// is the initial latency envelope for the default 100 ms poll interval.
+// This is guidance, not a capacity guarantee. Polling still stats every stored
+// file, and a mutation still clones and writes the whole account state.
+// On a local Apple M1 filesystem, three one-operation samples at 20000 messages
+// measured roughly 1 s per idle poll and 0.6 s per STORE or single-message MOVE.
+// At that size, use a poll interval of several seconds and expect mutations to
+// queue behind each other. Measure the intended filesystem and workload before
+// choosing this backend for larger or mutation-heavy accounts. Message bytes
+// stream during FETCH, but that does not remove metadata-write costs.
+//
+// BenchmarkMaildirScale provides 1000/20000-message idle-poll, STORE and MOVE
+// fixtures; run go test -run '^$' -bench BenchmarkMaildirScale -benchtime=1x
+// -count=3 in this package. Idle polls avoid a full-state clone, and MOVE keeps
+// unaffected messages in linear time. Incremental persistence and a file index
+// remain future optimisations rather than part of the v1 contract.
 package maildir

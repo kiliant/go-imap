@@ -15,7 +15,9 @@ import (
 	"github.com/kiliant/go-imap"
 )
 
-const stateVersion = 2
+// Version 3 makes the bounded-history checkpoint mandatory knowledge. An older
+// reader must refuse this state rather than silently omit forgotten expunges.
+const stateVersion = 3
 const stateFile = ".imap-state.json"
 const journalFile = ".imap-journal.json"
 const identityFile = ".imap-identity.json"
@@ -31,16 +33,17 @@ type accountState struct {
 	Extra         extraFields                              `json:"-"`
 }
 type mailboxState struct {
-	UIDValidity   uint32                                   `json:"uidvalidity"`
-	UIDNext       imap.UID                                 `json:"uidnext"`
-	Revision      uint64                                   `json:"revision"`
-	HighestModSeq uint64                                   `json:"highestmodseq"`
-	Flags         []imap.Flag                              `json:"flags"`
-	SpecialUse    []imap.MailboxAttr                       `json:"specialuse"`
-	Messages      []*messageRecord                         `json:"messages"`
-	Tombstones    []tombstone                              `json:"tombstones"`
-	Metadata      map[imap.MetadataEntryName]metadataValue `json:"metadata"`
-	Extra         extraFields                              `json:"-"`
+	UIDValidity    uint32                                   `json:"uidvalidity"`
+	UIDNext        imap.UID                                 `json:"uidnext"`
+	Revision       uint64                                   `json:"revision"`
+	HighestModSeq  uint64                                   `json:"highestmodseq"`
+	Flags          []imap.Flag                              `json:"flags"`
+	SpecialUse     []imap.MailboxAttr                       `json:"specialuse"`
+	Messages       []*messageRecord                         `json:"messages"`
+	Tombstones     []tombstone                              `json:"tombstones"`
+	TombstoneFloor uint64                                   `json:"tombstonefloor,omitempty"`
+	Metadata       map[imap.MetadataEntryName]metadataValue `json:"metadata"`
+	Extra          extraFields                              `json:"-"`
 }
 type messageRecord struct {
 	UID    imap.UID    `json:"uid"`
@@ -178,7 +181,7 @@ func decodeState(raw []byte) (*accountState, error) {
 				m.Revision = 1
 			}
 		}
-		if m.Revision == 0 || m.HighestModSeq == 0 || m.HighestModSeq > math.MaxInt64 {
+		if m.Revision == 0 || m.HighestModSeq == 0 || m.HighestModSeq > math.MaxInt64 || m.TombstoneFloor > m.HighestModSeq {
 			return nil, fmt.Errorf("maildir: invalid mailbox revision")
 		}
 		if m.Metadata == nil {
@@ -257,6 +260,7 @@ func (a *account) commit(next *accountState, actions []fileAction) error {
 // The production budget is the read limit. Taking it as an argument keeps
 // boundary/recovery tests small while exercising the actual commit path.
 func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxBytes int64) error {
+	a.pruneHistory(next)
 	if a.state == nil || !sameMailboxNames(a.state, next) {
 		if err := a.checkMailboxLayout(next); err != nil {
 			return noError(imap.CodeCannot, err.Error())
@@ -301,7 +305,7 @@ func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxB
 		return err
 	}
 	if err = a.backend.fault("journal"); err == nil {
-		err = a.replay(&j)
+		err = a.replay(&j, false)
 	}
 	if err != nil {
 		a.failure = err
@@ -323,15 +327,28 @@ func sameMailboxNames(a, b *accountState) bool {
 	return true
 }
 
-func (a *account) replay(j *diskJournal) error {
+func (a *account) replay(j *diskJournal, recoverMissing bool) error {
 	for _, action := range j.Actions {
 		if err := a.applyAction(action); err != nil {
-			return err
+			// An externally unlinked cur/ source may disappear after journal
+			// preparation. Preserve UID identity and record its loss instead of
+			// leaving an otherwise replayable STORE stuck forever.
+			if !recoverMissing || !os.IsNotExist(err) {
+				return err
+			}
+			recovered, recoveryErr := a.recoverMissingMessage(j.State, action)
+			if recoveryErr != nil {
+				return recoveryErr
+			}
+			if !recovered {
+				return err
+			}
 		}
 		if err := a.backend.fault("action"); err != nil {
 			return err
 		}
 	}
+	a.pruneHistory(j.State)
 	raw, err := json.Marshal(j.State)
 	if err != nil {
 		return err
@@ -354,6 +371,36 @@ func (a *account) replay(j *diskJournal) error {
 		}
 	}
 	return a.backend.fault("complete")
+}
+
+func (a *account) recoverMissingMessage(state *accountState, action fileAction) (bool, error) {
+	if action.Kind != "rename" || filepath.Base(filepath.Dir(action.From)) != "cur" || filepath.Base(filepath.Dir(action.To)) != "cur" {
+		return false, nil
+	}
+	for _, path := range []string{action.From, action.To} {
+		if _, err := a.root.Lstat(path); !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	for name, m := range state.Mailboxes {
+		for i, msg := range m.Messages {
+			if messagePath(name, msg) != action.To {
+				continue
+			}
+			if m.Revision == math.MaxUint64 {
+				return false, noError(imap.CodeLimit, "revision space exhausted")
+			}
+			modseq, err := bump(m)
+			if err != nil {
+				return false, err
+			}
+			m.Revision++
+			m.Tombstones = append(m.Tombstones, tombstone{UID: msg.UID, ModSeq: modseq})
+			m.Messages = append(m.Messages[:i], m.Messages[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (a *account) applyAction(action fileAction) error {
@@ -514,7 +561,7 @@ func (a *account) load() error {
 		if err := json.Unmarshal(journalRaw, &j); err != nil {
 			return err
 		}
-		if j.Version != stateVersion || j.State == nil {
+		if j.Version < 1 || j.Version > stateVersion || j.State == nil {
 			return fmt.Errorf("maildir: unsupported journal version")
 		}
 		raw, err := json.Marshal(j.State)
@@ -564,7 +611,7 @@ func (a *account) load() error {
 		if err := a.checkMailboxLayout(pending.State); err != nil {
 			return err
 		}
-		if err := a.replay(pending); err != nil {
+		if err := a.replay(pending, true); err != nil {
 			return err
 		}
 		state = pending.State
@@ -611,9 +658,7 @@ func (a *account) load() error {
 	// Construction records skipped deliveries without invoking user callbacks
 	// before Open returns. Subsequent polls report them outside account locks.
 	if a.deliveryError != nil {
-		a.backend.mu.Lock()
-		a.backend.lastPollError = a.deliveryError
-		a.backend.mu.Unlock()
+		a.backend.recordPollFailure(a, a.deliveryError)
 	}
 	staged, err := readDir(a.root, ".staging")
 	if err != nil {
@@ -625,6 +670,7 @@ func (a *account) load() error {
 		}
 	}
 	// Also persists version-1 migrations, retaining unrecognised fields.
+	a.pruneHistory(a.state)
 	raw, err := json.Marshal(a.state)
 	if err != nil {
 		return err
