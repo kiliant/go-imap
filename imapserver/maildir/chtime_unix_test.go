@@ -5,6 +5,7 @@ package maildir
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -19,13 +20,16 @@ func TestFileTimeOutsideUnixNanoRange(t *testing.T) {
 			}
 			defer file.Close()
 			// Some filesystems clamp dates to their own timestamp range. Use
-			// the standard path API as an oracle: unsupported dates must be
-			// refused instead of silently stored with a different INTERNALDATE.
+			// the path syscall as an oracle: unsupported dates must be refused
+			// instead of silently stored with a different INTERNALDATE. Avoid
+			// os.Chtimes, which itself converts through overflowing UnixNano.
 			probe := filepath.Join(t.TempDir(), "probe")
 			if err := os.WriteFile(probe, nil, 0600); err != nil {
 				t.Fatal(err)
 			}
-			probeErr := os.Chtimes(probe, date, date)
+			ts := syscall.NsecToTimespec(int64(date.Nanosecond()))
+			ts.Sec = date.Unix()
+			probeErr := syscall.UtimesNano(probe, []syscall.Timespec{ts, ts})
 			probeInfo, err := os.Stat(probe)
 			if err != nil {
 				t.Fatal(err)
