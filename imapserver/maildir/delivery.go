@@ -2,6 +2,7 @@ package maildir
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -173,6 +174,7 @@ func (b *Backend) pollAccount(ctx context.Context, a *account, interval time.Dur
 			continue
 		}
 		err := a.reconcileContext(ctx)
+		err = errors.Join(err, a.deliveryError)
 		a.leave()
 		if err != nil && ctx.Err() == nil {
 			b.reportPollError(err)
@@ -196,6 +198,7 @@ func (b *Backend) reportPollError(err error) {
 }
 func (a *account) reconcile() error { return a.reconcileContext(context.Background()) }
 func (a *account) reconcileContext(ctx context.Context) error {
+	a.deliveryError = nil
 	next, err := cloneState(a.state)
 	if err != nil {
 		return err
@@ -249,11 +252,19 @@ func (a *account) reconcileContext(ctx context.Context) error {
 				sourcePath := filepath.Join(dir, entry.Name())
 				f, err := openRegular(a.root, sourcePath)
 				if err != nil {
+					if sub == "new" {
+						a.skipDelivery(sourcePath, err)
+						continue
+					}
 					return err
 				}
 				info, err := f.Stat()
 				if err != nil {
 					f.Close()
+					if sub == "new" {
+						a.skipDelivery(sourcePath, err)
+						continue
+					}
 					return err
 				}
 				flags := flagsFromFilename(entry.Name())
@@ -263,7 +274,11 @@ func (a *account) reconcileContext(ctx context.Context) error {
 					stage, n, mtime, err := a.stage(ctx, f, date, true)
 					f.Close()
 					if err != nil {
-						return err
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						a.skipDelivery(sourcePath, err)
+						continue
 					}
 					defer a.discardStage(stage)
 					file = filepath.Base(stage) + flagSuffix(flags)
@@ -295,4 +310,12 @@ func (a *account) reconcileContext(ctx context.Context) error {
 		return err
 	}
 	return a.publishCommit(next, actions, changes, 0)
+}
+
+func (a *account) skipDelivery(path string, err error) {
+	// Bound diagnostics independently of the number of invalid entries. Leave
+	// the original file for an operator to repair; never follow or delete it.
+	if a.deliveryError == nil {
+		a.deliveryError = fmt.Errorf("maildir: skipped delivery %q: %w", path, err)
+	}
 }

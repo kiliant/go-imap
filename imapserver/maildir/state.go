@@ -261,6 +261,11 @@ func (a *account) commit(next *accountState, actions []fileAction) error {
 	// any account fails to load. Refusing before the journal exists keeps the
 	// account usable; the next poll reconciles the removal as an expunge.
 	for _, action := range actions {
+		if action.Kind == "merge" || action.Kind == "relocate" {
+			if err := checkMergeTree(a.root, action.From, action.To); err != nil {
+				return noError(imap.CodeCannot, err.Error())
+			}
+		}
 		if action.Kind != "rename" || strings.HasPrefix(action.From, ".staging") {
 			continue
 		}
@@ -474,6 +479,9 @@ func mergeTree(root *os.Root, from, to string) error {
 }
 
 func (a *account) load() error {
+	if err := cleanupAtomicFiles(a.root, stateFile, journalFile, identityFile); err != nil {
+		return err
+	}
 	stateRaw, stateErr := readFile(a.root, stateFile)
 	var state *accountState
 	var err error
@@ -526,7 +534,8 @@ func (a *account) load() error {
 		if len(entries) != 0 {
 			return fmt.Errorf("maildir: identity allocator missing; refusing possible UIDVALIDITY reuse")
 		}
-		a.identity = identityState{Version: 1, Next: 1}
+		// Existing allocators retain their durable monotonic value.
+		a.identity = identityState{Version: 1, Next: uint64(time.Now().Unix())}
 		raw, _ := json.Marshal(a.identity)
 		if err := atomicFile(a.root, identityFile, raw); err != nil {
 			return err
@@ -585,6 +594,13 @@ func (a *account) load() error {
 	if err := a.reconcile(); err != nil {
 		return err
 	}
+	// Construction records skipped deliveries without invoking user callbacks
+	// before Open returns. Subsequent polls report them outside account locks.
+	if a.deliveryError != nil {
+		a.backend.mu.Lock()
+		a.backend.lastPollError = a.deliveryError
+		a.backend.mu.Unlock()
+	}
 	staged, err := readDir(a.root, ".staging")
 	if err != nil {
 		return err
@@ -618,7 +634,7 @@ func (s *rootRegistry) UnmarshalJSON(raw []byte) error {
 	s.Extra = extra
 	return err
 }
-func loadRootRegistry(root *os.Root, fresh bool) (*rootRegistry, error) {
+func loadRootRegistry(root *os.Root) (*rootRegistry, error) {
 	raw, err := readFile(root, ".imap-root.json")
 	if err == nil {
 		var registry rootRegistry
@@ -637,7 +653,19 @@ func loadRootRegistry(root *os.Root, fresh bool) (*rootRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !fresh || len(entries) != 1 || entries[0].Name() != ".imap-lock" {
+	// The lock is created before the registry, so its presence says nothing
+	// about whether setup completed. Any account directory still makes a
+	// missing registry fatal, preserving the identity-loss guard.
+	for _, entry := range entries {
+		if entry.Name() == ".imap-lock" {
+			continue
+		}
+		if entry.Name() == "lost+found" && entry.IsDir() {
+			contents, err := readDir(root, entry.Name())
+			if err == nil && len(contents) == 0 {
+				continue
+			}
+		}
 		return nil, fmt.Errorf("maildir: root registry missing; refusing possible identity reuse")
 	}
 	registry := &rootRegistry{Version: 1, Accounts: make(map[string]bool)}
@@ -680,6 +708,37 @@ func (a *account) discover(path string, parts []string, names *[]string) error {
 			return err
 		}
 		if err := a.discover(filepath.Join(path, entry.Name()), append(append([]string(nil), parts...), segment), names); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Check the complete relocation before preparing a roll-forward journal.
+func checkMergeTree(root *os.Root, from, to string) error {
+	entries, err := readDir(root, from)
+	if err != nil {
+		return err
+	}
+	info, err := root.Lstat(to)
+	destinationMissing := os.IsNotExist(err)
+	if err != nil && !destinationMissing {
+		return err
+	}
+	if !destinationMissing && !info.IsDir() {
+		return fmt.Errorf("maildir: rename destination is not a directory")
+	}
+	for _, entry := range entries {
+		src, dst := filepath.Join(from, entry.Name()), filepath.Join(to, entry.Name())
+		if entry.IsDir() {
+			if err := checkMergeTree(root, src, dst); err != nil {
+				return err
+			}
+		} else if !entry.Type().IsRegular() {
+			return fmt.Errorf("maildir: rename source contains a nonregular file")
+		} else if _, err := root.Lstat(dst); err == nil {
+			return fmt.Errorf("maildir: rename destination collision")
+		} else if !os.IsNotExist(err) {
 			return err
 		}
 	}

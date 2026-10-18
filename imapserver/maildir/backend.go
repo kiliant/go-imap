@@ -79,6 +79,8 @@ type account struct {
 	existing bool
 	watchers map[uint32]map[*selected]*imapserver.Updater
 	failure  error
+	// deliveryError records skipped new/ entries under the account gate.
+	deliveryError error
 }
 
 // Open opens or creates root, locks it, recovers pending transactions, and
@@ -152,8 +154,6 @@ func Open(ctx context.Context, root string, options *Options) (_ *Backend, retEr
 	if err := checkedPath(r, ".imap-lock"); err != nil {
 		return nil, err
 	}
-	_, lockStatErr := r.Lstat(".imap-lock")
-	freshRoot := os.IsNotExist(lockStatErr)
 	b.lock, err = r.OpenFile(".imap-lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -161,7 +161,10 @@ func Open(ctx context.Context, root string, options *Options) (_ *Backend, retEr
 	if err := lockFile(b.lock); err != nil {
 		return nil, fmt.Errorf("maildir: root is already locked or locking is unavailable: %w", err)
 	}
-	registry, err := loadRootRegistry(r, freshRoot)
+	if err := cleanupAtomicFiles(r, ".imap-root.json"); err != nil {
+		return nil, err
+	}
+	registry, err := loadRootRegistry(r)
 	if err != nil {
 		return nil, err
 	}

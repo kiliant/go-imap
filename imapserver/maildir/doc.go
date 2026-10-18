@@ -13,8 +13,11 @@
 // The root and its structural directories belong exclusively to this backend.
 // Do not rename them, edit cur/ files, or restore an older live snapshot while
 // it is open. External delivery may write regular files in a mailbox's tmp/
-// and atomically rename them into new/. Symlinks and nonregular message files
-// are refused. Account-root handles constrain file access; Go 1.24 uses a
+// and atomically rename them into new/. Invalid or unreadable entries in new/
+// are skipped and left for repair; valid deliveries continue. Initial skips
+// appear in LastPollError, and polling also reports them through OnPollError.
+// Symlinks and nonregular stored messages are refused. Account-root handles
+// constrain file access; Go 1.24 uses a
 // checked-path rename fallback because os.Root.Rename was added in Go 1.25.
 // That fallback also requires the root's ancestor paths to remain unchanged
 // while open, in addition to structural ownership. Passwords are
@@ -40,13 +43,17 @@
 // size, sections, ENVELOPE, BODYSTRUCTURE and SEARCH use the same stored bytes.
 //
 // .imap-root.json registers previously initialized accounts. Each account's
-// .imap-identity.json is a monotonic UIDVALIDITY allocator, separate from
+// .imap-identity.json is a monotonic UIDVALIDITY allocator, seeded from Unix
+// time for new accounts and separate from
 // recoverable .imap-state.json. Missing account state reconstructs messages
 // from cur/ and new/ with fresh UIDVALIDITY; keywords, metadata, subscriptions
 // and tombstones lost with that state cannot be recovered. Missing registered
 // account directories or allocators, or a missing existing root registry, fail
 // closed rather than risk reusing an identity. Preserve the complete root in
 // backups; erasing the entire root is provisioning a different store.
+// Interrupted first-time setup can resume when only the root lock, an empty
+// lost+found directory and unpublished atomic-write temporary files remain.
+// Recognized atomic-write temporaries are removed under the root lock.
 //
 // Account state is version 2. It holds mailbox identities, UIDNEXT, message
 // mappings, flags/keywords, modification sequences, metadata, subscriptions and

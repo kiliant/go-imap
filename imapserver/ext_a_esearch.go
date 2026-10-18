@@ -154,6 +154,11 @@ func writeSearchResponse(c *conn, command *queuedCommand, args *searchArgs, uids
 
 func writeESearchResponse(c *conn, command *queuedCommand, args *searchArgs, numbers []uint32) error {
 	requested := searchReturnSet(args)
+	// RFC 5182: SAVE alone updates the saved set without returning search
+	// data. Other options (including CONTEXT's UPDATE) keep their responses.
+	if len(requested) == 1 && requested[searchReturnSave] {
+		return nil
+	}
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().
 		Special('(').Atom("TAG").SP().Quoted(command.tag).Special(')')
 	if commandUsesUIDs(command) {
@@ -186,8 +191,8 @@ func writeESearchResponse(c *conn, command *queuedCommand, args *searchArgs, num
 }
 
 // searchReturnSet resolves which data items an ESEARCH response carries.
-// RFC 4731 section 3.1: an empty RETURN list means ALL, and so does a list that
-// asks only for SAVE, since SAVE alone produces no response data.
+// RFC 4731 section 3.1: an empty RETURN list means ALL. SAVE alone has no
+// response data and must not acquire an implicit ALL (RFC 5182).
 func searchReturnSet(args *searchArgs) map[string]bool {
 	requested := make(map[string]bool, len(args.returnOptions))
 	for _, option := range args.returnOptions {
@@ -195,7 +200,7 @@ func searchReturnSet(args *searchArgs) map[string]bool {
 	}
 	if !requested[searchReturnMin] && !requested[searchReturnMax] &&
 		!requested[searchReturnAll] && !requested[searchReturnCount] &&
-		!requested[searchReturnPartial] && !requested[searchReturnUpd] {
+		!requested[searchReturnPartial] && !requested[searchReturnUpd] && !requested[searchReturnSave] {
 		requested[searchReturnAll] = true
 	}
 	return requested

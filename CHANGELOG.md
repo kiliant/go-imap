@@ -170,6 +170,20 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** NOMODSEQ mailboxes refuse MODSEQ, CHANGEDSINCE and UNCHANGEDSINCE before backend access; selecting a clock-tracking mailbox restores support. No exported API change. (#91)
 
+- **imapserver:** Plain STORE reports MODIFIED in message sequence numbers; UID STORE continues to report UIDs, including after expunges. No exported API change. (#89)
+
+- **imapserver:** SAVE-only SEARCH updates the saved result without emitting SEARCH/ESEARCH data, in UID, rev1 and rev2 sessions. No exported API change. (#90)
+
+- **imapserver/maildir:** Preflight RENAME hierarchy collisions before preparing a journal, preserving account reopenability after refusal. No exported API change. (#92)
+
+- **imapserver/maildir:** Fresh UIDVALIDITY allocators start at current Unix time; persisted allocator values remain unchanged. No exported API change. (#93)
+
+- **imapserver/maildir:** Resume interrupted initial setup and clean unpublished atomic-write temporaries while preserving registered-identity checks. No exported API change. (#95)
+
+- **imapserver/maildir:** Skip invalid or unreadable new/ deliveries in place, preserving valid ingestion and reopenability with observable diagnostics. No exported API change. (#96)
+
+- **imapserver/maildir:** Convert INTERNALDATE without UnixNano overflow and refuse dates the filesystem cannot represent. No exported API change. (#94)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
