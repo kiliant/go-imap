@@ -479,6 +479,9 @@ func mergeTree(root *os.Root, from, to string) error {
 }
 
 func (a *account) load() error {
+	if err := cleanupAtomicFiles(a.root, stateFile, journalFile, identityFile); err != nil {
+		return err
+	}
 	stateRaw, stateErr := readFile(a.root, stateFile)
 	var state *accountState
 	var err error
@@ -624,7 +627,7 @@ func (s *rootRegistry) UnmarshalJSON(raw []byte) error {
 	s.Extra = extra
 	return err
 }
-func loadRootRegistry(root *os.Root, fresh bool) (*rootRegistry, error) {
+func loadRootRegistry(root *os.Root) (*rootRegistry, error) {
 	raw, err := readFile(root, ".imap-root.json")
 	if err == nil {
 		var registry rootRegistry
@@ -643,7 +646,19 @@ func loadRootRegistry(root *os.Root, fresh bool) (*rootRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !fresh || len(entries) != 1 || entries[0].Name() != ".imap-lock" {
+	// The lock is created before the registry, so its presence says nothing
+	// about whether setup completed. Any account directory still makes a
+	// missing registry fatal, preserving the identity-loss guard.
+	for _, entry := range entries {
+		if entry.Name() == ".imap-lock" {
+			continue
+		}
+		if entry.Name() == "lost+found" && entry.IsDir() {
+			contents, err := readDir(root, entry.Name())
+			if err == nil && len(contents) == 0 {
+				continue
+			}
+		}
 		return nil, fmt.Errorf("maildir: root registry missing; refusing possible identity reuse")
 	}
 	registry := &rootRegistry{Version: 1, Accounts: make(map[string]bool)}

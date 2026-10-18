@@ -283,3 +283,35 @@ func (r contextReader) Read(buf []byte) (int, error) {
 	}
 	return r.source.Read(buf)
 }
+
+// Remove only unpublished atomic-write temporaries while holding the root lock.
+func cleanupAtomicFiles(root *os.Root, paths ...string) error {
+	entries, err := readDir(root, ".")
+	if err != nil {
+		return err
+	}
+	removed := false
+	for _, entry := range entries {
+		for _, path := range paths {
+			suffix, ok := strings.CutPrefix(entry.Name(), path+".tmp-")
+			if !ok || len(suffix) != 32 {
+				continue
+			}
+			if _, err := hex.DecodeString(suffix); err != nil {
+				continue
+			}
+			if !entry.Type().IsRegular() {
+				return fmt.Errorf("maildir: atomic-write temporary is not a regular file")
+			}
+			if err := root.Remove(entry.Name()); err != nil {
+				return err
+			}
+			removed = true
+			break
+		}
+	}
+	if removed {
+		return syncDir(root, ".")
+	}
+	return nil
+}
