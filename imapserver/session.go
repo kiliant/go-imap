@@ -279,20 +279,72 @@ func (u *updaterCore) close() {
 	u.mu.Unlock()
 }
 
+// queuedExpunges packs consecutive removals inside one atomic batch. It is
+// private to the queue: application still removes each UID in its original
+// order and emits the same individually ordered EXPUNGE responses.
+type queuedExpunges struct{ uids []imap.UID }
+
+func (*queuedExpunges) update() {}
+
+// updateRun returns the next run that can share storage without moving an
+// update across another kind. Empty or typed-nil updates remain barriers so
+// compaction cannot hide malformed backend input.
+func updateRun(changes []Update) (count, uids int) {
+	switch changes[0].(type) {
+	case *UpdateAdd:
+		for _, change := range changes {
+			add, ok := change.(*UpdateAdd)
+			if !ok || add == nil || len(add.UIDs) == 0 {
+				break
+			}
+			count++
+			uids += len(add.UIDs)
+		}
+	case *UpdateExpunge:
+		for _, change := range changes {
+			expunge, ok := change.(*UpdateExpunge)
+			if !ok || expunge == nil {
+				break
+			}
+			count++
+			uids++
+		}
+	}
+	if count == 0 {
+		count = 1
+	}
+	return count, uids
+}
+
 func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
+	// Size the interface slice for the compact result, not the backend's
+	// original per-message updates; retaining its capacity defeats compaction.
+	count := 0
+	for remaining := batch.Changes; len(remaining) != 0; count++ {
+		n, _ := updateRun(remaining)
+		remaining = remaining[n:]
+	}
 	copyBatch := &UpdateBatch{
 		Before:  batch.Before,
 		After:   batch.After,
 		Origin:  batch.Origin,
-		Changes: make([]Update, 0, len(batch.Changes)),
+		Changes: make([]Update, 0, count),
 	}
-	for _, change := range batch.Changes {
-		switch change := change.(type) {
+	for remaining := batch.Changes; len(remaining) != 0; {
+		n, uidCount := updateRun(remaining)
+		run := remaining[:n]
+		remaining = remaining[n:]
+		switch change := run[0].(type) {
 		case *UpdateAdd:
 			if change == nil {
 				copyBatch.Changes = append(copyBatch.Changes, change)
 			} else {
-				copyBatch.Changes = append(copyBatch.Changes, &UpdateAdd{UIDs: slices.Clone(change.UIDs)})
+				uids := make([]imap.UID, uidCount)
+				at := 0
+				for _, item := range run {
+					at += copy(uids[at:], item.(*UpdateAdd).UIDs)
+				}
+				copyBatch.Changes = append(copyBatch.Changes, &UpdateAdd{UIDs: uids})
 			}
 		case *UpdateFlags:
 			if change == nil {
@@ -309,8 +361,20 @@ func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
 		case *UpdateExpunge:
 			if change == nil {
 				copyBatch.Changes = append(copyBatch.Changes, change)
+			} else if n > 1 {
+				uids := make([]imap.UID, n)
+				for i, item := range run {
+					uids[i] = item.(*UpdateExpunge).UID
+				}
+				copyBatch.Changes = append(copyBatch.Changes, &queuedExpunges{uids: uids})
 			} else {
 				copyBatch.Changes = append(copyBatch.Changes, &UpdateExpunge{UID: change.UID})
+			}
+		case *queuedExpunges:
+			if change == nil {
+				copyBatch.Changes = append(copyBatch.Changes, change)
+			} else {
+				copyBatch.Changes = append(copyBatch.Changes, &queuedExpunges{uids: slices.Clone(change.uids)})
 			}
 		case *UpdateVanished:
 			if change == nil {
@@ -364,8 +428,8 @@ func (q *updateQueue) push(batch *UpdateBatch) error {
 		}
 		return ErrUpdateOverflow
 	}
-	// Bound the original value before cloning it: otherwise a backend could
-	// force an allocation larger than the queue's byte limit on the Push path.
+	// Bound compact retained storage before allocating it. The backend's
+	// original per-message interface slice need not be duplicated wholesale.
 	q.items = append(q.items, cloneUpdateBatch(batch))
 	q.bytes += size
 	q.mu.Unlock()
@@ -487,7 +551,7 @@ func batchRemovesMessages(batch *UpdateBatch) bool {
 	}
 	for _, change := range batch.Changes {
 		switch change.(type) {
-		case *UpdateExpunge, *UpdateVanished:
+		case *UpdateExpunge, *queuedExpunges, *UpdateVanished:
 			return true
 		}
 	}
@@ -505,17 +569,23 @@ func (q *updateQueue) close() {
 	q.mu.Unlock()
 }
 
+// updateBatchSize accounts for the compact storage cloneUpdateBatch retains.
 func updateBatchSize(batch *UpdateBatch) int64 {
 	const batchOverhead = 64
 	if batch == nil {
 		return batchOverhead
 	}
 	size := int64(batchOverhead + len(batch.Before) + len(batch.After))
-	for _, change := range batch.Changes {
+	for remaining := batch.Changes; len(remaining) != 0; {
+		n, uidCount := updateRun(remaining)
+		change := remaining[0]
+		remaining = remaining[n:]
 		switch change := change.(type) {
 		case *UpdateAdd:
 			if change != nil {
-				size += 32 + int64(len(change.UIDs))*4
+				size += 32 + int64(uidCount)*4
+			} else {
+				size += 16
 			}
 		case *UpdateFlags:
 			if change != nil {
@@ -523,6 +593,8 @@ func updateBatchSize(batch *UpdateBatch) int64 {
 				for _, flag := range change.Flags {
 					size += int64(len(flag))
 				}
+			} else {
+				size += 16
 			}
 		case *UpdateMailboxFlags:
 			if change != nil {
@@ -530,12 +602,26 @@ func updateBatchSize(batch *UpdateBatch) int64 {
 				for _, flag := range change.Flags {
 					size += int64(len(flag))
 				}
+			} else {
+				size += 16
 			}
 		case *UpdateExpunge:
-			size += 24
+			if n > 1 {
+				size += 32 + int64(uidCount)*4
+			} else {
+				size += 24
+			}
+		case *queuedExpunges:
+			if change != nil {
+				size += 32 + int64(len(change.uids))*4
+			} else {
+				size += 16
+			}
 		case *UpdateVanished:
 			if change != nil {
 				size += 32 + int64(len(change.UIDs))*8
+			} else {
+				size += 16
 			}
 		default:
 			size += 64
@@ -805,16 +891,29 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 				s.flags = slices.Clone(change.Flags)
 				delivered = append(delivered, deliveredUpdate{kind: updateMailboxFlags, flags: slices.Clone(change.Flags)})
 			}
-		case *UpdateExpunge:
-			if change == nil {
-				return nil, fmt.Errorf("%w: nil EXPUNGE update", ErrRevisionMismatch)
+		case *UpdateExpunge, *queuedExpunges:
+			var uids []imap.UID
+			switch change := change.(type) {
+			case *UpdateExpunge:
+				if change != nil {
+					uids = []imap.UID{change.UID}
+				}
+			case *queuedExpunges:
+				if change != nil {
+					uids = change.uids
+				}
 			}
-			seq, ok := s.removeUID(change.UID)
-			if !ok {
-				return nil, fmt.Errorf("%w: expunge for unknown UID %d", ErrRevisionMismatch, change.UID)
+			if len(uids) == 0 {
+				return nil, fmt.Errorf("%w: empty EXPUNGE update", ErrRevisionMismatch)
 			}
-			if !(suppress && (accounting.effect == effectExpunge || accounting.effect == effectMoveOut)) {
-				delivered = append(delivered, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: change.UID})
+			for _, uid := range uids {
+				seq, ok := s.removeUID(uid)
+				if !ok {
+					return nil, fmt.Errorf("%w: expunge for unknown UID %d", ErrRevisionMismatch, uid)
+				}
+				if !(suppress && (accounting.effect == effectExpunge || accounting.effect == effectMoveOut)) {
+					delivered = append(delivered, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
+				}
 			}
 		case *UpdateVanished:
 			if change == nil || change.UIDs.IsEmpty() {
