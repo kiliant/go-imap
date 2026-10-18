@@ -190,6 +190,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
 
+- **imapserver:** GETMETADATA MAXSIZE filters values in the framework and
+  reports the largest omitted size with the required METADATA LONGENTRIES
+  response code. MAXSIZE 0 retains empty values; DEPTH and server/mailbox
+  scopes remain intact. Correct the MetadataOptions.MaxSize documentation.
+  No exported signatures change. (#54)
+
 - **imapserver:** wait for the reader to settle its pending-input flag before
   executing a handed-off command. A fast UID SEARCH could otherwise complete
   while its own handoff looked like pipelined input, withholding an EXPUNGE

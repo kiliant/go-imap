@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -26,6 +27,8 @@ type MetadataSession interface {
 	// GetMetadata reads the named entries. An entry that does not exist is
 	// omitted from the result rather than reported as an error: RFC 5464
 	// section 4.2.2 makes absence a nil value, not a failure.
+	// The framework may request values without MAXSIZE so it can compute the
+	// largest omitted value and apply the client's limit to its wire response.
 	GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *MetadataOptions) (*imap.MailboxMetadata, error)
 	// SetMetadata writes entries. An entry carrying a nil value is a deletion,
 	// which RFC 5464 section 4.3 defines as the only way to remove one.
@@ -40,11 +43,12 @@ type MetadataOptions struct {
 	// "0", "1" or "infinity" per RFC 5464 section 4.2.2. Empty means "0".
 	Depth string `imapfeature:"metadata"`
 	// MaxSize suppresses values larger than this many octets.
-	// RFC 5464 section 4.2.2.
+	// RFC 5464 section 4.2.1.
 	//
 	// HasMaxSize carries presence separately: MAXSIZE 0 is a real request —
-	// it suppresses every value and asks for them all to be named in
-	// METADATA LONGENTRIES — and is not the same as no MAXSIZE at all.
+	// it suppresses nonempty values, retaining present empty values. The
+	// framework reports the largest omitted size with METADATA LONGENTRIES.
+	// It is not the same as no MAXSIZE at all.
 	MaxSize uint32 `imapfeature:"metadata"`
 	// HasMaxSize reports whether the client supplied MAXSIZE.
 	HasMaxSize bool `imapfeature:"metadata"`
@@ -226,14 +230,38 @@ func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 		}
 	}
 	options := args.options
+	// MetadataSession returns only values, with no omitted-size summary.
+	// Fetch the requested depth without a size filter, then enforce MAXSIZE
+	// here so even an existing backend supplies enough information for the
+	// mandatory LONGENTRIES response (RFC 5464 section 4.2.1).
+	options.HasMaxSize, options.MaxSize = false, 0
 	data, err := session.GetMetadata(ctx, args.mailbox, args.entries, &options)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if data != nil && len(data.Entries) != 0 {
+	var entries []imap.MetadataEntry
+	var longest uint64
+	if data != nil {
+		entries = data.Entries
+		if args.options.HasMaxSize {
+			// Do not reuse the backing slice: the result belongs to the backend.
+			entries = make([]imap.MetadataEntry, 0, len(data.Entries))
+			for _, entry := range data.Entries {
+				if entry.Value != nil && uint64(len(*entry.Value)) > uint64(args.options.MaxSize) {
+					longest = max(longest, uint64(len(*entry.Value)))
+					continue
+				}
+				entries = append(entries, entry)
+			}
+		}
+	}
+	if longest > 1<<32-1 {
+		return writeBackendError(c, command.tag, command.name, commandLimitError("METADATA value size exceeds protocol number range"))
+	}
+	if len(entries) != 0 {
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("METADATA").SP().Mailbox(args.mailbox).SP().
-			List(len(data.Entries), func(i int) {
-				entry := data.Entries[i]
+			List(len(entries), func(i int) {
+				entry := entries[i]
 				c.encoder.Astring(string(entry.Name)).SP()
 				if entry.Value == nil {
 					c.encoder.NIL()
@@ -244,6 +272,9 @@ func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 		if err := c.encoder.Flush(); err != nil {
 			return err
 		}
+	}
+	if longest != 0 {
+		return writeTaggedCondition(c, command.tag, "OK", imap.CodeMetadata, "LONGENTRIES "+strconv.FormatUint(longest, 10), command.name+" completed")
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }
