@@ -64,7 +64,11 @@
 // permits, is an object {"base64": ...}, so binary octets survive. Unknown fields
 // at root/account/mailbox/message/tombstone boundaries survive rewrites. Newer
 // versions are refused without rewriting those files. Identity/root registry
-// formats are version 1. Metadata files are limited to 256 MiB when read.
+// formats are version 1. State, journal, identity and root-registry files are
+// limited to 256 MiB on both reads and writes. A mutation whose serialized
+// journal exceeds that budget returns NO [LIMIT] before preparing a transaction,
+// leaving the previous state usable. Tombstone history is not automatically
+// pruned to fit this budget.
 //
 // Mutations first fsync staged message data, then atomically publish and fsync
 // .imap-journal.json. Recovery rolls this prepared transaction forward using

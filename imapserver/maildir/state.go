@@ -19,6 +19,7 @@ const stateVersion = 2
 const stateFile = ".imap-state.json"
 const journalFile = ".imap-journal.json"
 const identityFile = ".imap-identity.json"
+const maxStateFileBytes = 256 << 20
 
 type extraFields map[string]json.RawMessage
 
@@ -250,6 +251,12 @@ func (a *account) newMailbox() (*mailboxState, error) {
 }
 
 func (a *account) commit(next *accountState, actions []fileAction) error {
+	return a.commitWithLimit(next, actions, maxStateFileBytes)
+}
+
+// The production budget is the read limit. Taking it as an argument keeps
+// boundary/recovery tests small while exercising the actual commit path.
+func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxBytes int64) error {
 	if a.state == nil || !sameMailboxNames(a.state, next) {
 		if err := a.checkMailboxLayout(next); err != nil {
 			return noError(imap.CodeCannot, err.Error())
@@ -278,6 +285,13 @@ func (a *account) commit(next *accountState, actions []fileAction) error {
 	j := diskJournal{Version: stateVersion, State: next, Actions: actions}
 	raw, err := json.Marshal(j)
 	if err != nil {
+		return err
+	}
+	// The journal contains the complete state plus its filesystem actions, so
+	// bounding it also bounds the state recovery will publish. Refuse before
+	// any prepared transaction exists; an ordinary LIMIT must not poison the
+	// account or leave filesystem actions for a future Open to replay.
+	if err := checkStateFileSize(int64(len(raw)), maxBytes); err != nil {
 		return err
 	}
 	// Once the journal is durable, recovery must roll forward. Any later error
