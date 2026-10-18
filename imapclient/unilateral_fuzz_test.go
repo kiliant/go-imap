@@ -53,17 +53,15 @@ func FuzzUnilateralStream(f *testing.F) {
 			List:           func(*ListData) {},
 			Metadata:       func(*imap.MetadataChange) {},
 		}})
+		defer c.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = c.WaitGreeting(ctx, nil)
 		// The server side closes after writing, so the reader must finish:
 		// either it rejected the stream or it reached EOF. Waiting for it is
 		// what turns a parser that loops into a fuzz failure.
-		select {
-		case <-c.readerDone:
-		case <-ctx.Done():
+		if !fuzzReaderFinished(ctx, c.readerDone) {
 			t.Fatal("reader did not finish on a closed connection")
 		}
-		_ = c.Close()
 	})
 }
