@@ -560,6 +560,20 @@ func batchRemovesMessages(batch *UpdateBatch) bool {
 	return false
 }
 
+func (q *updateQueue) hasRemovals() bool {
+	if q == nil {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, batch := range q.items {
+		if batchRemovesMessages(batch) {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *updateQueue) close() {
 	if q == nil {
 		return

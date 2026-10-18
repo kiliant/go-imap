@@ -997,7 +997,12 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 // this code over the larger FETCH values when completing the command.
 func (c *conn) writeDeferredModSeqFence() {
 	selected := c.state.selected
-	if selected == nil || len(selected.withheld) == 0 || !condStoreMailboxEnabled(c) {
+	if selected == nil || !condStoreMailboxEnabled(c) {
+		return
+	}
+	// A backend may emit a FETCH and then fail before the handler's normal
+	// drain. Its already-published removal still needs to fence that response.
+	if len(selected.withheld) == 0 && !selected.queue.hasRemovals() {
 		return
 	}
 	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "removal announcements pending")
