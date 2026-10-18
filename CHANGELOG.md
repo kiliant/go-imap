@@ -182,6 +182,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
 
+- **imapserver:** wait for the reader to settle its pending-input flag before
+  executing a handed-off command. A fast UID SEARCH could otherwise complete
+  while its own handoff looked like pipelined input, withholding an EXPUNGE
+  past the command's legal delivery point. The wait is cancelable; actual
+  pipelines still defer unsolicited removals. No exported API change. (#73)
+
 - **imapserver:** Consecutive additions and expunges use compact storage within
   atomic update batches, avoiding queue overflow caused by per-message object
   overhead during bulk delivery and removal. EXPUNGE ordering, revision/origin

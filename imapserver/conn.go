@@ -308,12 +308,15 @@ func (c *conn) readCommands() error {
 		// literal has its payload read by the handler, on the event loop, from
 		// this same bufio.Reader. Reading Buffered() afterwards is a data race,
 		// which is exactly what the race detector said the first time.
+		settled := make(chan struct{})
+		command.readerSettled = settled
 		c.inputPending.Store(true)
 		pending := decoder.Buffered() > 0
 		if err := c.queueCommand(command); err != nil {
 			return err
 		}
 		c.inputPending.Store(pending)
+		close(settled)
 		if commandIsBarrier(command) {
 			if err := c.waitBarrier(decoder, command); err != nil {
 				return err
@@ -598,6 +601,17 @@ func (c *conn) eventLoop() (retErr error) {
 }
 
 func (c *conn) execute(command *queuedCommand) error {
+	// A channel send can wake this goroutine before the reader resumes after
+	// queueCommand. Wait until it publishes the settled pending-input state;
+	// otherwise a fast UID command can complete while its own handoff still
+	// looks like a pipeline, missing its only legal EXPUNGE delivery point.
+	if command.readerSettled != nil {
+		select {
+		case <-command.readerSettled:
+		case <-c.ctx.Done():
+			return context.Cause(c.ctx)
+		}
+	}
 	// A command is in progress from here until its tagged response, which is
 	// what makes a drain in between a legal moment to deliver an expunge. Set
 	// before the early returns so a BAD is not a window either. It ends at the
