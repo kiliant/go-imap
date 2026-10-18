@@ -634,7 +634,7 @@ func TestDeliverySymlinkSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := openTest(t, root)
-	if next.LastPollError() == nil || len(next.accounts["alice"].state.Mailboxes["INBOX"].Messages) != 0 {
+	if len(next.PollFailures()) == 0 || len(next.accounts["alice"].state.Mailboxes["INBOX"].Messages) != 0 {
 		t.Fatal("reopen did not skip delivery symlink with a diagnostic")
 	}
 	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
