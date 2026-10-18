@@ -42,7 +42,8 @@ type Limits struct {
 	MaxQueuedCommandBytes int64
 	// MaxCommands bounds the lifetime command count of one connection.
 	MaxCommands int
-	// MaxQueuedUpdates bounds pending backend update batches.
+	// MaxQueuedUpdates bounds pending backend update batches, including
+	// retained removal announcements the protocol does not yet permit.
 	MaxQueuedUpdates int
 	// MaxQueuedUpdateBytes bounds their retained payload bytes in aggregate.
 	MaxQueuedUpdateBytes int64

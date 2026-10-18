@@ -800,8 +800,17 @@ replacement selection, session close, or connection teardown — whichever comes
 first. (An earlier revision said "every path — success, error and panic", which
 contradicted that lifetime.)
 
-**Ordering.** Per selection, updates are delivered in the order pushed. Ordering
-across selections is not defined and must not be relied on.
+**Ordering.** Per selection, backend revisions and origin accounting are applied
+in the order pushed. When the protocol forbids removal announcements, the
+framework keeps the removed UIDs in the client's sequence view while applying
+later additions and flag changes against that view. The removals are announced
+in their original order during a command that permits them, and only then does
+the client view renumber. Retained removal batches share the configured update
+queue limits; delivered additions and flags no longer consume that budget.
+For CONDSTORE, an explicit HIGHESTMODSEQ checkpoint from the selection snapshot
+prevents later per-message MODSEQ values from advancing resynchronisation past
+a withheld removal (RFC 7162 sections 3.2 and 6). Ordering across selections is
+not defined and must not be relied on.
 
 **Blocking.** Pushes are non-blocking while the bounded queue has room. The queue
 is bounded by **payload bytes as well as item count** — a flag update carrying a

@@ -680,6 +680,7 @@ func (c *conn) writeGreeting() error {
 }
 
 func (c *conn) writeTagged(tag, status, text string) error {
+	c.writeDeferredModSeqFence()
 	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{Status: status, Text: imapwire.RespText{Text: text}}).CRLF()
 	return c.encoder.Flush()
@@ -702,9 +703,10 @@ func (c *conn) completeCommand() {
 
 // drainBeforeCompletion is the in-progress delivery point of FETCH, STORE,
 // SEARCH, SORT and THREAD: after their untagged responses, before their tagged
-// one. It drains only for the UID forms. §7.4.1 forbids an EXPUNGE while
-// responding to the plain forms, and RFC 9051 §7.5.1 permits one "during a UID
-// command"; imaptest classifies UID FETCH the same way.
+// one. The plain forms retain removals while delivering additions and flags.
+// §7.4.1 forbids an EXPUNGE while responding to the plain forms, and RFC 9051
+// §7.5.1 permits one "during a UID command"; imaptest classifies UID FETCH the
+// same way.
 //
 // Without it the UID forms would have no legal delivery point at all: their
 // pre-command drain defers because "UID" is sequence-sensitive, and the drain
@@ -714,7 +716,10 @@ func (c *conn) completeCommand() {
 // queued behind one.
 func (c *conn) drainBeforeCompletion(command *queuedCommand, accounting updateAccounting) error {
 	if !commandUsesUIDs(command) {
-		return nil
+		// Apply additions and flags before completion, retaining the old
+		// sequence positions of removals the command may not announce.
+		c.executingSeqSensitive = true
+		defer func() { c.executingSeqSensitive = false }()
 	}
 	return c.drainUpdates(accounting)
 }
@@ -907,41 +912,18 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		}
 		c.updateEffects[accounting.origin] = accounting.effect
 	}
-	// Left queued, deliberately: what is not popped does not advance the
-	// framework's sequence view past the client's either. Popping and
-	// withholding the responses would produce exactly the desynchronisation
-	// this prevents.
-	//
-	// The prefix is the whole of the subtlety. Batches are ordered, and applying
-	// a later one without its predecessor would move the sequence view across a
-	// change the client was never told about — so one batch that must wait stops
-	// every batch behind it, whatever those contain.
+	// Revisions always advance in order. Only removal announcements and the
+	// corresponding client sequence-number changes wait; later EXISTS and
+	// FLAGS updates use that unchanged client view.
+	deferred := mode == drainModeDeferred && c.expungeDeliveryDeferred()
 	var batches []*UpdateBatch
-	switch mode {
-	case drainModeThroughOrigin:
+	if mode == drainModeThroughOrigin {
 		batches = selected.queue.popThroughOrigin(accounting.origin)
-	case drainModeAllowRemovals:
-		batches = selected.queue.popWhile(func(*UpdateBatch) bool { return true })
-	default:
-		deferred := c.expungeDeliveryDeferred()
-		batches = selected.queue.popWhile(func(batch *UpdateBatch) bool {
-			if !deferred {
-				return true
-			}
-			// This command's own changes still go out: the client caused them and
-			// has already been told, and this drain is what suppresses the duplicate.
-			if batch.Origin != 0 && batch.Origin == accounting.origin {
-				return true
-			}
-			// Only removals are forbidden here. EXISTS and FLAGS may be sent at any
-			// time, and holding them behind an unrelated expunge would delay every
-			// new-message notification the client is waiting for.
-			return !batchRemovesMessages(batch)
-		})
+	} else {
+		batches = selected.queue.popAll()
 	}
-	// A command may publish no batch at all. Conversely, its batch may still be
-	// behind the deferred prefix. Keep accounting only for origins that remain
-	// queued; applied origins and no-op commands are finished.
+	// Keep accounting only for origins not yet applied. Withheld removals have
+	// already passed origin accounting and do not retain STORE command entries.
 	queuedOrigins := selected.queue.origins()
 	defer func() {
 		for origin := range c.updateEffects {
@@ -950,13 +932,21 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			}
 		}
 	}()
-	if len(batches) == 0 {
+	if len(batches) == 0 && (deferred || len(selected.withheld) == 0) {
 		return nil
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
 	// which of their matches went away. See ext_e_context.go.
 	var removed []imap.UID
 	var pending []deliveredUpdate
+	if !deferred && len(selected.withheld) != 0 {
+		var err error
+		pending, err = selected.deliverWithheldRemovals()
+		if err != nil {
+			c.failFatal(err)
+			return err
+		}
+	}
 	for _, batch := range batches {
 		batchAccounting := updateAccounting{
 			origin: batch.Origin,
@@ -965,7 +955,7 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		if batch.Origin != 0 && batch.Origin == accounting.origin {
 			batchAccounting = accounting
 		}
-		updates, err := selected.applyBatch(batch, batchAccounting)
+		updates, err := selected.applyBatchDeferringRemovals(batch, batchAccounting, deferred)
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
 			// knows the selected mailbox's sequence view. Continuing would risk
@@ -976,8 +966,18 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		pending = append(pending, updates...)
 	}
 	for _, update := range coalesceWireUpdates(pending) {
-		if update.kind == updateMessageExpunge || update.kind == updateMessageVanished {
+		if update.kind == updateMessageExpunge {
 			removed = append(removed, update.uid)
+		} else if update.kind == updateMessageVanished {
+			// Only registered matches need individual notification; do not
+			// expand a possibly enormous VANISHED UID range.
+			for _, held := range selected.contexts {
+				for uid := range held.uids {
+					if update.uids.Contains(uid) {
+						removed = append(removed, uid)
+					}
+				}
+			}
 		}
 		if err := c.writeUpdate(update); err != nil {
 			return err
@@ -990,6 +990,22 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	// after the ordinary updates so the client sees the expunge before the
 	// REMOVEFROM that explains it.
 	return notifySearchContexts(c, removed)
+}
+
+// RFC 7162 sections 3.2 and 6 require an explicit safe checkpoint when
+// higher per-message MODSEQs pass a delayed removal. A client MUST prefer
+// this code over the larger FETCH values when completing the command.
+func (c *conn) writeDeferredModSeqFence() {
+	selected := c.state.selected
+	if selected == nil || !condStoreMailboxEnabled(c) {
+		return
+	}
+	// A backend may emit a FETCH and then fail before the handler's normal
+	// drain. Its already-published removal still needs to fence that response.
+	if len(selected.withheld) == 0 && !selected.queue.hasRemovals() {
+		return
+	}
+	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "removal announcements pending")
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {

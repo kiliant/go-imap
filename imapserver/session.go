@@ -392,14 +392,16 @@ func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
 }
 
 type updateQueue struct {
-	mu       sync.Mutex
-	items    []*UpdateBatch
-	bytes    int64
-	maxItems int
-	maxBytes int64
-	signal   chan struct{}
-	overflow func()
-	closed   bool
+	mu        sync.Mutex
+	items     []*UpdateBatch
+	bytes     int64
+	heldItems int
+	heldBytes int64
+	maxItems  int
+	maxBytes  int64
+	signal    chan struct{}
+	overflow  func()
+	closed    bool
 }
 
 func newUpdateQueue(maxItems int, maxBytes int64, overflow func()) *updateQueue {
@@ -418,7 +420,7 @@ func (q *updateQueue) push(batch *UpdateBatch) error {
 		q.mu.Unlock()
 		return ErrUpdaterClosed
 	}
-	if size < 0 || (q.maxItems >= 0 && len(q.items) >= q.maxItems) ||
+	if size < 0 || (q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems) ||
 		(q.maxBytes >= 0 && size > q.maxBytes-q.bytes) {
 		overflow := q.overflow
 		q.closed = true
@@ -444,7 +446,7 @@ func (q *updateQueue) popAll() []*UpdateBatch {
 	q.mu.Lock()
 	items := q.items
 	q.items = nil
-	q.bytes = 0
+	q.bytes = q.heldBytes
 	q.mu.Unlock()
 	return items
 }
@@ -558,6 +560,20 @@ func batchRemovesMessages(batch *UpdateBatch) bool {
 	return false
 }
 
+func (q *updateQueue) hasRemovals() bool {
+	if q == nil {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, batch := range q.items {
+		if batchRemovesMessages(batch) {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *updateQueue) close() {
 	if q == nil {
 		return
@@ -566,6 +582,40 @@ func (q *updateQueue) close() {
 	q.closed = true
 	q.items = nil
 	q.bytes = 0
+	q.heldBytes, q.heldItems = 0, 0
+	q.mu.Unlock()
+}
+
+// Withheld removals share the ordinary queue budget. Already delivered flag
+// and addition updates consume no retained budget, regardless of command count.
+func (q *updateQueue) holdRemovals(batch *UpdateBatch) error {
+	size := updateBatchSize(batch)
+	q.mu.Lock()
+	if q.closed {
+		q.mu.Unlock()
+		return ErrUpdaterClosed
+	}
+	if q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems ||
+		q.maxBytes >= 0 && size > q.maxBytes-q.bytes {
+		q.closed = true
+		overflow := q.overflow
+		q.mu.Unlock()
+		if overflow != nil {
+			overflow()
+		}
+		return ErrUpdateOverflow
+	}
+	q.heldItems++
+	q.heldBytes += size
+	q.bytes += size
+	q.mu.Unlock()
+	return nil
+}
+
+func (q *updateQueue) releaseRemovals() {
+	q.mu.Lock()
+	q.bytes -= q.heldBytes
+	q.heldBytes, q.heldItems = 0, 0
 	q.mu.Unlock()
 }
 
@@ -643,6 +693,14 @@ type selectedState struct {
 	maxUIDs  int
 	queue    *updateQueue
 	updater  *Updater
+	// uids is the client's view. While removals are withheld, backendUIDs
+	// follows the fully applied revision without renumbering that view.
+	backendUIDs []imap.UID
+	withheld    []*UpdateBatch
+	// The selection snapshot is a known-safe resynchronisation checkpoint.
+	// UpdateBatch does not carry removal mod-sequences, so a later FETCH
+	// value cannot establish a newer safe checkpoint past a withheld removal.
+	snapshotModSeq uint64
 	// savedSearch is the SEARCHRES result referenced by "$". It is framework
 	// state, not backend state, per the contract on SelectedMailbox: it is
 	// scoped to this selection and discarded with it. RFC 5182.
@@ -734,16 +792,17 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		flags = result.Snapshot.Status.Flags
 	}
 	selected := &selectedState{
-		mailbox:  result.Mailbox,
-		name:     result.Snapshot.Status.Mailbox,
-		uids:     slices.Clone(result.Snapshot.UIDs),
-		flags:    slices.Clone(flags),
-		revision: result.Snapshot.Revision,
-		readOnly: result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
-		noModSeq: result.Snapshot.NoModSeq || result.Snapshot.Status.NoModSeq,
-		maxUIDs:  limits.MaxSelectedMessages,
-		queue:    queue,
-		updater:  updater,
+		mailbox:        result.Mailbox,
+		name:           result.Snapshot.Status.Mailbox,
+		uids:           slices.Clone(result.Snapshot.UIDs),
+		flags:          slices.Clone(flags),
+		revision:       result.Snapshot.Revision,
+		readOnly:       result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
+		noModSeq:       result.Snapshot.NoModSeq || result.Snapshot.Status.NoModSeq,
+		maxUIDs:        limits.MaxSelectedMessages,
+		queue:          queue,
+		updater:        updater,
+		snapshotModSeq: max(result.Snapshot.HighestModSeq, result.Snapshot.Status.HighestModSeq),
 	}
 	return selected, nil
 }
@@ -852,6 +911,10 @@ func coalesceWireUpdates(updates []deliveredUpdate) []deliveredUpdate {
 }
 
 func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounting) ([]deliveredUpdate, error) {
+	return s.applyBatchDeferringRemovals(batch, accounting, false)
+}
+
+func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounting updateAccounting, deferRemovals bool) ([]deliveredUpdate, error) {
 	if s == nil || batch == nil {
 		return nil, ErrUpdaterClosed
 	}
@@ -859,6 +922,7 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 		return nil, fmt.Errorf("%w: got %q, want %q", ErrRevisionMismatch, batch.Before, s.revision)
 	}
 	var delivered []deliveredUpdate
+	withheld := &UpdateBatch{Before: batch.Before, After: batch.After}
 	for _, change := range batch.Changes {
 		suppress := batch.Origin != 0 && batch.Origin == accounting.origin
 		switch change := change.(type) {
@@ -877,6 +941,10 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 				return nil, fmt.Errorf("%w: nil FLAGS update", ErrRevisionMismatch)
 			}
 			seq, ok := s.sequence(change.UID)
+			if s.backendUIDs != nil {
+				_, active := slices.BinarySearch(s.backendUIDs, change.UID)
+				ok = ok && active
+			}
 			if !ok {
 				return nil, fmt.Errorf("%w: flag update for unknown UID %d", ErrRevisionMismatch, change.UID)
 			}
@@ -907,6 +975,17 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 				return nil, fmt.Errorf("%w: empty EXPUNGE update", ErrRevisionMismatch)
 			}
 			for _, uid := range uids {
+				if deferRemovals {
+					if s.backendUIDs == nil {
+						s.backendUIDs = slices.Clone(s.uids)
+					}
+					at, ok := slices.BinarySearch(s.backendUIDs, uid)
+					if !ok {
+						return nil, fmt.Errorf("%w: expunge for unknown UID %d", ErrRevisionMismatch, uid)
+					}
+					s.backendUIDs = slices.Delete(s.backendUIDs, at, at+1)
+					continue
+				}
 				seq, ok := s.removeUID(uid)
 				if !ok {
 					return nil, fmt.Errorf("%w: expunge for unknown UID %d", ErrRevisionMismatch, uid)
@@ -915,12 +994,23 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 					delivered = append(delivered, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
 				}
 			}
+			if deferRemovals {
+				withheld.Changes = append(withheld.Changes, change)
+			}
 		case *UpdateVanished:
 			if change == nil || change.UIDs.IsEmpty() {
 				return nil, fmt.Errorf("%w: empty VANISHED update", ErrRevisionMismatch)
 			}
 			if change.UIDs.Dynamic() {
 				return nil, fmt.Errorf("%w: VANISHED update contains a dynamic UID set", ErrRevisionMismatch)
+			}
+			if deferRemovals {
+				if s.backendUIDs == nil {
+					s.backendUIDs = slices.Clone(s.uids)
+				}
+				s.backendUIDs = removeUIDsInSet(s.backendUIDs, change.UIDs)
+				withheld.Changes = append(withheld.Changes, change)
+				continue
 			}
 			s.removeUIDSet(change.UIDs)
 			if !(suppress && (accounting.effect == effectExpunge || accounting.effect == effectMoveOut)) {
@@ -930,8 +1020,44 @@ func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounti
 			return nil, fmt.Errorf("imapserver: unsupported update type %T", change)
 		}
 	}
+	if len(withheld.Changes) != 0 {
+		if err := s.queue.holdRemovals(withheld); err != nil {
+			return nil, err
+		}
+		s.withheld = append(s.withheld, withheld)
+	}
 	s.revision = batch.After
 	return delivered, nil
+}
+
+func (s *selectedState) deliverWithheldRemovals() ([]deliveredUpdate, error) {
+	var updates []deliveredUpdate
+	for _, batch := range s.withheld {
+		for _, change := range batch.Changes {
+			switch change := change.(type) {
+			case *UpdateExpunge:
+				seq, ok := s.removeUID(change.UID)
+				if !ok {
+					return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, change.UID)
+				}
+				updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: change.UID})
+			case *queuedExpunges:
+				for _, uid := range change.uids {
+					seq, ok := s.removeUID(uid)
+					if !ok {
+						return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, uid)
+					}
+					updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
+				}
+			case *UpdateVanished:
+				s.removeUIDSet(change.UIDs)
+				updates = append(updates, deliveredUpdate{kind: updateMessageVanished, uids: change.UIDs, earlier: change.Earlier})
+			}
+		}
+	}
+	s.withheld, s.backendUIDs = nil, nil
+	s.queue.releaseRemovals()
+	return updates, nil
 }
 
 func (s *selectedState) sequence(uid imap.UID) (imap.SeqNum, bool) {
@@ -957,6 +1083,9 @@ func (s *selectedState) addUIDs(uids []imap.UID) error {
 		last = uid
 	}
 	s.uids = append(s.uids, uids...)
+	if s.backendUIDs != nil {
+		s.backendUIDs = append(s.backendUIDs, uids...)
+	}
 	return nil
 }
 
@@ -971,11 +1100,15 @@ func (s *selectedState) removeUID(uid imap.UID) (imap.SeqNum, bool) {
 }
 
 func (s *selectedState) removeUIDSet(set imap.UIDSet) {
-	out := s.uids[:0]
-	for _, uid := range s.uids {
+	s.uids = removeUIDsInSet(s.uids, set)
+}
+
+func removeUIDsInSet(uids []imap.UID, set imap.UIDSet) []imap.UID {
+	out := uids[:0]
+	for _, uid := range uids {
 		if !set.Contains(uid) {
 			out = append(out, uid)
 		}
 	}
-	s.uids = out
+	return out
 }

@@ -124,6 +124,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING, update-delivery behaviour:** `UpdateBatch` revisions and origin
+  accounting remain ordered, but a withheld removal no longer blocks later
+  additions and flag updates. Client sequence positions remain stable until
+  removal announcements are permitted. Retained removals count toward
+  `Limits.MaxQueuedUpdates` and `MaxQueuedUpdateBytes`; already delivered
+  STORE updates do not accumulate. CONDSTORE completions carry a safe
+  HIGHESTMODSEQ checkpoint while removals wait. No exported signature changes.
+  (#73)
+
 - **Server v1 preparation:** document backendtest's prospective compatibility
   policy: checks may enforce existing obligations, while new obligations need
   harness opt-in or a witnessed optional interface. Extend the configuration
