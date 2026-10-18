@@ -10,6 +10,8 @@ import (
 
 func FuzzMaildirState(f *testing.F) {
 	f.Add(`{"version":2,"mailboxes":{},"future":{"x":1}}`)
+	f.Add(`{"version":3,"mailboxes":{"INBOX":{"uidvalidity":1,"uidnext":6,"revision":2,"highestmodseq":9,"tombstonefloor":4,"messages":[{"uid":5,"file":"msg:2,","size":0,"modseq":9}],"tombstones":[{"uid":1,"modseq":7}]}}}`)
+	f.Add(`{"version":3,"mailboxes":{"INBOX":{"uidvalidity":1,"uidnext":1,"revision":1,"highestmodseq":9,"tombstonefloor":10}}}`)
 	f.Add(`{"version":999,"mailboxes":{}}`)
 	f.Add(`{"version":1,"mailboxes":{"INBOX":{"uidvalidity":1,"uidnext":1}}}`)
 	f.Fuzz(func(t *testing.T, raw string) {

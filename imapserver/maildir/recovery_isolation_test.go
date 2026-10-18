@@ -109,6 +109,43 @@ func TestReplayRecordsMessageLostAfterJournalPreparation(t *testing.T) {
 	}
 }
 
+func TestLiveMutationDoesNotRewritePublishedUpdateRevisionOnRecovery(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	b := openTest(t, root)
+	s := loginTest(t, b)
+	appendTest(t, s, "INBOX")
+	sel := selectTest(t, s, "INBOX")
+	m := s.account.state.Mailboxes["INBOX"]
+	oldRevision := m.Revision
+	path := filepath.Join(accountPath(root), messagePath("INBOX", m.Messages[0]))
+	var batches []*imapserver.UpdateBatch
+	_, err := s.Select(ctx, "INBOX", &imapserver.Updater{PushFunc: func(batch *imapserver.UpdateBatch) error { batches = append(batches, batch); return nil }}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.faultHook = func(stage string) error {
+		if stage == "journal" {
+			return os.Remove(path)
+		}
+		return nil
+	}
+	if err := sel.Store(ctx, discardFetch(), imap.UIDSetNum(1), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen}}, nil); err == nil {
+		t.Fatal("live mutation rewrote its already-constructed update batch")
+	}
+	if len(batches) != 0 || s.account.failure == nil || s.account.state.Mailboxes["INBOX"].Revision != oldRevision {
+		t.Fatal("failed live commit exposed inconsistent revision")
+	}
+	if err := b.Close(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	b = openTest(t, root)
+	s = loginTest(t, b)
+	if len(s.account.state.Mailboxes["INBOX"].Messages) != 0 || len(s.account.state.Mailboxes["INBOX"].Tombstones) != 1 {
+		t.Fatal("reopen did not recover loss as expunge")
+	}
+}
+
 func TestOpenCanIsolateUnrecoverableAccounts(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

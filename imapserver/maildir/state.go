@@ -305,7 +305,7 @@ func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxB
 		return err
 	}
 	if err = a.backend.fault("journal"); err == nil {
-		err = a.replay(&j)
+		err = a.replay(&j, false)
 	}
 	if err != nil {
 		a.failure = err
@@ -327,13 +327,13 @@ func sameMailboxNames(a, b *accountState) bool {
 	return true
 }
 
-func (a *account) replay(j *diskJournal) error {
+func (a *account) replay(j *diskJournal, recoverMissing bool) error {
 	for _, action := range j.Actions {
 		if err := a.applyAction(action); err != nil {
 			// An externally unlinked cur/ source may disappear after journal
 			// preparation. Preserve UID identity and record its loss instead of
 			// leaving an otherwise replayable STORE stuck forever.
-			if !os.IsNotExist(err) {
+			if !recoverMissing || !os.IsNotExist(err) {
 				return err
 			}
 			recovered, recoveryErr := a.recoverMissingMessage(j.State, action)
@@ -611,7 +611,7 @@ func (a *account) load() error {
 		if err := a.checkMailboxLayout(pending.State); err != nil {
 			return err
 		}
-		if err := a.replay(pending); err != nil {
+		if err := a.replay(pending, true); err != nil {
 			return err
 		}
 		state = pending.State
