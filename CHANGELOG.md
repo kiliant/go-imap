@@ -124,6 +124,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING (server v0.x):** `SessionUpdater.Push` queue overflow now ends the
+  NOTIFY registration as required by RFC 5465, rather than continuing after
+  dropping events. The framework closes the updater, calls
+  `NotifySession.Notify` with nil updater/configuration and reports
+  NOTIFICATIONOVERFLOW. The client can register again. Document per-mailbox
+  coalescing and overflow on these exported methods; no signatures change.
+  (#132)
+
 - **BREAKING, Maildir storage policy:** account state/journals migrate to
   version 3, preserving identities and unknown fields; older readers refuse
   its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to
