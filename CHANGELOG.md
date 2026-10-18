@@ -182,6 +182,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver/maildir:** Skip invalid or unreadable new/ deliveries in place, preserving valid ingestion and reopenability with observable diagnostics. No exported API change. (#96)
 
+- **imapserver/maildir:** Convert INTERNALDATE without UnixNano overflow and refuse dates the filesystem cannot represent. No exported API change. (#94)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
