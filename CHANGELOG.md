@@ -124,6 +124,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** `SCRAMCredentials` implementations must also supply a separate
+  `CapabilitySupport` witness for each AUTH=SCRAM-SHA-1, AUTH=SCRAM-SHA-256,
+  AUTH=SCRAM-SHA-1-PLUS and AUTH=SCRAM-SHA-256-PLUS token they serve. Structural
+  credential support alone no longer advertises mechanisms. Each -PLUS variant
+  additionally requires TLS. Document this contract on both exported
+  interfaces, update memory's witnesses and activate SCRAM options for
+  plus-only advertisements. No exported signatures change. (#123)
+
 - **BREAKING, Maildir storage policy:** account state/journals migrate to
   version 3, preserving identities and unknown fields; older readers refuse
   its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to

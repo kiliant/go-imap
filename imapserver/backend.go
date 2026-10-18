@@ -219,6 +219,9 @@ type MoveMailbox interface {
 // return true for "AUTH=XOAUTH2" or "AUTH=OAUTHBEARER" only when Authenticate
 // accepts that mechanism's token credentials. Each token opts in separately;
 // the mechanisms are offered only over TLS. PLAIN and LOGIN need no witness.
+// SCRAM also requires a separate Backend witness for each AUTH=SCRAM-* token,
+// together with SCRAMCredentials; see that interface for the supported tokens
+// and the TLS requirement for -PLUS variants.
 //
 // This witness is deliberately keyed by an open string rather than by one
 // interface per capability: a future RFC is then a new token, which is a data

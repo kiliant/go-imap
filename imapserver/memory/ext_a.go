@@ -27,7 +27,13 @@ import (
 // genuinely evaluated rather than ignored. Advertising a search key a backend
 // silently drops would make every result quietly wrong.
 var supportedCapabilities = map[string]bool{
-	"MOVE": true,
+	// Credential derivations and channel binding are implemented for both
+	// hash families. Each wire mechanism is an independent witness.
+	"AUTH=SCRAM-SHA-1":        true,
+	"AUTH=SCRAM-SHA-256":      true,
+	"AUTH=SCRAM-SHA-1-PLUS":   true,
+	"AUTH=SCRAM-SHA-256-PLUS": true,
+	"MOVE":                    true,
 	// UIDPLUS: this backend returns UIDs in AppendData and CopyData, so the
 	// APPENDUID and COPYUID codes are real, and its Expunge honours the UID-set
 	// filter UID EXPUNGE supplies.
