@@ -2,6 +2,7 @@ package maildir
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -370,7 +371,16 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 	if err != nil {
 		return err
 	}
-	defer s.session.account.leave()
+	a := s.session.account
+	locked := true
+	defer func() {
+		if locked {
+			a.release()
+		}
+		// Streaming remains an in-flight operation even while the account
+		// gate is free. Close must not release the roots or process lock yet.
+		a.backend.ops.Done()
+	}()
 	items := []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags}
 	var changed uint64
 	if options != nil {
@@ -423,11 +433,48 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			return err
 		}
 	}
-	m = s.session.account.state.Mailboxes[name]
+	a.release()
+	locked = false
 	for _, uid := range selectedUIDs {
-		at := slices.IndexFunc(m.Messages, func(msg *messageRecord) bool { return msg.UID == uid })
-		msg := m.Messages[at]
-		if err := s.fetchMessage(ctx, writer, name, msg, imap.SeqNum(at+1), items); err != nil {
+		if err := a.acquire(ctx); err != nil {
+			return err
+		}
+		locked = true
+		if a.failure != nil {
+			return noError(imap.CodeUnavailable, "account requires recovery; reopen the backend")
+		}
+		// Other sessions may rename the mailbox or expunge a later UID
+		// while a response streams. Resolve the stable identity and current
+		// path under the gate, then pin just this message's open file.
+		m = nil
+		for currentName, current := range a.state.Mailboxes {
+			if current.UIDValidity == s.id {
+				name, m = currentName, current
+				break
+			}
+		}
+		if m == nil {
+			return noError(imap.CodeClosed, "mailbox is no longer selected")
+		}
+		at, found := slices.BinarySearchFunc(m.Messages, uid, func(msg *messageRecord, uid imap.UID) int { return cmp.Compare(msg.UID, uid) })
+		if !found {
+			a.release()
+			locked = false
+			continue
+		}
+		msg := *m.Messages[at]
+		msg.Flags = slices.Clone(msg.Flags)
+		f, err := openRegular(a.root, messagePath(name, &msg))
+		a.release()
+		locked = false
+		if err != nil {
+			return err
+		}
+		err = func() error {
+			defer f.Close()
+			return writeFetchMessage(ctx, writer, f, &msg, imap.SeqNum(at+1), items)
+		}()
+		if err != nil {
 			return err
 		}
 	}
@@ -442,7 +489,11 @@ func (s *selected) fetchMessage(ctx context.Context, writer *imapserver.FetchWri
 		return err
 	}
 	defer f.Close()
-	analysis, err := message.Analyze(ctx, f, msg.Size, nil)
+	return writeFetchMessage(ctx, writer, f, msg, seq, items)
+}
+
+func writeFetchMessage(ctx context.Context, writer *imapserver.FetchWriter, source io.ReaderAt, msg *messageRecord, seq imap.SeqNum, items []imap.FetchItem) error {
+	analysis, err := message.Analyze(ctx, source, msg.Size, nil)
 	if err != nil {
 		return err
 	}

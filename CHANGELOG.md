@@ -130,6 +130,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   to retain advertisement and AUTHENTICATE support. Password-only backends no
   longer offer unusable bearer mechanisms. No exported signatures changed. (#72)
 
+- **BREAKING, maildir behaviour:** FETCH no longer serializes the whole request
+  against other account operations. It releases the account lock for analysis
+  and streaming, retaining one open message source until its writer returns.
+  Concurrent STORE, rename, expunge and deliveries can proceed; later vanished
+  UIDs are skipped and Close still waits for the whole FETCH. UID lookup between
+  responses uses binary search. This relaxes the documented serialization
+  guarantee before the v1 stability window. No exported signatures change. (#74)
+
 #### Added
 
 - `imapserver/maildir`: a persistent backend built through the public server
