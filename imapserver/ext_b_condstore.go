@@ -66,6 +66,10 @@ func condStoreEnabled(c *conn) bool {
 	return c.state.enabledCapability("CONDSTORE")
 }
 
+func condStoreMailboxEnabled(c *conn) bool {
+	return condStoreEnabled(c) && (c.state.selected == nil || !c.state.selected.noModSeq)
+}
+
 // enableCondStoreSideEffect implements the second route above. It is deliberately
 // not routed through the capability descriptor's Enable hook: that hook answers
 // the ENABLE command, whereas this fires when a command *parameter* is used,
@@ -250,7 +254,7 @@ func applySelectParams(c *conn, args *selectArgs, options *SelectOptions) error 
 // the client is expected to track modseqs from that point on, and a response
 // without one would leave a hole in its record.
 func applyCondStoreFetchItems(c *conn, items []imap.FetchItem) []imap.FetchItem {
-	if !condStoreEnabled(c) {
+	if !condStoreMailboxEnabled(c) {
 		return items
 	}
 	for _, item := range items {
@@ -270,7 +274,7 @@ func applyCondStoreFetchItems(c *conn, items []imap.FetchItem) []imap.FetchItem 
 // knows the value, so it always reports it and the framework removes it here,
 // the same way mapFetchResponse removes the UID it requested internally.
 func stripModSeqUnlessEnabled(c *conn, data *imap.FetchMessageData) *imap.FetchMessageData {
-	if data == nil || condStoreEnabled(c) {
+	if data == nil || condStoreMailboxEnabled(c) {
 		return data
 	}
 	for key := range data.Items {
@@ -292,6 +296,15 @@ func validateCondStoreUse(c *conn, used bool, what string) error {
 	}
 	enableCondStoreSideEffect(c)
 	return nil
+}
+
+// Unlike SELECT's parameter, a CONDSTORE item on a selected mailbox requires
+// persistent clocks for that mailbox (RFC 7162 section 3.1.2.2).
+func validateSelectedCondStoreUse(c *conn, used bool, what string) error {
+	if used && c.state.selected != nil && c.state.selected.noModSeq {
+		return fmt.Errorf("%s is unavailable in a NOMODSEQ mailbox", what)
+	}
+	return validateCondStoreUse(c, used, what)
 }
 
 // storeCondStore runs a conditional STORE and reports the rejected messages.
