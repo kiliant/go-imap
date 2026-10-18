@@ -191,7 +191,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	// RFC 7162 section 3.1.3: rejected messages are reported on a successful
 	// tagged OK through MODIFIED, not as a command failure.
-	if modified, ok := condStoreModifiedArgs(condStore); ok {
+	if modified, ok := condStoreModifiedArgs(c, condStore, uidMode); ok {
 		if err := writeTaggedCondition(c, command.tag, "OK", imap.CodeModified, modified, command.name+" completed"); err != nil {
 			return err
 		}

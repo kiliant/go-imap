@@ -170,6 +170,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** NOMODSEQ mailboxes refuse MODSEQ, CHANGEDSINCE and UNCHANGEDSINCE before backend access; selecting a clock-tracking mailbox restores support. No exported API change. (#91)
 
+- **imapserver:** Plain STORE reports MODIFIED in message sequence numbers; UID STORE continues to report UIDs, including after expunges. No exported API change. (#89)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
