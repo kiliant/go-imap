@@ -580,6 +580,8 @@ type ChangeToken uint64
 
 // UpdateBatch is every observable change from one atomic backend commit.
 // Changes are applied in slice order and batches are never merged.
+// Removal announcements may be delayed where the protocol forbids them;
+// later additions and flags still use the client's unrenumbered sequence view.
 // Construct with keyed fields only; fields may be added in a future release.
 type UpdateBatch struct {
 	// Before must equal the selected snapshot revision or previous batch's
