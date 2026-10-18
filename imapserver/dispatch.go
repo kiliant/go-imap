@@ -26,6 +26,9 @@ type queuedCommand struct {
 	bytes      int64
 	parseErr   error
 	done       chan struct{}
+	// readerSettled closes after the reader publishes the amount of input
+	// buffered behind this command. Nil is used by synthetic/error commands.
+	readerSettled <-chan struct{}
 }
 
 var commandDescriptors = map[string]*commandDescriptor{

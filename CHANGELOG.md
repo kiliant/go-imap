@@ -124,11 +124,27 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **Server v1 preparation:** document backendtest's prospective compatibility
+  policy: checks may enforce existing obligations, while new obligations need
+  harness opt-in or a witnessed optional interface. Extend the configuration
+  guard and options-parameter gates to public server subpackages and their
+  constructors. Retain independent versions, targeting `imapserver/v1.0.0`
+  after the full review and two compatible substantive minor releases. No
+  exported signatures change. (#54)
+
 - **BREAKING:** `AUTH=XOAUTH2` and `AUTH=OAUTHBEARER` now require separate
   `CapabilitySupport` witnesses on the Backend, in addition to TLS. Backends
   accepting bearer credentials must return true for each supported wire token
   to retain advertisement and AUTHENTICATE support. Password-only backends no
   longer offer unusable bearer mechanisms. No exported signatures changed. (#72)
+
+- **BREAKING, maildir behaviour:** FETCH no longer serializes the whole request
+  against other account operations. It releases the account lock for analysis
+  and streaming, retaining one open message source until its writer returns.
+  Concurrent STORE, rename, expunge and deliveries can proceed; later vanished
+  UIDs are skipped and Close still waits for the whole FETCH. UID lookup between
+  responses uses binary search. This relaxes the documented serialization
+  guarantee before the v1 stability window. No exported signatures change. (#74)
 
 #### Added
 
@@ -173,6 +189,18 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 #### Fixed
 
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
+
+- **imapserver:** GETMETADATA MAXSIZE filters values in the framework and
+  reports the largest omitted size with the required METADATA LONGENTRIES
+  response code. MAXSIZE 0 retains empty values; DEPTH and server/mailbox
+  scopes remain intact. Correct the MetadataOptions.MaxSize documentation.
+  No exported signatures change. (#54)
+
+- **imapserver:** wait for the reader to settle its pending-input flag before
+  executing a handed-off command. A fast UID SEARCH could otherwise complete
+  while its own handoff looked like pipelined input, withholding an EXPUNGE
+  past the command's legal delivery point. The wait is cancelable; actual
+  pipelines still defer unsolicited removals. No exported API change. (#73)
 
 - **imapserver:** Consecutive additions and expunges use compact storage within
   atomic update batches, avoiding queue overflow caused by per-message object

@@ -88,9 +88,13 @@
 //
 // PollInterval bounds idle time before the next delivery scan; ingestion,
 // another active operation, scheduling and a callback add to that delay. All
-// operations within an account are serialized, including streaming FETCH.
-// Polling and SELECT share that lock: every delivery is in the atomic snapshot
-// or a subsequent revision-chained update, never missed between them. Poll
+// state changes within an account are serialized. FETCH opens one message at
+// a time under the account lock, then releases it for analysis and streaming;
+// a slow client does not block other sessions or delivery polling. An open
+// source remains readable across a concurrent rename or expunge. Later UIDs
+// that vanish before opening are skipped. Close still waits for streaming.
+// Polling and SELECT share the state lock: every delivery is in the atomic
+// snapshot or a subsequent revision-chained update, never missed between them. Poll
 // errors remain observable through LastPollError and optional OnPollError.
 // Close stops polling and rejects new work, waits for operations/callbacks,
 // then releases roots and locks, without waiting for idle session lifetimes.
