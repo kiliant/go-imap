@@ -172,6 +172,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **imapserver:** Plain STORE reports MODIFIED in message sequence numbers; UID STORE continues to report UIDs, including after expunges. No exported API change. (#89)
 
+- **imapserver:** SAVE-only SEARCH updates the saved result without emitting SEARCH/ESEARCH data, in UID, rev1 and rev2 sessions. No exported API change. (#90)
+
 - CONDSTORE SEARCH now evaluates message modification sequences and reports
   the matching result clock in SEARCH/ESEARCH, including nested criteria,
   rev2 responses and MIN/MAX-only results. A MODSEQ criterion enables
