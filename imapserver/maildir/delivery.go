@@ -166,39 +166,86 @@ func (b *Backend) pollAccount(ctx context.Context, a *account, interval time.Dur
 			return
 		case <-ticker.C:
 		}
-		if err := a.enter(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			b.reportPollError(err)
-			continue
-		}
-		err := a.reconcileContext(ctx)
-		err = errors.Join(err, a.deliveryError)
-		a.leave()
+		err := a.pollOnce(ctx)
 		if err != nil && ctx.Err() == nil {
-			b.reportPollError(err)
+			b.reportPollFailure(ctx, a, err)
+		} else if err == nil {
+			b.mu.Lock()
+			delete(b.pollFailures, a.username)
+			b.mu.Unlock()
 		}
 	}
 }
 
-// reportPollError keeps OnPollError's documented serial delivery now that
-// pollers run concurrently. callbackMu is held only around the callback, never
-// with an account or backend lock.
-func (b *Backend) reportPollError(err error) {
+func (a *account) pollOnce(ctx context.Context) error {
+	if err := a.backend.begin(ctx); err != nil {
+		return err
+	}
+	if err := a.acquire(ctx); err != nil {
+		a.backend.ops.Done()
+		return err
+	}
+	defer a.leave()
+	if a.failure != nil {
+		return a.failure
+	}
+	err := a.reconcileContext(ctx)
+	return errors.Join(err, a.deliveryError)
+}
+
+func (b *Backend) recordPollFailure(a *account, err error) PollFailure {
+	failure := PollFailure{Username: a.username, Err: err}
+	var mailboxError *mailboxPollError
+	if errors.As(err, &mailboxError) {
+		failure.Mailbox = mailboxError.mailbox
+	}
 	b.mu.Lock()
-	b.lastPollError = err
-	callback := b.onPollError
+	b.lastPollError = fmt.Errorf("maildir: account %q: %w", a.username, err)
+	if b.pollFailures == nil {
+		b.pollFailures = make(map[string]PollFailure)
+	}
+	b.pollFailures[a.username] = failure
 	b.mu.Unlock()
-	if callback != nil {
+	return failure
+}
+
+// callbackMu serializes callbacks, outside account/backend locks. Give a
+// callback its own copy so it cannot mutate the diagnostics retained by b.
+func (b *Backend) reportPollFailure(ctx context.Context, a *account, err error) {
+	failure := b.recordPollFailure(a, err)
+	if b.onPollFailure != nil || b.onPollError != nil {
 		b.callbackMu.Lock()
 		defer b.callbackMu.Unlock()
-		callback(err)
+		if b.onPollFailure != nil {
+			b.onPollFailure(ctx, &failure)
+		} else {
+			b.onPollError(err)
+		}
 	}
 }
+
+type mailboxPollError struct {
+	mailbox string
+	err     error
+}
+
+func (e *mailboxPollError) Error() string {
+	return fmt.Sprintf("maildir: mailbox %q: %v", e.mailbox, e.err)
+}
+func (e *mailboxPollError) Unwrap() error { return e.err }
+
 func (a *account) reconcile() error { return a.reconcileContext(context.Background()) }
-func (a *account) reconcileContext(ctx context.Context) error {
+func (a *account) reconcileContext(ctx context.Context) (retErr error) {
+	var currentMailbox string
+	defer func() {
+		if retErr != nil && currentMailbox != "" {
+			retErr = &mailboxPollError{mailbox: currentMailbox, err: retErr}
+		}
+	}()
 	a.deliveryError = nil
+	if changed, err := a.reconciliationNeeded(ctx); err != nil || !changed {
+		return err
+	}
 	next, err := cloneState(a.state)
 	if err != nil {
 		return err
@@ -211,6 +258,7 @@ func (a *account) reconcileContext(ctx context.Context) error {
 	}
 	slices.Sort(names)
 	for _, name := range names {
+		currentMailbox = name
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -253,7 +301,7 @@ func (a *account) reconcileContext(ctx context.Context) error {
 				f, err := openRegular(a.root, sourcePath)
 				if err != nil {
 					if sub == "new" {
-						a.skipDelivery(sourcePath, err)
+						a.skipDelivery(name, sourcePath, err)
 						continue
 					}
 					return err
@@ -262,7 +310,7 @@ func (a *account) reconcileContext(ctx context.Context) error {
 				if err != nil {
 					f.Close()
 					if sub == "new" {
-						a.skipDelivery(sourcePath, err)
+						a.skipDelivery(name, sourcePath, err)
 						continue
 					}
 					return err
@@ -277,7 +325,7 @@ func (a *account) reconcileContext(ctx context.Context) error {
 						if ctx.Err() != nil {
 							return ctx.Err()
 						}
-						a.skipDelivery(sourcePath, err)
+						a.skipDelivery(name, sourcePath, err)
 						continue
 					}
 					defer a.discardStage(stage)
@@ -303,6 +351,7 @@ func (a *account) reconcileContext(ctx context.Context) error {
 			}
 		}
 	}
+	currentMailbox = ""
 	if len(changes) == 0 {
 		return nil
 	}
@@ -312,10 +361,10 @@ func (a *account) reconcileContext(ctx context.Context) error {
 	return a.publishCommit(next, actions, changes, 0)
 }
 
-func (a *account) skipDelivery(path string, err error) {
+func (a *account) skipDelivery(mailbox, path string, err error) {
 	// Bound diagnostics independently of the number of invalid entries. Leave
 	// the original file for an operator to repair; never follow or delete it.
 	if a.deliveryError == nil {
-		a.deliveryError = fmt.Errorf("maildir: skipped delivery %q: %w", path, err)
+		a.deliveryError = &mailboxPollError{mailbox: mailbox, err: fmt.Errorf("maildir: skipped delivery %q: %w", path, err)}
 	}
 }

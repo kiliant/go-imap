@@ -133,6 +133,11 @@ func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.M
 		return err
 	}
 	defer s.account.leave()
+	for _, entry := range entries {
+		if entry.Value != nil && uint64(len(*entry.Value)) > uint64(s.account.backend.maxMetadataValueBytes) {
+			return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeMetadata, CodeArgs: fmt.Sprintf("MAXSIZE %d", s.account.backend.maxMetadataValueBytes), Text: "metadata value exceeds storage limit"}
+		}
+	}
 	next, err := cloneState(s.account.state)
 	if err != nil {
 		return err
@@ -152,6 +157,13 @@ func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.M
 			changed = changed || !present || string(old) != *entry.Value
 			store[entry.Name] = metadataValue(*entry.Value)
 		}
+	}
+	previous, err := metadataStore(s.account.state, name)
+	if err != nil {
+		return err
+	}
+	if len(store) > s.account.backend.maxMetadataEntries && len(store) >= len(previous) {
+		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeMetadata, CodeArgs: "TOOMANY", Text: "metadata entry count exceeds storage limit"}
 	}
 	if changed && name != "" {
 		// QRESYNC also advances the mailbox clock for mailbox annotations;

@@ -435,6 +435,7 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 
 		// Cached analysis and diagnostics: no I/O or blocking operation.
 		"maildir.Backend.LastPollError": true,
+		"maildir.Backend.PollFailures":  true,
 		"message.Message.Size":          true,
 		"message.Message.Envelope":      true,
 		"message.Message.BodyStructure": true,

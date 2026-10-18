@@ -124,6 +124,26 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING, Maildir storage policy:** account state/journals migrate to
+  version 3, preserving identities and unknown fields; older readers refuse
+  its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to
+  10000 per mailbox with a durable QRESYNC checkpoint and conservative older
+  requests. `MaxMetadataValueBytes` defaults to 65536 and `MaxMetadataEntries`
+  to 1024 per mailbox/server scope, with atomic METADATA MAXSIZE/TOOMANY
+  refusals. Existing values remain readable. (#74)
+- **maildir:** add guarded `PollFailure`, `Backend.PollFailures`, and
+  `Options.OnPollFailure` for current account/mailbox diagnostics, cancellation
+  and callback ownership. The new callback takes precedence over legacy
+  OnPollError; LastPollError remains sticky. Add `Options.IsolateAccountErrors`
+  to keep healthy accounts available without reprovisioning failed identities;
+  the default continues to fail Open. Recover a missing journalled cur-to-cur
+  source as a tombstone. Enforce public-import allowlists separately for
+  production and tests. Avoid full-state clones on idle polls and quadratic
+  MOVE retention scans; document the measured scale envelope. Private backend
+  response-shaping helpers remain separate to avoid freezing unnecessary new
+  public APIs; message parsing and matching already use imapserver/message.
+  Public additions only; existing signatures are unchanged. (#74)
+
 - **BREAKING, update-delivery behaviour:** `UpdateBatch` revisions and origin
   accounting remain ordered, but a withheld removal no longer blocks later
   additions and flag updates. Client sequence positions remain stable until
