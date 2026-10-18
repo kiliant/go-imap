@@ -217,6 +217,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapserver:** reject wildcard QRESYNC sets, non-ascending sequence-match
+  data and unequal sequence/UID counts with BAD before SELECT or Resync reaches
+  a backend, including on UIDVALIDITY mismatch. Validation counts ranges
+  without expanding them. No exported API change. (#118)
+
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
 
 - **imapserver:** GETMETADATA MAXSIZE filters values in the framework and
