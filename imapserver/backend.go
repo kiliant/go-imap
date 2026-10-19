@@ -50,6 +50,7 @@ package imapserver
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -702,9 +703,66 @@ type SearchResult struct {
 	_      struct{}
 }
 
-// SearchQuery is a UID-normalised SEARCH tree. Values are constructed only by
-// the framework, so a backend can rely on Criteria containing no SearchSeqNum.
+// SearchQuery is a UID-normalised SEARCH tree. The framework and NewSearchQuery
+// construct values containing no SearchSeqNum or unsubstituted SearchFilter.
+// The framework and backendtest always pass non-nil queries to backends; a
+// backend is not required to accept a nil query or a query's zero value.
 type SearchQuery struct{ criteria imap.SearchCriteria }
+
+// SearchQueryOptions configures NewSearchQuery. A nil pointer selects defaults.
+// Construct with keyed fields only; fields may be added in a future release.
+type SearchQueryOptions struct{ _ struct{} }
+
+// NewSearchQuery constructs a query for direct backend calls, including tests.
+// Nil criteria mean ALL. It copies the tree and its UID sets, rejecting sequence
+// numbers, unsubstituted filters, unclassified criteria and malformed containers
+// at every depth. Trees deeper than 64 levels, including cyclic trees, are refused.
+//
+// This constructor has no session and does not negotiate capabilities. The
+// caller must restrict extension keys to those the backend witnesses. Queries
+// supplied by the framework also carry the capability guarantee on Criteria.
+func NewSearchQuery(criteria imap.SearchCriteria, _ *SearchQueryOptions) (*SearchQuery, error) {
+	if criteria == nil {
+		criteria = imap.SearchAll
+	}
+	criteria, err := copyBackendSearchCriteria(criteria, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := imapcodec.ValidateSearchCriteria(criteria); err != nil {
+		return nil, err
+	}
+	return &SearchQuery{criteria: criteria}, nil
+}
+
+func copyBackendSearchCriteria(criteria imap.SearchCriteria, depth int) (imap.SearchCriteria, error) {
+	if depth > 64 {
+		return nil, fmt.Errorf("imapserver: SEARCH query exceeds 64 nesting levels")
+	}
+	if _, classified := criterionCapability(criteria); !classified {
+		return nil, fmt.Errorf("imapserver: unsupported SEARCH criterion %s", describeCriterion(criteria))
+	}
+	switch criteria.(type) {
+	case imap.SearchSeqNum, imap.SearchFilter:
+		return nil, fmt.Errorf("imapserver: SEARCH query requires resolved UIDs and filters")
+	}
+	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
+		copied := make([]imap.SearchCriteria, len(children))
+		for i, child := range children {
+			var err error
+			copied[i], err = copyBackendSearchCriteria(child, depth+1)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return rebuild(copied), nil
+	}
+	if uid, ok := criteria.(imap.SearchUID); ok {
+		uid.Set = slices.Clone(uid.Set)
+		return uid, nil
+	}
+	return criteria, nil
+}
 
 // newSearchQuery constructs the only SEARCH tree that may cross the backend
 // boundary. uids is the selected mailbox's sequence-order snapshot.
@@ -814,7 +872,8 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 //
 // # Capability
 //
-// Every criterion in the tree belongs to the IMAP4rev1 baseline or to a
+// For queries supplied by the framework, every criterion in the tree belongs
+// to the IMAP4rev1 baseline or to a
 // capability this session advertised, at every nesting depth. A backend that
 // witnesses no extension capability therefore receives baseline keys only, and
 // a criterion added by a later release of package imap cannot reach a backend

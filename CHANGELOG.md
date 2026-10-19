@@ -245,6 +245,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   half a batch was added or expunged. Different sizes/ranges and reselections
   are deliberately allowed. No exported API change. The server release must
   require the published root release containing the shared vocabulary. (#51)
+- `imapserver.NewSearchQuery` and guarded `SearchQueryOptions` let backend
+  authors construct validated UID-only queries for direct calls. The constructor
+  copies criteria and UID sets and rejects unresolved, unknown or excessively
+  nested keys. `backendtest` checks baseline and witnessed extension SEARCH keys
+  and uses explicit ALL queries for SORT/THREAD; nil queries are not required
+  backend inputs. Memory SEARCH now supplies save dates and EMAILIDs to its
+  evaluator, fixing the regressions exposed by the conformance checks. (#130)
+
 - `imapserver/message` provides the supported public message-analysis API:
   `Analyze`, concrete `Message`, `AnalyzeOptions`, `Metadata`, `MatchOptions`,
   `Match`, `ErrUnsupportedCriteria` and `ErrUnsupportedCharset`. It generates

@@ -175,7 +175,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement SortMailbox")
 		}
-		sorted, err := sorter.Sort(context.Background(), nil,
+		sorted, err := sorter.Sort(context.Background(), searchQuery(t, imap.SearchAll),
 			[]imap.SortKeySpec{{Key: imap.SortKeyArrival}}, &imapserver.SortOptions{})
 		if err != nil {
 			t.Fatalf("Sort: %v", err)
@@ -203,7 +203,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement ThreadMailbox")
 		}
-		roots, err := threader.Thread(context.Background(), nil, imap.ThreadOrderedSubject, &imapserver.ThreadOptions{})
+		roots, err := threader.Thread(context.Background(), searchQuery(t, imap.SearchAll), imap.ThreadOrderedSubject, &imapserver.ThreadOptions{})
 		if err != nil {
 			// Refusing an algorithm is allowed; answering it wrongly is not.
 			t.Skipf("backend declined ORDEREDSUBJECT: %v", err)

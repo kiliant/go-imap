@@ -319,7 +319,7 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 // exception list stops meaning anything.
 var unguardedByDesign = map[string]string{
 	"Server":          "constructed by New, never by a caller",
-	"SearchQuery":     "constructed by the framework from parsed criteria; has no exported fields",
+	"SearchQuery":     "constructed by the framework or NewSearchQuery; has no exported fields",
 	"ListWriter":      "framework-provided writer; callers receive one, never build one",
 	"FetchWriter":     "framework-provided writer",
 	"ExpungeWriter":   "framework-provided writer",
