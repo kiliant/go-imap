@@ -36,19 +36,6 @@ type selected struct {
 	closed   bool
 }
 
-func (s *selected) Status(ctx context.Context, _ *imapserver.StatusOptions) (*imap.MailboxStatus, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	s.session.account.mu.Lock()
-	defer s.session.account.mu.Unlock()
-	if s.closed {
-		return nil, noError(imap.CodeClosed, "mailbox is no longer selected")
-	}
-	snapshot := snapshotLocked(s.mailbox, s.readOnly)
-	return &snapshot.Status, nil
-}
-
 func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, options *imapserver.FetchOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -121,6 +108,16 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	charset := ""
 	if options != nil {
 		charset = options.Charset
+	}
+	// Validate the request even when the mailbox has no messages. Charset
+	// support must not depend on whether the per-message loop runs.
+	empty, err := servermessage.Analyze(ctx, bytes.NewReader(nil), 0, nil)
+	if err == nil {
+		_, err = servermessage.Match(ctx, empty, servermessage.Metadata{}, criteria, &servermessage.MatchOptions{Charset: charset})
+	}
+	if err != nil {
+		s.session.account.mu.Unlock()
+		return nil, err
 	}
 	var matches []imap.UID
 	var highest uint64

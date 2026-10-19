@@ -14,6 +14,7 @@ import (
 
 type streamingAppendBackend struct {
 	started chan struct{}
+	options chan AppendOptions
 	once    sync.Once
 }
 
@@ -26,7 +27,10 @@ type streamingAppendSession struct {
 	backend *streamingAppendBackend
 }
 
-func (s *streamingAppendSession) Append(_ context.Context, _ string, literal io.Reader, _ *AppendOptions) (*imap.AppendData, error) {
+func (s *streamingAppendSession) Append(_ context.Context, _ string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error) {
+	if s.backend.options != nil {
+		s.backend.options <- *options
+	}
 	s.backend.once.Do(func() { close(s.backend.started) })
 	if _, err := io.Copy(io.Discard, literal); err != nil {
 		return nil, err
@@ -67,7 +71,7 @@ func (r *gatedAppendReader) Read(p []byte) (int, error) {
 }
 
 func TestAppendStreamsIntoBackendBeforeClientFinishesProducing(t *testing.T) {
-	backend := &streamingAppendBackend{started: make(chan struct{})}
+	backend := &streamingAppendBackend{started: make(chan struct{}), options: make(chan AppendOptions, 1)}
 	server := New(backend, &Options{AllowInsecureAuth: true})
 	serverSide, clientSide := net.Pipe()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -91,6 +95,9 @@ func TestAppendStreamsIntoBackendBeforeClientFinishesProducing(t *testing.T) {
 	}
 	if data == nil || !data.HasUID || data.UID != 1 {
 		t.Fatalf("APPEND data = %#v", data)
+	}
+	if options := <-backend.options; !options.HasSize || options.Size != size {
+		t.Fatalf("streaming APPEND size = %d (present %t), want %d", options.Size, options.HasSize, size)
 	}
 	if err := client.Logout(ctx, nil); err != nil {
 		t.Fatal(err)

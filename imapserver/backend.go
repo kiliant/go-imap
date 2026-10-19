@@ -31,6 +31,20 @@
 // [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
 // and is supported, not a toy — it is the backend this project's own conformance
 // and interoperability suites run against.
+//
+// # Backend errors
+//
+// The framework finds *imap.Error values with errors.As. It sends their Code,
+// CodeArgs and Text to the client in the current command's tagged response:
+// Type BAD produces BAD, and every other Type produces NO. Empty Text becomes
+// "<operation> failed". Backend authors must keep secrets out of these fields,
+// especially Text, because they are client-visible.
+//
+// Without an *imap.Error, context.Canceled and context.DeadlineExceeded produce
+// NO [UNAVAILABLE]; other errors produce NO [SERVERBUG]. Both use the generic
+// "<operation> failed" text. The underlying error text is not sent to clients.
+// Wrapped errors retain these mappings; an *imap.Error takes precedence over a
+// cancellation error in the same chain.
 package imapserver
 
 import (
@@ -66,9 +80,9 @@ type Session interface {
 	// requires, with the selection already installed. An error returned from
 	// that call fails the SELECT.
 	List(ctx context.Context, writer *ListWriter, reference string, patterns []string, options *ListOptions) error
-	// Status answers STATUS for a mailbox that is not selected. Only the items
-	// options requests need be populated; the framework writes what it asked
-	// for and nothing else.
+	// Status answers STATUS for any mailbox, including the selected mailbox.
+	// Only the items options requests need be populated; the framework writes
+	// what it asked for and nothing else.
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
 	// Create makes a mailbox. Creating one that exists is an error, and
 	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
@@ -134,9 +148,6 @@ type SessionCloseOptions struct{ _ struct{} }
 // Backends receive UIDs only. Sequence numbers are resolved by the framework
 // before any method here is called.
 type SelectedMailbox interface {
-	// Status answers STATUS for this selection, which a client may ask for even
-	// while the mailbox is selected.
-	Status(ctx context.Context, options *StatusOptions) (*imap.MailboxStatus, error)
 	// Fetch streams the requested items through writer, one message at a time.
 	//
 	// Streaming is the contract, not an optimisation: a backend that buffers a
@@ -399,7 +410,15 @@ type AppendOptions struct {
 	// InternalDate is the message's supplied internal date. The zero value asks
 	// the backend to use its current time.
 	InternalDate time.Time
-	_            struct{}
+	// Size is the ordinary literal's declared octet count when HasSize is true.
+	// It is available before the backend reads the stream. It does not guarantee
+	// that the reader will supply that many bytes: reads may fail or end early.
+	Size int64
+	// HasSize distinguishes a known size, including zero, from an unknown one.
+	// The framework sets it for ordinary APPEND literals and leaves it false
+	// for CATENATE, whose assembled size is not declared by the client.
+	HasSize bool
+	_       struct{}
 }
 
 // SelectOptions configures SELECT or EXAMINE. A nil pointer selects the

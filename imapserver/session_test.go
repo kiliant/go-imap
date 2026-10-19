@@ -17,9 +17,6 @@ import (
 
 type stubSelectedMailbox struct{}
 
-func (*stubSelectedMailbox) Status(context.Context, *StatusOptions) (*imap.MailboxStatus, error) {
-	return &imap.MailboxStatus{}, nil
-}
 func (*stubSelectedMailbox) Fetch(context.Context, *FetchWriter, imap.UIDSet, *FetchOptions) error {
 	return nil
 }
