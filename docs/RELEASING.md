@@ -26,6 +26,13 @@ freeze the server API. Before opening the stability window, resolve or
 explicitly defer the storage contract gaps and complete the full review in
 `tasks/T33-imapserver-v1.md`, including the message helper, backendtest and
 documented defaults. Land any breaking corrections while still on v0.x.
+Then complete a second full review of the integrated candidate, covering
+every exported symbol and documented behavioural contract in `imapserver`,
+`backendtest`, `memory`, `message` and `maildir`, including unchanged API.
+Record its commit, coverage, evidence and verdict on #54, and resolve blocking
+findings before the stability window opens. The second pass is required by
+the human's 2026-10-19 instruction; reviewing only the corrections does not
+satisfy it.
 
 Then publish two consecutive substantive server minor releases that preserve
 the reviewed contract. Every release between them, including patches, must
@@ -34,7 +41,7 @@ only bumps the root dependency does not count; a break restarts the window.
 Record the API-diff and changelog evidence on issue #54 for each release.
 The existing pre-Maildir releases cannot count toward that window.
 
-Immediately before the v1 tag, review every addition since the initial review
+Immediately before the v1 tag, review every addition since the second full review
 and compare against the second quiet release. Update the module promise in
 API-STABILITY, this file, CLAUDE and ROADMAP only in the actual release PR.
 The standalone build, clean-consumer and signed-tag gates below remain

@@ -463,15 +463,21 @@ all three of these hold:
    the exported API and its documentation, passes `backendtest` and server
    interop.
 2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
-   first at or after the one containing T32 and the initial full review's
-   fixes. Every release from the first through the second minor, patches
-   included, has no incompatible change in `apidiff` and no BREAKING entry
+   first at or after the one containing T32 and the fixes approved by the
+   second full review. Every release from the first through the second minor,
+   patches included, has no incompatible change in `apidiff` and no BREAKING entry
    in `CHANGELOG.md`, including behaviour changes. Each counted minor must
    contain a server-module change beyond a root dependency bump; a release
    cut only to advance the count does not count. Any break restarts the
    window.
-3. **A full review.** An `api-guardian` review of the whole server surface,
-   with its findings resolved: T33.
+3. **Full reviews.** An `api-guardian` review of the whole server surface,
+   with its findings resolved, followed by a second full review of the
+   integrated corrections before the release window: T33. The human
+   explicitly requested this second pass on 2026-10-19. It covers every
+   exported symbol and documented behavioural contract in all five public
+   server packages on one candidate commit, including unchanged API. Record
+   that commit, coverage, evidence and verdict on #54; a diff review alone
+   does not satisfy this gate.
 
 Feature completeness is deliberately not a criterion. The server was
 feature-complete at M6 and still broke compatibility twice afterwards. The
