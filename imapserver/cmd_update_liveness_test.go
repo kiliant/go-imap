@@ -32,7 +32,7 @@ func (s *updateLivenessSession) Select(_ context.Context, _ string, updater *Upd
 	return &SelectResult{
 		Mailbox: &updateLivenessMailbox{updater: updater, add: s.backend.add, failFetch: s.backend.failFetch, revision: 1},
 		Snapshot: SelectSnapshot{
-			UIDs: []imap.UID{1, 2, 3}, Revision: "r1", HighestModSeq: 10,
+			UIDs: []imap.UID{1, 2, 3}, Revision: "r1",
 			Status: imap.MailboxStatus{NumMessages: 3, UIDValidity: 1, UIDNext: 4, HighestModSeq: 10},
 		},
 	}, nil

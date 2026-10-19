@@ -787,22 +787,18 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		}
 		return nil, err
 	}
-	flags := result.Snapshot.Flags
-	if flags == nil {
-		flags = result.Snapshot.Status.Flags
-	}
 	selected := &selectedState{
 		mailbox:        result.Mailbox,
 		name:           result.Snapshot.Status.Mailbox,
 		uids:           slices.Clone(result.Snapshot.UIDs),
-		flags:          slices.Clone(flags),
+		flags:          slices.Clone(result.Snapshot.Status.Flags),
 		revision:       result.Snapshot.Revision,
-		readOnly:       result.Snapshot.ReadOnly || result.Snapshot.Status.ReadOnly,
-		noModSeq:       result.Snapshot.NoModSeq || result.Snapshot.Status.NoModSeq,
+		readOnly:       result.Snapshot.Status.ReadOnly,
+		noModSeq:       result.Snapshot.Status.NoModSeq,
 		maxUIDs:        limits.MaxSelectedMessages,
 		queue:          queue,
 		updater:        updater,
-		snapshotModSeq: max(result.Snapshot.HighestModSeq, result.Snapshot.Status.HighestModSeq),
+		snapshotModSeq: result.Snapshot.Status.HighestModSeq,
 	}
 	return selected, nil
 }
@@ -814,7 +810,7 @@ func validateSelectSnapshot(snapshot *SelectSnapshot, maxMessages int) error {
 	if maxMessages >= 0 && len(snapshot.UIDs) > maxMessages {
 		return fmt.Errorf("imapserver: selected mailbox has %d messages, limit is %d", len(snapshot.UIDs), maxMessages)
 	}
-	if uint32(len(snapshot.UIDs)) != snapshot.Status.NumMessages {
+	if uint64(len(snapshot.UIDs)) != uint64(snapshot.Status.NumMessages) {
 		return fmt.Errorf("imapserver: SELECT snapshot has %d UIDs but reports %d messages", len(snapshot.UIDs), snapshot.Status.NumMessages)
 	}
 	if snapshot.Status.UIDValidity == 0 {
@@ -830,7 +826,7 @@ func validateSelectSnapshot(snapshot *SelectSnapshot, maxMessages int) error {
 	if snapshot.Status.UIDNext == 0 || snapshot.Status.UIDNext <= previous {
 		return fmt.Errorf("imapserver: UIDNEXT does not exceed the selected UIDs")
 	}
-	if snapshot.NumRecent > uint32(len(snapshot.UIDs)) {
+	if snapshot.Status.NumRecent > snapshot.Status.NumMessages {
 		return fmt.Errorf("imapserver: RECENT exceeds the message count")
 	}
 	return nil

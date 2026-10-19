@@ -474,7 +474,7 @@ func snapshot(name string, m *mailboxState, readOnly bool) imapserver.SelectSnap
 	}
 	flags := slices.Clone(m.Flags)
 	permanent := append(slices.Clone(flags), imap.FlagWildcard)
-	return imapserver.SelectSnapshot{UIDs: uids, Status: imap.MailboxStatus{Mailbox: name, Flags: flags, PermanentFlags: permanent, NumMessages: uint32(len(uids)), UIDNext: m.UIDNext, UIDValidity: m.UIDValidity, Unseen: unseen, HighestModSeq: m.HighestModSeq, ReadOnly: readOnly}, Flags: flags, PermanentFlags: permanent, ReadOnly: readOnly, HighestModSeq: m.HighestModSeq, Revision: revision(m.Revision)}
+	return imapserver.SelectSnapshot{UIDs: uids, Status: imap.MailboxStatus{Mailbox: name, Flags: flags, PermanentFlags: permanent, NumMessages: uint32(len(uids)), UIDNext: m.UIDNext, UIDValidity: m.UIDValidity, Unseen: unseen, HighestModSeq: m.HighestModSeq, ReadOnly: readOnly}, Revision: revision(m.Revision)}
 }
 func (s *session) Select(ctx context.Context, name string, updater *imapserver.Updater, options *imapserver.SelectOptions) (*imapserver.SelectResult, error) {
 	if updater == nil {

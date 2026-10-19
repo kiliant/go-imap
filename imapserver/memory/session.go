@@ -423,11 +423,7 @@ func snapshotLocked(m *mailbox, readOnly bool) imapserver.SelectSnapshot {
 			HighestModSeq:  m.highestModSeq,
 			ReadOnly:       readOnly,
 		},
-		Flags:          cloneFlags(flags),
-		PermanentFlags: append(cloneFlags(flags), imap.FlagWildcard),
-		ReadOnly:       readOnly,
-		HighestModSeq:  m.highestModSeq,
-		Revision:       revision(m.revision),
+		Revision: revision(m.revision),
 	}
 }
 

@@ -147,8 +147,8 @@ func (s *bulkUpdateSession) Select(_ context.Context, _ string, updater *Updater
 	return &SelectResult{
 		Mailbox: &stubSelectedMailbox{},
 		Snapshot: SelectSnapshot{
-			UIDs: uids, Revision: "r1", NoModSeq: true,
-			Status: imap.MailboxStatus{UIDValidity: 1, UIDNext: imap.UID(len(uids) + 1), NumMessages: uint32(len(uids))},
+			UIDs: uids, Revision: "r1",
+			Status: imap.MailboxStatus{UIDValidity: 1, UIDNext: imap.UID(len(uids) + 1), NumMessages: uint32(len(uids)), NoModSeq: true},
 		},
 	}, nil
 }

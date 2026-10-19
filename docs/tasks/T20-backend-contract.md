@@ -73,9 +73,9 @@ call, per §2's contract:
 > delivered exactly once, or the connection is terminated.
 
 `SelectSnapshot` carries the ordered UID list (which *is* the sequence-number
-map), status, flags, permanent flags, read-only bit, `NumRecent`,
-`HighestModSeq`/`NoModSeq`, and `Revision`. Get the three-step race described in
-§2 into a test even though it is a backend author's bug to make, not the
+map), `Status` as the sole source of mailbox values (including flags, access
+mode, `NumRecent` and `HighestModSeq`/`NoModSeq`), and `Revision`. Get the
+three-step race described in §2 into a test even though it is a backend author's bug to make, not the
 framework's — `backendtest` (below) is where that test lives permanently.
 
 If `Select` attaches the updater and then fails, the backend must detach before

@@ -577,21 +577,14 @@ type SelectResult struct {
 type SelectSnapshot struct {
 	// UIDs lists every visible message in strictly ascending sequence order.
 	UIDs []imap.UID
-	// Status carries the message count, UIDVALIDITY, UIDNEXT and related
-	// mailbox values for the same atomic state.
+	// Status is the sole source of SELECT values for this atomic state:
+	// Mailbox, Flags, PermanentFlags, NumMessages, NumRecent, UIDValidity,
+	// UIDNext, Unseen, ReadOnly, HighestModSeq and NoModSeq. NumMessages must
+	// equal len(UIDs), NumRecent must not exceed it, UIDValidity must be nonzero
+	// and UIDNext must exceed every visible UID. The framework copies its flag
+	// slices before retaining them. NoModSeq suppresses HIGHESTMODSEQ; RECENT
+	// and UNSEEN are reported only for IMAP4rev1.
 	Status imap.MailboxStatus
-	// Flags is the set of flags currently present in the mailbox.
-	Flags []imap.Flag
-	// PermanentFlags is the set the client may change.
-	PermanentFlags []imap.Flag
-	// ReadOnly reports that the mailbox was selected without write access.
-	ReadOnly bool
-	// NumRecent is the rev1 RECENT count.
-	NumRecent uint32
-	// HighestModSeq is the highest modification sequence for CONDSTORE.
-	HighestModSeq uint64
-	// NoModSeq selects NOMODSEQ instead of a zero-valued HIGHESTMODSEQ.
-	NoModSeq bool
 	// Revision starts the selected updater's mandatory Before/After chain.
 	Revision MailboxRevision
 	_        struct{}

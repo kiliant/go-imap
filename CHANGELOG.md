@@ -179,6 +179,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   HIGHESTMODSEQ checkpoint while removals wait. No exported signature changes.
   (#73)
 
+- **BREAKING:** remove `SelectSnapshot.Flags`, `PermanentFlags`, `ReadOnly`,
+  `NumRecent`, `HighestModSeq` and `NoModSeq`; their fields in `Status` are the
+  sole source for SELECT responses and the retained selection checkpoint.
+  Document snapshot validation, copy retained flag slices, and migrate both
+  backends and backendtest. No root-module API changes. (#120)
+
 - **Server v1 preparation:** document backendtest's prospective compatibility
   policy: checks may enforce existing obligations, while new obligations need
   harness opt-in or a witnessed optional interface. Extend the configuration
