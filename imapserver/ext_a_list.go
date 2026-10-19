@@ -273,7 +273,7 @@ func writeListStatus(ctx context.Context, c *conn, args *listArgs, mailboxes []s
 		if err != nil || data == nil {
 			continue
 		}
-		if err := imapcodec.WriteStatusResponse(c.encoder, data); err != nil {
+		if err := imapcodec.WriteStatusResponse(c.encoder, c.statusReply(data, args.statusItems)); err != nil {
 			return err
 		}
 		if err := c.encoder.Flush(); err != nil {
