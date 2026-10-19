@@ -133,6 +133,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- `CapabilitySupport` documents the complete backend witness catalogue:
+  advertisement gates, the LIST-EXTENDED routing token, backend-only
+  BINARY-FETCH, required interfaces, states and obligations. Clarify that a
+  Session answer replaces the Backend answer even when false. A gate compares
+  the catalogue against compiled descriptors, backend feature witnesses and
+  static spoken tokens in both directions. No exported API change. (#134)
+
 - **BREAKING:** IMAP4REV2 advertisement now requires `CapabilitySupport`'s
   backend-only BINARY-FETCH witness, independently of the full BINARY token.
   Backends without it lose the rev2 umbrella before the v1 freeze. Memory and
