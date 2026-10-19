@@ -6,7 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -79,7 +79,7 @@ func (a *account) urlAuthKeyLocked(mailbox string) ([]byte, error) {
 // two properties RFC 4467 section 3 needs: it cannot be forged without the
 // secret, and RESETKEY invalidates every token for that mailbox at once by
 // discarding the secret.
-func (s *session) GenerateURLAuth(ctx context.Context, url, mechanism string, _ *imapserver.URLAuthOptions) (string, error) {
+func (s *session) GenerateURLAuth(ctx context.Context, url, mechanism string, _ *imapserver.GenURLAuthOptions) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -90,7 +90,7 @@ func (s *session) GenerateURLAuth(ctx context.Context, url, mechanism string, _ 
 			Text: "unsupported URLAUTH mechanism " + mechanism,
 		}
 	}
-	mailbox := urlMailbox(url)
+	mailbox := mailboxKey(urlMailbox(url))
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
 	key, err := s.account.urlAuthKeyLocked(mailbox)
@@ -106,7 +106,7 @@ func (s *session) GenerateURLAuth(ctx context.Context, url, mechanism string, _ 
 // returned. A variable-time comparison here would leak the token a byte at a
 // time to anyone allowed to present a guess, which is the whole attack URLAUTH
 // has to withstand.
-func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.URLAuthOptions) (io.ReadCloser, error) {
+func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.URLFetchOptions) (*imapserver.URLFetchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.UR
 	if !found {
 		return nil, nil
 	}
-	mailbox := urlMailbox(base)
+	mailbox := mailboxKey(urlMailbox(base))
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
 	key, ok := s.account.urlAuthKeys[mailbox]
@@ -131,7 +131,7 @@ func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.UR
 	uid := urlUID(base)
 	for _, msg := range m.messages {
 		if msg.uid == uid {
-			return io.NopCloser(bytes.NewReader(append([]byte(nil), msg.raw...))), nil
+			return &imapserver.URLFetchResult{Body: io.NopCloser(&contextReader{ctx: ctx, reader: bytes.NewReader(msg.raw)}), Size: int64(len(msg.raw)), HasSize: true}, nil
 		}
 	}
 	return nil, nil
@@ -139,9 +139,16 @@ func (s *session) FetchURLAuth(ctx context.Context, url string, _ *imapserver.UR
 
 // ResetURLAuthKey implements [imapserver.URLAuthSession]. An empty mailbox name
 // revokes every URL in the account, per RFC 4467 section 5.1.
-func (s *session) ResetURLAuthKey(ctx context.Context, mailbox string, _ *imapserver.URLAuthOptions) error {
+func (s *session) ResetURLAuthKey(ctx context.Context, mailbox string, options *imapserver.ResetURLAuthKeyOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if options != nil {
+		for _, mechanism := range options.Mechanisms {
+			if mailbox == "" || !strings.EqualFold(mechanism, "INTERNAL") {
+				return noError(imap.CodeCannot, "unsupported RESETKEY mechanism")
+			}
+		}
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
@@ -149,14 +156,14 @@ func (s *session) ResetURLAuthKey(ctx context.Context, mailbox string, _ *imapse
 		s.account.urlAuthKeys = nil
 		return nil
 	}
-	delete(s.account.urlAuthKeys, mailbox)
+	delete(s.account.urlAuthKeys, mailboxKey(mailbox))
 	return nil
 }
 
 func urlAuthToken(key []byte, url string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(url))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // urlMailbox and urlUID pull the mailbox and UID out of an IMAP URL of the form
