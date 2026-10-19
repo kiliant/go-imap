@@ -85,7 +85,9 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 			changes = append(changes, &imapserver.UpdateFlags{UID: msg.UID, Flags: slices.Clone(flags), ModSeq: msg.ModSeq})
 		}
 		if !silent || conditional {
-			results = append(results, flagsData(imap.SeqNum(i+1), msg))
+			data := flagsData(imap.SeqNum(i+1), msg)
+			s.decorateRecent(data, msg.UID)
+			results = append(results, data)
 		}
 	}
 	if len(changes) > 0 {
@@ -161,9 +163,6 @@ func (s *selected) copyMove(ctx context.Context, uids imap.UIDSet, destination s
 	if a.state.Mailboxes[destination] == nil {
 		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
 	}
-	if move && name == destination {
-		return nil, noError(imap.CodeCannot, "cannot MOVE to the selected mailbox")
-	}
 	next, err := cloneState(a.state)
 	if err != nil {
 		return nil, err
@@ -202,6 +201,7 @@ func (s *selected) copyMove(ctx context.Context, uids imap.UIDSet, destination s
 		defer a.discardStage(stage)
 		msg := *original
 		msg.UID = uid
+		msg.Recent = true
 		msg.File = filepath.Base(stage) + flagSuffix(original.Flags)
 		msg.Size = size
 		msg.Date = date
@@ -226,7 +226,21 @@ func (s *selected) copyMove(ctx context.Context, uids imap.UIDSet, destination s
 		destinationUIDs = append(destinationUIDs, uid)
 	}
 	if move {
+		if from == to {
+			retained = append(retained, to.Messages[len(source.Messages):]...)
+		}
 		from.Messages = retained
+	}
+	if move && from == to {
+		var removals, additions []imapserver.Update
+		for _, change := range changes[from.UIDValidity] {
+			if _, ok := change.(*imapserver.UpdateExpunge); ok {
+				removals = append(removals, change)
+			} else {
+				additions = append(additions, change)
+			}
+		}
+		changes[from.UIDValidity] = append(removals, additions...)
 	}
 	if len(sourceUIDs) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -366,7 +380,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 			f.Close()
 			return nil, err
 		}
-		matched, err := message.Match(ctx, analysis, message.Metadata{SeqNum: imap.SeqNum(i + 1), UID: msg.UID, Flags: slices.Clone(msg.Flags), InternalDate: msg.Date, RFC822Size: msg.Size, ModSeq: msg.ModSeq}, criteria, opts)
+		matched, err := message.Match(ctx, analysis, message.Metadata{SeqNum: imap.SeqNum(i + 1), UID: msg.UID, Flags: s.recentFlags(msg.UID, msg.Flags), InternalDate: msg.Date, RFC822Size: msg.Size, ModSeq: msg.ModSeq}, criteria, opts)
 		f.Close()
 		if err != nil {
 			return nil, err
@@ -478,7 +492,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			continue
 		}
 		msg := *m.Messages[at]
-		msg.Flags = slices.Clone(msg.Flags)
+		msg.Flags = s.recentFlags(msg.UID, msg.Flags)
 		f, err := openRegular(a.root, messagePath(name, &msg))
 		a.release()
 		locked = false
@@ -636,7 +650,7 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 				if item == imap.FetchItemRFC822Text {
 					section.Specifier = imap.PartSpecifierText
 				}
-				reader, n, err := analysis.OpenBodySection(ctx, section)
+				reader, n, err := analysis.OpenBodySection(ctx, section, nil)
 				if err != nil {
 					return nil, false, err
 				}
@@ -657,7 +671,7 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 			}
 			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: analysis.BodyStructure()})
 		case *imap.FetchItemBodySection:
-			reader, n, err := analysis.OpenBodySection(ctx, item)
+			reader, n, err := analysis.OpenBodySection(ctx, item, nil)
 			if err != nil {
 				return nil, false, err
 			}

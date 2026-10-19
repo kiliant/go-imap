@@ -9,9 +9,8 @@ import (
 // ENVELOPE. RFC 3501 section 7.4.2 (the address production in section 9),
 // RFC 9051 section 7.5.2.
 //
-// IMAP transmits an address as four fields; this type keeps three of them,
-// because the fourth (the source route of RFC 822) was deprecated by RFC 2822
-// and is not used by any deployed server.
+// IMAP transmits four address fields. SourceRoute preserves the obsolete
+// RFC 822 route when it occurs in a stored message or ENVELOPE response.
 //
 // An address list may contain group syntax markers. A start-of-group marker has
 // an empty Host and a non-empty Mailbox holding the group name; an end-of-group
@@ -23,6 +22,10 @@ type Address struct {
 	// Name is the display name, already decoded from RFC 2047 encoded-words
 	// by whatever produced this value. It may be empty.
 	Name string
+
+	// SourceRoute is the obsolete RFC 822 source route, such as "@relay".
+	// An empty string represents NIL on the wire.
+	SourceRoute string
 
 	// Mailbox is the local part of the address, or the group name for a
 	// start-of-group marker.

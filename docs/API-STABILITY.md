@@ -149,6 +149,20 @@ apidiff scope is a gate on us; it changes nothing a user of a module tagged v1
 sees, and the versioning policy below already rules that an exclusion is not a
 licence.
 
+Separate options types when commands already have different policy. The server's
+`GetMetadataOptions` carries depth and size limits; `SetMetadataOptions` is
+independent and empty. `ACLOptions`, `QuotaOptions`, `LanguageOptions` and
+`ComparatorOptions` remain shared, deliberately documented on each type: a
+future command-specific field must name its command and be ignored by the
+other methods. URLAUTH similarly has separate `GenURLAuthOptions`,
+`URLFetchOptions` and `ResetURLAuthKeyOptions` after its pre-v1 correction.
+
+Stored-message helpers follow the same rule. In particular
+`message.Message.OpenBodySection` takes `*message.SectionOptions` for helper
+policy. Its shared `imap.FetchItemBodySection` describes a wire request and
+cannot carry server-only transformation policy. This replaces the T32 helper
+exemption before the server freeze; its reader, size and error results remain.
+
 ## 4. Exported interfaces are a liability
 
 Adding a method to an exported interface breaks every external implementer.
@@ -537,6 +551,44 @@ between them is not stylistic:
 Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
+
+### Resolved content carries size and ownership — added 2026-10-19
+
+`URLAuthSession.FetchURLAuth` returns guarded `URLFetchResult`, so later URLFETCH
+metadata can grow without replacing its return signature. A nil result means
+unresolved. A non-nil result supplies an owned Body that the framework closes
+exactly once, including when returned with an error. Size is exact when HasSize
+is set, including a known empty body; otherwise bounded disk staging measures
+it. A known-size stream failure after literal framing invalidates the connection
+rather than attempting to continue with a mismatched byte count.
+
+`Limits.MaxLiteralBytes` bounds individual input literals and aggregate APPEND
+and URLFETCH payloads per command. CATENATE stages parts on disk with this bound;
+URLFETCH streams known sizes and bounds staging of unknown ones. Refusal drains
+remaining client literals without resolving more URLs. These pre-v1 changes
+correct the previous unbounded buffering and are recorded as breaking behaviour.
+The default and future retuning policy are part of the limits review (#124).
+
+### Atomic batches require an explicit backend contract — added 2026-10-19
+
+`MultiAppendSession.MultiAppend` receives the whole command's messages through
+borrowed readers and returns the shared `imap.MultiAppendData`. Each guarded
+`AppendMessage` carries per-message flags, date and declared-size presence;
+`MultiAppendOptions` carries command-wide mutation origin and future settings.
+The optional interface promises all-or-nothing storage and one atomic update
+batch. Its absence withdraws MULTIAPPEND; the framework never simulates the
+operation with repeated `Session.Append` calls. This corrects the pre-v1
+advertisement, deliberately recorded as breaking behaviour in CHANGELOG.md.
+
+The framework stages a complete APPEND command to a temporary file before any
+backend call, even for one message: the command's shape and later failures are
+not known until every literal and its terminator are consumed. Backends still
+read streams, but are called after staging rather than while the client sends.
+Cancellation and parse/zero-length failures discard staged data. Memory
+implements the atomic contract. Maildir's existing journal recovers by rolling
+forward after a prepared commit failure; it does not implement this stricter
+rollback contract and therefore does not advertise MULTIAPPEND. This interface
+adds no obligations to the mandatory Session method set.
 
 ### Capability withdrawal is a separate opt-in policy — added 2026-10-19
 
@@ -949,3 +1001,25 @@ The `api-guardian` agent (`.claude/agents/api-guardian.md`) reviews every diff
 that touches an exported symbol. Its single question is the one from CLAUDE.md:
 *can the next RFC be added without breaking this?* It has authority to reject a
 functionally correct change.
+
+### RECENT selection ownership and source-route preservation (#160, #165)
+
+`UpdateRecent{NumRecent}` extends the existing closed-to-external-types update
+vocabulary without adding a method to any exported interface. Its absolute count
+belongs to the receiving selection and follows additions/removals in the same
+revision batch. Reference backends persist pending state until a read-write
+selection claims it; EXAMINE does not consume it. A backend must tailor FETCH,
+STORE and update flags to each selection, and must not store `\Recent` as a
+client-controlled permanent flag. The framework suppresses RECENT counts and
+flags in rev2. Pending claims in old Maildir records without explicit recent
+state are conservatively treated as recent on first read.
+
+`imap.Address.SourceRoute` is an additive field on an already guarded root
+struct, preserving the fourth ENVELOPE address component. The root module must
+be released before a standalone server release consumes these codec/helper
+corrections, following the existing root-before-server release gate. No root
+signature or existing backend interface changes.
+
+For `message.Metadata`, nil private and shared per-entry clock maps select
+RFC 7162's single-clock model for `/flags/` MODSEQ queries. Non-nil maps preserve
+entry-specific behavior, including zero for an absent entry.

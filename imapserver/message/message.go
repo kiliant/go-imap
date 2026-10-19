@@ -100,17 +100,25 @@ func (m *Message) BodyStructure() imap.BodyStructure {
 	return cloneStructure(m.parsed.BodyStructure)
 }
 
+// SectionOptions configures [Message.OpenBodySection]. A nil pointer selects
+// the defaults: return the requested stored bytes without transformation.
+// Empty today; helper policy belongs here rather than in shared wire vocabulary.
+// Construct with keyed fields only; fields may be added in a future release.
+type SectionOptions struct{ _ struct{} }
+
 // OpenBodySection returns a streaming reader and its exact octet count. item
 // selects a part, HEADER/TEXT/MIME, header-field filters and optional partial.
 // It must be non-nil; an empty item selects the complete stored message.
 // Peek has no effect: this utility never changes mailbox flags.
+// A nil options pointer selects the defaults.
 //
 // Missing parts and invalid requests return errors. Offsets beyond the section
 // produce an empty reader. The reader is bound to ctx for its entire lifetime,
 // owns no source copy, and needs no Close. Keep the source open and immutable
 // until reading finishes; other Message operations and readers remain usable
 // if this reader's context is cancelled. A nil/zero Message is invalid.
-func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodySection) (io.Reader, int64, error) {
+func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodySection, options *SectionOptions) (io.Reader, int64, error) {
+	_ = options
 	if err := checkContext(ctx); err != nil {
 		return nil, 0, err
 	}

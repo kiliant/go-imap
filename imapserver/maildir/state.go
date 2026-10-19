@@ -46,6 +46,7 @@ type mailboxState struct {
 	Extra          extraFields                              `json:"-"`
 }
 type messageRecord struct {
+	Recent bool        `json:"recent"`
 	UID    imap.UID    `json:"uid"`
 	File   string      `json:"file"`
 	Size   int64       `json:"size"`
@@ -127,6 +128,12 @@ func (s *messageRecord) UnmarshalJSON(b []byte) error {
 	type plain messageRecord
 	e, err := unmarshalExtra(b, (*plain)(s))
 	s.Extra = e
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(b, &fields) == nil {
+		if _, known := fields["recent"]; !known {
+			s.Recent = true
+		}
+	}
 	return err
 }
 func (s tombstone) MarshalJSON() ([]byte, error) {

@@ -41,6 +41,8 @@ type ComparatorSession interface {
 
 // ComparatorOptions configures a COMPARATOR operation. A nil pointer selects
 // the defaults.
+// Shared by Comparators and SetComparator. Future command-specific fields will be
+// named for their command and documented as ignored by the other methods.
 // Construct with keyed fields only; fields may be added in a future release.
 type ComparatorOptions struct{ _ struct{} }
 

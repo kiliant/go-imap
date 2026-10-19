@@ -23,10 +23,9 @@ import (
 // unimplemented until NOTIFY's session-scoped machinery existed — and why it
 // became tractable once it did.
 //
-// The context is held by the framework rather than the backend. It already sees
-// every change to the selected mailbox through the update queue, so it can
-// decide whether a change affects a registered result without asking anyone.
-// A backend therefore needs to know nothing about CONTEXT at all.
+// The framework holds each context and refreshes its query after queued mailbox
+// changes, on the event loop after backend mutations return. Backends need no
+// additional interface for CONTEXT=SEARCH.
 
 // SORT and SEARCH return options from RFC 5267 section 4.
 const (
@@ -49,6 +48,8 @@ type searchContext struct {
 	tag     string
 	uids    map[imap.UID]struct{}
 	uidMode bool
+	query   *SearchQuery
+	charset string
 }
 
 func init() {
@@ -114,7 +115,7 @@ func validateSortReturnOptions(c *conn, options []string) error {
 //
 // A second UPDATE under the same tag replaces the first, which is what lets a
 // client refresh its registration without a CANCELUPDATE round trip.
-func registerSearchContext(c *conn, tag string, uids []imap.UID, uidMode bool) {
+func registerSearchContext(c *conn, tag string, uids []imap.UID, uidMode bool, args *searchArgs) {
 	if c.state.selected == nil {
 		return
 	}
@@ -125,11 +126,11 @@ func registerSearchContext(c *conn, tag string, uids []imap.UID, uidMode bool) {
 	contexts := c.state.selected.contexts
 	for i := range contexts {
 		if contexts[i].tag == tag {
-			contexts[i].uids, contexts[i].uidMode = held, uidMode
+			contexts[i] = &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids), charset: args.charset}
 			return
 		}
 	}
-	c.state.selected.contexts = append(contexts, &searchContext{tag: tag, uids: held, uidMode: uidMode})
+	c.state.selected.contexts = append(contexts, &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids), charset: args.charset})
 }
 
 func parseCancelUpdate(decoder *imapwire.Decoder) (any, int64, error) {
@@ -175,48 +176,105 @@ func handleCancelUpdate(_ context.Context, c *conn, command *queuedCommand) erro
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }
 
-// notifySearchContexts reports how a batch of selected-mailbox changes affected
-// each registered search result.
-//
-// Only removals are reported. A message that newly *matches* a stored search
-// cannot be recognised without re-running the criteria against it, which would
-// mean calling the backend from the update path — the re-entrancy the design
-// forbids. Reporting the removals the framework can see for certain, and not
-// guessing at additions, is the honest half: RFC 5267 section 4.3 allows a
-// server to send REMOVEFROM without ADDTO, and a wrong ADDTO would put a message
-// in the client's result set that never matched.
-func notifySearchContexts(c *conn, removed []imap.UID) error {
+// Refresh contexts on the event-loop after backend mutations have returned and
+// their queued changes have been applied. No backend callback is re-entered.
+// UID membership survives renumbering; REMOVEFROM uses the old sequence number
+// for an expunge and the current one for a flag change.
+type searchContextDelta struct {
+	context     *searchContext
+	added, gone []uint32
+}
+
+func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.SeqNum) []searchContextDelta {
 	selected := c.state.selected
-	if selected == nil || len(selected.contexts) == 0 || len(removed) == 0 {
+	if selected == nil {
 		return nil
 	}
+	var deltas []searchContextDelta
+	var live []*searchContext
 	for _, held := range selected.contexts {
-		var gone []uint32
-		for _, uid := range removed {
-			if _, ok := held.uids[uid]; !ok {
-				continue
-			}
-			delete(held.uids, uid)
-			gone = append(gone, uint32(uid))
-		}
-		if len(gone) == 0 {
+		result, err := selected.mailbox.Search(c.ctx, held.query, &SearchOptions{Charset: held.charset})
+		if err != nil || result == nil || len(result.UIDs) > maxCommandSearchResults {
+			writeUntaggedOK(c, imap.CodeNoUpdate, held.tag, "search context could not be refreshed")
 			continue
 		}
+		current := make(map[imap.UID]struct{}, len(result.UIDs))
+		var added, gone []uint32
+		for _, uid := range result.UIDs {
+			seq, visible := selected.sequence(uid)
+			if !visible {
+				continue
+			}
+			if _, duplicate := current[uid]; duplicate {
+				continue
+			}
+			current[uid] = struct{}{}
+			if _, known := held.uids[uid]; !known {
+				number := uint32(seq)
+				if held.uidMode {
+					number = uint32(uid)
+				}
+				added = append(added, number)
+			}
+		}
+		for uid := range held.uids {
+			if _, matches := current[uid]; matches {
+				continue
+			}
+			seq, expunged := removed[uid]
+			if !expunged {
+				var visible bool
+				seq, visible = selected.sequence(uid)
+				if visible && selected.backendUIDs != nil {
+					if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
+						current[uid] = struct{}{}
+						continue // its EXPUNGE is still withheld
+					}
+				}
+				if !visible {
+					continue
+				}
+			}
+			if before, ok := beforeSequences[uid]; ok {
+				seq = before
+			}
+			number := uint32(seq)
+			if held.uidMode {
+				number = uint32(uid)
+			}
+			gone = append(gone, number)
+		}
+		held.uids = current
+		live = append(live, held)
+		if len(added) == 0 && len(gone) == 0 {
+			continue
+		}
+		slices.Sort(added)
 		slices.Sort(gone)
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().
-			Special('(').Atom("TAG").SP().Quoted(held.tag).Special(')')
-		if held.uidMode {
+		deltas = append(deltas, searchContextDelta{context: held, added: added, gone: gone})
+	}
+	selected.contexts = live
+	return deltas
+}
+
+// REMOVEFROM precedes EXPUNGE renumbering; ADDTO follows the corresponding
+// EXISTS. Separate responses are legal and keep both number spaces coherent.
+func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, removals bool) error {
+	for _, delta := range deltas {
+		numbers, key := delta.added, "ADDTO"
+		if removals {
+			numbers, key = delta.gone, "REMOVEFROM"
+		}
+		if len(numbers) == 0 {
+			continue
+		}
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().Special('(').Atom("TAG").SP().Quoted(delta.context.tag).Special(')')
+		if delta.context.uidMode {
 			c.encoder.SP().Atom("UID")
 		}
-		// REMOVEFROM's argument is a position/set pair; position 0 means the
-		// removal is not relative to a partial window. RFC 5267 section 4.3.
-		c.encoder.SP().Atom("REMOVEFROM").SP().
-			Special('(').Number(0).SP().Atom(numberSetString(gone)).Special(')').CRLF()
-		if err := c.encoder.Flush(); err != nil {
-			return err
-		}
+		c.encoder.SP().Atom(key).SP().Special('(').Number(0).SP().Atom(numberSetString(numbers)).Special(')').CRLF()
 	}
-	return nil
+	return c.encoder.Flush()
 }
 
 // searchContextTag reports the tag a SEARCH should register under, and whether

@@ -42,6 +42,8 @@ type ACLSetSession interface {
 }
 
 // ACLOptions configures an ACL query. A nil pointer selects the defaults.
+// Shared by GetACL, MyRights, ListRights and DeleteACL. Future fields specific
+// to one command will name it and be ignored by the other methods.
 // Construct with keyed fields only; fields may be added in a future release.
 type ACLOptions struct{ _ struct{} }
 
