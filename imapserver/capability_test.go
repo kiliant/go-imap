@@ -125,9 +125,9 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"Thread(ctx context.Context, query *SearchQuery, algorithm imap.ThreadAlgorithm, options *ThreadOptions) ([]imap.ThreadNode, error)",
 		},
 		"URLAuthSession": {
-			"FetchURLAuth(ctx context.Context, url string, options *URLAuthOptions) (io.ReadCloser, error)",
-			"GenerateURLAuth(ctx context.Context, url, mechanism string, options *URLAuthOptions) (string, error)",
-			"ResetURLAuthKey(ctx context.Context, mailbox string, options *URLAuthOptions) error",
+			"FetchURLAuth(ctx context.Context, url string, options *URLFetchOptions) (*URLFetchResult, error)",
+			"GenerateURLAuth(ctx context.Context, url, mechanism string, options *GenURLAuthOptions) (string, error)",
+			"ResetURLAuthKey(ctx context.Context, mailbox string, options *ResetURLAuthKeyOptions) error",
 		},
 		"UnauthenticateSession": {
 			"Unauthenticate(ctx context.Context, options *UnauthenticateOptions) error",

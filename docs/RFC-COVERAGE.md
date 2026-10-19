@@ -260,9 +260,10 @@ CONDSTORE `MODIFIED` on tagged OK.
     not. RFC 3502's UID-set form of APPENDUID is reported.
 
 [^srvcatenate]: Client text and server-side URLs assembled into one message
-    through the optional `CatenateSession`. Parts are read in order because each
-    literal's length is only knowable once the previous is off the wire; that
-    buffering is the grammar's price, not a design choice.
+    through optional `CatenateSession`. Parts spool to bounded temporary files;
+    aggregate APPEND bytes are limited by `Limits.MaxLiteralBytes`. Over-limit
+    input returns NO [TOOBIG] without committing, and remaining literals drain
+    without resolving further URLs.
 
 [^srvutf8]: **The only capabilities left unimplemented, and both by decision.**
     RFC 9755 deprecates UTF8=ALL and UTF8=USER outright — implementing a
@@ -431,7 +432,7 @@ break the client; full command support is best-effort.
 | LOGIN-REFERRALS | 2221 | done | done [^srvreferral] | referral response codes parse |
 | MAILBOX-REFERRALS | 2193 | done | done [^srvreferral] | as above |
 | URLAUTH | 4467 | done | done [^srvurlauth] | GENURLAUTH / URLFETCH / RESETKEY |
-| URLAUTH=BINARY | 5524 | done | done | capability accepted with URLAUTH |
+| URLAUTH=BINARY | 5524 | done | deferred | server extended URLFETCH syntax is not implemented or advertised |
 | URL-PARTIAL | 5550 | done | done | `;PARTIAL=` in IMAP URLs |
 | LANGUAGE | 5255 | done | done | |
 | I18NLEVEL=1 | 5255 | done | done | capability probe |
