@@ -16,6 +16,7 @@ import (
 )
 
 type message struct {
+	recent       bool
 	uid          imap.UID
 	flags        []imap.Flag
 	internalDate time.Time
@@ -34,6 +35,7 @@ type selected struct {
 	mailbox  *mailbox
 	readOnly bool
 	closed   bool
+	recent   map[imap.UID]bool
 }
 
 func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, options *imapserver.FetchOptions) error {
@@ -79,6 +81,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			}
 			flagUpdates = append(flagUpdates, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(msg.flags), ModSeq: msg.modSeq})
 		}
+		s.decorateRecent(data, msg.uid)
 		results = append(results, data)
 	}
 	if len(flagUpdates) != 0 {
@@ -128,7 +131,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 		metadata := servermessage.Metadata{
 			SeqNum:       imap.SeqNum(i + 1),
 			UID:          msg.uid,
-			Flags:        cloneFlags(msg.flags),
+			Flags:        s.recentFlags(msg.uid, msg.flags),
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
 			ModSeq:       msg.modSeq,
@@ -205,7 +208,9 @@ func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, ui
 		msg.modSeq = bumpModSeqLocked(s.mailbox)
 		changes = append(changes, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(flags), ModSeq: msg.modSeq})
 		if !silent {
-			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
+			data := flagsFetchData(imap.SeqNum(i+1), msg)
+			s.decorateRecent(data, msg.uid)
+			results = append(results, data)
 		}
 	}
 	afterFlags := mailboxFlagsLocked(s.mailbox)
@@ -257,9 +262,6 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 	if destinationMailbox == nil {
 		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
 	}
-	if move && destinationMailbox == s.mailbox {
-		return nil, noError(imap.CodeCannot, "cannot move messages to the selected mailbox")
-	}
 	var sources, destinations []imap.UID
 	var additions []imapserver.Update
 	var removals []imapserver.Update
@@ -277,6 +279,8 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		destinationMailbox.uidNext++
 		clone := *msg
 		clone.uid = uid
+		clone.recent = true
+		clone.modSeq = bumpModSeqLocked(destinationMailbox)
 		clone.flags = cloneFlags(msg.flags)
 		destinationMailbox.messages = append(destinationMailbox.messages, &clone)
 		ensureMailboxFlagsLocked(destinationMailbox, clone.flags)
@@ -286,6 +290,14 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 			removals = append(removals, &imapserver.UpdateExpunge{UID: msg.uid})
 		}
 	}
+	if move && destinationMailbox == s.mailbox && len(additions) > 0 {
+		s.mailbox.messages = append(retained, destinationMailbox.messages[len(original):]...)
+		if !slices.Equal(beforeFlags, mailboxFlagsLocked(destinationMailbox)) {
+			additions = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(destinationMailbox)}}, additions...)
+		}
+		publishLocked(s.mailbox, advanceLocked(s.mailbox, origin, append(removals, additions...)))
+		return &imap.CopyData{HasUIDs: true, UIDValidity: s.mailbox.uidValidity, SourceUIDs: imap.UIDSetNum(sources...), DestinationUIDs: imap.UIDSetNum(destinations...)}, nil
+	}
 	if len(additions) != 0 {
 		if !slices.Equal(beforeFlags, mailboxFlagsLocked(destinationMailbox)) {
 			additions = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(destinationMailbox)}}, additions...)
@@ -293,6 +305,9 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		publishLocked(destinationMailbox, advanceLocked(destinationMailbox, origin, additions))
 	}
 	if move && len(removals) != 0 {
+		if destinationMailbox == s.mailbox {
+			retained = append(retained, destinationMailbox.messages[len(original):]...)
+		}
 		s.mailbox.messages = retained
 		publishLocked(s.mailbox, advanceLocked(s.mailbox, origin, removals))
 	}
@@ -369,12 +384,6 @@ func advanceLocked(m *mailbox, origin imapserver.ChangeToken, changes []imapserv
 	before := revision(m.revision)
 	m.revision++
 	return &imapserver.UpdateBatch{Before: before, After: revision(m.revision), Origin: origin, Changes: changes}
-}
-
-func publishLocked(m *mailbox, batch *imapserver.UpdateBatch) {
-	for _, updater := range m.watchers {
-		_ = updater.Push(batch)
-	}
 }
 
 func cloneFlags(flags []imap.Flag) []imap.Flag { return append([]imap.Flag(nil), flags...) }

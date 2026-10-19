@@ -1001,3 +1001,25 @@ The `api-guardian` agent (`.claude/agents/api-guardian.md`) reviews every diff
 that touches an exported symbol. Its single question is the one from CLAUDE.md:
 *can the next RFC be added without breaking this?* It has authority to reject a
 functionally correct change.
+
+### RECENT selection ownership and source-route preservation (#160, #165)
+
+`UpdateRecent{NumRecent}` extends the existing closed-to-external-types update
+vocabulary without adding a method to any exported interface. Its absolute count
+belongs to the receiving selection and follows additions/removals in the same
+revision batch. Reference backends persist pending state until a read-write
+selection claims it; EXAMINE does not consume it. A backend must tailor FETCH,
+STORE and update flags to each selection, and must not store `\Recent` as a
+client-controlled permanent flag. The framework suppresses RECENT counts and
+flags in rev2. Pending claims in old Maildir records without explicit recent
+state are conservatively treated as recent on first read.
+
+`imap.Address.SourceRoute` is an additive field on an already guarded root
+struct, preserving the fourth ENVELOPE address component. The root module must
+be released before a standalone server release consumes these codec/helper
+corrections, following the existing root-before-server release gate. No root
+signature or existing backend interface changes.
+
+For `message.Metadata`, nil private and shared per-entry clock maps select
+RFC 7162's single-clock model for `/flags/` MODSEQ queries. Non-nil maps preserve
+entry-specific behavior, including zero for an absent entry.

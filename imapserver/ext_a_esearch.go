@@ -130,7 +130,7 @@ func writeSearchResponse(c *conn, command *queuedCommand, args *searchArgs, uids
 		saveSearchResult(c, args, uids)
 		// CONTEXT registers the result so later changes to it are reported.
 		if tag, ok := searchContextTag(command, args.returnOptions); ok {
-			registerSearchContext(c, tag, uids, commandUsesUIDs(command))
+			registerSearchContext(c, tag, uids, commandUsesUIDs(command), args)
 		}
 		return writeESearchResponse(c, command, args, numbers)
 	}

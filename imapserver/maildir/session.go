@@ -22,6 +22,7 @@ type session struct {
 }
 type selected struct {
 	session          *session
+	recent           map[imap.UID]bool
 	id               uint32
 	readOnly, closed bool
 }
@@ -77,13 +78,12 @@ func (a *account) publishCommit(next *accountState, actions []fileAction, change
 		m.Revision++
 		batches[id] = &imapserver.UpdateBatch{Before: before, After: revision(m.Revision), Origin: origin, Changes: updates}
 	}
+	claims := a.prepareRecent(next, changes)
 	if err := a.commit(next, actions); err != nil {
 		return err
 	}
 	for id, batch := range batches {
-		for _, updater := range a.watchers[id] {
-			_ = updater.Push(batch)
-		}
+		a.publishRecent(id, batch, claims[id])
 	}
 	return nil
 }
@@ -451,7 +451,12 @@ func statusData(name string, m *mailboxState) *imap.StatusData {
 	data.Values[imap.StatusItemUIDNext] = uint64(m.UIDNext)
 	data.Values[imap.StatusItemUIDValidity] = uint64(m.UIDValidity)
 	data.Values[imap.StatusItemUnseen] = uint64(data.NumUnseen)
-	data.Values[imap.StatusItemRecent] = uint64(0)
+	for _, msg := range m.Messages {
+		if msg.Recent {
+			data.NumRecent++
+		}
+	}
+	data.Values[imap.StatusItemRecent] = uint64(data.NumRecent)
 	data.Values[imap.StatusItemHighestModSeq] = m.HighestModSeq
 	data.Values[imap.StatusItemSize] = size
 	data.Values[imap.StatusItemDeleted] = deleted
@@ -496,12 +501,34 @@ func (s *session) Select(ctx context.Context, name string, updater *imapserver.U
 		return nil, missingMailbox()
 	}
 	selection := &selected{session: s, id: m.UIDValidity, readOnly: options != nil && options.ReadOnly}
+	selection.recent = make(map[imap.UID]bool)
+	for _, msg := range m.Messages {
+		if msg.Recent {
+			selection.recent[msg.UID] = true
+		}
+	}
+	if !selection.readOnly && len(selection.recent) > 0 {
+		next, err := cloneState(s.account.state)
+		if err != nil {
+			return nil, err
+		}
+		for _, msg := range next.Mailboxes[name].Messages {
+			msg.Recent = false
+		}
+		if err := s.account.commit(next, nil); err != nil {
+			return nil, err
+		}
+		m = s.account.state.Mailboxes[name]
+	}
 	if s.account.watchers[selection.id] == nil {
 		s.account.watchers[selection.id] = make(map[*selected]*imapserver.Updater)
 	}
 	s.account.watchers[selection.id][selection] = updater
 	s.selections[selection] = true
-	return &imapserver.SelectResult{Mailbox: selection, Snapshot: snapshot(name, m, selection.readOnly)}, nil
+	snap := snapshot(name, m, selection.readOnly)
+	snap.Status.NumRecent = uint32(len(selection.recent))
+	snap.Status.Flags = append(snap.Status.Flags, imap.FlagRecent)
+	return &imapserver.SelectResult{Mailbox: selection, Snapshot: snap}, nil
 }
 func (s *session) Close(ctx context.Context, _ *imapserver.SessionCloseOptions) error {
 	if err := checkContext(ctx); err != nil {
@@ -602,7 +629,7 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 		return nil, err
 	}
 	file := filepath.Base(stage) + flagSuffix(flags)
-	msg := &messageRecord{UID: uid, File: file, Size: size, Date: actualDate, Flags: flags, ModSeq: modseq}
+	msg := &messageRecord{Recent: true, UID: uid, File: file, Size: size, Date: actualDate, Flags: flags, ModSeq: modseq}
 	m.Messages = append(m.Messages, msg)
 	updates := []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}}
 	if ensureFlags(m, flags) {

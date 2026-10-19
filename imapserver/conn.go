@@ -937,7 +937,13 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
 	// which of their matches went away. See ext_e_context.go.
-	var removed []imap.UID
+	removed := make(map[imap.UID]imap.SeqNum)
+	beforeSequences := make(map[imap.UID]imap.SeqNum)
+	if len(selected.contexts) > 0 {
+		for i, uid := range selected.uids {
+			beforeSequences[uid] = imap.SeqNum(i + 1)
+		}
+	}
 	var pending []deliveredUpdate
 	if !deferred && len(selected.withheld) != 0 {
 		var err error
@@ -965,20 +971,28 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		}
 		pending = append(pending, updates...)
 	}
-	for _, update := range coalesceWireUpdates(pending) {
+	wireUpdates := coalesceWireUpdates(pending)
+	for _, update := range wireUpdates {
 		if update.kind == updateMessageExpunge {
-			removed = append(removed, update.uid)
+			removed[update.uid] = beforeSequences[update.uid]
 		} else if update.kind == updateMessageVanished {
 			// Only registered matches need individual notification; do not
 			// expand a possibly enormous VANISHED UID range.
 			for _, held := range selected.contexts {
 				for uid := range held.uids {
 					if update.uids.Contains(uid) {
-						removed = append(removed, uid)
+						removed[uid] = beforeSequences[uid]
 					}
 				}
 			}
 		}
+	}
+	// Report removals from contexts before EXPUNGE renumbers sequence IDs.
+	deltas := refreshSearchContexts(c, removed, beforeSequences)
+	if err := writeSearchContextDeltas(c, deltas, true); err != nil {
+		return err
+	}
+	for _, update := range wireUpdates {
 		if err := c.writeUpdate(update); err != nil {
 			return err
 		}
@@ -986,10 +1000,7 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if err := c.encoder.Flush(); err != nil {
 		return err
 	}
-	// CONTEXT registrations hear which of their matches were removed. This runs
-	// after the ordinary updates so the client sees the expunge before the
-	// REMOVEFROM that explains it.
-	return notifySearchContexts(c, removed)
+	return writeSearchContextDeltas(c, deltas, false)
 }
 
 // RFC 7162 sections 3.2 and 6 require an explicit safe checkpoint when
@@ -1009,9 +1020,14 @@ func (c *conn) writeDeferredModSeqFence() {
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {
+	update.flags = wireFlags(c, update.flags)
 	switch update.kind {
 	case updateExists:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(update.exists).SP().Atom("EXISTS").CRLF()
+	case updateRecent:
+		if c.state.revision != revisionIMAP4rev2 {
+			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(update.exists).SP().Atom("RECENT").CRLF()
+		}
 	case updateMailboxFlags:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("FLAGS").SP().List(len(update.flags), func(i int) {
 			c.encoder.Flag(string(update.flags[i]))

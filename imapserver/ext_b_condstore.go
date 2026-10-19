@@ -304,7 +304,28 @@ func validateSelectedCondStoreUse(c *conn, used bool, what string) error {
 	if used && c.state.selected != nil && c.state.selected.noModSeq {
 		return fmt.Errorf("%s is unavailable in a NOMODSEQ mailbox", what)
 	}
-	return validateCondStoreUse(c, used, what)
+	first := used && !condStoreEnabled(c)
+	if err := validateCondStoreUse(c, used, what); err != nil {
+		return err
+	}
+	if first && c.state.selected != nil {
+		data, err := c.state.session.Status(c.ctx, c.state.selected.name, &StatusOptions{Items: []imap.StatusItem{imap.StatusItemHighestModSeq}})
+		if err != nil {
+			return err
+		}
+		if data == nil {
+			return fmt.Errorf("imapserver: nil STATUS for CONDSTORE activation")
+		}
+		clock := data.HighestModSeq
+		if value, ok := data.Values[imap.StatusItemHighestModSeq].(uint64); ok {
+			clock = value
+		}
+		if clock == 0 {
+			return fmt.Errorf("imapserver: missing CONDSTORE activation clock")
+		}
+		writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(clock), "highest modification sequence")
+	}
+	return nil
 }
 
 // storeCondStore runs a conditional STORE and reports the rejected messages.
