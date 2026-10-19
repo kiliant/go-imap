@@ -231,6 +231,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   against both backends sequentially. Mailbox creation/rename rejects filesystem
   case and normalization aliases before preparing a transaction; reopening
   aliased state fails without merging identities. (#53)
+
+- A runnable `imapserver/examples/maildir.go` server demonstrates opening a
+  persistent account, polling diagnostics and ordered server/backend shutdown.
+  The existing example compile gate covers it. `maildir.Open` now displays
+  unnamed results in its public signature; its types are unchanged. (#140)
+
 - UIDBATCHES (RFC 10022) is now advertised for every backend and computed
   from the framework's selection UID list, without a backend interface or
   capability witness. Responses preserve descending batch order, support

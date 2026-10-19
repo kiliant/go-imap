@@ -1,6 +1,10 @@
 // Package maildir implements a persistent IMAP backend using Maildir message
 // files and journalled account metadata.
 //
+// The server module's examples/maildir.go is a runnable server with account
+// configuration, polling diagnostics and orderly shutdown. From imapserver,
+// run it with: go run ./examples/maildir.go ./examples/config.go.
+//
 // # Storage contract
 //
 // This backend supports local filesystems on Linux and macOS that implement
