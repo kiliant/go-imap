@@ -214,6 +214,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver.CapabilityFilter` and guarded `CapabilityFilterOptions` let an
+  opted-in Backend or Session withdraw backend-backed capabilities without
+  changing legacy `CapabilitySupport` semantics. Session policy takes precedence;
+  withdrawal also prunes dependents and the IMAP4REV2 umbrella. Command gates
+  enforce server-only metadata scope, and backendtest skips withdrawn optional
+  behaviours. Remove Maildir's inert spoken structural witnesses. Additive. (#137)
+
 - `imapserver.AppendOptions.Size` and `HasSize` expose the ordinary APPEND
   literal's declared octet count before the backend reads it, including a
   known zero size. CATENATE leaves size unknown. Backends must still handle

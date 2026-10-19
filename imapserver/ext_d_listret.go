@@ -223,12 +223,16 @@ func capabilityValueOverrides(state *sessionState, names []string) []string {
 // and everything else — with context.Background(), since derivation has no
 // context to pass. Resolving once against the authentication context keeps the
 // "context first on every blocking call" rule intact.
-func resolveMessageLimits(ctx context.Context, state *sessionState) {
+func resolveMessageLimits(ctx context.Context, state *sessionState, backend Backend) {
 	if state == nil || state.session == nil {
 		return
 	}
 	session, ok := state.session.(MessageLimitSession)
 	if !ok {
+		return
+	}
+	if !backendAllowsCapability(ctx, state, backend, "MESSAGELIMIT") &&
+		!backendAllowsCapability(ctx, state, backend, "SAVELIMIT") {
 		return
 	}
 	limits, err := session.MessageLimits(ctx, nil)

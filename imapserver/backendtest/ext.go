@@ -15,8 +15,8 @@ import (
 // Conformance for the optional interfaces T23 added.
 //
 // Every subtest here skips when the backend does not implement the interface it
-// covers. That is the whole point of an optional interface: not implementing it
-// is a valid choice, and a suite that failed for it would push backend authors
+// covers, or explicitly filters its capability. Not implementing an optional
+// interface is a valid choice, and failing for it would push backend authors
 // towards stub implementations that always error — which is worse than an
 // honest absence, because the framework would then advertise the capability.
 //
@@ -51,6 +51,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("condstore-conditional-store", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "CONDSTORE")
 		mailbox := populate(t, session, "condstore")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		condStore, ok := result.Mailbox.(imapserver.CondStoreMailbox)
@@ -93,6 +94,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("qresync-vanished-excludes-present-messages", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "QRESYNC", "CONDSTORE")
 		mailbox := populate(t, session, "qresync")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		resync, ok := result.Mailbox.(imapserver.QResyncMailbox)
@@ -124,6 +126,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("replace-is-atomic", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "REPLACE")
 		mailbox := populate(t, session, "replace")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		replacer, ok := result.Mailbox.(imapserver.ReplaceMailbox)
@@ -169,6 +172,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("sort-returns-a-permutation", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "SORT")
 		mailbox := populate(t, session, "sort")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		sorter, ok := result.Mailbox.(imapserver.SortMailbox)
@@ -197,6 +201,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("thread-reports-each-message-once", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "THREAD=ORDEREDSUBJECT")
 		mailbox := populate(t, session, "thread")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		threader, ok := result.Mailbox.(imapserver.ThreadMailbox)
@@ -232,6 +237,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("quota-roots-are-answerable", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "QUOTA")
 		quota, ok := session.(imapserver.QuotaSession)
 		if !ok {
 			t.Skip("backend does not implement QuotaSession")
@@ -262,6 +268,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("acl-round-trips", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "ACL")
 		acl, ok := session.(imapserver.ACLSession)
 		if !ok {
 			t.Skip("backend does not implement ACLSession")
@@ -302,7 +309,12 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement MetadataSession")
 		}
-		mailbox := populate(t, session, "metadata")
+		mailbox := ""
+		if capabilityAllowed(instance, session, "METADATA") {
+			mailbox = populate(t, session, "metadata")
+		} else {
+			requireAllowedCapabilities(t, instance, session, "METADATA-SERVER")
+		}
 		const entry imap.MetadataEntryName = "/private/backendtest"
 		empty := ""
 		if err := metadata.SetMetadata(context.Background(), mailbox,
@@ -335,6 +347,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("multisearch-results-carry-their-mailbox", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "MULTISEARCH")
 		searcher, ok := session.(imapserver.MultiSearchSession)
 		if !ok {
 			t.Skip("backend does not implement MultiSearchSession")
@@ -372,6 +385,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement SCRAMCredentials")
 		}
+		requireAllowedCapabilities(t, instance, nil, "AUTH=SCRAM-SHA-256")
 		stored, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username, nil)
 		if err != nil {
 			t.Fatalf("SCRAMCredentials: %v", err)
@@ -406,6 +420,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("urlauth-refuses-a-forged-token", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "URLAUTH")
 		urlAuth, ok := session.(imapserver.URLAuthSession)
 		if !ok {
 			t.Skip("backend does not implement URLAuthSession")
@@ -438,6 +453,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("language-reports-what-it-adopts", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "LANGUAGE")
 		languages, ok := session.(imapserver.LanguageSession)
 		if !ok {
 			t.Skip("backend does not implement LanguageSession")
@@ -465,6 +481,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("namespace-reports-a-personal-namespace", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "NAMESPACE")
 		namespaces, ok := session.(imapserver.NamespaceSession)
 		if !ok {
 			t.Skip("backend does not implement NamespaceSession")
@@ -483,6 +500,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("quota-set-is-readable-afterwards", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "QUOTASET", "QUOTA")
 		setter, ok := session.(imapserver.QuotaSetSession)
 		if !ok {
 			t.Skip("backend does not implement QuotaSetSession")
@@ -537,6 +555,9 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement MessageLimitSession")
 		}
+		if !capabilityAllowed(instance, session, "MESSAGELIMIT") && !capabilityAllowed(instance, session, "SAVELIMIT") {
+			t.Skip("backend filters both message limits")
+		}
 		// The framework resolves these once, against the authentication context,
 		// and reuses the answer for every later capability derivation — because
 		// deriving capabilities happens inside command handling, where a fresh
@@ -573,6 +594,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("unauthenticate-returns-to-a-usable-state", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "UNAUTHENTICATE")
 		unauth, ok := session.(imapserver.UnauthenticateSession)
 		if !ok {
 			t.Skip("backend does not implement UnauthenticateSession")
@@ -602,6 +624,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("catenate-url-resolves-or-is-refused", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "CATENATE")
 		catenate, ok := session.(imapserver.CatenateSession)
 		if !ok {
 			t.Skip("backend does not implement CatenateSession")
@@ -646,6 +669,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("filter-lookup-distinguishes-unknown-from-empty", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "FILTERS")
 		filters, ok := session.(imapserver.FilterSession)
 		if !ok {
 			t.Skip("backend does not implement FilterSession")
@@ -668,6 +692,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("comparator-reports-an-active-comparator", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "I18NLEVEL=2", "I18NLEVEL=1")
 		comparators, ok := session.(imapserver.ComparatorSession)
 		if !ok {
 			t.Skip("backend does not implement ComparatorSession")
@@ -715,6 +740,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("notify-refuses-what-it-cannot-deliver", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "NOTIFY")
 		notifier, ok := session.(imapserver.NotifySession)
 		if !ok {
 			t.Skip("backend does not implement NotifySession")

@@ -159,6 +159,9 @@ func witnessesRev2(ctx context.Context, state *sessionState, backend Backend) bo
 		if witness != nil && !witness(ctx, state, backend) {
 			return false
 		}
+		if witness != nil && !backendAllowsCapability(ctx, state, backend, name) {
+			return false
+		}
 	}
 	return true
 }
@@ -232,24 +235,32 @@ func deriveCapabilitiesContext(ctx context.Context, state *sessionState, server 
 			descriptor.Available != nil && !descriptor.Available(state, server) {
 			continue
 		}
+		if descriptor.RequiresBackend != nil && !backendAllowsCapability(ctx, state, server.backend, descriptor.Name) {
+			continue
+		}
 		available[descriptor.Name] = true
 	}
 
-	// Dependencies are checked after the first pass so descriptor order cannot
-	// accidentally make one token available.
-	var capabilities []string
-	for _, descriptor := range capabilityDescriptors {
-		if !available[descriptor.Name] {
-			continue
-		}
-		ok := true
-		for _, dependency := range descriptor.Depends {
-			if !available[dependency] {
-				ok = false
-				break
+	// Prune to a fixed point: a filtered witness can withdraw a whole chain
+	// of dependent capabilities, regardless of descriptor registration order.
+	for changed := true; changed; {
+		changed = false
+		for _, descriptor := range capabilityDescriptors {
+			if !available[descriptor.Name] {
+				continue
+			}
+			for _, dependency := range descriptor.Depends {
+				if !available[dependency] {
+					delete(available, descriptor.Name)
+					changed = true
+					break
+				}
 			}
 		}
-		if ok {
+	}
+	var capabilities []string
+	for _, descriptor := range capabilityDescriptors {
+		if available[descriptor.Name] {
 			capabilities = append(capabilities, descriptor.Name)
 		}
 	}

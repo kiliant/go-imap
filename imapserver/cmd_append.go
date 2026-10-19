@@ -161,6 +161,9 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 		return &appendPayload{reader: literal, literal: message.literal, pending: literal}, nil
 	}
 	session, _ := c.state.session.(CatenateSession)
+	if !advertisedCapabilities(c)["CATENATE"] {
+		session = nil
+	}
 	payload := &appendPayload{}
 	parts := message.catenate
 	// The first failure is remembered and the command is read to its end anyway.
@@ -179,7 +182,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 			}
 			if session == nil {
 				if failure == nil {
-					failure = fmt.Errorf("imapserver: CATENATE is not implemented by this backend")
+					failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "CATENATE is not available"}
 				}
 				continue
 			}

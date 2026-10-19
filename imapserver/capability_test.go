@@ -40,6 +40,9 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 		"CapabilitySupport": {
 			"SupportsCapability(ctx context.Context, name string, options *CapabilitySupportOptions) bool",
 		},
+		"CapabilityFilter": {
+			"AllowCapability(ctx context.Context, name string, options *CapabilityFilterOptions) bool",
+		},
 		"CatenateSession": {
 			"ResolveCatenateURL(ctx context.Context, url string, options *CatenateOptions) (io.ReadCloser, error)",
 		},
