@@ -112,6 +112,9 @@ echo "=== done ==="
 	}
 	requireImaptestRan(t, out)
 	assertNoImaptestFailures(t, out)
+	if len(imaptestSummaries(out)) == 0 {
+		t.Error("imaptest scripts produced no recognised result summary")
+	}
 }
 
 // TestImaptestStress runs imaptest's randomised command mix for a bounded time.
@@ -243,10 +246,10 @@ func assertNoImaptestFailures(t *testing.T, out string) {
 		t.Errorf("imaptest reported %d untriaged problem(s) against our server:\n%s",
 			len(complaints), strings.Join(complaints, "\n"))
 	}
-	if total, failed, ok := imaptestTotals(out); ok {
-		t.Logf("imaptest scripts: %d run, %d failed", total, failed)
-		if failed > 0 {
-			t.Errorf("%d of %d imaptest scripts failed", failed, total)
+	for _, summary := range imaptestSummaries(out) {
+		t.Logf("imaptest %s: %d total, %d failed", summary.kind, summary.total, summary.failed)
+		if summary.failed > 0 {
+			t.Errorf("%d of %d imaptest %s failed", summary.failed, summary.total, summary.kind)
 		}
 	}
 }
@@ -318,21 +321,80 @@ func matchTriaged(line string) (string, bool) {
 	return "", false
 }
 
-// imaptestTotals reads the "x / y tests failed" summary imaptest prints after a
-// scripted run, when it printed one.
-func imaptestTotals(out string) (total, failed int, ok bool) {
-	summary := regexp.MustCompile(`(\d+)\s*/\s*(\d+)\s+tests?\s+failed`)
-	match := summary.FindStringSubmatch(out)
-	if match == nil {
-		return 0, 0, false
+type imaptestSummary struct {
+	kind          string
+	total, failed int
+}
+
+var (
+	imaptestGroupSummary   = regexp.MustCompile(`^(\d+) test groups:\s*(\d+) failed(?:,|$)`)
+	imaptestCommandSummary = regexp.MustCompile(`^(base protocol|extensions):\s*(\d+)\s*/\s*(\d+) individual commands failed$`)
+	imaptestLegacySummary  = regexp.MustCompile(`^(\d+)\s*/\s*(\d+)\s+tests?\s+failed(?:\s|$)`)
+)
+
+// imaptestSummaries accepts both the legacy "failed / total tests failed"
+// report and current group/command summaries. Stress counters are not script
+// summaries. Every nonzero count is a failure, even without an Error: complaint.
+func imaptestSummaries(out string) []imaptestSummary {
+	var summaries []imaptestSummary
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		var kind, totalText, failedText string
+		if match := imaptestGroupSummary.FindStringSubmatch(line); match != nil {
+			kind, totalText, failedText = "test groups", match[1], match[2]
+		} else if match := imaptestCommandSummary.FindStringSubmatch(line); match != nil {
+			kind, totalText, failedText = match[1]+" commands", match[3], match[2]
+		} else if match := imaptestLegacySummary.FindStringSubmatch(line); match != nil {
+			kind, totalText, failedText = "scripts", match[2], match[1]
+		} else {
+			continue
+		}
+		total, err := strconv.Atoi(totalText)
+		if err != nil {
+			continue
+		}
+		failed, err := strconv.Atoi(failedText)
+		if err != nil {
+			continue
+		}
+		summaries = append(summaries, imaptestSummary{kind: kind, total: total, failed: failed})
 	}
-	failed, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0, 0, false
+	return summaries
+}
+
+func TestImaptestSummaries(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		out  string
+		want []imaptestSummary
+	}{
+		{
+			name: "current failing transcript without Error complaint",
+			out:  "71 test groups: 19 failed, 0 skipped due to missing capabilities\nbase protocol: 47/457 individual commands failed\nextensions: 25/157 individual commands failed\n",
+			want: []imaptestSummary{{kind: "test groups", total: 71, failed: 19}, {kind: "base protocol commands", total: 457, failed: 47}, {kind: "extensions commands", total: 157, failed: 25}},
+		},
+		{
+			name: "current clean CRLF transcript",
+			out:  " 71 test groups: 0 failed, 2 skipped due to missing capabilities\r\nbase protocol: 0/457 individual commands failed\r\nextensions: 0/157 individual commands failed\r\n",
+			want: []imaptestSummary{{kind: "test groups", total: 71}, {kind: "base protocol commands", total: 457}, {kind: "extensions commands", total: 157}},
+		},
+		{name: "legacy failure", out: "2 / 4 tests failed", want: []imaptestSummary{{kind: "scripts", total: 4, failed: 2}}},
+		{name: "legacy clean", out: "0 / 71 tests failed", want: []imaptestSummary{{kind: "scripts", total: 71}}},
+		{name: "legacy with suffix", out: "2 / 4 tests failed (1 skipped)", want: []imaptestSummary{{kind: "scripts", total: 4, failed: 2}}},
+		{name: "legacy singular", out: "1/1 test failed", want: []imaptestSummary{{kind: "scripts", total: 1, failed: 1}}},
+		{name: "command failure despite zero groups", out: "71 test groups: 0 failed\nextensions: 1/157 individual commands failed", want: []imaptestSummary{{kind: "test groups", total: 71}, {kind: "extensions commands", total: 157, failed: 1}}},
+		{name: "stress and unrelated counters", out: "Logins: 4\nSelects: 19\n47/457 commands\nno scripts failed\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := imaptestSummaries(tc.out)
+			if len(got) != len(tc.want) {
+				t.Fatalf("summaries = %#v, want %#v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("summary %d = %#v, want %#v", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
-	total, err = strconv.Atoi(match[2])
-	if err != nil {
-		return 0, 0, false
-	}
-	return total, failed, true
 }

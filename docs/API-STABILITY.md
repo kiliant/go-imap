@@ -477,15 +477,21 @@ all three of these hold:
    the exported API and its documentation, passes `backendtest` and server
    interop.
 2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
-   first at or after the one containing T32 and the initial full review's
-   fixes. Every release from the first through the second minor, patches
-   included, has no incompatible change in `apidiff` and no BREAKING entry
+   first at or after the one containing T32 and the fixes approved by the
+   second full review. Every release from the first through the second minor,
+   patches included, has no incompatible change in `apidiff` and no BREAKING entry
    in `CHANGELOG.md`, including behaviour changes. Each counted minor must
    contain a server-module change beyond a root dependency bump; a release
    cut only to advance the count does not count. Any break restarts the
    window.
-3. **A full review.** An `api-guardian` review of the whole server surface,
-   with its findings resolved: T33.
+3. **Full reviews.** An `api-guardian` review of the whole server surface,
+   with its findings resolved, followed by a second full review of the
+   integrated corrections before the release window: T33. The human
+   explicitly requested this second pass on 2026-10-19. It covers every
+   exported symbol and documented behavioural contract in all five public
+   server packages on one candidate commit, including unchanged API. Record
+   that commit, coverage, evidence and verdict on #54; a diff review alone
+   does not satisfy this gate.
 
 Feature completeness is deliberately not a criterion. The server was
 feature-complete at M6 and still broke compatibility twice afterwards. The
@@ -1013,3 +1019,24 @@ conversion; an empty section retains the message headers. Containers are
 rejected, unknown or malformed CTEs return UNKNOWN-CTE, and source I/O errors
 retain their identity. Source ownership and lifetime match OpenBodySection.
 The helper adds no backend interface requirement. (#126)
+### RECENT selection ownership and source-route preservation (#160, #165)
+
+`UpdateRecent{NumRecent}` extends the existing closed-to-external-types update
+vocabulary without adding a method to any exported interface. Its absolute count
+belongs to the receiving selection and follows additions/removals in the same
+revision batch. Reference backends persist pending state until a read-write
+selection claims it; EXAMINE does not consume it. A backend must tailor FETCH,
+STORE and update flags to each selection, and must not store `\Recent` as a
+client-controlled permanent flag. The framework suppresses RECENT counts and
+flags in rev2. Pending claims in old Maildir records without explicit recent
+state are conservatively treated as recent on first read.
+
+`imap.Address.SourceRoute` is an additive field on an already guarded root
+struct, preserving the fourth ENVELOPE address component. The root module must
+be released before a standalone server release consumes these codec/helper
+corrections, following the existing root-before-server release gate. No root
+signature or existing backend interface changes.
+
+For `message.Metadata`, nil private and shared per-entry clock maps select
+RFC 7162's single-clock model for `/flags/` MODSEQ queries. Non-nil maps preserve
+entry-specific behavior, including zero for an absent entry.

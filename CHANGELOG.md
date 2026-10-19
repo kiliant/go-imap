@@ -27,6 +27,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imap.Address.SourceRoute` preserves the obsolete RFC 822 source-route
+  field in ENVELOPE decoding and encoding. Additive; no existing signature
+  changes. Stored routed addresses and addresses with comments in the local
+  part also remain searchable by their normalized mailbox. (#165)
+
 - `imap.UIDBatchesData`, `UIDBatch`, `UIDBatchIndexRange`, response codes
   `CodeTooFew` and `CodeTooMany`, and `imapclient.Client.UIDBatches` with
   client-owned `UIDBatchesData` and guarded `UIDBatchesOptions`: RFC 10022
@@ -182,6 +187,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   literals remain file streams rather than whole-message framework buffers.
   Add opt-in backend conformance for rollback, cancellation and update chains.
   (#121)
+- Interop acceptance recognises current imaptest group and per-command
+  summaries as well as the legacy summary. Nonzero failures fail the test even
+  without an Error-prefixed complaint; the synchronising-literal tool exception
+  remains specific. No exported API change. (#164)
 
 - **BREAKING:** `SCRAMCredentials` implementations must also supply a separate
   `CapabilitySupport` witness for each AUTH=SCRAM-SHA-1, AUTH=SCRAM-SHA-256,
@@ -269,6 +278,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver.UpdateRecent{NumRecent}` reports a selection-specific absolute
+  RECENT count through the existing extensible update vocabulary. Memory and
+  Maildir claim new messages for one read-write selection; EXAMINE leaves
+  pending claims intact. Maildir persists pending/claimed state across reopen,
+  and treats old records without that state conservatively as recent. FETCH,
+  STORE and SEARCH use the selection's flags; rev2 omits all RECENT wire data.
+  Additive; existing backend interfaces are unchanged. (#160)
+
 - `imapserver.CapabilityFilter` and guarded `CapabilityFilterOptions` let an
   opted-in Backend or Session withdraw backend-backed capabilities without
   changing legacy `CapabilitySupport` semantics. Session policy takes precedence;
@@ -339,6 +356,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- Resolve UID SEARCH wildcards against the selected maximum, normalize
+  reversed PARTIAL windows, and report the first CONDSTORE activation clock.
+  Flag MODSEQ searches may use the supported single message-wide clock.
+  Correct nested message/rfc822 and multipart/digest section interpretation.
+  Restore modified UTF-7 LIST matching, LSUB hierarchy entries and
+  same-mailbox MOVE. CONTEXT=SEARCH refreshes additions and flag changes, and
+  reports removals using pre-expunge sequence numbers. The interop ID corpus
+  uses an explicitly configured 64 KiB line allowance; production defaults
+  are unchanged. (#165)
 
 - **imapserver:** accept standalone FETCH items, including body sections and
   modifiers, through the shared item parser. Both reference backends return a
