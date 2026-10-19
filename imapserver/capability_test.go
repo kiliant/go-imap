@@ -225,11 +225,15 @@ func frameworkRequestStruct(name string) bool {
 
 func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 	baseline := map[string]bool{
-		"MutationOptions.Origin":         true,
-		"StatusOptions.Items":            true,
-		"AppendOptions.MutationOptions":  true,
-		"AppendOptions.Flags":            true,
-		"AppendOptions.InternalDate":     true,
+		"MutationOptions.Origin":        true,
+		"StatusOptions.Items":           true,
+		"AppendOptions.MutationOptions": true,
+		"AppendOptions.Flags":           true,
+		"AppendOptions.InternalDate":    true,
+		// Declared literal size is available for ordinary rev1 APPEND without
+		// an extension capability; CATENATE explicitly leaves it unknown.
+		"AppendOptions.Size":             true,
+		"AppendOptions.HasSize":          true,
 		"SelectOptions.ReadOnly":         true,
 		"FetchOptions.Items":             true,
 		"SearchOptions.Charset":          true,

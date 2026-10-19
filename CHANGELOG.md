@@ -189,6 +189,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver.AppendOptions.Size` and `HasSize` expose the ordinary APPEND
+  literal's declared octet count before the backend reads it, including a
+  known zero size. CATENATE leaves size unknown. Backends must still handle
+  short or failing readers. Additive. (#138)
+
 - `imapserver/maildir`: a persistent backend built through the public server
   and message APIs. Exports `Open`, concrete `Backend`, guarded `Options`,
   `AccountOptions` and `CloseOptions`, plus `Backend.Authenticate`,

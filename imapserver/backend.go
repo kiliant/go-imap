@@ -396,7 +396,15 @@ type AppendOptions struct {
 	// InternalDate is the message's supplied internal date. The zero value asks
 	// the backend to use its current time.
 	InternalDate time.Time
-	_            struct{}
+	// Size is the ordinary literal's declared octet count when HasSize is true.
+	// It is available before the backend reads the stream. It does not guarantee
+	// that the reader will supply that many bytes: reads may fail or end early.
+	Size int64
+	// HasSize distinguishes a known size, including zero, from an unknown one.
+	// The framework sets it for ordinary APPEND literals and leaves it false
+	// for CATENATE, whose assembled size is not declared by the client.
+	HasSize bool
+	_       struct{}
 }
 
 // SelectOptions configures SELECT or EXAMINE. A nil pointer selects the
