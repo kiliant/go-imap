@@ -120,7 +120,7 @@ type account struct {
 // Empty/duplicate usernames and unsupported poll intervals are rejected.
 // ctx controls construction only; cancellation after success does not stop
 // polling. Failure releases every acquired root/file/lock.
-func Open(ctx context.Context, root string, options *Options) (_ *Backend, retErr error) {
+func Open(ctx context.Context, root string, options *Options) (*Backend, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
@@ -185,8 +185,9 @@ func Open(ctx context.Context, root string, options *Options) (_ *Backend, retEr
 	b := &Backend{root: r, accounts: make(map[string]*account), done: make(chan struct{}), pollDone: make(chan struct{})}
 	b.onPollFailure, b.pollFailures = opts.OnPollFailure, make(map[string]PollFailure)
 	b.maxMetadataValueBytes, b.maxMetadataEntries, b.maxTombstones = opts.MaxMetadataValueBytes, opts.MaxMetadataEntries, opts.MaxTombstones
+	opened := false
 	defer func() {
-		if retErr != nil {
+		if !opened {
 			for _, a := range b.accounts {
 				if a.root != nil {
 					a.root.Close()
@@ -259,6 +260,7 @@ func Open(ctx context.Context, root string, options *Options) (_ *Backend, retEr
 	}
 	pollCtx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
+	opened = true
 	go b.poll(pollCtx, opts.PollInterval)
 	return b, nil
 }
