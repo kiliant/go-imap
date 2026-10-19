@@ -162,6 +162,18 @@ func listRecursiveMatch(ctx context.Context, session Session, writer *ListWriter
 	slices.Sort(names)
 	for _, name := range names {
 		data := results[name]
+		if len(args.patterns) > 1 && imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrSubscribed) {
+			covered := false
+			for child := range results {
+				if strings.HasPrefix(child, name+string(data.Delimiter)) {
+					covered = true
+					break
+				}
+			}
+			if covered {
+				continue
+			}
+		}
 		if _, ok := below[name]; ok {
 			data.ChildInfo = []string{listSelectSubscribed}
 		}

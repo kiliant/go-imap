@@ -103,7 +103,9 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 		// modification sequence even for .SILENT, because the client needs it
 		// to issue the next conditional command.
 		if !silent || hasUnchangedSince {
-			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
+			data := flagsFetchData(imap.SeqNum(i+1), msg)
+			s.decorateRecent(data, msg.uid)
+			results = append(results, data)
 		}
 	}
 	afterFlags := mailboxFlagsLocked(s.mailbox)
@@ -291,7 +293,7 @@ func (s *selected) Replace(ctx context.Context, uid imap.UID, name string, liter
 	newUID := destination.uidNext
 	destination.uidNext++
 	destination.messages = append(destination.messages, &message{
-		uid: newUID, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
+		recent: true, uid: newUID, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
 		modSeq: bumpModSeqLocked(destination), saveDate: time.Now(),
 	})
 	destinationFlagsChanged := ensureMailboxFlagsLocked(destination, flags)

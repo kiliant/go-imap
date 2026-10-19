@@ -26,13 +26,17 @@ var ErrUnsupportedCharset = errors.New("message: unsupported search charset")
 // when evaluating the stored message's canonical RFC822.SIZE. It is not inferred.
 // Construct with keyed fields only; fields may be added in a future release.
 type Metadata struct {
-	SeqNum         imap.SeqNum
-	UID            imap.UID
-	Flags          []imap.Flag
-	InternalDate   time.Time
-	SaveDate       *time.Time
-	RFC822Size     int64
-	ModSeq         uint64
+	SeqNum       imap.SeqNum
+	UID          imap.UID
+	Flags        []imap.Flag
+	InternalDate time.Time
+	SaveDate     *time.Time
+	RFC822Size   int64
+	ModSeq       uint64
+	// PrivateModSeqs and SharedModSeqs optionally supply per-entry clocks.
+	// When both are nil, /flags/ MODSEQ criteria use the message-wide ModSeq
+	// (the single-clock model permitted by RFC 7162). Non-nil maps use zero
+	// for absent entries.
 	PrivateModSeqs map[string]uint64
 	SharedModSeqs  map[string]uint64
 	EmailID        string
