@@ -128,6 +128,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** memory URLAUTH generation rejects missing/invalid access
+  identifiers, wrong key owners, nonexistent mailboxes, malformed message URLs
+  and expired requests with BAD. Valid generation preserves the exact signed
+  rump bytes. Resolution enforces access identities and expiry, reads from the
+  URL owner's account, and honors UIDVALIDITY, sections and partial ranges.
+  Hex verifiers are compared in constant time after decoding. Mailbox keys bind
+  to UIDVALIDITY and are removed on delete/rename, preventing old tokens from
+  exposing replacement mailboxes. The backend grants no submit role. No exported
+  signatures change; conformance fixtures now supply valid rump URLs. (#162)
+
 - **BREAKING:** `URLAuthSession` now uses guarded `GenURLAuthOptions`,
   `URLFetchOptions` and `ResetURLAuthKeyOptions{Mechanisms}` in place of
   `URLAuthOptions`. `FetchURLAuth` returns guarded `*URLFetchResult` with owned

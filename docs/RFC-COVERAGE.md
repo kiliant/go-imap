@@ -451,10 +451,14 @@ break the client; full command support is best-effort.
     the extension is a data change, not a type change.
 
 [^srvurlauth]: GENURLAUTH, URLFETCH and RESETKEY, with tokens minted and verified
-    by the backend since only it holds the per-mailbox secret. The reference
-    backend uses an HMAC and a constant-time comparison, and its test asserts
-    that a forged token is refused — the one property here that is a security
-    question rather than a formatting one.
+    by the backend since only it holds the per-mailbox secret. Memory validates
+    rump/full URL structure, key owners, access identifiers, expiry and
+    UIDVALIDITY. HMAC verification uses exact original rump bytes, with a
+    constant-time comparison of decoded hex tokens. Validated URLs resolve
+    through the owner's account, including stored BODY sections and partial
+    ranges. Keys cannot survive a deleted/recreated mailbox identity. The
+    backend grants no submit role. Scripted/direct and own-client coverage;
+    independent live implementations are not claimed. (#162)
 
 [^srvi18n2]: The COMPARATOR command, through the optional `ComparatorSession`.
     Comparator names are an open RFC 4790 registry and cross the boundary as

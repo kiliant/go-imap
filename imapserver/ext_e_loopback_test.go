@@ -50,7 +50,7 @@ func TestLoopbackURLAuth(t *testing.T) {
 	defer cancel()
 	_, clientSide, reader := newGroupARawSession(t, ctx)
 
-	url := "imap://alice@example.com/INBOX/;UID=1"
+	url := "imap://alice@example.com/INBOX/;UID=1;URLAUTH=anonymous"
 	writeRawCommand(t, clientSide, "E1 GENURLAUTH \""+url+"\" INTERNAL\r\n")
 	untagged, tagged := collectUntilTag(t, reader, "E1 ")
 	if !strings.HasPrefix(tagged, "E1 OK") {

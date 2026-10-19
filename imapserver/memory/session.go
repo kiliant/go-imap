@@ -14,6 +14,7 @@ import (
 )
 
 type session struct {
+	backend *Backend
 	account *account
 	// username is the authenticated identity, which ACL entries are keyed by.
 	// See ext_d.go.
@@ -182,6 +183,7 @@ func (s *session) Delete(ctx context.Context, name string, _ *imapserver.DeleteO
 		return noError(imap.CodeInUse, "mailbox is selected")
 	}
 	delete(s.account.mailboxes, key)
+	delete(s.account.urlAuthKeys, key)
 	return nil
 }
 
@@ -206,6 +208,7 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 		return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
 	}
 	delete(s.account.mailboxes, oldKey)
+	delete(s.account.urlAuthKeys, oldKey)
 	m.name = newName
 	s.account.mailboxes[newKey] = m
 	return nil
