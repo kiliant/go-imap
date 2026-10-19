@@ -133,6 +133,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** IMAP4REV2 advertisement now requires `CapabilitySupport`'s
+  backend-only BINARY-FETCH witness, independently of the full BINARY token.
+  Backends without it lose the rev2 umbrella before the v1 freeze. Memory and
+  Maildir witness the fetch half. `message.Message.OpenBinarySection` and
+  guarded `message.BinarySectionOptions` share bounded-buffer CTE decoding,
+  exact length measurement, text CRLF conversion and decoded partial ranges.
+  BINARY fetches report partial origins, respect PEEK/Seen, reject containers
+  and return UNKNOWN-CTE for unknown or malformed CTEs. Unsupported FETCH errors
+  no longer expose Go type names. No existing exported signatures change. (#126)
+
 - **BREAKING:** `Limits.MaxLiteralBytes` now defaults to 32 MiB instead of
   64 KiB, and non-positive `Limits.MaxCommands` means unlimited instead of
   selecting 10,000. Positive command limits send BYE before disconnecting.
