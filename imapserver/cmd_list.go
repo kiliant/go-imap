@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -151,7 +152,12 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	var statusMailboxes []string
 	writer := newListWriter(func(_ context.Context, data *imap.ListData) error {
-		if data == nil || data.Mailbox == "" {
+		// Session.List supplies hierarchy data for an empty pattern. LSUB
+		// shares that backend method but has no hierarchy-query production.
+		if args.legacy && len(args.patterns) == 1 && args.patterns[0] == "" {
+			return nil
+		}
+		if data == nil || data.Mailbox == "" && !slices.Contains(args.patterns, "") {
 			return fmt.Errorf("imapserver: backend LIST returned an invalid mailbox")
 		}
 		if !listResultSelected(options, data) {
@@ -161,7 +167,7 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if count > maxCommandListResults {
 			return commandLimitError("LIST result limit exceeded")
 		}
-		if wantsPerMailboxResponses(args) {
+		if wantsPerMailboxResponses(args) && data.Mailbox != "" {
 			statusMailboxes = append(statusMailboxes, data.Mailbox)
 		}
 		return writeListDataExtended(c, writtenName, listResultAttrs(args, options, data.Attrs), data, listResultChildInfo(args, options, data.ChildInfo))

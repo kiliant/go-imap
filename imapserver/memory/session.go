@@ -54,6 +54,9 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 			results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
 		}
 	}
+	if slices.Contains(patterns, "") {
+		results = append(results, &imap.ListData{Attrs: []imap.MailboxAttr{imap.MailboxAttrNoSelect}, Delimiter: '/', Mailbox: ""})
+	}
 	s.account.mu.Unlock()
 	slices.SortFunc(results, func(a, b *imap.ListData) int { return strings.Compare(a.Mailbox, b.Mailbox) })
 	for _, result := range results {
@@ -69,6 +72,9 @@ func matchesAnyMailbox(name, reference string, patterns []string) bool {
 		return false
 	}
 	for _, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
 		resolved := pattern
 		if reference != "" && !strings.HasPrefix(pattern, "/") {
 			resolved = reference + pattern

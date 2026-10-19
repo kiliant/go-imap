@@ -11,6 +11,17 @@ import (
 )
 
 func runList(t *testing.T, harness *Harness) {
+	t.Run("list-empty-pattern-reports-hierarchy", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		for _, reference := range []string{"", "INBOX", "missing/"} {
+			listed := listMailboxes(t, session, reference, []string{""}, nil)
+			if len(listed) != 1 {
+				t.Fatalf("empty LIST pattern with reference %q returned %d hierarchy responses, want 1", reference, len(listed))
+			}
+		}
+	})
+
 	// REMOTE expands the candidates; it must not exclude local descendants.
 	// SPECIAL-USE restricts the final results, not which subscribed descendants
 	// contribute CHILDINFO. Exercise both options together as well.
