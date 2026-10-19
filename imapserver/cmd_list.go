@@ -64,6 +64,7 @@ func parseList(decoder *imapwire.Decoder) (any, int64, error) {
 		}
 		args.patterns = append(args.patterns, pattern)
 	}
+	decodeListPatterns(decoder, args)
 	if err := parseListReturnOptions(decoder, args); err != nil {
 		return nil, 0, err
 	}
@@ -83,7 +84,20 @@ func parseLsub(decoder *imapwire.Decoder) (any, int64, error) {
 		return nil, 0, decoder.Err()
 	}
 	args.patterns = []string{pattern}
+	decodeListPatterns(decoder, args)
 	return args, listArgsSize(args), nil
+}
+
+// Match the mailbox decoder's compatibility behavior for modified UTF-7.
+func decodeListPatterns(decoder *imapwire.Decoder, args *listArgs) {
+	if decoder.UTF8Accept() {
+		return
+	}
+	for i, pattern := range args.patterns {
+		if decoded, err := imapwire.DecodeMailboxName(pattern); err == nil {
+			args.patterns[i] = decoded
+		}
+	}
 }
 
 func listArgsSize(args *listArgs) int64 {
@@ -160,7 +174,7 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		if data == nil || data.Mailbox == "" && !slices.Contains(args.patterns, "") {
 			return fmt.Errorf("imapserver: backend LIST returned an invalid mailbox")
 		}
-		if !listResultSelected(options, data) {
+		if !args.legacy && !listResultSelected(options, data) {
 			return nil
 		}
 		count++
@@ -173,7 +187,9 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeListDataExtended(c, writtenName, listResultAttrs(args, options, data.Attrs), data, listResultChildInfo(args, options, data.ChildInfo))
 	})
 	var err error
-	if options.SelectRecursiveMatch && !backendEvaluatesRecursiveMatch(ctx, c) {
+	if args.legacy {
+		err = listLegacySubscribed(ctx, c.state.session, writer, args)
+	} else if options.SelectRecursiveMatch && !backendEvaluatesRecursiveMatch(ctx, c) {
 		err = listRecursiveMatch(ctx, c.state.session, writer, args, options)
 	} else {
 		err = c.state.session.List(ctx, writer, args.reference, args.patterns, options)

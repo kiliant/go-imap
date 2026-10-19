@@ -13,6 +13,7 @@ import (
 func FuzzAnalyzeGenerateAndExtract(f *testing.F) {
 	for _, seed := range []string{
 		fixture,
+		"From: <@one,@two:user@example.test>\r\nContent-Type: multipart/digest; boundary=x\r\n\r\n--x\r\n\r\nSubject: nested\r\n\r\nbody\r\n--x--\r\n",
 		"Subject: plain\r\n\r\nbody\r\n",
 		"Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\na\r\n--x--\r\n",
 		"broken header\n\xff\x00body",

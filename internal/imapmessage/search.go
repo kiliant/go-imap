@@ -157,6 +157,11 @@ func match(message *Message, metadata Metadata, criterion imap.SearchCriteria, o
 		if c.EntryName == "" {
 			return metadata.ModSeq >= c.ModSeq, nil
 		}
+		// RFC 7162 permits one clock for all metadata entries. Nil maps
+		// select that model for flags; non-nil maps provide finer clocks.
+		if metadata.PrivateModSeqs == nil && metadata.SharedModSeqs == nil && strings.HasPrefix(strings.ToLower(c.EntryName), "/flags/") {
+			return metadata.ModSeq >= c.ModSeq, nil
+		}
 		var modSeq uint64
 		switch c.EntryType {
 		case imap.SearchModSeqMetadataPrivate:
@@ -228,17 +233,25 @@ func matchString(message *Message, key imap.SearchStringKey, needle string) (boo
 		}
 		return false
 	}
+	addressContains := func(name string) bool {
+		for _, address := range parseAddressList(message.root.headers.value(name)) {
+			if containsFoldString(address.Name, needle) || containsFoldString(address.Mailbox+"@"+address.Host, needle) {
+				return true
+			}
+		}
+		return false
+	}
 	switch key {
 	case imap.SearchKeyBcc:
-		return headerContains("Bcc"), nil
+		return addressContains("Bcc"), nil
 	case imap.SearchKeyCc:
-		return headerContains("Cc"), nil
+		return addressContains("Cc"), nil
 	case imap.SearchKeyFrom:
-		return headerContains("From"), nil
+		return addressContains("From"), nil
 	case imap.SearchKeySubject:
 		return headerContains("Subject"), nil
 	case imap.SearchKeyTo:
-		return headerContains("To"), nil
+		return addressContains("To"), nil
 	case imap.SearchKeyBody:
 		return message.bodyContains(needle)
 	case imap.SearchKeyText:

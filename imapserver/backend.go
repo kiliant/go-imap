@@ -659,7 +659,7 @@ type UpdateBatch struct {
 	_       struct{}
 }
 
-// Update is one UID-keyed selected-mailbox change. The set is open to this
+// Update is one selected-mailbox change. Message changes are UID-keyed. The set is open to this
 // package and closed to external implementations; future extensions add a new
 // concrete value without changing UpdateBatch.
 type Update interface{ update() }
@@ -674,6 +674,19 @@ type UpdateAdd struct {
 }
 
 func (*UpdateAdd) update() {}
+
+// UpdateRecent replaces the number of messages recent to this selection.
+// Backends track per-selection RECENT ownership and publish this after additions
+// or removals in the same batch. The count must not exceed the visible message
+// count. The framework suppresses this response in IMAP4rev2 sessions.
+// Construct with keyed fields only; fields may be added in a future release.
+type UpdateRecent struct {
+	// NumRecent is the absolute count recent to this selection after the batch.
+	NumRecent uint32
+	_         struct{}
+}
+
+func (*UpdateRecent) update() {}
 
 // UpdateFlags replaces one message's flags and optionally reports its modseq.
 // Construct with keyed fields only; fields may be added in a future release.
@@ -846,6 +859,22 @@ func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap
 		return rebuild(normalized)
 	}
 	switch criteria := criteria.(type) {
+	case imap.SearchUID:
+		// A UID wildcard denotes the highest UID in this selected view,
+		// including reversed ranges such as UIDNEXT:*. Resolve it before
+		// backends evaluate the set without that view's maximum.
+		if !criteria.Set.Dynamic() {
+			return criteria
+		}
+		var set imap.UIDSet
+		if len(uids) > 0 {
+			for _, uid := range uids {
+				if uidSetContains(criteria.Set, uid, uids[len(uids)-1]) {
+					set.AddNum(uid)
+				}
+			}
+		}
+		return imap.SearchUID{Set: set.Normalized()}
 	case imap.SearchSeqNum:
 		var set imap.UIDSet
 		for i, uid := range uids {

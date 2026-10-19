@@ -58,6 +58,16 @@ func requireUIDCommand(c *conn, command *queuedCommand) error {
 // already the response's subject and RFC 9586 section 3.2 makes repeating it the
 // one redundant item in the grammar.
 func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
+	if c.state.revision == revisionIMAP4rev2 {
+		for key, values := range data.Items {
+			for i, value := range values {
+				if flags, ok := value.(imap.FetchDataFlags); ok {
+					values[i] = imap.FetchDataFlags(wireFlags(c, flags))
+				}
+			}
+			data.Items[key] = values
+		}
+	}
 	if err := ensureFetchFlagsAdvertised(c, data); err != nil {
 		return err
 	}

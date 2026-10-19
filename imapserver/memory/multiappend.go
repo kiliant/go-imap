@@ -36,7 +36,7 @@ func (s *session) MultiAppend(ctx context.Context, name string, messages []imaps
 		if date.IsZero() {
 			date = time.Now()
 		}
-		staged = append(staged, &message{raw: raw, analysis: analysis, flags: uniqueFlags(input.Flags), internalDate: date, saveDate: time.Now()})
+		staged = append(staged, &message{recent: true, raw: raw, analysis: analysis, flags: uniqueFlags(input.Flags), internalDate: date, saveDate: time.Now()})
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()

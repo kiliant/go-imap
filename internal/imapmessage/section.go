@@ -45,7 +45,7 @@ func (m *Message) OpenBodySection(item *imap.FetchItemBodySection) (io.Reader, i
 		spans = []segment{{start: p.headers.start, size: p.headers.end - p.headers.start}}
 	case item.Specifier == imap.PartSpecifierText:
 		target := p
-		if p.message != nil {
+		if len(item.Part) > 0 && p.message != nil {
 			target = p.message
 		}
 		spans = []segment{{start: target.headers.bodyStart, size: target.end - target.headers.bodyStart}}
@@ -68,7 +68,7 @@ func (m *Message) OpenBodySection(item *imap.FetchItemBodySection) (io.Reader, i
 }
 
 func sectionHeaders(p *part, item *imap.FetchItemBodySection) headerBlock {
-	if p.message != nil && item.Specifier == imap.PartSpecifierHeader {
+	if len(item.Part) > 0 && p.message != nil && item.Specifier == imap.PartSpecifierHeader {
 		return p.message.headers
 	}
 	return p.headers
@@ -102,7 +102,7 @@ func (m *Message) findPart(path []int) (*part, error) {
 			return nil, fmt.Errorf("body part numbers must be positive")
 		}
 		implicitSingle := i == 0
-		if p.message != nil {
+		if i > 0 && p.message != nil {
 			p = p.message
 			implicitSingle = true
 		}

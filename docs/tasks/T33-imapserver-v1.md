@@ -17,15 +17,17 @@ three exit criteria for that exception. All three must hold:
    the exported API and its documentation, passes `backendtest` and server
    interop.
 2. **Two quiet releases.** Two consecutive `imapserver` minor releases, the
-   first at or after the one containing T32 and the initial full review's
-   fixes. Every release from the first through the second minor, patches
-   included, has no incompatible change in `apidiff` and no BREAKING entry
+   first at or after the one containing T32 and the fixes approved by the
+   second full review. Every release from the first through the second minor,
+   patches included, has no incompatible change in `apidiff` and no BREAKING entry
    in `CHANGELOG.md`, including behaviour changes. Each counted minor must
    contain a server-module change beyond a root dependency bump; a release
    cut only to advance the count does not count. Any break restarts the
    window.
-3. **A full review.** An `api-guardian` review of the whole server surface,
-   with its findings resolved: T33.
+3. **Full reviews.** An `api-guardian` review of the whole server surface,
+   with its findings resolved, followed by a second full review of the
+   integrated corrections before the release window: T33. The second pass
+   was explicitly requested by the human on 2026-10-19.
 
 This task runs criterion 3, watches criterion 2, and turns the result into a
 v1 release.
@@ -58,16 +60,31 @@ v1 release.
      on a previously conforming backend. Document this in its package docs.
    - The verdict goes on the issue. Fixes are made in their own PRs, through
      the owner of the affected file, named on the issue.
-2. **Release window.** Track criterion 2 on the issue release by release,
+2. **Second full review, after the corrections are integrated.** Review
+   the entire surface from step 1 again on one identified candidate commit,
+   including unchanged symbols in all five public packages. This is a full
+   review, not a review limited to the fixes or an API diff.
+   - Recheck signatures, optional-interface evolution, capability witnesses
+     and filtering, the `backendtest` compatibility policy, and evidence
+     from both backends and both message-helper consumers.
+   - Recheck behavioural contracts: defaults and sentinel values, permitted
+     default retuning, streaming and source ownership, cancellation,
+     URLAUTH authorization and result ownership, and RECENT/update semantics.
+   - Record the candidate SHA, package-by-package coverage, findings,
+     validation evidence and explicit verdict on #54. Review of individual
+     stacked PRs does not approve the integrated candidate. Resolve blocking
+     contract findings before approving it; any correction after the verdict
+     must be reviewed against that same full scope before the window opens.
+3. **Release window.** Track criterion 2 on the issue release by release,
    with the `apidiff` report and the changelog check for each. Any break
    restarts the window.
-3. **Final check, right before the tag.** Re-review the diff since step 1.
+4. **Final check, right before the tag.** Re-review the diff since step 2.
    It must report no breaking change and no new exported interface that
    bypasses the optional-interface rule. Run `apidiff` from the second quiet
    release to the candidate tag: either the exported surface is unchanged,
    or every addition has review and validation before it freezes. A breaking
    result restarts the release window; it cannot be waved through at tagging.
-4. **Release.** Follow `../RELEASING.md`, with the root module first if it
+5. **Release.** Follow `../RELEASING.md`, with the root module first if it
    is released at the same time.
 
 ## The version number

@@ -45,7 +45,7 @@ func TestFetchReleasesAccountWhileStreaming(t *testing.T) {
 			if _, err := mutating.Append(mutationCtx, "renamed", strings.NewReader(sampleMessage), nil); err != nil {
 				return err
 			}
-			if flags := []imap.Flag(data.Items["FLAGS"][0].(imap.FetchDataFlags)); len(flags) != 0 {
+			if flags := []imap.Flag(data.Items["FLAGS"][0].(imap.FetchDataFlags)); !reflect.DeepEqual(flags, []imap.Flag{imap.FlagRecent}) {
 				t.Errorf("in-flight FETCH flags changed with STORE: %v", flags)
 			}
 		}

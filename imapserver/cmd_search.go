@@ -74,6 +74,7 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, err.Error())
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids)
+	args.criteria = query.Criteria()
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
