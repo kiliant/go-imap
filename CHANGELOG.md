@@ -128,6 +128,20 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** `Limits.MaxLiteralBytes` now defaults to 32 MiB instead of
+  64 KiB, and non-positive `Limits.MaxCommands` means unlimited instead of
+  selecting 10,000. Positive command limits send BYE before disconnecting.
+  Negative `Limits.MaxConnections` and `MaxConnectionsPerIP` disable those
+  connection limits; zero retains the existing defaults. Every `Limits` field
+  documents its default and sentinel semantics. Resource-limit defaults may be
+  retuned in minor releases, with a changelog entry; explicitly set positive
+  values to retain application policy across upgrades. (#124)
+- Oversized APPEND literals return `NO [TOOBIG]`, including later MULTIAPPEND
+  and CATENATE parts. An oversized non-synchronising literal receives its
+  refusal before the connection closes without reading its payload. STATUS
+  and LIST-STATUS cap APPENDLIMIT at the framework's literal limit, preserving
+  smaller backend limits without changing backend-owned maps. (#124)
+
 - **BREAKING:** `URLAuthSession` now uses guarded `GenURLAuthOptions`,
   `URLFetchOptions` and `ResetURLAuthKeyOptions{Mechanisms}` in place of
   `URLAuthOptions`. `FetchURLAuth` returns guarded `*URLFetchResult` with owned

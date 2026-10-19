@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapcodec"
@@ -92,6 +93,32 @@ func statusReply(data *imap.StatusData, items []imap.StatusItem) *imap.StatusDat
 	return &narrowed
 }
 
+// statusReply applies transport policy to the owned projection, leaving the
+// backend's cached map untouched. NIL means no backend limit, so the framework
+// limit still applies. Smaller backend limits, including zero, are preserved.
+func (c *conn) statusReply(data *imap.StatusData, items []imap.StatusItem) *imap.StatusData {
+	reply := statusReply(data, items)
+	if reply == nil {
+		return nil
+	}
+	limit := uint64(c.server.options.Limits.MaxLiteralBytes)
+	value, present := reply.Values[imap.StatusItemAppendLimit]
+	if !present {
+		return reply
+	}
+	switch value := value.(type) {
+	case uint64:
+		if value > limit {
+			reply.Values[imap.StatusItemAppendLimit] = limit
+		}
+	case string:
+		if strings.EqualFold(value, "NIL") {
+			reply.Values[imap.StatusItemAppendLimit] = limit
+		}
+	}
+	return reply
+}
+
 func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*statusArgs)
 	if args == nil {
@@ -101,7 +128,7 @@ func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, "STATUS", err)
 	}
-	if err := imapcodec.WriteStatusResponse(c.encoder, statusReply(data, args.items)); err != nil {
+	if err := imapcodec.WriteStatusResponse(c.encoder, c.statusReply(data, args.items)); err != nil {
 		return writeBackendError(c, command.tag, "STATUS", err)
 	}
 	if err := c.encoder.Flush(); err != nil {

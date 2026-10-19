@@ -12,10 +12,9 @@ import (
 
 const (
 	defaultMaxCommandLine       = 8 << 10
-	defaultMaxLiteral           = 64 << 10
+	defaultMaxLiteral           = 32 << 20
 	defaultMaxQueuedCommands    = 16
 	defaultMaxQueuedCommandByte = 256 << 10
-	defaultMaxCommands          = 10_000
 	defaultMaxQueuedUpdates     = 256
 	defaultMaxQueuedUpdateBytes = 1 << 20
 	defaultMaxSelectedMessages  = 2_000_000
@@ -28,45 +27,65 @@ var (
 )
 
 // Limits bounds work retained or initiated by one connection. Non-positive
-// fields select safe defaults. The retained command and update queues are
-// always bounded.
+// fields select the documented defaults, except MaxCommands, where they mean
+// unlimited, and the connection limits, where negative values mean unlimited.
+// The retained command and update queues are always bounded.
+// Defaults may be retuned in a minor release; set positive values to pin an
+// application's limits across upgrades.
 // Construct with keyed fields only; fields may be added in a future release.
 type Limits struct {
 	// MaxCommandLineBytes bounds one protocol line excluding literal payloads.
+	// The default is 8 KiB.
 	MaxCommandLineBytes int
 	// MaxLiteralBytes bounds each client-supplied literal, the aggregate staged
 	// APPEND payload and the aggregate resolved URLFETCH payload per command.
+	// The default is 32 MiB. STATUS and LIST-STATUS APPENDLIMIT replies are
+	// capped at this value, including a backend's unlimited (NIL) reply.
 	MaxLiteralBytes int64
 	// MaxQueuedCommands bounds parsed commands waiting for the event loop.
+	// The default is 16.
 	MaxQueuedCommands int
 	// MaxQueuedCommandBytes bounds their retained payload bytes in aggregate.
+	// The default is 256 KiB.
 	MaxQueuedCommandBytes int64
 	// MaxCommands bounds the lifetime command count of one connection.
+	// Non-positive values mean unlimited (the default). A positive limit
+	// closes the connection with BYE before executing the next command.
 	MaxCommands int
 	// MaxQueuedUpdates bounds pending backend update batches, including
 	// retained removal announcements the protocol does not yet permit.
+	// The default is 256.
 	MaxQueuedUpdates int
 	// MaxQueuedUpdateBytes bounds their retained payload bytes in aggregate.
+	// The default is 1 MiB.
 	MaxQueuedUpdateBytes int64
 	// MaxSelectedMessages bounds the per-selection UID-to-sequence map.
+	// The default is 2,000,000 messages.
 	MaxSelectedMessages int
 	// MaxConnections bounds active connections across the server.
+	// Zero selects the default of 1024; a negative value means unlimited.
 	MaxConnections int
 	// MaxConnectionsPerIP bounds active connections sharing one source address.
+	// Zero selects the default of 32; a negative value means unlimited.
 	MaxConnectionsPerIP int
 	// PreAuthTimeout bounds the entire unauthenticated connection lifetime and
 	// individual pre-authentication reads and TLS handshakes.
+	// The default is 2 minutes.
 	PreAuthTimeout time.Duration
 	// CommandTimeout bounds one event-loop command and backend call.
+	// The default is 5 minutes.
 	CommandTimeout time.Duration
 	// ReadTimeout bounds an authenticated protocol read.
+	// The default is 30 minutes.
 	ReadTimeout time.Duration
 	// WriteTimeout bounds each protocol write.
+	// The default is 5 minutes.
 	WriteTimeout time.Duration
 	// OverflowWriteTimeout bounds the best-effort BYE after update overflow.
+	// The default is 250 milliseconds.
 	OverflowWriteTimeout time.Duration
 	// ForceCloseTimeout bounds how long update overflow may wait before closing
-	// the transport unconditionally.
+	// the transport unconditionally. The default is 1 second.
 	ForceCloseTimeout time.Duration
 	_                 struct{}
 }
@@ -84,9 +103,6 @@ func (limits Limits) withDefaults() Limits {
 	if limits.MaxQueuedCommandBytes <= 0 {
 		limits.MaxQueuedCommandBytes = defaultMaxQueuedCommandByte
 	}
-	if limits.MaxCommands <= 0 {
-		limits.MaxCommands = defaultMaxCommands
-	}
 	if limits.MaxQueuedUpdates <= 0 {
 		limits.MaxQueuedUpdates = defaultMaxQueuedUpdates
 	}
@@ -96,10 +112,10 @@ func (limits Limits) withDefaults() Limits {
 	if limits.MaxSelectedMessages <= 0 {
 		limits.MaxSelectedMessages = defaultMaxSelectedMessages
 	}
-	if limits.MaxConnections <= 0 {
+	if limits.MaxConnections == 0 {
 		limits.MaxConnections = 1024
 	}
-	if limits.MaxConnectionsPerIP <= 0 {
+	if limits.MaxConnectionsPerIP == 0 {
 		limits.MaxConnectionsPerIP = 32
 	}
 	if limits.PreAuthTimeout <= 0 {
