@@ -36,19 +36,6 @@ type selected struct {
 	closed   bool
 }
 
-func (s *selected) Status(ctx context.Context, _ *imapserver.StatusOptions) (*imap.MailboxStatus, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	s.session.account.mu.Lock()
-	defer s.session.account.mu.Unlock()
-	if s.closed {
-		return nil, noError(imap.CodeClosed, "mailbox is no longer selected")
-	}
-	snapshot := snapshotLocked(s.mailbox, s.readOnly)
-	return &snapshot.Status, nil
-}
-
 func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, options *imapserver.FetchOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err

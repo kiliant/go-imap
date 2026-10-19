@@ -526,15 +526,6 @@ func (s *selected) Unselect(ctx context.Context, _ *imapserver.UnselectOptions) 
 	s.closed = true
 	return nil
 }
-func (s *selected) Status(ctx context.Context, _ *imapserver.StatusOptions) (*imap.MailboxStatus, error) {
-	name, m, err := s.enter(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer s.session.account.leave()
-	status := snapshot(name, m, s.readOnly).Status
-	return &status, nil
-}
 
 func (s *session) Append(ctx context.Context, name string, literal io.Reader, options *imapserver.AppendOptions) (*imap.AppendData, error) {
 	if literal == nil {

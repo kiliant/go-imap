@@ -128,6 +128,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** remove the unused `SelectedMailbox.Status` method before the
+  server v1 freeze. `Session.Status` handles every STATUS request, including
+  requests for the selected mailbox; its documentation now states that contract.
+  Remove the redundant implementations and move the backend conformance check
+  to `Session.Status`, retaining numeric STATUS item validation. (#119)
+
 - **BREAKING (server v0.x):** `SessionUpdater.Push` queue overflow now ends the
   NOTIFY registration as required by RFC 5465, rather than continuing after
   dropping events. The framework closes the updater, calls
