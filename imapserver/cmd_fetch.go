@@ -33,7 +33,7 @@ func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
 			return nil, 0, err
 		}
 		args.items = items
-	} else {
+	} else if decoder.PeekAtomEqual("FAST") || decoder.PeekAtomEqual("ALL") || decoder.PeekAtomEqual("FULL") {
 		var macro string
 		if !decoder.ExpectAtom(&macro) {
 			return nil, 0, decoder.Err()
@@ -48,6 +48,12 @@ func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
 		default:
 			return nil, 0, fmt.Errorf("unknown FETCH macro %q", macro)
 		}
+	} else {
+		item, err := imapcodec.ReadFetchItem(decoder)
+		if err != nil {
+			return nil, 0, err
+		}
+		args.items = []imap.FetchItem{item}
 	}
 	if len(args.items) == 0 {
 		if decoder.Err() != nil {

@@ -344,12 +344,18 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 		}
 	}
 	var results []*imap.ListData
+	if slices.Contains(patterns, "") {
+		results = append(results, &imap.ListData{Attrs: []imap.MailboxAttr{imap.MailboxAttrNoSelect}, Delimiter: '/', Mailbox: ""})
+	}
 	for name := range names {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		match := false
 		for _, pattern := range patterns {
+			if pattern == "" {
+				continue
+			}
 			if !strings.HasPrefix(pattern, "/") {
 				pattern = reference + pattern
 			}

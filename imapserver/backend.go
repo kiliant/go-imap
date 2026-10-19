@@ -77,6 +77,10 @@ type Backend interface {
 // This method set is the mandatory IMAP4rev1 baseline and is frozen. A future
 // extension adds an optional interface or an option field, not a method here.
 type Session interface {
+	// List with an empty pattern returns the reference's hierarchy delimiter
+	// and root name, even when there are no matching mailboxes (RFC 3501
+	// section 6.3.8). This is a hierarchy query, not an empty match result.
+	//
 	// List is also called by the framework during SELECT and EXAMINE on an
 	// IMAP4rev2 session, to produce the untagged LIST response RFC 9051 §6.3.2
 	// requires, with the selection already installed. An error returned from
