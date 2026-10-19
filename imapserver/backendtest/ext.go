@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -426,7 +427,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 			t.Skip("backend does not implement URLAuthSession")
 		}
 		mailbox := populate(t, session, "urlauth")
-		url := "imap://" + instance.Credentials.Username + "@example.com/" + mailbox + "/;UID=1"
+		url := "imap://" + url.User(instance.Credentials.Username).String() + "@example.com/" + url.PathEscape(mailbox) + "/;UID=1;URLAUTH=anonymous"
 		authorized, err := urlAuth.GenerateURLAuth(context.Background(), url, "INTERNAL", nil)
 		if err != nil {
 			t.Fatalf("GenerateURLAuth: %v", err)
@@ -450,7 +451,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 			t.Fatalf("URLFETCH known size %d differs from %d bytes", content.Size, len(raw))
 		}
 		// The security property: tampering with the token must not resolve.
-		// Everything else about URLAUTH is formatting.
+		// URL shape, owner/access restrictions and expiry need separate checks.
 		forged := authorized[:len(authorized)-1] + "x"
 		if content, _ := urlAuth.FetchURLAuth(context.Background(), forged, nil); content != nil {
 			if content.Body != nil {

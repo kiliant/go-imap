@@ -50,7 +50,7 @@ type account struct {
 	quotaMessages uint64
 	metadata      map[imap.MetadataEntryName]string
 	// urlAuthKeys holds the per-mailbox URLAUTH secrets. See ext_e.go.
-	urlAuthKeys map[string][]byte
+	urlAuthKeys map[string]urlAuthKey
 	// sessions are the live sessions on this account, so a change in one can
 	// be reported to a NOTIFY registration in another. See ext_d.go.
 	sessions map[*session]struct{}
@@ -161,7 +161,7 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if a == nil || (!verified && credentials.Password != a.password) {
 		return nil, authenticationError()
 	}
-	s := &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
+	s := &session{backend: b, account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
 	a.mu.Lock()
 	if a.sessions == nil {
 		a.sessions = make(map[*session]struct{})
