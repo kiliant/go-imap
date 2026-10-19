@@ -234,6 +234,7 @@ func Run(t *testing.T, harness *Harness) {
 	})
 
 	runList(t, harness)
+	runSearch(t, harness)
 
 	t.Run("streaming-and-mutations", func(t *testing.T) {
 		instance, session := newSession(t, harness)

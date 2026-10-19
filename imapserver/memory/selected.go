@@ -123,6 +123,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	}
 	var matches []imap.UID
 	var highest uint64
+	needsEmailID := searchNeedsEmailID(criteria)
 	for i, msg := range s.mailbox.messages {
 		metadata := servermessage.Metadata{
 			SeqNum:       imap.SeqNum(i + 1),
@@ -131,6 +132,10 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
 			ModSeq:       msg.modSeq,
+			SaveDate:     saveDateOf(msg),
+		}
+		if needsEmailID {
+			metadata.EmailID = emailID(msg)
 		}
 		matched, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
@@ -144,6 +149,23 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	}
 	s.session.account.mu.Unlock()
 	return &imapserver.SearchResult{UIDs: matches, ModSeq: highest}, nil
+}
+
+// Avoid hashing every message for searches that do not use its object ID.
+func searchNeedsEmailID(criteria imap.SearchCriteria) bool {
+	switch criteria := criteria.(type) {
+	case imap.SearchObjectID:
+		return criteria.Key == imap.SearchObjectIDKeyEmail
+	case imap.SearchAnd:
+		return slices.ContainsFunc(criteria, searchNeedsEmailID)
+	case imap.SearchOr:
+		return searchNeedsEmailID(criteria.Left) || searchNeedsEmailID(criteria.Right)
+	case imap.SearchNot:
+		return searchNeedsEmailID(criteria.Criteria)
+	case imap.SearchFuzzy:
+		return searchNeedsEmailID(criteria.Criteria)
+	}
+	return false
 }
 
 func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, store *imapserver.StoreFlags, options *imapserver.StoreOptions) error {
