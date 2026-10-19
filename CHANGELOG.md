@@ -128,6 +128,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** `SCRAMCredentials` implementations must also supply a separate
+  `CapabilitySupport` witness for each AUTH=SCRAM-SHA-1, AUTH=SCRAM-SHA-256,
+  AUTH=SCRAM-SHA-1-PLUS and AUTH=SCRAM-SHA-256-PLUS token they serve. Structural
+  credential support alone no longer advertises mechanisms. Each -PLUS variant
+  additionally requires TLS. Document this contract on both exported
+  interfaces, update memory's witnesses and activate SCRAM options for
+  plus-only advertisements. No exported signatures change. (#123)
+
 - **BREAKING:** remove the unused `SelectedMailbox.Status` method before the
   server v1 freeze. `Session.Status` handles every STATUS request, including
   requests for the selected mailbox; its documentation now states that contract.

@@ -28,9 +28,8 @@ import (
 // iteration count, StoredKey and ServerKey — which only the backend has.
 //
 // So the exchange, the nonces and the proof verification are all here, and the
-// backend supplies four values. AUTH=SCRAM-* is advertised only when the backend
-// implements the interface, because there is nothing to verify against
-// otherwise.
+// backend supplies four values. Each AUTH=SCRAM-* advertisement requires both
+// the credential interface and a CapabilitySupport witness for that exact token.
 //
 // # Channel binding
 //
@@ -51,6 +50,10 @@ import (
 //
 // SCRAMCredentials is consulted before any session exists, so it lives on the
 // Backend rather than on a Session.
+// The Backend must also implement CapabilitySupport and return true separately
+// for each mechanism it serves: AUTH=SCRAM-SHA-1, AUTH=SCRAM-SHA-256,
+// AUTH=SCRAM-SHA-1-PLUS and AUTH=SCRAM-SHA-256-PLUS. A -PLUS witness does not
+// imply its unbound variant or vice versa; -PLUS is offered only over TLS.
 type SCRAMCredentials interface {
 	// SCRAMCredentials returns the stored derivation for a username under the
 	// named mechanism ("SCRAM-SHA-256"). It returns an error when the user is
@@ -138,14 +141,22 @@ func init() {
 	registerFeatures(featureDescriptor{
 		ID: featureSCRAM,
 		Active: func(_ *sessionState, advertised map[string]bool) bool {
-			return advertised["AUTH=SCRAM-SHA-256"] || advertised["AUTH=SCRAM-SHA-1"]
+			for name := range scramMechanisms {
+				if advertised["AUTH="+name] {
+					return true
+				}
+			}
+			return false
 		},
 	})
 	for name := range scramMechanisms {
 		descriptor := capabilityDescriptor{
-			Name:            "AUTH=" + name,
-			States:          stateMaskNotAuthenticated,
-			RequiresBackend: hasSCRAMCredentials,
+			Name:   "AUTH=" + name,
+			States: stateMaskNotAuthenticated,
+			RequiresBackend: func(ctx context.Context, state *sessionState, backend Backend) bool {
+				return hasSCRAMCredentials(ctx, state, backend) &&
+					backendSupportsCapability("AUTH="+name)(ctx, state, backend)
+			},
 		}
 		// A -PLUS mechanism has nothing to bind to without TLS.
 		if scramChannelBound(name) {
