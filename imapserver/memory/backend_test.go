@@ -22,11 +22,11 @@ func TestBackendConformance(t *testing.T) {
 				Password:  "secret",
 			},
 			Controls: backendtest.Controls{
-				ForceUIDValidityChange: func(ctx context.Context, mailbox string) error {
+				ForceUIDValidityChange: func(ctx context.Context, mailbox string, _ *backendtest.ForceUIDValidityChangeOptions) error {
 					return backend.forceUIDValidityChange(ctx, "alice", mailbox)
 				},
-				ForceSelectFailure: func(ctx context.Context, mailbox string, enabled bool) error {
-					return backend.forceSelectFailure(ctx, "alice", mailbox, enabled)
+				ForceSelectFailure: func(ctx context.Context, mailbox string, options *backendtest.ForceSelectFailureOptions) error {
+					return backend.forceSelectFailure(ctx, "alice", mailbox, options != nil && options.Enabled)
 				},
 			},
 		}, nil
