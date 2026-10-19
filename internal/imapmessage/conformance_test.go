@@ -2,9 +2,10 @@ package imapmessage
 
 import (
 	"bytes"
-	"github.com/kiliant/go-imap"
 	"io"
 	"testing"
+
+	"github.com/kiliant/go-imap"
 )
 
 func TestNestedMessageAndDigestSections(t *testing.T) {

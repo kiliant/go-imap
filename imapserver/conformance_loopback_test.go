@@ -3,13 +3,14 @@ package imapserver_test
 import (
 	"context"
 	"fmt"
-	"github.com/kiliant/go-imap/imapserver"
-	"github.com/kiliant/go-imap/imapserver/maildir"
-	"github.com/kiliant/go-imap/imapserver/memory"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/imapserver/maildir"
+	"github.com/kiliant/go-imap/imapserver/memory"
 )
 
 func conformanceBackends(t *testing.T, test func(*testing.T, imapserver.Backend)) {
@@ -153,5 +154,21 @@ func TestConformanceSearchContextChangesAndExpungeNumbers(t *testing.T) {
 			t.Fatalf("append ADDTO: %v", lines)
 		}
 		command("CANCELUPDATE C7")
+	})
+}
+
+func TestConformanceFirstCondStoreActivationOnEmptyMailbox(t *testing.T) {
+	conformanceBackends(t, func(t *testing.T, backend imapserver.Backend) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+		_, connection, reader := newRawSessionOn(t, ctx, server)
+		writeRawCommand(t, connection, "Z1 SELECT INBOX\r\n")
+		collectUntilTag(t, reader, "Z1 ")
+		writeRawCommand(t, connection, "Z2 FETCH 1:* MODSEQ\r\n")
+		lines, done := collectUntilTag(t, reader, "Z2 ")
+		if !strings.HasPrefix(done, "Z2 OK") || !strings.Contains(strings.Join(lines, "\n"), "[HIGHESTMODSEQ 1]") {
+			t.Fatalf("empty activation: %s %v", done, lines)
+		}
 	})
 }

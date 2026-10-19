@@ -3,8 +3,9 @@ package maildir
 import (
 	"context"
 	"encoding/json"
-	"github.com/kiliant/go-imap/imapserver"
 	"testing"
+
+	"github.com/kiliant/go-imap/imapserver"
 )
 
 func TestRecentClaimSurvivesRestartAndExamineDoesNotConsume(t *testing.T) {
