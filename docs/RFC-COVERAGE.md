@@ -245,9 +245,11 @@ CONDSTORE `MODIFIED` on tagged OK.
     refused by the capability gate with a tagged `BAD` before the backend is
     reached, instead of by the backend with a `NO`.
 
-[^srvbinary]: FETCH side. `BINARY[]` and `BINARY.SIZE[]` decode the
-    content-transfer-encoding, and an encoding that cannot be undone fails with
-    UNKNOWN-CTE rather than handing the client base64 it believes is binary.
+[^srvbinary]: FETCH side. Both memory and Maildir use the public message
+    helper for `BINARY[]`, `BINARY.PEEK[]` and `BINARY.SIZE[]`, decoding CTE,
+    normalising text lines to CRLF and slicing decoded partial ranges. Unknown
+    or malformed CTEs fail with UNKNOWN-CTE. IMAP4REV2 requires the backend-only
+    BINARY-FETCH witness, independently of full BINARY advertisement. (#126)
     Binary APPEND (a literal8 payload) is blocked with CATENATE and MULTIAPPEND
     below.
 

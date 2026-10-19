@@ -538,11 +538,13 @@ func fetchMarksSeen(items []imap.FetchItem) (bool, error) {
 			default:
 				return false, noError(imap.CodeCannot, fmt.Sprintf("unsupported FETCH item %q", item))
 			}
-		case *imap.FetchItemBodyStructure:
+		case *imap.FetchItemBodyStructure, *imap.FetchItemBinarySectionSize:
+		case *imap.FetchItemBinarySection:
+			seen = seen || !item.Peek
 		case *imap.FetchItemBodySection:
 			seen = seen || !item.Peek
 		default:
-			return false, noError(imap.CodeCannot, fmt.Sprintf("unsupported FETCH item %T", item))
+			return false, noError(imap.CodeCannot, "unsupported FETCH item")
 		}
 	}
 	return seen, nil
@@ -656,6 +658,36 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 				key = "BODYSTRUCTURE"
 			}
 			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: analysis.BodyStructure()})
+		case *imap.FetchItemBinarySection:
+			reader, n, err := analysis.OpenBinarySection(ctx, item, nil)
+			if err != nil {
+				return nil, false, err
+			}
+			reader, err = sized(reader, n)
+			if err != nil {
+				return nil, false, err
+			}
+			value := &imap.FetchDataBinarySection{Part: slices.Clone(item.Part), Literal: reader}
+			if item.Partial != nil {
+				value.Origin, value.HasOrigin = item.Partial.Offset, true
+			}
+			keyText := binarySectionKey(item.Part, false)
+			if item.Partial != nil {
+				keyText += fmt.Sprintf("<%d>", item.Partial.Offset)
+			}
+			key := imap.FetchDataKey(keyText)
+			data.Items[key] = append(data.Items[key], value)
+			seen = seen || !item.Peek
+		case *imap.FetchItemBinarySectionSize:
+			_, n, err := analysis.OpenBinarySection(ctx, &imap.FetchItemBinarySection{Part: item.Part}, nil)
+			if err != nil {
+				return nil, false, err
+			}
+			if n > 1<<32-1 {
+				return nil, false, noError(imap.CodeLimit, "decoded body exceeds BINARY.SIZE range")
+			}
+			key := imap.FetchDataKey(binarySectionKey(item.Part, true))
+			data.Items[key] = append(data.Items[key], imap.FetchDataBinarySectionSize(n))
 		case *imap.FetchItemBodySection:
 			reader, n, err := analysis.OpenBodySection(ctx, item, nil)
 			if err != nil {
@@ -674,7 +706,7 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 			data.Items[key] = append(data.Items[key], value)
 			seen = seen || !item.Peek
 		default:
-			return nil, false, noError(imap.CodeCannot, fmt.Sprintf("unsupported FETCH item %T", item))
+			return nil, false, noError(imap.CodeCannot, "unsupported FETCH item")
 		}
 	}
 	return data, seen, nil
@@ -718,3 +750,20 @@ var _ imapserver.SelectedMailbox = (*selected)(nil)
 var _ imapserver.MoveMailbox = (*selected)(nil)
 var _ imapserver.CondStoreMailbox = (*selected)(nil)
 var _ imapserver.QResyncMailbox = (*selected)(nil)
+
+func binarySectionKey(part []int, size bool) string {
+	var b strings.Builder
+	b.WriteString("BINARY")
+	if size {
+		b.WriteString(".SIZE")
+	}
+	b.WriteByte('[')
+	for i, n := range part {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.Itoa(n))
+	}
+	b.WriteByte(']')
+	return b.String()
+}

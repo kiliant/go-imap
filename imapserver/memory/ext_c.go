@@ -3,9 +3,7 @@ package memory
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"io"
-	"mime/quotedprintable"
 	"slices"
 	"strings"
 	"time"
@@ -320,55 +318,3 @@ func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria 
 }
 
 var _ imapserver.MultiSearchSession = (*session)(nil)
-
-// openBinarySection answers a BINARY[] fetch: the part's bytes with its
-// content-transfer-encoding undone.
-//
-// The decoding is done here rather than in imapserver/message because it is
-// backend work by the design's own split — the framework has no access to the
-// message — the public helper supplies raw BODY sections. A backend with a
-// store that already keeps decoded parts would answer this without decoding
-// anything.
-//
-// RFC 3516 section 4.3 requires an UNKNOWN-CTE failure rather than a guess when
-// the encoding cannot be undone; returning the raw bytes would hand the client
-// base64 it believes is binary.
-func openBinarySection(ctx context.Context, msg *message, part []int) (io.Reader, error) {
-	raw, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Part: part, Peek: true}, nil)
-	if err != nil {
-		return nil, err
-	}
-	switch strings.ToLower(partEncoding(msg.analysis.BodyStructure(), part)) {
-	case "", "7bit", "8bit", "binary":
-		return raw, nil
-	case "base64":
-		return base64.NewDecoder(base64.StdEncoding, raw), nil
-	case "quoted-printable":
-		return quotedprintable.NewReader(raw), nil
-	default:
-		return nil, &imap.Error{
-			Type: imap.ErrorTypeNo,
-			Code: imap.CodeUnknownCTE,
-			Text: "cannot decode this content-transfer-encoding",
-		}
-	}
-}
-
-// partEncoding walks the body structure to the named part and reports its
-// content-transfer-encoding. An empty path means the whole message.
-func partEncoding(structure imap.BodyStructure, part []int) string {
-	current := structure
-	for _, index := range part {
-		multipart, ok := current.(*imap.BodyStructureMultiPart)
-		if !ok || index < 1 || index > len(multipart.Children) {
-			// A path into a non-multipart is the message itself, which the
-			// single-part branch below then reports on.
-			break
-		}
-		current = multipart.Children[index-1]
-	}
-	if single, ok := current.(*imap.BodyStructureSinglePart); ok {
-		return single.Encoding
-	}
-	return ""
-}

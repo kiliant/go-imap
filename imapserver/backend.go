@@ -226,13 +226,19 @@ type MoveMailbox interface {
 // CapabilitySupport is the open witness by which a Backend or Session declares
 // that it implements the behaviour behind an optional capability. A Backend may
 // implement it to describe support before authentication; a Session may
-// implement it when support varies by authenticated user, and is consulted
-// first when it does.
+// implement it when support varies by authenticated user, and answers
+// alone when it does: the Backend is not consulted.
 //
-// name is an upper-case capability token exactly as it appears on the wire,
-// such as "CONDSTORE" or "SPECIAL-USE". The framework never advertises a
-// capability using this spoken witness unless this returns true for it, so a
-// backend that does not recognise a name must return false. Structural witnesses
+// name is an upper-case capability token such as "CONDSTORE" or "SPECIAL-USE",
+// or the backend-only "BINARY-FETCH" witness. BINARY-FETCH is never advertised:
+// it promises BINARY, BINARY.PEEK and BINARY.SIZE FETCH support, including CTE
+// decoding, decoded partial ranges, CRLF text lines and PEEK/Seen semantics.
+// IMAP4REV2 requires it; it does not promise literal8 APPEND support. The wire
+// BINARY token remains a separate promise of the full extension.
+//
+// The framework never advertises a capability using this spoken witness
+// unless this returns true for it, so a backend that does not recognise a name
+// must return false. Structural witnesses
 // use their optional interfaces instead; see CapabilityFilter for withdrawal.
 //
 // Bearer authentication requires a Backend witness before any Session exists:

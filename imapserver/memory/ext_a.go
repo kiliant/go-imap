@@ -70,6 +70,7 @@ var supportedCapabilities = map[string]bool{
 	// Thread refuses the algorithm. RFC 5256 has no bare "THREAD" capability.
 	"THREAD=ORDEREDSUBJECT": true,
 	"BINARY":                true,
+	"BINARY-FETCH":          true,
 	"MULTISEARCH":           true,
 	// SEARCH=FUZZY (RFC 6203). The shared evaluator answers FUZZY with exact
 	// matches, which RFC 6203 section 2 permits — the server chooses the

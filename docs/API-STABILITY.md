@@ -995,3 +995,21 @@ The `api-guardian` agent (`.claude/agents/api-guardian.md`) reviews every diff
 that touches an exported symbol. Its single question is the one from CLAUDE.md:
 *can the next RFC be added without breaking this?* It has authority to reject a
 functionally correct change.
+
+### BINARY fetch is an independent backend witness — added 2026-10-19
+
+`CapabilitySupport` recognises the backend-only token `BINARY-FETCH`. It is
+never advertised on the wire and is separate from full `BINARY`, which also
+claims literal8 APPEND. IMAP4REV2 requires the fetch-only witness alongside its
+other incorporated behaviours. The same session-over-backend precedence applies.
+`CapabilityFilter` filters wire capabilities, not this backend-only witness;
+withdrawing full BINARY therefore does not withdraw the incorporated fetch half.
+
+`message.Message.OpenBinarySection` and guarded `message.BinarySectionOptions`
+provide a shared, context-bound decoder for both reference backends. Exact
+length measurement scans the body before opening the returned stream, using
+bounded buffers. Partial ranges apply after CTE decoding and text CRLF
+conversion; an empty section retains the message headers. Containers are
+rejected, unknown or malformed CTEs return UNKNOWN-CTE, and source I/O errors
+retain their identity. Source ownership and lifetime match OpenBodySection.
+The helper adds no backend interface requirement. (#126)
