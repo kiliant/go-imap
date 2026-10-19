@@ -466,6 +466,11 @@ type QResyncSelect struct {
 // FetchOptions configures FETCH. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchOptions struct {
+	// MutationOptions identifies this FETCH's implicit \Seen changes. Backends
+	// copy Origin into the UpdateBatch that publishes those changes. Backends
+	// that leave the batch origin at zero remain correct; the framework treats
+	// their updates as external changes and still delivers them.
+	MutationOptions
 	// Items are the data items requested for each matching message.
 	//
 	// Every item belongs to the IMAP4rev1 baseline or to a capability this

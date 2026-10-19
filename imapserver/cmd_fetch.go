@@ -119,16 +119,21 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 		}
 		return c.encoder.Flush()
 	})
-	err = c.state.selected.mailbox.Fetch(ctx, writer, uids, &FetchOptions{Items: items, ChangedSince: args.changedSince})
+	origin := nextCommandOrigin()
+	err = c.state.selected.mailbox.Fetch(ctx, writer, uids, &FetchOptions{
+		MutationOptions: MutationOptions{Origin: origin},
+		Items:           items,
+		ChangedSince:    args.changedSince,
+	})
 	writer.core.close()
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
+	if err := c.drainBeforeCompletion(command, updateAccounting{origin: origin}); err != nil {
 		return err
 	}
 	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
 		return err
 	}
-	return c.drainUpdates(updateAccounting{})
+	return c.drainUpdates(updateAccounting{origin: origin})
 }

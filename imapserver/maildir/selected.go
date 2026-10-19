@@ -396,11 +396,13 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 	}()
 	items := []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags}
 	var changed uint64
+	var origin imapserver.ChangeToken
 	if options != nil {
 		if len(options.Items) > 0 {
 			items = options.Items
 		}
 		changed = options.ChangedSince
+		origin = options.Origin
 	}
 	// Keep only the immutable UID list; committing a Seen flag replaces state.
 	var selectedUIDs []imap.UID
@@ -442,7 +444,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 				}
 			}
 		}
-		if err := s.markSeen(ctx, name, unseen); err != nil {
+		if err := s.markSeen(ctx, name, unseen, origin); err != nil {
 			return err
 		}
 	}
@@ -546,7 +548,7 @@ func fetchMarksSeen(items []imap.FetchItem) (bool, error) {
 	return seen, nil
 }
 
-func (s *selected) markSeen(ctx context.Context, name string, uids []imap.UID) error {
+func (s *selected) markSeen(ctx context.Context, name string, uids []imap.UID, origin imapserver.ChangeToken) error {
 	if len(uids) == 0 {
 		return nil
 	}
@@ -584,7 +586,7 @@ func (s *selected) markSeen(ctx context.Context, name string, uids []imap.UID) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return a.publishCommit(next, actions, map[uint32][]imapserver.Update{s.id: changes}, 0)
+	return a.publishCommit(next, actions, map[uint32][]imapserver.Update{s.id: changes}, origin)
 }
 
 type sizedReader struct {

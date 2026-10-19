@@ -52,8 +52,10 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 	var results []*imap.FetchMessageData
 	var flagUpdates []imapserver.Update
 	changedSince := uint64(0)
+	var origin imapserver.ChangeToken
 	if options != nil {
 		changedSince = options.ChangedSince
+		origin = options.Origin
 	}
 	for i, msg := range s.mailbox.messages {
 		if !uids.Contains(msg.uid) {
@@ -80,7 +82,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 		results = append(results, data)
 	}
 	if len(flagUpdates) != 0 {
-		batch := advanceLocked(s.mailbox, 0, flagUpdates)
+		batch := advanceLocked(s.mailbox, origin, flagUpdates)
 		publishLocked(s.mailbox, batch)
 	}
 	s.session.account.mu.Unlock()
