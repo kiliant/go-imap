@@ -150,6 +150,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   coalescing and overflow on these exported methods; no signatures change.
   (#132)
 
+- **BREAKING:** `backendtest.Controls` hooks now end in dedicated guarded
+  options pointers. `ForceSelectFailureOptions.Enabled` replaces the positional
+  boolean; nil options restore normal selection. Document the callback shape
+  for future controls and verify restoration in the conformance suite. (#129)
+
 - **BREAKING, Maildir storage policy:** account state/journals migrate to
   version 3, preserving identities and unknown fields; older readers refuse
   its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to

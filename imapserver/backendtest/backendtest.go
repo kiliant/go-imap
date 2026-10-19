@@ -16,6 +16,9 @@
 // cases must not infer that consent merely from a backend's concrete type or
 // impose new requirements on every existing Harness. Controls remain test-only
 // fixtures; implementing a control does not grant production capabilities.
+// Every caller-supplied control callback must take a context first and a
+// pointer to its own options struct last. Nil options select documented
+// defaults, so future controls can grow without changing callback signatures.
 package backendtest
 
 import (
@@ -37,11 +40,27 @@ import (
 type Controls struct {
 	// ForceUIDValidityChange changes one mailbox's UIDVALIDITY without changing
 	// its name, simulating recreation or recovery.
-	ForceUIDValidityChange func(context.Context, string) error
+	// Nil options select the defaults.
+	ForceUIDValidityChange func(context.Context, string, *ForceUIDValidityChangeOptions) error
 	// ForceSelectFailure makes Select fail after any tentative updater attachment.
-	// Passing false restores normal selection.
-	ForceSelectFailure func(context.Context, string, bool) error
+	// Nil options or Enabled false restore normal selection.
+	ForceSelectFailure func(context.Context, string, *ForceSelectFailureOptions) error
 	_                  struct{}
+}
+
+// ForceUIDValidityChangeOptions configures a forced UIDVALIDITY change.
+// A nil pointer selects the defaults: choose a new, different UIDVALIDITY.
+// Construct with keyed fields only; fields may be added in a future release.
+type ForceUIDValidityChangeOptions struct{ _ struct{} }
+
+// ForceSelectFailureOptions configures forced selection failures.
+// A nil pointer selects the defaults: restore normal selection.
+// Construct with keyed fields only; fields may be added in a future release.
+type ForceSelectFailureOptions struct {
+	// Enabled makes Select fail after any tentative updater attachment.
+	// False restores normal selection.
+	Enabled bool
+	_       struct{}
 }
 
 // Instance is one fresh backend under test.
@@ -314,7 +333,7 @@ func Run(t *testing.T, harness *Harness) {
 			if err := before.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Fatal(err)
 			}
-			if err := instance.Controls.ForceUIDValidityChange(context.Background(), mailbox); err != nil {
+			if err := instance.Controls.ForceUIDValidityChange(context.Background(), mailbox, nil); err != nil {
 				t.Fatal(err)
 			}
 			after := selectMailbox(t, session, mailbox, &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }})
@@ -328,18 +347,22 @@ func Run(t *testing.T, harness *Harness) {
 		if instance.Controls.ForceSelectFailure != nil {
 			var pushes int
 			updater := &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { pushes++; return nil }}
-			if err := instance.Controls.ForceSelectFailure(context.Background(), mailbox, true); err != nil {
+			if err := instance.Controls.ForceSelectFailure(context.Background(), mailbox, &ForceSelectFailureOptions{Enabled: true}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := session.Select(context.Background(), mailbox, updater, nil); err == nil {
 				t.Fatal("forced Select failure succeeded")
 			}
-			if err := instance.Controls.ForceSelectFailure(context.Background(), mailbox, false); err != nil {
+			if err := instance.Controls.ForceSelectFailure(context.Background(), mailbox, nil); err != nil {
 				t.Fatal(err)
 			}
 			appendMessage(t, session, mailbox, "after failed select")
 			if pushes != 0 {
 				t.Fatalf("failed Select left updater attached: %d pushes", pushes)
+			}
+			restored := selectMailbox(t, session, mailbox, discardUpdater())
+			if err := restored.Mailbox.Unselect(context.Background(), nil); err != nil {
+				t.Fatal(err)
 			}
 		}
 		closeSession(t, instance, session)
