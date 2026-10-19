@@ -250,7 +250,6 @@ func TestPollFailureCarriesScopeAndCloseCancellation(t *testing.T) {
 		<-ctx.Done()
 		close(finished)
 	}
-	opts.OnPollError = func(error) { t.Error("legacy callback ran despite OnPollFailure") }
 	b, err := Open(ctx, root, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -311,8 +310,5 @@ func TestSuccessfulPollClearsCurrentFailure(t *testing.T) {
 			t.Fatal(ctx.Err())
 		case <-time.After(time.Millisecond):
 		}
-	}
-	if b.LastPollError() == nil {
-		t.Fatal("legacy sticky event was cleared")
 	}
 }

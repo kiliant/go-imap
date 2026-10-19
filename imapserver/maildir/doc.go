@@ -15,8 +15,7 @@
 // it is open. External delivery may write regular files in a mailbox's tmp/
 // and atomically rename them into new/. Invalid or unreadable entries in new/
 // are skipped and left for repair; valid deliveries continue. Initial skips
-// appear in PollFailures and LastPollError. Polling reports them through
-// OnPollFailure (or the legacy OnPollError callback).
+// appear in PollFailures. Polling reports them through OnPollFailure.
 // Symlinks and nonregular stored messages are refused. Account-root handles
 // constrain file access; Go 1.24 uses a
 // checked-path rename fallback because os.Root.Rename was added in Go 1.25.
@@ -118,10 +117,9 @@
 // snapshot or a subsequent revision-chained update, never missed between them. Poll
 // errors remain observable through PollFailures and optional OnPollFailure.
 // Each current diagnostic identifies its account and, when known, mailbox.
-// Successful polls clear that account's current failure; LastPollError remains
-// a sticky last-event accessor. Callbacks run serially outside locks with a
-// cancellation context, may retain their copied diagnostic, and must not call
-// Close synchronously. OnPollFailure takes precedence over OnPollError.
+// Successful polls clear that account's current failure. Callbacks run serially
+// outside locks with a cancellation context, may retain their copied diagnostic,
+// and must not call Close synchronously.
 // Close stops polling and rejects new work, waits for operations/callbacks,
 // then releases roots and locks, without waiting for idle session lifetimes.
 //

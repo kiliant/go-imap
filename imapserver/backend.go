@@ -31,6 +31,20 @@
 // [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
 // and is supported, not a toy — it is the backend this project's own conformance
 // and interoperability suites run against.
+//
+// # Backend errors
+//
+// The framework finds *imap.Error values with errors.As. It sends their Code,
+// CodeArgs and Text to the client in the current command's tagged response:
+// Type BAD produces BAD, and every other Type produces NO. Empty Text becomes
+// "<operation> failed". Backend authors must keep secrets out of these fields,
+// especially Text, because they are client-visible.
+//
+// Without an *imap.Error, context.Canceled and context.DeadlineExceeded produce
+// NO [UNAVAILABLE]; other errors produce NO [SERVERBUG]. Both use the generic
+// "<operation> failed" text. The underlying error text is not sent to clients.
+// Wrapped errors retain these mappings; an *imap.Error takes precedence over a
+// cancellation error in the same chain.
 package imapserver
 
 import (
@@ -393,7 +407,15 @@ type AppendOptions struct {
 	// InternalDate is the message's supplied internal date. The zero value asks
 	// the backend to use its current time.
 	InternalDate time.Time
-	_            struct{}
+	// Size is the ordinary literal's declared octet count when HasSize is true.
+	// It is available before the backend reads the stream. It does not guarantee
+	// that the reader will supply that many bytes: reads may fail or end early.
+	Size int64
+	// HasSize distinguishes a known size, including zero, from an unknown one.
+	// The framework sets it for ordinary APPEND literals and leaves it false
+	// for CATENATE, whose assembled size is not declared by the client.
+	HasSize bool
+	_       struct{}
 }
 
 // SelectOptions configures SELECT or EXAMINE. A nil pointer selects the

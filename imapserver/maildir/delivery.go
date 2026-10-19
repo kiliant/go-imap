@@ -200,7 +200,6 @@ func (b *Backend) recordPollFailure(a *account, err error) PollFailure {
 		failure.Mailbox = mailboxError.mailbox
 	}
 	b.mu.Lock()
-	b.lastPollError = fmt.Errorf("maildir: account %q: %w", a.username, err)
 	if b.pollFailures == nil {
 		b.pollFailures = make(map[string]PollFailure)
 	}
@@ -213,14 +212,10 @@ func (b *Backend) recordPollFailure(a *account, err error) PollFailure {
 // callback its own copy so it cannot mutate the diagnostics retained by b.
 func (b *Backend) reportPollFailure(ctx context.Context, a *account, err error) {
 	failure := b.recordPollFailure(a, err)
-	if b.onPollFailure != nil || b.onPollError != nil {
+	if b.onPollFailure != nil {
 		b.callbackMu.Lock()
 		defer b.callbackMu.Unlock()
-		if b.onPollFailure != nil {
-			b.onPollFailure(ctx, &failure)
-		} else {
-			b.onPollError(err)
-		}
+		b.onPollFailure(ctx, &failure)
 	}
 }
 

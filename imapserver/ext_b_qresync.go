@@ -98,6 +98,9 @@ func parseQResyncParams(decoder *imapwire.Decoder) (*QResyncSelect, error) {
 			if err != nil {
 				return err
 			}
+			if set.Dynamic() {
+				return fmt.Errorf("QRESYNC known UIDs must not contain '*'")
+			}
 			params.KnownUIDs = set
 			if !decoder.SP() {
 				return nil
@@ -128,10 +131,41 @@ func parseQResyncSeqMatch(decoder *imapwire.Decoder, params *QResyncSelect) erro
 		if err != nil {
 			return err
 		}
+		seqCount, err := qResyncMatchCount(seqNums)
+		if err != nil {
+			return err
+		}
+		uidCount, err := qResyncMatchCount(uids)
+		if err != nil {
+			return err
+		}
+		if seqCount != uidCount {
+			return fmt.Errorf("QRESYNC sequence match sets must have equal cardinality")
+		}
 		params.SeqMatchSeqNums = seqNums
 		params.SeqMatchUIDs = uids
 		return nil
 	})
+}
+
+// qResyncMatchCount validates the wire order without normalising the set or
+// expanding its ranges. Match data pairs positions in two strictly ascending
+// sequences, so sorting, merging or reversing a range would change the claim.
+// Count in 64 bits so even the full nonzero uint32 range remains inexpensive.
+func qResyncMatchCount[N imap.SeqNum | imap.UID](set imap.NumSet[N]) (uint64, error) {
+	var count uint64
+	var previous N
+	for _, r := range set {
+		if r.Start == 0 || r.Stop == 0 {
+			return 0, fmt.Errorf("QRESYNC sequence match sets must not contain '*'")
+		}
+		if r.Start > r.Stop || r.Start <= previous {
+			return 0, fmt.Errorf("QRESYNC sequence match sets must be strictly ascending")
+		}
+		count += uint64(r.Stop) - uint64(r.Start) + 1
+		previous = r.Stop
+	}
+	return count, nil
 }
 
 // removalsUseVanished reports whether removals must be reported as VANISHED

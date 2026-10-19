@@ -253,13 +253,13 @@ func readSearchKey(dec *imapwire.Decoder) (imap.SearchCriteria, error) {
 			return nil, dec.Err()
 		}
 		var field, value string
-		if !dec.ExpectAstring(&field) || !dec.ExpectSP() || !dec.ExpectString(&value) {
+		if !dec.ExpectAstring(&field) || !dec.ExpectSP() || !dec.ExpectAstring(&value) {
 			return nil, dec.Err()
 		}
 		return imap.SearchHeaderField{Field: field, Value: value}, nil
 	case "BCC", "BODY", "CC", "FROM", "SUBJECT", "TEXT", "TO":
 		var value string
-		if !dec.ExpectSP() || !dec.ExpectString(&value) {
+		if !dec.ExpectSP() || !dec.ExpectAstring(&value) {
 			return nil, dec.Err()
 		}
 		return imap.SearchString{Key: imap.SearchStringKey(upper), Value: value}, nil

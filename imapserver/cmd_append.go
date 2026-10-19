@@ -98,11 +98,15 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 			failure = validateAppendShape(c, len(appended)+1, len(message.catenate) != 0)
 		}
 		if failure == nil {
-			data, backendErr := c.state.session.Append(ctx, args.mailbox, payload.reader, &AppendOptions{
+			options := &AppendOptions{
 				MutationOptions: MutationOptions{Origin: origin},
 				Flags:           message.flags,
 				InternalDate:    message.internalDate,
-			})
+			}
+			if message.literal != nil {
+				options.Size, options.HasSize = message.literal.Size(), true
+			}
+			data, backendErr := c.state.session.Append(ctx, args.mailbox, payload.reader, options)
 			if backendErr != nil {
 				failure = backendErr
 			} else {

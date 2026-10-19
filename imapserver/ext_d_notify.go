@@ -44,7 +44,7 @@ type SessionUpdater struct {
 }
 
 // Push publishes one event. It returns ErrUpdaterClosed once the session's
-// NOTIFY registration has been replaced or the session has ended.
+// NOTIFY registration has ended, including replacement, overflow or session end.
 //
 // The update must name a mailbox and carry a Status, which is the untagged
 // STATUS form RFC 5465 section 6 reports these in. Anything else is refused
@@ -52,9 +52,11 @@ type SessionUpdater struct {
 // reaches the client is indistinguishable, from the backend, from one that did.
 //
 // A successful Push means the update is queued, not that it reached the client.
-// The queue is bounded and drops its oldest entry under pressure — see
-// sessionUpdateQueue for why that is the right trade for NOTIFY and the wrong
-// one for a selected mailbox.
+// The bounded queue coalesces updates for the same mailbox, retaining the most
+// recent state. If updates for distinct mailboxes exceed the queue limit, the
+// framework reports NOTIFICATIONOVERFLOW to the client and ends the registration
+// as if NOTIFY NONE had been received. Once closed, this updater returns
+// ErrUpdaterClosed; the client must register again to resume notifications.
 func (u *SessionUpdater) Push(update *SessionUpdate) error {
 	if u == nil {
 		return ErrUpdaterClosed
@@ -101,6 +103,8 @@ type SessionUpdate struct {
 // The framework calls Notify with a fresh updater each time, and closes the
 // previous one first, so a backend that kept the old updater finds it closed
 // rather than delivering into a registration the client has replaced.
+// Queue overflow also closes the updater and calls Notify with a nil updater
+// and configuration, just like NOTIFY NONE.
 type NotifySession interface {
 	Notify(ctx context.Context, updater *SessionUpdater, config *NotifyConfig, options *NotifyOptions) error
 }
@@ -216,12 +220,11 @@ func (u *sessionUpdaterCore) close() {
 
 // sessionUpdateQueue is the NOTIFY analogue of updateQueue.
 //
-// It drops the oldest event on overflow rather than terminating the connection,
-// which is the opposite of the selection queue's rule and deliberately so: a
-// dropped selection update would desynchronise a sequence-number view the client
-// is actively using, while a dropped NOTIFY event costs the client only a
-// refresh it can make itself. RFC 5465 section 6 anticipates this by allowing a
-// server to stop notifying and say so.
+// It coalesces state by mailbox and records overflow when distinct mailbox
+// updates exceed its bound. The event loop then discards the pending events,
+// closes the registration and reports NOTIFICATIONOVERFLOW, as RFC 5465 section
+// 5.8 requires. Unlike a lost selection update, this does not invalidate the
+// client's sequence-number view, so the connection itself can remain open.
 type sessionUpdateQueue struct {
 	mu       sync.Mutex
 	items    []*SessionUpdate
@@ -474,6 +477,21 @@ func (c *conn) drainNotify() error {
 		return nil
 	}
 	updates, dropped := c.notifyQueue.popAll()
+	if dropped {
+		// Close before calling the backend, so even a producer racing with
+		// teardown cannot publish into the ended registration.
+		c.closeNotify()
+		ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+		err := c.state.session.(NotifySession).Notify(ctx, nil, nil, nil)
+		cancel()
+		writeUntaggedOK(c, imap.CodeNotificationOverflow, "", "notifications disabled after queue overflow")
+		if flushErr := c.encoder.Flush(); flushErr != nil {
+			return flushErr
+		}
+		// If teardown failed, end the connection rather than silently keeping
+		// backend resources for a registration the client believes has ended.
+		return err
+	}
 	for _, update := range updates {
 		if update == nil || update.Status == nil {
 			continue
@@ -481,15 +499,6 @@ func (c *conn) drainNotify() error {
 		if err := imapcodec.WriteStatusResponse(c.encoder, update.Status); err != nil {
 			return err
 		}
-		if err := c.encoder.Flush(); err != nil {
-			return err
-		}
-	}
-	if dropped {
-		// The client is told rather than left believing it saw everything. A
-		// silently truncated notification stream is worse than none, because
-		// the client stops polling on the strength of it.
-		writeUntaggedOK(c, imap.CodeNotificationOverflow, "", "some notifications were dropped")
 		if err := c.encoder.Flush(); err != nil {
 			return err
 		}

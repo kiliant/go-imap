@@ -1,0 +1,2 @@
+go test fuzz v1
+string("HEADER {7+}\r\nSubject {9+}\r\ntwo words")

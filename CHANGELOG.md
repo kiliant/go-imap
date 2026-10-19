@@ -82,6 +82,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapcodec:** accept atom, quoted and literal astring arguments for SEARCH
+  string keys and HEADER values, allowing commands such as `SEARCH FROM alice`.
+  No exported API change. (#127)
+
 - **imapclient tests:** Stream fuzz targets confirm reader completion before
   reporting an expired deadline, avoiding false shutdown failures when both
   channels are ready after scheduling delays. Readers still running when a
@@ -130,6 +134,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   Remove the redundant implementations and move the backend conformance check
   to `Session.Status`, retaining numeric STATUS item validation. (#119)
 
+- **BREAKING (server v0.x):** `SessionUpdater.Push` queue overflow now ends the
+  NOTIFY registration as required by RFC 5465, rather than continuing after
+  dropping events. The framework closes the updater, calls
+  `NotifySession.Notify` with nil updater/configuration and reports
+  NOTIFICATIONOVERFLOW. The client can register again. Document per-mailbox
+  coalescing and overflow on these exported methods; no signatures change.
+  (#132)
+
 - **BREAKING, Maildir storage policy:** account state/journals migrate to
   version 3, preserving identities and unknown fields; older readers refuse
   its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to
@@ -139,8 +151,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   refusals. Existing values remain readable. (#74)
 - **maildir:** add guarded `PollFailure`, `Backend.PollFailures`, and
   `Options.OnPollFailure` for current account/mailbox diagnostics, cancellation
-  and callback ownership. The new callback takes precedence over legacy
-  OnPollError; LastPollError remains sticky. Add `Options.IsolateAccountErrors`
+  and callback ownership. `OnPollFailure` and `PollFailures` are the sole
+  callback/accessor; remove the unreleased legacy poll-error surface. Add `Options.IsolateAccountErrors`
   to keep healthy accounts available without reprovisioning failed identities;
   the default continues to fail Open. Recover a missing journalled cur-to-cur
   source as a tombstone. Enforce public-import allowlists separately for
@@ -183,10 +195,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver.AppendOptions.Size` and `HasSize` expose the ordinary APPEND
+  literal's declared octet count before the backend reads it, including a
+  known zero size. CATENATE leaves size unknown. Backends must still handle
+  short or failing readers. Additive. (#138)
+
 - `imapserver/maildir`: a persistent backend built through the public server
   and message APIs. Exports `Open`, concrete `Backend`, guarded `Options`,
   `AccountOptions` and `CloseOptions`, plus `Backend.Authenticate`,
-  `SupportsCapability`, `Close` and `LastPollError`. It provides account
+  `SupportsCapability`, `Close` and `PollFailures`. It provides account
   isolation, OS root locking, versioned journal recovery, durable UID identity,
   flags/keywords, subscriptions, metadata and QRESYNC history, and polling of
   external Maildir delivery. APPEND preserves bytes; external LF delivery is
@@ -223,7 +240,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapserver:** reject wildcard QRESYNC sets, non-ascending sequence-match
+  data and unequal sequence/UID counts with BAD before SELECT or Resync reaches
+  a backend, including on UIDVALIDITY mismatch. Validation counts ranges
+  without expanding them. No exported API change. (#118)
+
 - **imapserver:** Unsolicited flag updates include MODSEQ only after CONDSTORE is enabled for the receiving session. No exported API change. (#88)
+
+- **imapserver:** unsupported SEARCH charsets return NO [BADCHARSET] with the
+  message helper's supported charset list, including in empty memory mailboxes.
+  `message.ErrUnsupportedCharset` remains identifiable through errors.Is;
+  `message.Match` now returns an *imap.Error wrapping it. Document the backend
+  error contract and client-visible versus private error fields in the package
+  doc. No exported signatures change. (#135)
 
 - **imapserver:** GETMETADATA MAXSIZE filters values in the framework and
   reports the largest omitted size with the required METADATA LONGENTRIES
