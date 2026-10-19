@@ -128,6 +128,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** replace `imapserver.MetadataOptions` with guarded
+  `GetMetadataOptions` and `SetMetadataOptions`, and update `MetadataSession`
+  signatures and both backends. GETMETADATA retains the depth and size fields;
+  SETMETADATA has independent empty options. Document shared-command and future
+  field naming contracts on `ACLOptions`, `QuotaOptions`, `LanguageOptions`
+  and `ComparatorOptions`. (#131)
+
 - **BREAKING:** `message.Message.OpenBodySection` now ends in guarded
   `*message.SectionOptions`. Nil preserves the existing stored-byte behaviour;
   retain the reader, size and error results. Update both backends, examples,

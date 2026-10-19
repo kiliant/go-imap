@@ -35,12 +35,12 @@ type metadataFilterSession struct {
 	get, set int
 }
 
-func (s *metadataFilterSession) GetMetadata(_ context.Context, mailbox string, _ []imap.MetadataEntryName, _ *MetadataOptions) (*imap.MailboxMetadata, error) {
+func (s *metadataFilterSession) GetMetadata(_ context.Context, mailbox string, _ []imap.MetadataEntryName, _ *GetMetadataOptions) (*imap.MailboxMetadata, error) {
 	s.get++
 	return &imap.MailboxMetadata{Mailbox: mailbox}, nil
 }
 
-func (s *metadataFilterSession) SetMetadata(context.Context, string, []imap.MetadataEntry, *MetadataOptions) error {
+func (s *metadataFilterSession) SetMetadata(context.Context, string, []imap.MetadataEntry, *SetMetadataOptions) error {
 	s.set++
 	return nil
 }

@@ -64,8 +64,8 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)",
 		},
 		"MetadataSession": {
-			"GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *MetadataOptions) (*imap.MailboxMetadata, error)",
-			"SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *MetadataOptions) error",
+			"GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *GetMetadataOptions) (*imap.MailboxMetadata, error)",
+			"SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *SetMetadataOptions) error",
 		},
 		"MoveMailbox": {
 			"Move(ctx context.Context, uids imap.UIDSet, destination string, options *MoveOptions) (*imap.CopyData, error)",

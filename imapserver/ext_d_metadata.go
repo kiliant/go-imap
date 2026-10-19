@@ -30,16 +30,16 @@ type MetadataSession interface {
 	// section 4.2.2 makes absence a nil value, not a failure.
 	// The framework may request values without MAXSIZE so it can compute the
 	// largest omitted value and apply the client's limit to its wire response.
-	GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *MetadataOptions) (*imap.MailboxMetadata, error)
+	GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *GetMetadataOptions) (*imap.MailboxMetadata, error)
 	// SetMetadata writes entries. An entry carrying a nil value is a deletion,
 	// which RFC 5464 section 4.3 defines as the only way to remove one.
-	SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *MetadataOptions) error
+	SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *SetMetadataOptions) error
 }
 
-// MetadataOptions configures a METADATA operation. A nil pointer selects the
+// GetMetadataOptions configures GETMETADATA. A nil pointer selects the
 // defaults.
 // Construct with keyed fields only; fields may be added in a future release.
-type MetadataOptions struct {
+type GetMetadataOptions struct {
 	// Depth limits how far below each requested entry the server descends:
 	// "0", "1" or "infinity" per RFC 5464 section 4.2.2. Empty means "0".
 	Depth string `imapfeature:"metadata"`
@@ -55,6 +55,11 @@ type MetadataOptions struct {
 	HasMaxSize bool `imapfeature:"metadata"`
 	_          struct{}
 }
+
+// SetMetadataOptions configures SETMETADATA. A nil pointer selects the defaults.
+// Empty today; GETMETADATA depth and size policy does not apply to writes.
+// Construct with keyed fields only; fields may be added in a future release.
+type SetMetadataOptions struct{ _ struct{} }
 
 const featureMetadata featureID = "metadata"
 
@@ -94,7 +99,7 @@ func init() {
 type getMetadataArgs struct {
 	mailbox string
 	entries []imap.MetadataEntryName
-	options MetadataOptions
+	options GetMetadataOptions
 }
 
 func parseGetMetadata(decoder *imapwire.Decoder) (any, int64, error) {

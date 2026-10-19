@@ -149,6 +149,14 @@ apidiff scope is a gate on us; it changes nothing a user of a module tagged v1
 sees, and the versioning policy below already rules that an exclusion is not a
 licence.
 
+Separate options types when commands already have different policy. The server's
+`GetMetadataOptions` carries depth and size limits; `SetMetadataOptions` is
+independent and empty. `ACLOptions`, `QuotaOptions`, `LanguageOptions` and
+`ComparatorOptions` remain shared, deliberately documented on each type: a
+future command-specific field must name its command and be ignored by the
+other methods. URLAUTH's operation-specific shapes are tracked separately in
+#122.
+
 Stored-message helpers follow the same rule. In particular
 `message.Message.OpenBodySection` takes `*message.SectionOptions` for helper
 policy. Its shared `imap.FetchItemBodySection` describes a wire request and

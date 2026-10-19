@@ -54,7 +54,7 @@ type filteredFixtureSession struct {
 	reads *int
 }
 
-func (s *filteredFixtureSession) GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *imapserver.MetadataOptions) (*imap.MailboxMetadata, error) {
+func (s *filteredFixtureSession) GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *imapserver.GetMetadataOptions) (*imap.MailboxMetadata, error) {
 	if mailbox != "" {
 		return nil, fmt.Errorf("mailbox metadata is filtered")
 	}
@@ -62,7 +62,7 @@ func (s *filteredFixtureSession) GetMetadata(ctx context.Context, mailbox string
 	return s.MetadataSession.GetMetadata(ctx, mailbox, entries, options)
 }
 
-func (s *filteredFixtureSession) SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *imapserver.MetadataOptions) error {
+func (s *filteredFixtureSession) SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *imapserver.SetMetadataOptions) error {
 	if mailbox != "" {
 		return fmt.Errorf("mailbox metadata is filtered")
 	}
