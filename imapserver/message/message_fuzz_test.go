@@ -23,7 +23,7 @@ func FuzzAnalyze(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, size, err := m.OpenBodySection(ctx, &imap.FetchItemBodySection{})
+		r, size, err := m.OpenBodySection(ctx, &imap.FetchItemBodySection{}, nil)
 		if err != nil || size != int64(len(raw)) {
 			t.Fatalf("full section = %d, %v", size, err)
 		}

@@ -72,7 +72,7 @@ func TestMetadataStorageLimitsAreAtomicAndRecoverable(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close(ctx, nil)
-			got, err := loginTest(t, b).GetMetadata(ctx, scope, []imap.MetadataEntryName{"/private"}, &imapserver.MetadataOptions{Depth: "infinity"})
+			got, err := loginTest(t, b).GetMetadata(ctx, scope, []imap.MetadataEntryName{"/private"}, &imapserver.GetMetadataOptions{Depth: "infinity"})
 			if err != nil || len(got.Entries) != 10 {
 				t.Fatalf("quota boundary did not survive reopen: %v, %+v", err, got)
 			}

@@ -334,7 +334,7 @@ var _ imapserver.MultiSearchSession = (*session)(nil)
 // the encoding cannot be undone; returning the raw bytes would hand the client
 // base64 it believes is binary.
 func openBinarySection(ctx context.Context, msg *message, part []int) (io.Reader, error) {
-	raw, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Part: part, Peek: true})
+	raw, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Part: part, Peek: true}, nil)
 	if err != nil {
 		return nil, err
 	}

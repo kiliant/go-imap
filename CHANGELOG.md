@@ -128,6 +128,33 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** `URLAuthSession` now uses guarded `GenURLAuthOptions`,
+  `URLFetchOptions` and `ResetURLAuthKeyOptions{Mechanisms}` in place of
+  `URLAuthOptions`. `FetchURLAuth` returns guarded `*URLFetchResult` with owned
+  `Body`, `Size` and `HasSize`; known-size bodies stream, unknown-size bodies
+  spool to disk. Correct URLFETCH's URL/nstring wire pairs, accept multiple
+  GENURLAUTH pairs and RESETKEY mechanisms, and withdraw unimplemented
+  URLAUTH=BINARY. Memory supplies exact sizes, hexadecimal tokens and atomic
+  mechanism validation for key resets. (#122)
+
+- **BREAKING:** `Limits.MaxLiteralBytes` also bounds aggregate APPEND and
+  URLFETCH payload bytes per command. CATENATE parts spool to a bounded temporary
+  file, with later literals drained and later URLs skipped after refusal.
+  Oversized resolved content returns NO [TOOBIG]; readers and temporary files
+  are released on success, refusal, cancellation and framing failure. (#133)
+
+- **BREAKING:** replace `imapserver.MetadataOptions` with guarded
+  `GetMetadataOptions` and `SetMetadataOptions`, and update `MetadataSession`
+  signatures and both backends. GETMETADATA retains the depth and size fields;
+  SETMETADATA has independent empty options. Document shared-command and future
+  field naming contracts on `ACLOptions`, `QuotaOptions`, `LanguageOptions`
+  and `ComparatorOptions`. (#131)
+
+- **BREAKING:** `message.Message.OpenBodySection` now ends in guarded
+  `*message.SectionOptions`. Nil preserves the existing stored-byte behaviour;
+  retain the reader, size and error results. Update both backends, examples,
+  tests and fuzzing, and remove the method's options-gate exemption. (#128)
+
 - **BREAKING:** MULTIAPPEND now requires the new optional `MultiAppendSession`
   atomic batch interface, with guarded `AppendMessage` and `MultiAppendOptions`.
   It returns shared `imap.MultiAppendData`; memory commits all messages and

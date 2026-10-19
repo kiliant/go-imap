@@ -34,7 +34,8 @@ var (
 type Limits struct {
 	// MaxCommandLineBytes bounds one protocol line excluding literal payloads.
 	MaxCommandLineBytes int
-	// MaxLiteralBytes bounds one client-supplied literal.
+	// MaxLiteralBytes bounds each client-supplied literal, the aggregate staged
+	// APPEND payload and the aggregate resolved URLFETCH payload per command.
 	MaxLiteralBytes int64
 	// MaxQueuedCommands bounds parsed commands waiting for the event loop.
 	MaxQueuedCommands int

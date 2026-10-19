@@ -149,6 +149,20 @@ apidiff scope is a gate on us; it changes nothing a user of a module tagged v1
 sees, and the versioning policy below already rules that an exclusion is not a
 licence.
 
+Separate options types when commands already have different policy. The server's
+`GetMetadataOptions` carries depth and size limits; `SetMetadataOptions` is
+independent and empty. `ACLOptions`, `QuotaOptions`, `LanguageOptions` and
+`ComparatorOptions` remain shared, deliberately documented on each type: a
+future command-specific field must name its command and be ignored by the
+other methods. URLAUTH similarly has separate `GenURLAuthOptions`,
+`URLFetchOptions` and `ResetURLAuthKeyOptions` after its pre-v1 correction.
+
+Stored-message helpers follow the same rule. In particular
+`message.Message.OpenBodySection` takes `*message.SectionOptions` for helper
+policy. Its shared `imap.FetchItemBodySection` describes a wire request and
+cannot carry server-only transformation policy. This replaces the T32 helper
+exemption before the server freeze; its reader, size and error results remain.
+
 ## 4. Exported interfaces are a liability
 
 Adding a method to an exported interface breaks every external implementer.
@@ -531,6 +545,23 @@ between them is not stylistic:
 Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
+
+### Resolved content carries size and ownership — added 2026-10-19
+
+`URLAuthSession.FetchURLAuth` returns guarded `URLFetchResult`, so later URLFETCH
+metadata can grow without replacing its return signature. A nil result means
+unresolved. A non-nil result supplies an owned Body that the framework closes
+exactly once, including when returned with an error. Size is exact when HasSize
+is set, including a known empty body; otherwise bounded disk staging measures
+it. A known-size stream failure after literal framing invalidates the connection
+rather than attempting to continue with a mismatched byte count.
+
+`Limits.MaxLiteralBytes` bounds individual input literals and aggregate APPEND
+and URLFETCH payloads per command. CATENATE stages parts on disk with this bound;
+URLFETCH streams known sizes and bounds staging of unknown ones. Refusal drains
+remaining client literals without resolving more URLs. These pre-v1 changes
+correct the previous unbounded buffering and are recorded as breaking behaviour.
+The default and future retuning policy are part of the limits review (#124).
 
 ### Atomic batches require an explicit backend contract — added 2026-10-19
 

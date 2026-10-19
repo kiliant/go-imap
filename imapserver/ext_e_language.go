@@ -36,6 +36,8 @@ type LanguageSession interface {
 
 // LanguageOptions configures a LANGUAGE operation. A nil pointer selects the
 // defaults.
+// Shared by Languages and SetLanguage. Future command-specific fields will be
+// named for their command and documented as ignored by the other methods.
 // Construct with keyed fields only; fields may be added in a future release.
 type LanguageOptions struct{ _ struct{} }
 

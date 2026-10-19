@@ -285,30 +285,17 @@ func readAppendContinuation(ctx context.Context, c *conn, inCatenate bool) (*app
 	return continuation, nil
 }
 
-// appendPayload assembles one message's bytes, reading whatever the wire still
-// owes as it goes.
-//
-// A catenated message is assembled part by part rather than buffered whole:
-// each literal is streamed into the pipe as it arrives and each URL is resolved
-// and streamed, so a large catenated message never exists in memory here.
+// appendPayload owns one message's input stream. Plain literals are drained
+// before continuation parsing. CATENATE owns a bounded temporary file, removed
+// when the payload is closed, including on refusal or connection teardown.
 type appendPayload struct {
-	reader io.Reader
-	// literal is the wire literal an ordinary append streams from, and pending
-	// tracks how much of it the backend left unread.
+	reader  io.Reader
 	literal *imapwire.LiteralReader
 	pending *appendLiteral
-	// parts holds a catenated message's assembled pieces.
-	parts  [][]byte
-	closes []io.Closer
+	cleanup func()
 }
 
-// drain consumes whatever the backend left unread. The rest of the command
-// cannot be parsed until this message's bytes are off the wire, so this is not
-// optional cleanup — skipping it desynchronises the connection.
 func (p *appendPayload) drain() {
-	// Only an unfinished literal is discarded. Discarding a fully-read one
-	// consumes the bytes that follow it, which under MULTIAPPEND is the next
-	// message's header.
 	if p.literal != nil && p.pending != nil && p.pending.remaining != 0 {
 		_ = p.literal.Discard()
 		p.pending.remaining = 0
@@ -316,26 +303,10 @@ func (p *appendPayload) drain() {
 }
 
 func (p *appendPayload) close() {
-	for i := len(p.closes) - 1; i >= 0; i-- {
-		_ = p.closes[i].Close()
+	if p.cleanup != nil {
+		p.cleanup()
+		p.cleanup = nil
 	}
-}
-
-// bytesReader is a reader over an assembled catenate part.
-func bytesReader(part []byte) io.Reader { return &sliceReader{data: part} }
-
-type sliceReader struct {
-	data []byte
-	at   int
-}
-
-func (r *sliceReader) Read(p []byte) (int, error) {
-	if r.at >= len(r.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.data[r.at:])
-	r.at += n
-	return n, nil
 }
 
 // validateAppendShape refuses an APPEND whose form the session may not use.

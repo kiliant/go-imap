@@ -467,7 +467,7 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 					specifier = imap.PartSpecifierText
 					marksSeen = true
 				}
-				reader, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: specifier, Peek: item == imap.FetchItemRFC822Header})
+				reader, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: specifier, Peek: item == imap.FetchItemRFC822Header}, nil)
 				if err != nil {
 					return nil, false, err
 				}
@@ -507,7 +507,7 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 			key := imap.FetchDataKey(binarySectionKey(&imap.FetchItemBinarySection{Part: item.Part}, true))
 			data.Items[key] = append(data.Items[key], imap.FetchDataBinarySectionSize(size))
 		case *imap.FetchItemBodySection:
-			reader, _, err := msg.analysis.OpenBodySection(ctx, item)
+			reader, _, err := msg.analysis.OpenBodySection(ctx, item, nil)
 			if err != nil {
 				return nil, false, err
 			}
