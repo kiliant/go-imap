@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -51,7 +52,7 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 		return err
 	}
 	status := "READ-WRITE"
-	if readOnly || snapshot.ReadOnly || snapshot.Status.ReadOnly {
+	if readOnly || snapshot.Status.ReadOnly {
 		status = "READ-ONLY"
 	}
 	if selected == nil {
@@ -145,9 +146,9 @@ func selectAtomic(ctx context.Context, c *conn, mailbox string, options *SelectO
 	}
 	selected.readOnly = selected.readOnly || options != nil && options.ReadOnly
 	snapshotCopy := result.Snapshot
-	snapshotCopy.UIDs = append([]imap.UID(nil), result.Snapshot.UIDs...)
-	snapshotCopy.Flags = append([]imap.Flag(nil), result.Snapshot.Flags...)
-	snapshotCopy.PermanentFlags = append([]imap.Flag(nil), result.Snapshot.PermanentFlags...)
+	snapshotCopy.UIDs = slices.Clone(result.Snapshot.UIDs)
+	snapshotCopy.Status.Flags = slices.Clone(result.Snapshot.Status.Flags)
+	snapshotCopy.Status.PermanentFlags = slices.Clone(result.Snapshot.Status.PermanentFlags)
 	succeeded = true
 	return selected, &snapshotCopy, nil
 }
@@ -156,20 +157,14 @@ func writeSelectSnapshot(c *conn, snapshot *SelectSnapshot) error {
 	if snapshot == nil {
 		return fmt.Errorf("imapserver: nil SELECT snapshot")
 	}
-	flags := snapshot.Flags
-	if flags == nil {
-		flags = snapshot.Status.Flags
-	}
-	permanentFlags := snapshot.PermanentFlags
-	if permanentFlags == nil {
-		permanentFlags = snapshot.Status.PermanentFlags
-	}
+	flags := snapshot.Status.Flags
+	permanentFlags := snapshot.Status.PermanentFlags
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("FLAGS").SP().List(len(flags), func(i int) {
 		c.encoder.Flag(string(flags[i]))
 	}).CRLF()
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(snapshot.Status.NumMessages).SP().Atom("EXISTS").CRLF()
 	if c.state.revision == revisionIMAP4rev1 {
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(snapshot.NumRecent).SP().Atom("RECENT").CRLF()
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(snapshot.Status.NumRecent).SP().Atom("RECENT").CRLF()
 	}
 	encodedFlags, err := encodeFlagList(permanentFlags)
 	if err != nil {
@@ -181,14 +176,10 @@ func writeSelectSnapshot(c *conn, snapshot *SelectSnapshot) error {
 	if snapshot.Status.Unseen != 0 && c.state.revision == revisionIMAP4rev1 {
 		writeUntaggedOK(c, imap.CodeUnseen, fmt.Sprint(snapshot.Status.Unseen), "first unseen message")
 	}
-	if snapshot.NoModSeq || snapshot.Status.NoModSeq {
+	if snapshot.Status.NoModSeq {
 		writeUntaggedOK(c, imap.CodeNoModSeq, "", "mod-sequences unavailable")
-	} else if snapshot.HighestModSeq != 0 || snapshot.Status.HighestModSeq != 0 {
-		modSeq := snapshot.HighestModSeq
-		if modSeq == 0 {
-			modSeq = snapshot.Status.HighestModSeq
-		}
-		writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(modSeq), "highest modification sequence")
+	} else if snapshot.Status.HighestModSeq != 0 {
+		writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(snapshot.Status.HighestModSeq), "highest modification sequence")
 	}
 	return c.encoder.Flush()
 }

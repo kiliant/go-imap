@@ -449,8 +449,8 @@ func validateSnapshot(t *testing.T, snapshot imapserver.SelectSnapshot) {
 	if snapshot.Status.UIDNext == 0 || snapshot.Status.UIDNext <= previous {
 		t.Fatalf("UIDNext %d is not greater than max UID %d", snapshot.Status.UIDNext, previous)
 	}
-	if snapshot.NumRecent > snapshot.Status.NumMessages {
-		t.Fatalf("NumRecent %d > NumMessages %d", snapshot.NumRecent, snapshot.Status.NumMessages)
+	if snapshot.Status.NumRecent > snapshot.Status.NumMessages {
+		t.Fatalf("NumRecent %d > NumMessages %d", snapshot.Status.NumRecent, snapshot.Status.NumMessages)
 	}
 	if snapshot.Revision == "" {
 		t.Fatal("empty snapshot revision")

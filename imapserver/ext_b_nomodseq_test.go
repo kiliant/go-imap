@@ -35,10 +35,11 @@ func (s *noModSeqSession) Select(_ context.Context, name string, _ *Updater, _ *
 	}
 	if name == "tracked" {
 		snapshot.Status.HighestModSeq = 9
-	} else if name == "status" {
-		snapshot.Status.NoModSeq = true
 	} else {
-		snapshot.NoModSeq = true
+		snapshot.Status.NoModSeq = true
+		if name == "stale-modseq" {
+			snapshot.Status.HighestModSeq = 9
+		}
 	}
 	return &SelectResult{Mailbox: &noModSeqMailbox{backend: s.backend}, Snapshot: snapshot}, nil
 }
@@ -72,7 +73,7 @@ func (m *noModSeqMailbox) Thread(context.Context, *SearchQuery, imap.ThreadAlgor
 }
 
 func TestNoModSeqRejectsCommandsBeforeBackend(t *testing.T) {
-	for _, mailbox := range []string{"snapshot", "status"} {
+	for _, mailbox := range []string{"status", "stale-modseq"} {
 		t.Run(mailbox, func(t *testing.T) {
 			backend := &noModSeqBackend{}
 			server := New(backend, &Options{AllowInsecureAuth: true})

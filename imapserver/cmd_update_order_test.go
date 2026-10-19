@@ -45,8 +45,8 @@ func (s *expungeOrderSession) Select(_ context.Context, _ string, updater *Updat
 				NumMessages: 2,
 				UIDValidity: 1,
 				UIDNext:     3,
+				NoModSeq:    true,
 			},
-			NoModSeq: true,
 			Revision: "r1",
 		},
 	}, nil
@@ -85,8 +85,8 @@ func (s *deferredAccountingSession) Select(_ context.Context, _ string, updater 
 				NumMessages: 3,
 				UIDValidity: 1,
 				UIDNext:     4,
+				NoModSeq:    true,
 			},
-			NoModSeq: true,
 			Revision: "r1",
 		},
 	}, nil
@@ -503,8 +503,8 @@ func (s *staleAddExpungeSession) Select(_ context.Context, _ string, updater *Up
 				NumMessages: 3,
 				UIDValidity: 1,
 				UIDNext:     4,
+				NoModSeq:    true,
 			},
-			NoModSeq: true,
 			Revision: "r1",
 		},
 	}, nil

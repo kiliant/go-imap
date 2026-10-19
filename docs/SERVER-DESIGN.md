@@ -367,16 +367,9 @@ type SelectSnapshot struct {
 	// order, since UIDs ascend strictly within a mailbox. This IS the map.
 	UIDs []imap.UID
 
-	Status         imap.MailboxStatus
-	Flags          []imap.Flag
-	PermanentFlags []imap.Flag
-	ReadOnly       bool
-	NumRecent      uint32 // rev1 \Recent
-
-	// HighestModSeq zero with NoModSeq set is reported as NOMODSEQ, which is
-	// not the same as a modseq that happens to be zero.
-	HighestModSeq uint64
-	NoModSeq      bool
+	// Status is the sole source of SELECT values, including flags, access
+	// mode, RECENT and HighestModSeq/NoModSeq. NumMessages equals len(UIDs).
+	Status imap.MailboxStatus
 
 	// Revision identifies the state this snapshot describes. Updates carry
 	// the revision they follow, so a gap is detectable rather than silent.
