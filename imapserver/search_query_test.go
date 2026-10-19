@@ -87,3 +87,22 @@ func assertUIDNormalizedSearch(t *testing.T, criteria imap.SearchCriteria) {
 		t.Fatalf("UID-normalization gate does not know criteria type %T", criteria)
 	}
 }
+
+func TestSearchQueryUIDWildcardUsesSelectedMaximum(t *testing.T) {
+	for _, raw := range []string{"*", "34:*", "*:34", "33:*"} {
+		set, err := imap.ParseUIDSet(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		query := newSearchQuery(imap.SearchNot{Criteria: imap.SearchUID{Set: set}}, []imap.UID{11, 22, 33})
+		got := query.Criteria().(imap.SearchNot).Criteria.(imap.SearchUID).Set
+		if got.Dynamic() || got.String() != "33" {
+			t.Fatalf("UID %s normalized to %s", raw, got.String())
+		}
+	}
+	set, _ := imap.ParseUIDSet("*")
+	got := newSearchQuery(imap.SearchUID{Set: set}, nil).Criteria().(imap.SearchUID).Set
+	if !got.IsEmpty() {
+		t.Fatalf("empty mailbox wildcard = %s", got.String())
+	}
+}

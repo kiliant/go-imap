@@ -75,6 +75,9 @@ func parsePartialRange(raw string) (*searchPartialRange, error) {
 	if (first < 0) != (last < 0) {
 		return nil, fmt.Errorf("PARTIAL range %q mixes positive and negative positions", raw)
 	}
+	if first > last {
+		first, last = last, first
+	}
 	return &searchPartialRange{from: first, to: last}, nil
 }
 

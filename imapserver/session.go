@@ -346,6 +346,12 @@ func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
 				}
 				copyBatch.Changes = append(copyBatch.Changes, &UpdateAdd{UIDs: uids})
 			}
+		case *UpdateRecent:
+			if change == nil {
+				copyBatch.Changes = append(copyBatch.Changes, change)
+			} else {
+				copyBatch.Changes = append(copyBatch.Changes, &UpdateRecent{NumRecent: change.NumRecent})
+			}
 		case *UpdateFlags:
 			if change == nil {
 				copyBatch.Changes = append(copyBatch.Changes, change)
@@ -687,6 +693,7 @@ type selectedState struct {
 	name     string
 	uids     []imap.UID
 	flags    []imap.Flag
+	recent   uint32
 	revision MailboxRevision
 	readOnly bool
 	noModSeq bool
@@ -792,6 +799,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 		name:           result.Snapshot.Status.Mailbox,
 		uids:           slices.Clone(result.Snapshot.UIDs),
 		flags:          slices.Clone(result.Snapshot.Status.Flags),
+		recent:         result.Snapshot.Status.NumRecent,
 		revision:       result.Snapshot.Revision,
 		readOnly:       result.Snapshot.Status.ReadOnly,
 		noModSeq:       result.Snapshot.Status.NoModSeq,
@@ -874,6 +882,7 @@ type updateKind uint8
 const (
 	updateExists updateKind = iota + 1
 	updateMailboxFlags
+	updateRecent
 	updateMessageFlags
 	updateMessageExpunge
 	updateMessageVanished
@@ -932,6 +941,14 @@ func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounti
 			// Additions are never blanket-suppressed: APPEND/COPY/MOVE results
 			// do not tell the selected client the new sequence position.
 			delivered = append(delivered, deliveredUpdate{kind: updateExists, exists: uint32(len(s.uids))})
+		case *UpdateRecent:
+			if change == nil || uint64(change.NumRecent) > uint64(len(s.uids)) {
+				return nil, fmt.Errorf("%w: invalid RECENT count", ErrRevisionMismatch)
+			}
+			if s.recent != change.NumRecent {
+				s.recent = change.NumRecent
+				delivered = append(delivered, deliveredUpdate{kind: updateRecent, exists: change.NumRecent})
+			}
 		case *UpdateFlags:
 			if change == nil {
 				return nil, fmt.Errorf("%w: nil FLAGS update", ErrRevisionMismatch)

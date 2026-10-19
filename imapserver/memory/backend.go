@@ -118,12 +118,13 @@ func newAccount(password string) *account {
 // support modification sequences", which is what NOMODSEQ reports.
 func (a *account) createMailboxLocked(name string) *mailbox {
 	m := &mailbox{
-		name:        name,
-		uidValidity: a.nextUIDValidity,
-		uidNext:     1,
-		revision:    1,
-		flags:       defaultMailboxFlags(),
-		watchers:    make(map[*selected]*imapserver.Updater),
+		name:          name,
+		uidValidity:   a.nextUIDValidity,
+		uidNext:       1,
+		revision:      1,
+		highestModSeq: 1,
+		flags:         defaultMailboxFlags(),
+		watchers:      make(map[*selected]*imapserver.Updater),
 	}
 	a.nextUIDValidity++
 	a.mailboxes[mailboxKey(name)] = m
