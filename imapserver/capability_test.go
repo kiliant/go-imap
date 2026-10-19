@@ -235,6 +235,7 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 		"AppendOptions.Size":             true,
 		"AppendOptions.HasSize":          true,
 		"SelectOptions.ReadOnly":         true,
+		"FetchOptions.MutationOptions":   true,
 		"FetchOptions.Items":             true,
 		"SearchOptions.Charset":          true,
 		"StoreOptions.MutationOptions":   true,

@@ -194,6 +194,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   known zero size. CATENATE leaves size unknown. Backends must still handle
   short or failing readers. Additive. (#138)
 
+- `imapserver.FetchOptions` embeds `MutationOptions` so backends can identify
+  implicit \Seen updates with the FETCH command's origin token. Memory and
+  Maildir preserve it in their update batches. Updates from older backends
+  that leave the origin at zero remain supported. Additive. (#136)
+
 - `imapserver/maildir`: a persistent backend built through the public server
   and message APIs. Exports `Open`, concrete `Backend`, guarded `Options`,
   `AccountOptions` and `CloseOptions`, plus `Backend.Authenticate`,
