@@ -395,7 +395,8 @@ The test is whether a correct server, given the data, could put it on the wire.
   `apidiff` sees signatures, not behaviour, and a default documented in v1 is
   part of the promise. If one is judged wrong after v1.0, it gets an additive
   opt-in on the existing options struct, and the flip is recorded under "v2
-  candidates" in `docs/ROADMAP.md`. First exercised by
+  candidates" in `docs/ROADMAP.md`. The server resource-limit exception below
+  is deliberately narrower than this general rule. First exercised by
   `imapclient.AuthenticateOptions.CredentialKind`: unset, `Authenticate` can
   still send a password as a bearer token, as v1 documents.
 - Removal requires a deprecation notice for at least two minor releases, and
@@ -567,7 +568,16 @@ and URLFETCH payloads per command. CATENATE stages parts on disk with this bound
 URLFETCH streams known sizes and bounds staging of unknown ones. Refusal drains
 remaining client literals without resolving more URLs. These pre-v1 changes
 correct the previous unbounded buffering and are recorded as breaking behaviour.
-The default and future retuning policy are part of the limits review (#124).
+The owner-approved limits policy (#124) permits a minor release to retune
+`imapserver.Limits` default values. Every such change must be called out in the
+changelog. An application needing stable limits must set positive values
+explicitly. This exception covers resource-limit defaults only: the meaning of
+explicit values and sentinel values, other options defaults, and backend
+obligations remain under the general documented-behaviour promise.
+`MaxLiteralBytes` defaults to 32 MiB; non-positive `MaxCommands` means unlimited.
+`MaxConnections` and `MaxConnectionsPerIP` use zero for the documented default
+and negative values for unlimited. All remaining non-positive fields select
+their documented defaults; retained queues, sizes and timeouts remain bounded.
 
 ### Atomic batches require an explicit backend contract — added 2026-10-19
 
