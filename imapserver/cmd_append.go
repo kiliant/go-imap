@@ -73,9 +73,11 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 			}
 		} else {
 			if failure == nil {
-				size, copyErr := io.Copy(spool, payload.reader)
+				size, copyErr := io.Copy(spool, io.LimitReader(payload.reader, probingLimit(c.server.options.Limits.MaxLiteralBytes-offset)))
 				if copyErr != nil {
 					failure = copyErr
+				} else if size > c.server.options.Limits.MaxLiteralBytes-offset {
+					failure = resolvedContentTooBig()
 				} else if size == 0 {
 					failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "empty APPEND message"}
 				} else {
@@ -142,11 +144,10 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 // collectAppendPayload assembles one message's bytes, reading the remaining
 // CATENATE parts from the wire as it goes.
 //
-// A plain append streams its single literal straight through. A catenated one is
-// assembled part by part: each literal must be fully read before the next part
-// can be parsed, so the parts are buffered in order and concatenated. That
-// buffering is the price of the grammar rather than a choice — the next part's
-// length is not knowable until this one is consumed.
+// Plain literals remain streams. CATENATE parts are staged to a bounded
+// temporary file, so their byte counts and later syntax can be checked before
+// any backend append. On refusal, later literals are drained without resolving
+// more URLs, keeping the next command synchronized.
 func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage) (*appendPayload, error) {
 	if len(message.catenate) == 0 {
 		// Defence in depth behind decodeFailure. A parse that neither collected
@@ -164,55 +165,67 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 		session = nil
 	}
 	payload := &appendPayload{}
-	parts := message.catenate
-	// The first failure is remembered and the command is read to its end anyway.
-	// Every remaining part must come off the wire before a response is written,
-	// or the leftovers are parsed as commands.
+	file, err := os.CreateTemp("", "go-imap-catenate-*")
 	var failure error
+	if err != nil {
+		failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeServerBug, Text: "cannot stage CATENATE content"}
+	} else {
+		payload.cleanup = func() { _ = file.Close(); _ = os.Remove(file.Name()) }
+	}
+	success := false
+	defer func() {
+		if !success {
+			payload.close()
+		}
+	}()
+	parts := message.catenate
+	var total int64
 	for {
 		for _, part := range parts {
 			if part.literal != nil {
-				staged, err := io.ReadAll(&appendLiteral{reader: part.literal, remaining: part.literal.Size()})
-				if err != nil {
-					return nil, err
+				if failure == nil && part.literal.Size() > c.server.options.Limits.MaxLiteralBytes-total {
+					failure = resolvedContentTooBig()
 				}
-				payload.parts = append(payload.parts, staged)
-				continue
-			}
-			if session == nil {
 				if failure == nil {
-					failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "CATENATE is not available"}
-				}
-				continue
-			}
-			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)
-			if err != nil || resolved == nil {
-				// RFC 4469 section 3 answers an unresolvable URL with
-				// NO [BADURL <url>], naming the offending URL so a client
-				// catenating several parts learns which one failed.
-				//
-				// Recorded rather than returned: the rest of the command is still
-				// on the wire, and abandoning it there leaves the remainder to be
-				// re-parsed as commands. That produced a spurious untagged
-				// "* BAD invalid command syntax" after every refusal — harmless
-				// only because the decoder is literal-aware, and invisible to a
-				// test that stops reading at the tagged response.
-				if failure == nil {
-					failure = &imap.Error{
-						Type:     imap.ErrorTypeNo,
-						Code:     imap.CodeBadURL,
-						CodeArgs: part.url,
-						Text:     "CATENATE URL did not resolve",
+					n, err := io.Copy(file, &appendLiteral{reader: part.literal, remaining: part.literal.Size()})
+					if err != nil {
+						return nil, err
+					}
+					total += n
+					if total > c.server.options.Limits.MaxLiteralBytes {
+						failure = resolvedContentTooBig()
+					}
+				} else {
+					if err := part.literal.Discard(); err != nil {
+						return nil, err
 					}
 				}
 				continue
 			}
-			staged, err := io.ReadAll(resolved)
-			_ = resolved.Close()
-			if err != nil {
-				return nil, err
+			if failure != nil {
+				continue
 			}
-			payload.parts = append(payload.parts, staged)
+			if session == nil {
+				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "CATENATE is not available"}
+				continue
+			}
+			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)
+			if err != nil || resolved == nil {
+				if resolved != nil {
+					_ = resolved.Close()
+				}
+				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: "CATENATE URL did not resolve"}
+				continue
+			}
+			n, readErr := io.Copy(file, io.LimitReader(&literalContextReader{ctx: ctx, reader: resolved}, probingLimit(c.server.options.Limits.MaxLiteralBytes-total)))
+			_ = resolved.Close()
+			total += n
+			if readErr != nil {
+				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeUnavailable, Text: "CATENATE URL could not be read"}
+			}
+			if total > c.server.options.Limits.MaxLiteralBytes {
+				failure = resolvedContentTooBig()
+			}
 		}
 		next, err := readAppendContinuation(ctx, c, true)
 		if err != nil {
@@ -226,11 +239,8 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 	if failure != nil {
 		return nil, failure
 	}
-	readers := make([]io.Reader, 0, len(payload.parts))
-	for _, part := range payload.parts {
-		readers = append(readers, bytesReader(part))
-	}
-	payload.reader = io.MultiReader(readers...)
+	payload.reader = io.NewSectionReader(file, 0, total)
+	success = true
 	return payload, nil
 }
 
