@@ -165,6 +165,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   literals remain file streams rather than whole-message framework buffers.
   Add opt-in backend conformance for rollback, cancellation and update chains.
   (#121)
+- Interop acceptance recognises current imaptest group and per-command
+  summaries as well as the legacy summary. Nonzero failures fail the test even
+  without an Error-prefixed complaint; the synchronising-literal tool exception
+  remains specific. No exported API change. (#164)
 
 - **BREAKING:** `SCRAMCredentials` implementations must also supply a separate
   `CapabilitySupport` witness for each AUTH=SCRAM-SHA-1, AUTH=SCRAM-SHA-256,
