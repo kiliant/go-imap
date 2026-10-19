@@ -253,10 +253,11 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 [^srvmultiappend]: Parsing continues between literals: the parser reads to the
     first literal's announcement, the handler consumes it, then asks the reader
-    for the next chunk over the same path continuations and IDLE use. Not atomic
-    across messages — `Session.Append` stores one at a time, so a failure leaves
-    the messages already stored, and the framework says so rather than
-    pretending. RFC 3502's UID-set form of APPENDUID is reported.
+    for the next chunk over the same path continuations and IDLE use. The whole
+    command is staged to a temporary file before backend calls. MULTIAPPEND is
+    advertised only for `MultiAppendSession`, whose batch must commit atomically
+    or leave the mailbox unchanged. Memory implements it; Maildir currently does
+    not. RFC 3502's UID-set form of APPENDUID is reported.
 
 [^srvcatenate]: Client text and server-side URLs assembled into one message
     through the optional `CatenateSession`. Parts are read in order because each

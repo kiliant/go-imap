@@ -28,6 +28,46 @@ import (
 // the handler consumes that literal, and then asks the reader for the next
 // chunk. That is the same path continuations and IDLE already use.
 
+// MultiAppendSession is optional atomic MULTIAPPEND support (RFC 3502).
+// Implementing it witnesses MULTIAPPEND; Session.Append alone does not.
+type MultiAppendSession interface {
+	// MultiAppend appends the entire nonempty batch in order, or leaves the
+	// mailbox unchanged on failure. Validate and read every message before
+	// publishing any change. Publish a successful batch as one atomic update
+	// batch, carrying options.Origin. A nil result omits APPENDUID; a backend
+	// witnessing UIDPLUS must return every assigned UID in append order.
+	//
+	// Readers and message data belong to the caller and are valid only during
+	// this call. Do not retain or close them. Reject empty messages, nil readers,
+	// short declared sizes, read failures and cancellation without committing.
+	// Nil options select the defaults.
+	MultiAppend(ctx context.Context, mailbox string, messages []AppendMessage, options *MultiAppendOptions) (*imap.MultiAppendData, error)
+}
+
+// AppendMessage is one message of an atomic append batch.
+// Construct with keyed fields only; fields may be added in a future release.
+type AppendMessage struct {
+	// Literal supplies this message's bytes, consumed during MultiAppend.
+	Literal io.Reader
+	// Flags is the initial flag set.
+	Flags []imap.Flag
+	// InternalDate is the supplied internal date; zero selects the current time.
+	InternalDate time.Time
+	// Size is the declared octet count when HasSize is true. Reads may still fail.
+	Size int64
+	// HasSize distinguishes a declared size from an unknown one (CATENATE).
+	HasSize bool
+	_       struct{}
+}
+
+// MultiAppendOptions configures an atomic append. A nil pointer selects the
+// defaults. Per-message data belongs on AppendMessage.
+// Construct with keyed fields only; fields may be added in a future release.
+type MultiAppendOptions struct {
+	MutationOptions
+	_ struct{}
+}
+
 // CatenateSession is the optional CATENATE support of RFC 4469.
 //
 // A catenated APPEND builds the new message from a sequence of parts: literal
@@ -48,9 +88,8 @@ type CatenateOptions struct{ _ struct{} }
 
 func init() {
 	registerCapabilities(
-		// MULTIAPPEND needs nothing from the backend: several messages is
-		// several calls to the Append it already implements.
-		capabilityDescriptor{Name: "MULTIAPPEND", States: stateMaskAuthenticated | stateMaskSelected},
+		capabilityDescriptor{Name: "MULTIAPPEND", States: stateMaskAuthenticated | stateMaskSelected,
+			RequiresBackend: sessionImplements[MultiAppendSession]()},
 		capabilityDescriptor{
 			Name:            "CATENATE",
 			States:          stateMaskAuthenticated | stateMaskSelected,
@@ -303,10 +342,10 @@ func (r *sliceReader) Read(p []byte) (int, error) {
 func validateAppendShape(c *conn, messages int, catenated bool) error {
 	advertised := advertisedCapabilities(c)
 	if messages > 1 && !advertised["MULTIAPPEND"] {
-		return fmt.Errorf("MULTIAPPEND is not available")
+		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "MULTIAPPEND is not available"}
 	}
 	if catenated && !advertised["CATENATE"] {
-		return fmt.Errorf("CATENATE is not available")
+		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "CATENATE is not available"}
 	}
 	return nil
 }

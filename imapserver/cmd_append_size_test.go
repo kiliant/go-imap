@@ -40,6 +40,17 @@ func (*appendSizeSession) ResolveCatenateURL(context.Context, string, *CatenateO
 	return io.NopCloser(strings.NewReader("url")), nil
 }
 
+func (s *appendSizeSession) MultiAppend(_ context.Context, _ string, messages []AppendMessage, options *MultiAppendOptions) (*imap.MultiAppendData, error) {
+	// This fixture records metadata without publishing any mailbox state.
+	for _, message := range messages {
+		s.backend.calls <- AppendOptions{MutationOptions: options.MutationOptions, Size: message.Size, HasSize: message.HasSize}
+		if _, err := io.Copy(io.Discard, message.Literal); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
 func TestAppendPassesDeclaredSize(t *testing.T) {
 	for _, tc := range []struct {
 		name, payload string

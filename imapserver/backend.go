@@ -107,6 +107,8 @@ type Session interface {
 	Unsubscribe(ctx context.Context, mailbox string, options *UnsubscribeOptions) error
 	// Append stores a message read from literal.
 	//
+	// The framework stages the complete command on disk before this call, so
+	// malformed later MULTIAPPEND input cannot leave a first message committed.
 	// literal is a stream, valid only for the duration of the call: read it,
 	// do not retain it. The framework drains whatever is left afterwards — the
 	// rest of the command cannot be parsed until the message's bytes are off

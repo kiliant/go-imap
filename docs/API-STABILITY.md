@@ -532,6 +532,27 @@ Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
 
+### Atomic batches require an explicit backend contract — added 2026-10-19
+
+`MultiAppendSession.MultiAppend` receives the whole command's messages through
+borrowed readers and returns the shared `imap.MultiAppendData`. Each guarded
+`AppendMessage` carries per-message flags, date and declared-size presence;
+`MultiAppendOptions` carries command-wide mutation origin and future settings.
+The optional interface promises all-or-nothing storage and one atomic update
+batch. Its absence withdraws MULTIAPPEND; the framework never simulates the
+operation with repeated `Session.Append` calls. This corrects the pre-v1
+advertisement, deliberately recorded as breaking behaviour in CHANGELOG.md.
+
+The framework stages a complete APPEND command to a temporary file before any
+backend call, even for one message: the command's shape and later failures are
+not known until every literal and its terminator are consumed. Backends still
+read streams, but are called after staging rather than while the client sends.
+Cancellation and parse/zero-length failures discard staged data. Memory
+implements the atomic contract. Maildir's existing journal recovers by rolling
+forward after a prepared commit failure; it does not implement this stricter
+rollback contract and therefore does not advertise MULTIAPPEND. This interface
+adds no obligations to the mandatory Session method set.
+
 ### Capability withdrawal is a separate opt-in policy — added 2026-10-19
 
 `CapabilityFilter.AllowCapability(ctx, name, options)` can withdraw a

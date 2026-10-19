@@ -128,6 +128,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** MULTIAPPEND now requires the new optional `MultiAppendSession`
+  atomic batch interface, with guarded `AppendMessage` and `MultiAppendOptions`.
+  It returns shared `imap.MultiAppendData`; memory commits all messages and
+  publishes one update batch. Maildir and other backends without atomic support
+  no longer advertise MULTIAPPEND. Stage complete APPEND commands in a temporary
+  file before backend calls, including single-message commands, so malformed
+  later input and zero-length messages leave the mailbox unchanged. Plain
+  literals remain file streams rather than whole-message framework buffers.
+  Add opt-in backend conformance for rollback, cancellation and update chains.
+  (#121)
+
 - **BREAKING:** `SCRAMCredentials` implementations must also supply a separate
   `CapabilitySupport` witness for each AUTH=SCRAM-SHA-1, AUTH=SCRAM-SHA-256,
   AUTH=SCRAM-SHA-1-PLUS and AUTH=SCRAM-SHA-256-PLUS token they serve. Structural
