@@ -285,6 +285,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapserver:** accept standalone FETCH items, including body sections and
+  modifiers, through the shared item parser. Both reference backends return a
+  hierarchy delimiter/root response for empty LIST patterns. Add baseline
+  conformance and parser/loopback regressions. No exported signatures change.
+  (#159)
+
 - **imapserver:** reject wildcard QRESYNC sets, non-ascending sequence-match
   data and unequal sequence/UID counts with BAD before SELECT or Resync reaches
   a backend, including on UIDVALIDITY mismatch. Validation counts ranges
