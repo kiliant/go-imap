@@ -148,8 +148,15 @@ func TestMetadataSearchAndCharsets(t *testing.T) {
 			t.Fatalf("charset %q = %t, %v", charset, matched, err)
 		}
 	}
-	if _, err := message.Match(context.Background(), m, metadata, imap.SearchAll, &message.MatchOptions{Charset: "future-charset"}); !errors.Is(err, message.ErrUnsupportedCharset) {
-		t.Fatalf("unsupported charset = %v", err)
+	{
+		_, err := message.Match(context.Background(), m, metadata, imap.SearchAll, &message.MatchOptions{Charset: "future-charset"})
+		var protocolErr *imap.Error
+		if !errors.Is(err, message.ErrUnsupportedCharset) || !errors.As(err, &protocolErr) {
+			t.Fatalf("unsupported charset = %v, want sentinel and *imap.Error", err)
+		}
+		if protocolErr.Type != imap.ErrorTypeNo || protocolErr.Code != imap.CodeBadCharset || protocolErr.CodeArgs != "(US-ASCII UTF-8 ISO-8859-1)" {
+			t.Fatalf("unsupported charset protocol error = %+v", protocolErr)
+		}
 	}
 	for _, criterion := range []imap.SearchCriteria{
 		imap.SearchKeyword("FUTURE"),

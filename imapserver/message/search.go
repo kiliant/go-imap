@@ -17,6 +17,7 @@ import (
 var ErrUnsupportedCriteria = errors.New("message: unsupported search criterion")
 
 // ErrUnsupportedCharset identifies an unsupported SEARCH argument charset.
+// Match returns an *imap.Error with CodeBadCharset wrapping this sentinel.
 // Use errors.Is to identify it.
 var ErrUnsupportedCharset = errors.New("message: unsupported search charset")
 
@@ -78,7 +79,11 @@ func Match(ctx context.Context, message *Message, metadata Metadata, criterion i
 	switch strings.ToLower(strings.TrimSpace(opts.Charset)) {
 	case "", "us-ascii", "ascii", "utf-8", "utf8", "iso-8859-1", "iso8859-1", "latin1", "latin-1":
 	default:
-		return false, fmt.Errorf("%w: %q", ErrUnsupportedCharset, opts.Charset)
+		return false, &imap.Error{
+			Type: imap.ErrorTypeNo, Code: imap.CodeBadCharset,
+			CodeArgs: "(US-ASCII UTF-8 ISO-8859-1)", Text: "unsupported SEARCH charset",
+			Err: fmt.Errorf("%w: %q", ErrUnsupportedCharset, opts.Charset),
+		}
 	}
 	source := &operationSource{ctx: ctx, source: message.source}
 	matched, err := imapmessage.MatchContext(ctx, message.parsed.WithReader(source), imapmessage.Metadata{
