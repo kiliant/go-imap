@@ -238,8 +238,7 @@ type MoveMailbox interface {
 //
 // The framework never advertises a capability using this spoken witness
 // unless this returns true for it, so a backend that does not recognise a name
-// must return false. Structural witnesses
-// use their optional interfaces instead; see CapabilityFilter for withdrawal.
+// must return false. Structural witnesses use their optional interfaces instead; see CapabilityFilter for withdrawal.
 //
 // Bearer authentication requires a Backend witness before any Session exists:
 // return true for "AUTH=XOAUTH2" or "AUTH=OAUTHBEARER" only when Authenticate
@@ -259,6 +258,98 @@ type MoveMailbox interface {
 // suppresses the advertisement. The one such token is "LIST-EXTENDED", for
 // RECURSIVEMATCH; see [ListOptions.SelectRecursiveMatch]. Whether a token
 // gates or routes is fixed when it is introduced and does not change.
+//
+// # Witness contract catalogue
+//
+// This catalogue includes every backend-dependent descriptor, the routing token
+// and backend-only witnesses. Gate means the capability needs the stated
+// contract; route changes who evaluates an already available feature. A
+// backend-only token is never sent on the wire. A contract naming only an
+// optional Session interface is structural: SupportsCapability is not called
+// for it. CapabilitySupport in the contract denotes a separate spoken promise;
+// return false for every unrecognised token.
+//
+// States are N (not authenticated), A (authenticated) and S (selected). They
+// name the descriptor's advertisement states. /TLS is an additional transport
+// requirement. Backend witnesses are queried while deriving CAPABILITY,
+// greetings and ENABLE availability, and may be queried more than once.
+// IMAP4REV2 also asks its incorporated witnesses in all three states, including
+// before login: spoken promises come from Backend then; structural Session and
+// selected-mailbox checks are deferred until those objects exist. An
+// authenticated Session implementing CapabilitySupport answers alone, including
+// false: there is no fallback to Backend. Answers must describe support
+// consistently for that connection; use CapabilityFilter to withdraw wire
+// capabilities after a structural witness succeeds.
+//
+// For MOVE, SORT and THREAD, the spoken promise is needed before selection and
+// the named selected-mailbox interface must be present after selection.
+// REPLACE and QRESYNC also require their named mailbox interfaces when used.
+// SORT=DISPLAY inherits SortMailbox through SORT. Bearer and SCRAM witnesses
+// are Backend authentication contracts, queried before a Session exists.
+//
+// The table's obligations supplement the detailed method contracts. Witnessing
+// a name never relaxes atomicity, update delivery, streaming or ownership rules.
+// Framework-only descriptors are omitted: they impose no extra backend promise.
+// TestCapabilityWitnessCatalogue keeps this table level with the registries.
+//
+//	Token | Mode | Contract | States | Obligation
+//	ACL | gate | ACLSession | AS | Supply GETACL/LISTRIGHTS/MYRIGHTS; ACLSetSession separately enables writes.
+//	APPENDLIMIT | gate | CapabilitySupport | AS | Return per-mailbox STATUS APPENDLIMIT and enforce upload policy.
+//	AUTH=LOGIN | gate | Backend | N | Accept LOGIN password credentials; TLS or explicit insecure-auth policy.
+//	AUTH=OAUTHBEARER | gate | CapabilitySupport + Backend | N/TLS | Authenticate OAUTHBEARER token credentials.
+//	AUTH=PLAIN | gate | Backend | N | Accept PLAIN password credentials; TLS or explicit insecure-auth policy.
+//	AUTH=SCRAM-SHA-1 | gate | CapabilitySupport + SCRAMCredentials | N | Supply SHA-1 SCRAM derivations and accept verified credentials.
+//	AUTH=SCRAM-SHA-1-PLUS | gate | CapabilitySupport + SCRAMCredentials | N/TLS | Supply SHA-1 SCRAM derivations with TLS channel binding.
+//	AUTH=SCRAM-SHA-256 | gate | CapabilitySupport + SCRAMCredentials | N | Supply SHA-256 SCRAM derivations and accept verified credentials.
+//	AUTH=SCRAM-SHA-256-PLUS | gate | CapabilitySupport + SCRAMCredentials | N/TLS | Supply SHA-256 SCRAM derivations with TLS channel binding.
+//	AUTH=XOAUTH2 | gate | CapabilitySupport + Backend | N/TLS | Authenticate XOAUTH2 token credentials.
+//	BINARY | gate | CapabilitySupport | AS | Decode BINARY FETCH and accept literal8 APPEND; full extension promise.
+//	BINARY-FETCH | backend-only | CapabilitySupport | NAS | Supply decoded FETCH, decoded partials, SIZE, text CRLF and PEEK/Seen.
+//	CATENATE | gate | CatenateSession | AS | Resolve authorized IMAP URLs into message-part streams.
+//	CHILDREN | gate | CapabilitySupport | AS | Return accurate child attributes in LIST data.
+//	CONDSTORE | gate | CapabilitySupport | AS | Supply monotonic modseqs, conditional STORE and changed-since FETCH.
+//	CREATE-SPECIAL-USE | gate | CapabilitySupport | AS | Honor CREATE special-use attributes; requires SPECIAL-USE.
+//	FILTERS | gate | FilterSession | AS | List available search filters and expand FILTER criteria.
+//	I18NLEVEL=1 | gate | CapabilitySupport | AS | Evaluate internationalized comparisons with i;unicode-casemap.
+//	I18NLEVEL=2 | gate | ComparatorSession | AS | List and select comparators; requires I18NLEVEL=1.
+//	IMAP4REV2 | gate | rev2Incorporated | NAS | Satisfy every incorporated member, including BINARY-FETCH.
+//	JMAPACCESS | gate | CapabilitySupport | AS | Provide the account JMAP access information required by the extension.
+//	LANGUAGE | gate | LanguageSession | AS | List supported language tags and adopt a requested language.
+//	LIST-EXTENDED | route | CapabilitySupport | AS | Evaluate RECURSIVEMATCH natively; false uses framework evaluation.
+//	LIST-METADATA | gate | MetadataSession | AS | Supply requested LIST metadata; requires METADATA.
+//	LIST-MYRIGHTS | gate | ACLSession | AS | Supply MYRIGHTS for each listed mailbox; requires ACL.
+//	LOGIN-REFERRALS | gate | CapabilitySupport | N | Support login referral response codes.
+//	MAILBOX-REFERRALS | gate | CapabilitySupport | AS | Support mailbox referral response codes.
+//	MESSAGELIMIT | gate | MessageLimitSession | AS | Return message-count limits and honor advertised limits.
+//	METADATA | gate | MetadataSession | AS | Get and set mailbox and server metadata with depth/size semantics.
+//	METADATA-SERVER | gate | MetadataSession | AS | Get and set server-scope metadata.
+//	MOVE | gate | CapabilitySupport + MoveMailbox | AS | Provide atomic MOVE with the selected mailbox interface.
+//	MULTIAPPEND | gate | MultiAppendSession | AS | Commit complete batches atomically or leave the mailbox unchanged.
+//	MULTISEARCH | gate | MultiSearchSession | AS | Evaluate extended searches across the requested mailboxes.
+//	NAMESPACE | gate | NamespaceSession | AS | Return namespace prefixes and delimiters for the account.
+//	NOTIFY | gate | NotifySession | AS | Validate and deliver the requested mailbox event subscriptions.
+//	OBJECTID | gate | CapabilitySupport | AS | Return stable MAILBOXID, EMAILID and THREADID data.
+//	PREVIEW | gate | CapabilitySupport | AS | Produce message previews with PREVIEW/LAZY semantics.
+//	QRESYNC | gate | CapabilitySupport + QResyncMailbox | AS | Resynchronize known UIDs/modseqs and report vanished/changed messages.
+//	QUOTA | gate | QuotaSession | AS | Return quota roots and resource usage/limits.
+//	QUOTASET | gate | QuotaSetSession | AS | Set quota resource limits; requires QUOTA.
+//	REPLACE | gate | CapabilitySupport + ReplaceMailbox | AS | Provide atomic selected-message replacement into the destination mailbox.
+//	SASL-IR | gate | Backend | N | Have an authentication backend; framework handles initial-response syntax.
+//	SAVEDATE | gate | CapabilitySupport | AS | Return save dates and evaluate saved-date SEARCH criteria.
+//	SAVELIMIT | gate | MessageLimitSession | AS | Return search-result saving limits and honor advertised limits.
+//	SEARCH=FUZZY | gate | CapabilitySupport | AS | Evaluate FUZZY criteria using the supported matching policy.
+//	SORT | gate | CapabilitySupport + SortMailbox | AS | Evaluate SORT keys on the selected mailbox.
+//	SORT=DISPLAY | gate | CapabilitySupport + SortMailbox | AS | Evaluate DISPLAYFROM/DISPLAYTO sorting; requires SORT.
+//	SPECIAL-USE | gate | CapabilitySupport | AS | Return accurate LIST special-use attributes.
+//	STATUS=SIZE | gate | CapabilitySupport | AS | Return the mailbox SIZE status item.
+//	THREAD=ORDEREDSUBJECT | gate | CapabilitySupport + ThreadMailbox | AS | Produce the ORDEREDSUBJECT thread tree.
+//	THREAD=REFERENCES | gate | CapabilitySupport + ThreadMailbox | AS | Produce the REFERENCES thread tree.
+//	UIDPLUS | gate | CapabilitySupport | AS | Return assigned UIDs in APPEND/COPY results and honor UID EXPUNGE.
+//	UNAUTHENTICATE | gate | UnauthenticateSession | AS | Release authenticated state and reset the session.
+//	URL-PARTIAL | gate | CapabilitySupport + URLAuthSession | AS | Resolve URL byte ranges; requires URLAUTH.
+//	URLAUTH | gate | URLAuthSession | AS | Generate/reset authorization tokens and return owned URLFETCH bodies.
+//	UTF8=APPEND | gate | CapabilitySupport | AS | Accept messages with UTF-8 headers; requires UTF8=ACCEPT.
+//	WITHIN | gate | CapabilitySupport | AS | Evaluate OLDER/YOUNGER criteria against internal dates.
 //
 // Backend implementations must make SupportsCapability safe for concurrent use.
 type CapabilitySupport interface {
