@@ -636,7 +636,7 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 				if item == imap.FetchItemRFC822Text {
 					section.Specifier = imap.PartSpecifierText
 				}
-				reader, n, err := analysis.OpenBodySection(ctx, section)
+				reader, n, err := analysis.OpenBodySection(ctx, section, nil)
 				if err != nil {
 					return nil, false, err
 				}
@@ -657,7 +657,7 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 			}
 			data.Items[key] = append(data.Items[key], &imap.FetchDataBodyStructure{BodyStructure: analysis.BodyStructure()})
 		case *imap.FetchItemBodySection:
-			reader, n, err := analysis.OpenBodySection(ctx, item)
+			reader, n, err := analysis.OpenBodySection(ctx, item, nil)
 			if err != nil {
 				return nil, false, err
 			}

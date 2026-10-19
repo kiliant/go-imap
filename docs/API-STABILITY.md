@@ -149,6 +149,12 @@ apidiff scope is a gate on us; it changes nothing a user of a module tagged v1
 sees, and the versioning policy below already rules that an exclusion is not a
 licence.
 
+Stored-message helpers follow the same rule. In particular
+`message.Message.OpenBodySection` takes `*message.SectionOptions` for helper
+policy. Its shared `imap.FetchItemBodySection` describes a wire request and
+cannot carry server-only transformation policy. This replaces the T32 helper
+exemption before the server freeze; its reader, size and error results remain.
+
 ## 4. Exported interfaces are a liability
 
 Adding a method to an exported interface breaks every external implementer.

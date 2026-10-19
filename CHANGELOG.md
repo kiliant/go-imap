@@ -128,6 +128,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** `message.Message.OpenBodySection` now ends in guarded
+  `*message.SectionOptions`. Nil preserves the existing stored-byte behaviour;
+  retain the reader, size and error results. Update both backends, examples,
+  tests and fuzzing, and remove the method's options-gate exemption. (#128)
+
 - **BREAKING:** MULTIAPPEND now requires the new optional `MultiAppendSession`
   atomic batch interface, with guarded `AppendMessage` and `MultiAppendOptions`.
   It returns shared `imap.MultiAppendData`; memory commits all messages and

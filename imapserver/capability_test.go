@@ -449,10 +449,8 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 		"message.Message.Size":          true,
 		"message.Message.Envelope":      true,
 		"message.Message.BodyStructure": true,
-		// The section request and suite harness are guarded, growable
-		// payloads, like the writer payloads above.
-		"message.Message.OpenBodySection": true,
-		"backendtest.Run":                 true,
+		// The suite harness is a guarded, growable configuration payload.
+		"backendtest.Run": true,
 	}
 
 	fset := token.NewFileSet()
