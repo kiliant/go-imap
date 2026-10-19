@@ -91,7 +91,7 @@ func TestPollDeliveryConcurrentSelectAndCallbackShutdown(t *testing.T) {
 	var once sync.Once
 	opts := testOptions()
 	opts.PollInterval = 5 * time.Millisecond
-	opts.OnPollError = func(error) { once.Do(func() { close(callbackEntered) }); <-callbackRelease }
+	opts.OnPollFailure = func(context.Context, *PollFailure) { once.Do(func() { close(callbackEntered) }); <-callbackRelease }
 	b, err := Open(ctx, root, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +161,8 @@ func TestPollDeliveryConcurrentSelectAndCallbackShutdown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("poll error was not reported")
 	}
-	if b.LastPollError() == nil {
-		t.Fatal("nil cached polling error")
+	if failures := b.PollFailures(); len(failures) != 1 || failures[0].Err == nil {
+		t.Fatalf("missing current polling failure: %+v", failures)
 	}
 	// The callback runs outside account/backend locks: an operation still succeeds.
 	s := loginTest(t, b)

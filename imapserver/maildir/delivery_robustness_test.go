@@ -32,7 +32,7 @@ func TestBadNewEntriesDoNotBlockDeliveryOrOpen(t *testing.T) {
 	if len(m.Messages) != 1 || m.UIDNext != 2 {
 		t.Fatalf("good delivery blocked or bad entry ingested: %#v", m)
 	}
-	if b.LastPollError() == nil {
+	if len(b.PollFailures()) == 0 {
 		t.Error("bad delivery was not recorded")
 	}
 	for _, name := range []string{"a-symlink", "b-directory"} {

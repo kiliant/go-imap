@@ -54,15 +54,10 @@ type Options struct {
 	IsolateAccountErrors bool
 	// OnPollFailure receives account/mailbox diagnostics outside backend
 	// locks, with the poller's cancellation context. Calls are serialized.
-	// It takes precedence over OnPollError and must return promptly. Close
-	// cancels the context and waits for callbacks; do not call Close from one.
+	// It must return promptly. Close cancels the context and waits for
+	// callbacks; do not call Close from one.
 	OnPollFailure func(context.Context, *PollFailure)
-	// OnPollError receives failed poll errors serially, outside backend locks.
-	// It must return promptly and must not call Close synchronously. Close
-	// waits for an active callback. Nil still records LastPollError.
-	// Prefer OnPollFailure for account/mailbox details and cancellation.
-	OnPollError func(error)
-	_           struct{}
+	_             struct{}
 }
 
 // PollFailure describes a current account opening, recovery or delivery failure.
@@ -91,15 +86,13 @@ type Backend struct {
 	pollDone              chan struct{}
 	cancel                context.CancelFunc
 	ops                   sync.WaitGroup
-	lastPollError         error
 	closeErr              error
-	onPollError           func(error)
 	onPollFailure         func(context.Context, *PollFailure)
 	pollFailures          map[string]PollFailure
 	maxMetadataValueBytes uint32
 	maxMetadataEntries    int
 	maxTombstones         int
-	// callbackMu serialises OnPollError across the per-account pollers.
+	// callbackMu serialises OnPollFailure across the per-account pollers.
 	callbackMu sync.Mutex
 	// Tests inject interruption at durable commit boundaries, never through
 	// the public API or a production environment variable.
@@ -189,7 +182,7 @@ func Open(ctx context.Context, root string, options *Options) (_ *Backend, retEr
 	if err != nil {
 		return nil, err
 	}
-	b := &Backend{root: r, accounts: make(map[string]*account), done: make(chan struct{}), pollDone: make(chan struct{}), onPollError: opts.OnPollError}
+	b := &Backend{root: r, accounts: make(map[string]*account), done: make(chan struct{}), pollDone: make(chan struct{})}
 	b.onPollFailure, b.pollFailures = opts.OnPollFailure, make(map[string]PollFailure)
 	b.maxMetadataValueBytes, b.maxMetadataEntries, b.maxTombstones = opts.MaxMetadataValueBytes, opts.MaxMetadataEntries, opts.MaxTombstones
 	defer func() {
@@ -322,21 +315,9 @@ func (b *Backend) Close(ctx context.Context, options *CloseOptions) error {
 	}
 }
 
-// LastPollError returns the latest polling failure, or nil if none occurred.
-// A later successful poll does not clear it. The returned error is immutable.
-func (b *Backend) LastPollError() error {
-	if b == nil {
-		return nil
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.lastPollError
-}
-
 // PollFailures returns current failures, sorted by username, as independent
 // copies. A successful poll clears that account's entry. Failed Open accounts
-// remain listed until repaired and reopened. LastPollError remains a sticky
-// last-event accessor for compatibility.
+// remain listed until repaired and reopened.
 func (b *Backend) PollFailures() []PollFailure {
 	if b == nil {
 		return nil

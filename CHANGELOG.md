@@ -145,8 +145,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   refusals. Existing values remain readable. (#74)
 - **maildir:** add guarded `PollFailure`, `Backend.PollFailures`, and
   `Options.OnPollFailure` for current account/mailbox diagnostics, cancellation
-  and callback ownership. The new callback takes precedence over legacy
-  OnPollError; LastPollError remains sticky. Add `Options.IsolateAccountErrors`
+  and callback ownership. `OnPollFailure` and `PollFailures` are the sole
+  callback/accessor; remove the unreleased legacy poll-error surface. Add `Options.IsolateAccountErrors`
   to keep healthy accounts available without reprovisioning failed identities;
   the default continues to fail Open. Recover a missing journalled cur-to-cur
   source as a tombstone. Enforce public-import allowlists separately for
@@ -192,7 +192,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - `imapserver/maildir`: a persistent backend built through the public server
   and message APIs. Exports `Open`, concrete `Backend`, guarded `Options`,
   `AccountOptions` and `CloseOptions`, plus `Backend.Authenticate`,
-  `SupportsCapability`, `Close` and `LastPollError`. It provides account
+  `SupportsCapability`, `Close` and `PollFailures`. It provides account
   isolation, OS root locking, versioned journal recovery, durable UID identity,
   flags/keywords, subscriptions, metadata and QRESYNC history, and polling of
   external Maildir delivery. APPEND preserves bytes; external LF delivery is
