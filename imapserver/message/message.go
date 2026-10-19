@@ -133,6 +133,40 @@ func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodyS
 	return &sectionReader{ctx: ctx, reader: reader}, size, nil
 }
 
+// BinarySectionOptions configures [Message.OpenBinarySection]. A nil pointer
+// selects the defaults. Construct with keyed fields only; fields may be added.
+type BinarySectionOptions struct{ _ struct{} }
+
+// OpenBinarySection returns a leaf body's decoded bytes and exact octet count.
+// It supports identity, base64 and quoted-printable transfer encodings; text
+// line endings become CRLF. Parts follow BODY numbering, with an empty path
+// selecting the entire message, retaining its headers. Multipart and encapsulated
+// message containers are invalid; select a leaf within them instead.
+//
+// Partial ranges apply after decoding and line-ending conversion. Peek has no
+// effect on this utility. Nil items and invalid ranges fail; unknown transfer
+// encodings fail with *imap.Error carrying CodeUnknownCTE.
+//
+// Computing the exact count scans the decoded body with bounded buffers, then
+// reopens it for streaming; no complete body copy is retained. The returned
+// reader has the same context and source-lifetime guarantees as OpenBodySection.
+// A nil options pointer selects the defaults.
+func (m *Message) OpenBinarySection(ctx context.Context, item *imap.FetchItemBinarySection, options *BinarySectionOptions) (io.Reader, int64, error) {
+	_ = options
+	if err := checkContext(ctx); err != nil {
+		return nil, 0, err
+	}
+	if m == nil || m.parsed == nil {
+		return nil, 0, fmt.Errorf("message: nil or unanalysed message")
+	}
+	source := &operationSource{ctx: ctx, source: m.source}
+	reader, size, err := m.parsed.WithReader(source).OpenBinarySection(item)
+	if err := operationError(ctx, source, err); err != nil {
+		return nil, 0, err
+	}
+	return &sectionReader{ctx: ctx, reader: reader}, size, nil
+}
+
 type operationSource struct {
 	ctx    context.Context
 	source io.ReaderAt
@@ -179,6 +213,10 @@ func operationError(ctx context.Context, source *operationSource, err error) err
 	}
 	if source.err != nil {
 		return source.err // retain the caller's original I/O error identity
+	}
+	var protocolErr *imap.Error
+	if errors.As(err, &protocolErr) {
+		return protocolErr
 	}
 	if errors.Is(err, imapmessage.ErrUnsupportedCriteria) {
 		return fmt.Errorf("%w%s", ErrUnsupportedCriteria, strings.TrimPrefix(err.Error(), imapmessage.ErrUnsupportedCriteria.Error()))

@@ -66,7 +66,7 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 		if collectErr != nil {
 			var protocolErr *imap.Error
 			if !errors.As(collectErr, &protocolErr) {
-				return c.writeBad(command.tag, "invalid APPEND payload")
+				return writeAppendDecodeError(c, command.tag, collectErr, "invalid APPEND payload")
 			}
 			if failure == nil {
 				failure = collectErr
@@ -94,7 +94,7 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 		}
 		next, err := readAppendContinuation(ctx, c, false)
 		if err != nil {
-			return c.writeBad(command.tag, "invalid APPEND continuation")
+			return writeAppendDecodeError(c, command.tag, err, "invalid APPEND continuation")
 		}
 		if next.step == appendStepDone {
 			break
@@ -139,6 +139,24 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeTaggedCondition(c, command.tag, "OK", imap.CodeAppendUID, uidArgs, "APPEND completed")
 	}
 	return c.writeTagged(command.tag, "OK", "APPEND completed")
+}
+
+// appendLiteralTooBig identifies a literal size policy failure without turning
+// syntax, line-length or nesting errors into upload-size refusals.
+func appendLiteralTooBig(err error) bool {
+	var wireErr *imapwire.Error
+	if errors.As(err, &wireErr) && wireErr.Op == "literal" && errors.Is(err, imapwire.ErrLimitExceeded) {
+		return true
+	}
+	var protocolErr *imap.Error
+	return errors.As(err, &protocolErr) && protocolErr.Code == imap.CodeTooBig
+}
+
+func writeAppendDecodeError(c *conn, tag string, err error, text string) error {
+	if appendLiteralTooBig(err) {
+		return writeBackendError(c, tag, "APPEND", resolvedContentTooBig())
+	}
+	return c.writeBad(tag, text)
 }
 
 // collectAppendPayload assembles one message's bytes, reading the remaining

@@ -395,7 +395,8 @@ The test is whether a correct server, given the data, could put it on the wire.
   `apidiff` sees signatures, not behaviour, and a default documented in v1 is
   part of the promise. If one is judged wrong after v1.0, it gets an additive
   opt-in on the existing options struct, and the flip is recorded under "v2
-  candidates" in `docs/ROADMAP.md`. First exercised by
+  candidates" in `docs/ROADMAP.md`. The server resource-limit exception below
+  is deliberately narrower than this general rule. First exercised by
   `imapclient.AuthenticateOptions.CredentialKind`: unset, `Authenticate` can
   still send a password as a bearer token, as v1 documents.
 - Removal requires a deprecation notice for at least two minor releases, and
@@ -567,7 +568,16 @@ and URLFETCH payloads per command. CATENATE stages parts on disk with this bound
 URLFETCH streams known sizes and bounds staging of unknown ones. Refusal drains
 remaining client literals without resolving more URLs. These pre-v1 changes
 correct the previous unbounded buffering and are recorded as breaking behaviour.
-The default and future retuning policy are part of the limits review (#124).
+The owner-approved limits policy (#124) permits a minor release to retune
+`imapserver.Limits` default values. Every such change must be called out in the
+changelog. An application needing stable limits must set positive values
+explicitly. This exception covers resource-limit defaults only: the meaning of
+explicit values and sentinel values, other options defaults, and backend
+obligations remain under the general documented-behaviour promise.
+`MaxLiteralBytes` defaults to 32 MiB; non-positive `MaxCommands` means unlimited.
+`MaxConnections` and `MaxConnectionsPerIP` use zero for the documented default
+and negative values for unlimited. All remaining non-positive fields select
+their documented defaults; retained queues, sizes and timeouts remain bounded.
 
 ### Atomic batches require an explicit backend contract — added 2026-10-19
 
@@ -1002,6 +1012,23 @@ that touches an exported symbol. Its single question is the one from CLAUDE.md:
 *can the next RFC be added without breaking this?* It has authority to reject a
 functionally correct change.
 
+### BINARY fetch is an independent backend witness — added 2026-10-19
+
+`CapabilitySupport` recognises the backend-only token `BINARY-FETCH`. It is
+never advertised on the wire and is separate from full `BINARY`, which also
+claims literal8 APPEND. IMAP4REV2 requires the fetch-only witness alongside its
+other incorporated behaviours. The same session-over-backend precedence applies.
+`CapabilityFilter` filters wire capabilities, not this backend-only witness;
+withdrawing full BINARY therefore does not withdraw the incorporated fetch half.
+
+`message.Message.OpenBinarySection` and guarded `message.BinarySectionOptions`
+provide a shared, context-bound decoder for both reference backends. Exact
+length measurement scans the body before opening the returned stream, using
+bounded buffers. Partial ranges apply after CTE decoding and text CRLF
+conversion; an empty section retains the message headers. Containers are
+rejected, unknown or malformed CTEs return UNKNOWN-CTE, and source I/O errors
+retain their identity. Source ownership and lifetime match OpenBodySection.
+The helper adds no backend interface requirement. (#126)
 ### RECENT selection ownership and source-route preservation (#160, #165)
 
 `UpdateRecent{NumRecent}` extends the existing closed-to-external-types update
