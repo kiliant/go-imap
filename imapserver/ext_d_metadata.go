@@ -22,7 +22,8 @@ import (
 // An empty mailbox name addresses the server annotation space, which is what
 // METADATA-SERVER advertises. Both scopes go through the same methods because
 // RFC 5464 gives them the same syntax and the same entry tree; a backend that
-// serves only one returns nothing for the other.
+// serves only server annotations implements CapabilityFilter to withdraw
+// METADATA (and thereby LIST-METADATA) while retaining METADATA-SERVER.
 type MetadataSession interface {
 	// GetMetadata reads the named entries. An entry that does not exist is
 	// omitted from the result rather than reported as an error: RFC 5464
@@ -202,11 +203,11 @@ func parseSetMetadata(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, size, nil
 }
 
-// requireMetadataCapability accepts either METADATA token, since a backend may
-// advertise only the server-scope form.
-func requireMetadataCapability(c *conn) error {
+// The weaker token permits the empty (server) mailbox only. A filter can opt
+// out of mailbox annotations while retaining server annotations.
+func requireMetadataCapability(c *conn, mailbox string) error {
 	advertised := advertisedCapabilities(c)
-	if advertised["METADATA"] || advertised["METADATA-SERVER"] {
+	if advertised["METADATA"] || mailbox == "" && advertised["METADATA-SERVER"] {
 		return nil
 	}
 	return fmt.Errorf("METADATA is not available")
@@ -217,7 +218,7 @@ func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	if args == nil {
 		return c.writeBad(command.tag, "invalid GETMETADATA arguments")
 	}
-	if err := requireMetadataCapability(c); err != nil {
+	if err := requireMetadataCapability(c, args.mailbox); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(MetadataSession)
@@ -284,7 +285,7 @@ func handleSetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	if args == nil {
 		return c.writeBad(command.tag, "invalid SETMETADATA arguments")
 	}
-	if err := requireMetadataCapability(c); err != nil {
+	if err := requireMetadataCapability(c, args.mailbox); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	session, ok := c.state.session.(MetadataSession)

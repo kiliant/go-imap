@@ -98,7 +98,8 @@ func registerCapabilities(descriptors ...capabilityDescriptor) {
 //   - sessionImplements[T]() — the *structural* witness. Use it when the
 //     capability is entirely "can you answer this command": QUOTA, ACL,
 //     METADATA. The interface is the whole of the support, so the type system
-//     can decide and a backend cannot advertise what it has not implemented.
+//     can decide. A wrapper or partial implementation can withdraw tokens
+//     through CapabilityFilter after this witness succeeds.
 //   - selectedImplements[T](name) — both, for a capability whose work happens on
 //     a selected mailbox: SORT, THREAD, and MOVE before them. The spoken witness
 //     gates advertisement before selection, when there is no mailbox to inspect;
@@ -126,4 +127,18 @@ func backendSupportsCapability(name string) func(context.Context, *sessionState,
 		}
 		return false
 	}
+}
+
+// A new opt-in contract supplies negative policy without changing what an old
+// CapabilitySupport implementation means for structurally witnessed tokens.
+func backendAllowsCapability(ctx context.Context, state *sessionState, backend Backend, name string) bool {
+	if state != nil && state.session != nil {
+		if filter, ok := state.session.(CapabilityFilter); ok {
+			return filter.AllowCapability(ctx, name, nil)
+		}
+	}
+	if filter, ok := backend.(CapabilityFilter); ok {
+		return filter.AllowCapability(ctx, name, nil)
+	}
+	return true
 }

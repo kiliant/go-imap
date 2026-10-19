@@ -524,12 +524,39 @@ between them is not stylistic:
   or command lifetime; nil options select the defaults.
 - **A structural check** that the session or selected mailbox implements the
   optional interface. Use it where the interface *is* the whole of the support:
-  QUOTA, ACL, METADATA. The type system then makes it impossible to advertise
-  what is not implemented.
+  QUOTA, ACL, METADATA. A forwarding wrapper or a partial implementation
+  must additionally withdraw any unsupported tokens through the opt-in filter
+  below.
 
 Every extension command handler calls `requireCapability` before doing any work,
 whichever witness its capability uses. Holding an optional interface is not
 consent to advertise it.
+
+### Capability withdrawal is a separate opt-in policy — added 2026-10-19
+
+`CapabilityFilter.AllowCapability(ctx, name, options)` can withdraw a
+backend-backed capability after its ordinary witnesses succeed; true never
+grants support. The Session's filter answers alone when present, otherwise the
+Backend's filter is used. Without either, the existing witness rules are
+unchanged. The name is the upper-case descriptor token before a dynamic value
+is appended, such as `MESSAGELIMIT`; nil options select the defaults. A filter
+that only suppresses specific tokens should return true for all other names.
+
+Do not reinterpret false from `CapabilitySupport` as a veto of structural
+support: existing implementations correctly return false for unfamiliar names,
+including structural tokens. The new interface is what makes withdrawal an
+explicit, additive opt-in. In particular a server-only metadata backend can
+withdraw `METADATA`, retain `METADATA-SERVER`, and avoid promising mailbox
+annotations or `LIST-METADATA`. Command gates enforce the remaining scope.
+
+Withdrawal prunes dependent capabilities transitively. IMAP4REV2 also consults
+the filter for its backend-backed incorporated members, even when a member is
+not individually advertised in the current connection state. Framework-only
+capabilities, including the routing token LIST-EXTENDED, are not filterable.
+The filter does not change who evaluates a routing witness. Backend conformance
+skips explicitly withdrawn optional behaviours, and still checks retained
+server-scope metadata. Implementing a filter never changes the mandatory rev1
+backend contract.
 
 ### A routing witness chooses who evaluates, not whether to advertise — added 2026-10-15
 

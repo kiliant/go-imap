@@ -25,7 +25,8 @@
 // Start with [github.com/kiliant/go-imap/imapserver/backendtest], not with the
 // interface list below. It is a reusable conformance suite: point it at your
 // Backend and it exercises the mandatory contract and every optional interface
-// you implement, skipping the ones you do not. The interfaces say what the
+// you implement, skipping absent interfaces and capabilities explicitly
+// withdrawn through CapabilityFilter. The interfaces say what the
 // methods are; backendtest says whether you got them right.
 //
 // [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
@@ -224,8 +225,9 @@ type MoveMailbox interface {
 //
 // name is an upper-case capability token exactly as it appears on the wire,
 // such as "CONDSTORE" or "SPECIAL-USE". The framework never advertises a
-// capability whose behaviour the backend must implement unless this returns
-// true for it, so a backend that does not recognise a name must return false.
+// capability using this spoken witness unless this returns true for it, so a
+// backend that does not recognise a name must return false. Structural witnesses
+// use their optional interfaces instead; see CapabilityFilter for withdrawal.
 //
 // Bearer authentication requires a Backend witness before any Session exists:
 // return true for "AUTH=XOAUTH2" or "AUTH=OAUTHBEARER" only when Authenticate
@@ -256,6 +258,33 @@ type CapabilitySupport interface {
 //
 // Construct with keyed fields only; fields may be added in a future release.
 type CapabilitySupportOptions struct{ _ struct{} }
+
+// CapabilityFilter optionally withdraws backend-backed capabilities after their
+// ordinary spoken or structural witnesses succeed. It cannot grant support.
+// Implement it on a Backend for pre-authentication policy, or on a Session for
+// per-user or wrapper policy. A Session implementing it answers alone; otherwise
+// the Backend is consulted. Without either implementation, nothing is filtered.
+// CapabilitySupport retains its existing meaning, including for structural
+// capabilities it does not witness.
+//
+// name is the upper-case descriptor token, before backend-supplied values are
+// appended (for example "MESSAGELIMIT"). Return true for tokens that should
+// remain available, including names the filter does not intend to suppress.
+// False also withdraws dependent capabilities and an IMAP4REV2 umbrella that
+// incorporates the withdrawn behaviour. Framework-only tokens such as
+// IMAP4REV1, STARTTLS, LOGINDISABLED, ENABLE and LIST-EXTENDED are not filtered.
+// The framework may ask about an incorporated token while deriving IMAP4REV2
+// even when that token is not advertised in the current connection state.
+//
+// Like CapabilitySupport, answers must be consistent for the same connection
+// state. Backend implementations must be safe for concurrent use.
+type CapabilityFilter interface {
+	AllowCapability(ctx context.Context, name string, options *CapabilityFilterOptions) bool
+}
+
+// CapabilityFilterOptions configures a capability-filter query. Nil selects
+// the defaults. Construct with keyed fields only; fields may be added later.
+type CapabilityFilterOptions struct{ _ struct{} }
 
 // ConnInfo describes the transport presented to Backend.Authenticate.
 // Construct with keyed fields only; fields may be added in a future release.

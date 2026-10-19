@@ -119,7 +119,7 @@ func Run(t *testing.T, harness *Harness) {
 		t.Fatal("backendtest: nil harness or factory")
 	}
 	// The optional interfaces T23 added. Each subtest skips when the backend
-	// does not implement the interface it covers. See ext.go.
+	// does not implement the interface it covers or filters its capability. See ext.go.
 	runExtensions(t, harness)
 
 	t.Run("snapshot-consistency", func(t *testing.T) {
@@ -521,11 +521,36 @@ func waitForAddedUID(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notific
 // supportsCapability asks the witness the framework would: the session's
 // CapabilitySupport when it has one, otherwise the backend's.
 func supportsCapability(instance *Instance, session imapserver.Session, name string) bool {
+	// LIST-EXTENDED is a routing witness, not a filterable capability.
+	if name != "LIST-EXTENDED" && !capabilityAllowed(instance, session, name) {
+		return false
+	}
 	if support, ok := session.(imapserver.CapabilitySupport); ok {
 		return support.SupportsCapability(context.Background(), name, nil)
 	}
 	support, ok := instance.Backend.(imapserver.CapabilitySupport)
 	return ok && support.SupportsCapability(context.Background(), name, nil)
+}
+
+// capabilityAllowed follows the independent, opt-in negative policy. In
+// particular, it never asks CapabilitySupport about structurally witnessed names.
+func capabilityAllowed(instance *Instance, session imapserver.Session, name string) bool {
+	if filter, ok := session.(imapserver.CapabilityFilter); ok {
+		return filter.AllowCapability(context.Background(), name, nil)
+	}
+	if filter, ok := instance.Backend.(imapserver.CapabilityFilter); ok {
+		return filter.AllowCapability(context.Background(), name, nil)
+	}
+	return true
+}
+
+func requireAllowedCapabilities(t *testing.T, instance *Instance, session imapserver.Session, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if !capabilityAllowed(instance, session, name) {
+			t.Skipf("backend filters %s", name)
+		}
+	}
 }
 
 func cloneBatch(batch *imapserver.UpdateBatch) *imapserver.UpdateBatch {
