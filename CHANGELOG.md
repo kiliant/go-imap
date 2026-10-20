@@ -438,6 +438,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   Use protocol names in search/FETCH refusals and neutral size-limit wording
   for APPEND and other content. (#186, #187)
 
+- The Maildir backend compiles on 32-bit Linux again, where syscall time
+  fields are int32. An INTERNALDATE outside that range is refused as
+  unrepresentable rather than truncated. CI now type-checks both modules for
+  linux/386 and linux/arm. (#174)
 
 - Resolve UID SEARCH wildcards against the selected maximum, normalize
   reversed PARTIAL windows, and report the first CONDSTORE activation clock.

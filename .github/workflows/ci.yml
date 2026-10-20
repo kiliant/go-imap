@@ -136,6 +136,19 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Every runner is 64-bit, so platform files are never compiled where
+      # syscall time fields are int32. A maildir build break on 32-bit Linux
+      # survived unnoticed that way (#174). Type-checking only.
+      - name: go vet (linux/386, linux/arm)
+        run: |
+          for dir in $(.github/scripts/modules.sh); do
+            for arch in 386 arm; do
+              echo "::group::GOOS=linux GOARCH=$arch go vet $dir"
+              (cd "$dir" && GOOS=linux GOARCH="$arch" go vet ./...)
+              echo "::endgroup::"
+            done
+          done
+
       - name: install staticcheck (${{ env.STATICCHECK_VERSION }})
         # From a scratch directory: `go install pkg@version` is module-aware and
         # ignores the surrounding go.mod, but running it elsewhere makes that
