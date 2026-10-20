@@ -132,6 +132,7 @@ func writeTaggedCondition(c *conn, tag, status string, code imap.ResponseCode, a
 }
 
 func writeBackendError(c *conn, tag, operation string, err error) error {
+	c.reportBackendError(operation, err)
 	var protocolErr *imap.Error
 	if errors.As(err, &protocolErr) {
 		status := strings.ToUpper(string(protocolErr.Type))

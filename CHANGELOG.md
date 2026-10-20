@@ -131,6 +131,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+#### Added
+
+- `imapserver.Options.OnError`, guarded `ServerEvent` and open string
+  `ServerEventKind` expose backend failures, connection limits/timeouts,
+  accept/TLS errors and recovered connection panics. Callbacks run serially
+  outside connection loops with a bounded queue and reported drop counts.
+  A callback may initiate shutdown; shutdown does not wait for callbacks.
+  Backend causes remain private on the wire. Additive exported API. (#139)
+
+
 #### Changed
 
 - **BREAKING:** memory URLAUTH generation rejects missing/invalid access

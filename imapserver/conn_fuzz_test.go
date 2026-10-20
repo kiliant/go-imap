@@ -116,7 +116,13 @@ func driveServer(t *testing.T, prologue, input []byte) {
 	_ = clientConn.Close()
 
 	select {
-	case <-served:
+	case err := <-served:
+		// Panic isolation keeps the process serving other connections, but a
+		// recovered internal panic remains a fuzz finding. Never accept it as
+		// an ordinary malformed-input disconnect.
+		if err != nil && strings.HasPrefix(err.Error(), "imapserver: recovered panic:") {
+			t.Fatalf("ServeConn recovered an internal panic: %v", err)
+		}
 	case <-time.After(fuzzHangTimeout):
 		t.Fatalf("ServeConn did not return within %s of the peer closing", fuzzHangTimeout)
 	}

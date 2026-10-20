@@ -63,6 +63,11 @@ func runMaildir(ctx context.Context) (runErr error) {
 	server := imapserver.New(backend, &imapserver.Options{
 		Greeting:          "go-imap Maildir example server",
 		AllowInsecureAuth: true,
+		OnError: func(_ context.Context, event *imapserver.ServerEvent) {
+			// Backend causes can contain private data; send them only to a
+			// trusted operator log. Diagnostics are delivered best effort.
+			log.Printf("IMAP %s command %q: %v (dropped %d)", event.Kind, event.Command, event.Err, event.Dropped)
+		},
 	})
 	defer func() {
 		// Stop sessions before closing their storage. Shutdown uses a fresh

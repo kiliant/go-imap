@@ -23,6 +23,7 @@ const (
 var (
 	errConnectionLimit       = errors.New("imapserver: total connection limit reached")
 	errSourceConnectionLimit = errors.New("imapserver: source connection limit reached")
+	errCommandLimit          = errors.New("imapserver: command limit exceeded")
 	errPreAuthTimeout        = errors.New("imapserver: pre-authentication timeout")
 )
 
@@ -157,7 +158,17 @@ type Options struct {
 	ServerID map[string]string
 	// Limits controls per-connection and server-wide resource bounds.
 	Limits Limits
-	_      struct{}
+	// OnError receives backend failures hidden behind SERVERBUG, connection
+	// limits/timeouts, accept/TLS errors and recovered connection panics.
+	// Nil disables diagnostics. Calls run serially on a separate goroutine,
+	// outside server locks, and may overlap ServeConn/Close returning. Close
+	// does not wait for callbacks; they may call Close themselves. The context
+	// is the originating Serve/ServeConn context (and may be cancelled).
+	// Delivery is best effort: at most 64 events wait behind a callback, with
+	// further events dropped and counted on the next queued ServerEvent.
+	// Callback panics are recovered. Callbacks should return promptly.
+	OnError func(context.Context, *ServerEvent)
+	_       struct{}
 }
 
 // Server accepts IMAP connections and runs one isolated session per
@@ -166,6 +177,11 @@ type Server struct {
 	backend   Backend
 	options   Options
 	framework map[frameworkComponent]bool
+
+	eventMu          sync.Mutex
+	events           []pendingServerEvent
+	deliveringEvents bool
+	droppedEvents    uint64
 
 	mu       sync.Mutex
 	closed   bool
@@ -271,6 +287,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, options *Serv
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return ctx.Err()
 			}
+			s.reportEvent(ctx, &ServerEvent{Kind: ServerEventAcceptError, Err: err})
 			return err
 		}
 		c, err := newConn(ctx, s, netConn)
@@ -279,6 +296,9 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, options *Serv
 			return err
 		}
 		if err := s.register(c); err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				c.reportTerminal(terminalEventKind(err), err)
+			}
 			_ = netConn.Close()
 			if errors.Is(err, net.ErrClosed) {
 				return err
@@ -310,6 +330,9 @@ func (s *Server) ServeConn(ctx context.Context, netConn net.Conn, options *Serve
 		return err
 	}
 	if err := s.register(c); err != nil {
+		if !errors.Is(err, net.ErrClosed) {
+			c.reportTerminal(terminalEventKind(err), err)
+		}
 		_ = netConn.Close()
 		return err
 	}
@@ -319,7 +342,11 @@ func (s *Server) ServeConn(ctx context.Context, netConn net.Conn, options *Serve
 func (s *Server) serveRegisteredConn(c *conn) error {
 	defer s.unregister(c)
 	defer c.close()
-	return c.serve()
+	err := c.serve()
+	if err != nil {
+		c.reportTerminal(terminalEventKind(err), err)
+	}
+	return err
 }
 
 func (s *Server) register(c *conn) error {

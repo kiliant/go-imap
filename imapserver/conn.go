@@ -116,6 +116,9 @@ type conn struct {
 	fatalMu sync.Mutex
 	fatal   error
 
+	eventCommand     atomic.Value // most recent command name, never arguments
+	terminalReported atomic.Bool
+
 	closeOnce    sync.Once
 	preAuthTimer *time.Timer
 }
@@ -172,18 +175,25 @@ func (c *conn) newDecoder(reader io.Reader) *imapwire.Decoder {
 
 func (c *conn) serve() error {
 	if timeout := c.server.options.Limits.PreAuthTimeout; timeout > 0 {
-		c.preAuthTimer = time.AfterFunc(timeout, func() { c.cancel(errPreAuthTimeout) })
+		c.preAuthTimer = time.AfterFunc(timeout, func() {
+			c.reportTerminal(ServerEventTimeout, errPreAuthTimeout)
+			c.cancel(errPreAuthTimeout)
+			c.closeTransport()
+		})
 		defer c.preAuthTimer.Stop()
 	}
 	readerDone := make(chan error, 1)
 	loopDone := make(chan error, 1)
-	go func() { readerDone <- c.readCommands() }()
-	go func() { loopDone <- c.eventLoop() }()
+	go func() { readerDone <- c.protect(c.readCommands) }()
+	go func() { loopDone <- c.protect(c.eventLoop) }()
 
 	err := <-loopDone
 	c.cancel(err)
 	c.closeTransport()
 	readerErr := <-readerDone
+	if fatal := c.fatalError(); fatal != nil {
+		return fatal
+	}
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -256,7 +266,7 @@ func (c *conn) readCommands() error {
 		if max := c.server.options.Limits.MaxCommands; max > 0 {
 			commands++
 			if commands > max {
-				err := fmt.Errorf("imapserver: command limit exceeded")
+				err := errCommandLimit
 				command := &queuedCommand{stopErr: err, done: make(chan struct{})}
 				if queueErr := c.queueCommand(command); queueErr != nil {
 					return queueErr
@@ -563,6 +573,7 @@ func (c *conn) eventLoop() (retErr error) {
 	if tlsConn, ok := c.currentTransport().(*tls.Conn); ok {
 		handshakeCtx, cancel := c.preAuthContext(c.ctx)
 		if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
+			c.reportTerminal(ServerEventTLSHandshakeError, err)
 			cancel()
 			close(c.ready)
 			return err
@@ -625,6 +636,11 @@ func (c *conn) eventLoop() (retErr error) {
 }
 
 func (c *conn) execute(command *queuedCommand) error {
+	name := command.name
+	if args, ok := command.args.(*uidCommandArgs); ok && args.descriptor != nil {
+		name += " " + args.descriptor.name
+	}
+	c.eventCommand.Store(name)
 	// A channel send can wake this goroutine before the reader resumes after
 	// queueCommand. Wait until it publishes the settled pending-input state;
 	// otherwise a fast UID command can complete while its own handoff still
@@ -782,6 +798,7 @@ func (c *conn) upgradeTLS(ctx context.Context) error {
 	handshakeCtx, cancel := c.preAuthContext(ctx)
 	defer cancel()
 	if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
+		c.reportTerminal(ServerEventTLSHandshakeError, err)
 		return err
 	}
 	c.transportMu.Lock()
@@ -824,12 +841,16 @@ func (c *conn) cleanupBackend() {
 	if selected := c.state.unselect(); selected != nil {
 		selected.close()
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
-		_ = selected.mailbox.Unselect(ctx, nil)
+		if err := selected.mailbox.Unselect(ctx, nil); err != nil {
+			c.reportBackendError("UNSELECT", err)
+		}
 		cancel()
 	}
 	if session := c.state.session; session != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
-		_ = session.Close(ctx, nil)
+		if err := session.Close(ctx, nil); err != nil {
+			c.reportBackendError("LOGOUT", err)
+		}
 		cancel()
 		c.state.session = nil
 	}
@@ -1129,6 +1150,7 @@ func (c *conn) fatalError() error {
 }
 
 func (c *conn) updateOverflow() {
+	c.reportTerminal(ServerEventConnectionLimit, ErrUpdateOverflow)
 	c.failFatal(ErrUpdateOverflow)
 	time.AfterFunc(c.server.options.Limits.ForceCloseTimeout, c.closeTransport)
 }
