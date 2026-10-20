@@ -285,8 +285,9 @@ jobs:
     # is skipped by default if any dependency failed, which would make this
     # check vanish instead of reporting red. `apidiff` and `fuzz-smoke` are
     # also conditionally skipped by their own `if:` on a pull request — that
-    # must count as pass, not failure, hence checking specifically for
-    # 'failure' and 'cancelled' rather than "everything succeeded".
+    # must count as pass. Accept only 'success' and 'skipped': runner capacity
+    # failures can report a matrix result of 'abandoned', and any other
+    # unexpected result must fail the gate too.
     #
     # Keep this job's `needs:` list identical in spirit to the sibling
     # go-smtp repository's ci.yml (job names differ where the job sets do).
@@ -296,10 +297,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check all required jobs passed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || \
-                "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+          if ! jq -e 'all(.[]; .result == "success" or .result == "skipped")' \
+              <<< "$NEEDS_JSON" > /dev/null; then
             echo "One or more required jobs failed:" >&2
-            echo '${{ toJSON(needs) }}' >&2
+            printf '%s\n' "$NEEDS_JSON" >&2
             exit 1
           fi
