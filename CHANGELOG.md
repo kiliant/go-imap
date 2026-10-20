@@ -518,6 +518,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Concurrent `Server.Close` callers all wake when a connection finishes,
+  using a broadcast under the active-connection lock. A single-consumer signal
+  could leave another caller waiting until its context expired even after all
+  `ServeConn` calls had returned. No exported API change. (#54, final review)
+- Conditional STORE fills missing MODSEQ for rejected messages whose FLAGS
+  the backend reports, as well as successfully stored messages. No new backend
+  obligation. (#54, final review)
 - Live `UpdateVanished` batches use the client's negotiated removal form:
   EXPUNGE for ordinary sessions and VANISHED after QRESYNC or UIDONLY. UIDs
   never announced by EXISTS are omitted, and `Earlier` is normalized to live

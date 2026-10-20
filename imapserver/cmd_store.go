@@ -270,7 +270,8 @@ func (r *storeResponses) silenceStored(modified imap.UIDSet) {
 }
 
 // fetchMissingModSeq reports MODSEQ for every stored message whose collected
-// response lacks it. Stored means requested and not named in MODIFIED.
+// response lacks it. Stored means requested and not named in MODIFIED;
+// a rejected message also needs MODSEQ if the backend wrote its FLAGS.
 func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, requested, modified imap.UIDSet, includeUID bool) error {
 	have := make(map[imap.UID]bool, len(r.items))
 	byUID := make(map[imap.UID][]int, len(r.items))
@@ -311,7 +312,7 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 	}
 	var missing []imap.UID
 	for _, uid := range c.state.selected.uids {
-		if requested.Contains(uid) && !modified.Contains(uid) && !have[uid] {
+		if requested.Contains(uid) && (!modified.Contains(uid) || len(byUID[uid]) != 0) && !have[uid] {
 			missing = append(missing, uid)
 		}
 	}

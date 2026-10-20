@@ -162,6 +162,9 @@ type Options struct {
 	Limits Limits
 	// OnError receives backend failures hidden behind SERVERBUG, connection
 	// limits/timeouts, accept/TLS errors and recovered connection panics.
+	// Selection/session cleanup failures are reported even when they are
+	// protocol errors or cancellation, since cleanup cannot refuse a
+	// completed state transition.
 	// Nil disables diagnostics. Calls run serially on a separate goroutine,
 	// outside server locks, and may overlap ServeConn/Close returning. Close
 	// does not wait for callbacks; they may call Close themselves. The context
@@ -223,7 +226,7 @@ func New(backend Backend, options *Options) *Server {
 		framework: compiledFrameworkSupport(),
 		active:    make(map[*conn]struct{}),
 		bySource:  make(map[string]int),
-		changed:   make(chan struct{}, 1),
+		changed:   make(chan struct{}),
 	}
 }
 
@@ -380,15 +383,12 @@ func (s *Server) unregister(c *conn) {
 			delete(s.bySource, source)
 		}
 	}
+	// Every Close waiter must observe the transition. Replacing a closed
+	// channel under mu broadcasts it without losing a wakeup between a
+	// waiter's active-set snapshot and its select.
+	close(s.changed)
+	s.changed = make(chan struct{})
 	s.mu.Unlock()
-	s.signalChanged()
-}
-
-func (s *Server) signalChanged() {
-	select {
-	case s.changed <- struct{}{}:
-	default:
-	}
 }
 
 func sourceAddress(addr net.Addr) string {
@@ -421,6 +421,7 @@ func (s *Server) Close(ctx context.Context, options *ServerCloseOptions) error {
 		for c := range s.active {
 			connections = append(connections, c)
 		}
+		changed := s.changed
 		s.mu.Unlock()
 		if len(connections) == 0 {
 			return nil
@@ -429,7 +430,7 @@ func (s *Server) Close(ctx context.Context, options *ServerCloseOptions) error {
 			c.close()
 		}
 		select {
-		case <-s.changed:
+		case <-changed:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
