@@ -152,8 +152,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `message.Match` returns `ErrUnsupportedCriteria` for unresolved
   `imap.SearchSavedResult`, including nested and short-circuited criteria.
   The message package has not yet had a tagged release. (#54, B4)
-- Document `Session.Create`'s trailing hierarchy declaration: backends create
-  the name without the final delimiter. Memory and Maildir now do so, and
+- **BREAKING behaviour:** document `Session.Create`'s trailing hierarchy
+  declaration: backends create the name without the final delimiter. An
+  OBJECTID backend that kept the delimiter in the name now fails the
+  post-CREATE MAILBOXID lookup. Memory and Maildir now do so, and
   the framework uses the backend's delimiter for the post-CREATE MAILBOXID
   lookup. Clarify `StatusOptions.Items` and `SessionUpdate.Status` contracts.
   No signature change. (#54, B2/B5)
@@ -376,6 +378,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver.MultiSearchMailboxResult.ModSeqs` optionally pairs each matching
+  UID with its modification sequence, so ESEARCH can report MODSEQ for MIN,
+  MAX, PARTIAL or the whole result (RFC 7162 section 3.1.5, RFC 4731 section
+  3.2). Memory supplies it. Additive. (#54, pre-fourth review)
+
 - `imapserver.Options.OnError`, guarded `ServerEvent` and open string
   `ServerEventKind` expose backend failures, connection limits/timeouts,
   accept/TLS errors and recovered connection panics. Callbacks run serially
@@ -461,6 +468,23 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- MULTISEARCH accepts the result options of extended SEARCH: MIN, MAX, ALL,
+  COUNT, PARTIAL and CONTEXT per mailbox (RFC 7377 section 2.1), SAVE only
+  with the selected mailbox as the sole source, and CONTEXT=SEARCH UPDATE for
+  the selected mailbox, with MAILBOX and UIDVALIDITY on its updates (section
+  2.2). Results are sorted, deduplicated and bounded like SEARCH's. The
+  MAILBOX correlator uses the negotiated mailbox encoding instead of a raw
+  string. No signature change beyond the additive `ModSeqs`. (#54,
+  pre-fourth review)
+- After ENABLE UTF8=ACCEPT or IMAP4rev2, responses carry UTF-8 mailbox names;
+  only the command decoder switched before, so LIST, STATUS and others still
+  sent modified UTF-7. SEARCH and MULTISEARCH with a CHARSET, and SORT or
+  THREAD with a non-UTF-8 charset, receive BAD after ENABLE UTF8=ACCEPT
+  (RFC 9755 section 3). No signature change. (#54, pre-fourth review)
+- Memory's SORT, THREAD and MULTISEARCH evaluate with the same save dates,
+  EMAILIDs and selection flags as SEARCH. No exported API change. (#54,
+  pre-fourth review)
 
 - SEARCHRES substitutes `NOT ALL` for unset or empty saved results, so
   `SearchQuery.Criteria` does not impose a new empty-UID-set convention on

@@ -690,16 +690,18 @@ type selectedState struct {
 	mailbox SelectedMailbox
 	// name is the selected mailbox's name, which MULTISEARCH needs to name the
 	// default search source. See ext_c_multisearch.go.
-	name     string
-	uids     []imap.UID
-	flags    []imap.Flag
-	recent   uint32
-	revision MailboxRevision
-	readOnly bool
-	noModSeq bool
-	maxUIDs  int
-	queue    *updateQueue
-	updater  *Updater
+	name string
+	// uidValidity qualifies UIDs in MULTISEARCH context updates.
+	uidValidity uint32
+	uids        []imap.UID
+	flags       []imap.Flag
+	recent      uint32
+	revision    MailboxRevision
+	readOnly    bool
+	noModSeq    bool
+	maxUIDs     int
+	queue       *updateQueue
+	updater     *Updater
 	// uids is the client's view. While removals are withheld, backendUIDs
 	// follows the fully applied revision without renumbering that view.
 	backendUIDs []imap.UID
@@ -797,6 +799,7 @@ func attachSelectedState(result *SelectResult, updater *Updater, queue *updateQu
 	selected := &selectedState{
 		mailbox:        result.Mailbox,
 		name:           result.Snapshot.Status.Mailbox,
+		uidValidity:    result.Snapshot.Status.UIDValidity,
 		uids:           slices.Clone(result.Snapshot.UIDs),
 		flags:          slices.Clone(result.Snapshot.Status.Flags),
 		recent:         result.Snapshot.Status.NumRecent,

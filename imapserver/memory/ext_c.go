@@ -206,15 +206,11 @@ func (s *selected) matching(ctx context.Context, query *imapserver.SearchQuery, 
 		criteria = imap.SearchAll
 	}
 	var matched []*message
+	needsEmailID := searchNeedsEmailID(criteria)
 	for i, msg := range s.mailbox.messages {
-		metadata := servermessage.Metadata{
-			SeqNum:       imap.SeqNum(i + 1),
-			UID:          msg.uid,
-			Flags:        cloneFlags(msg.flags),
-			InternalDate: msg.internalDate,
-			RFC822Size:   int64(len(msg.raw)),
-			ModSeq:       msg.modSeq,
-		}
+		// The same evaluator input as Search, so SORT and THREAD select
+		// exactly what SEARCH would.
+		metadata := searchMetadata(i, msg, s.recentFlags(msg.uid, msg.flags), needsEmailID)
 		ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
 			return nil, err
@@ -285,33 +281,30 @@ func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria 
 		return nil, noError(imap.CodeClosed, "session is closed")
 	}
 	results := make([]imapserver.MultiSearchMailboxResult, 0, len(mailboxes))
+	needsEmailID := searchNeedsEmailID(criteria)
 	for _, name := range mailboxes {
 		m := s.account.mailboxes[mailboxKey(name)]
 		if m == nil {
 			continue
 		}
 		var matches []imap.UID
+		var modSeqs []uint64
 		for i, msg := range m.messages {
-			metadata := servermessage.Metadata{
-				SeqNum:       imap.SeqNum(i + 1),
-				UID:          msg.uid,
-				Flags:        cloneFlags(msg.flags),
-				InternalDate: msg.internalDate,
-				RFC822Size:   int64(len(msg.raw)),
-				ModSeq:       msg.modSeq,
-			}
+			metadata := searchMetadata(i, msg, cloneFlags(msg.flags), needsEmailID)
 			ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 			if err != nil {
 				return nil, err
 			}
 			if ok {
 				matches = append(matches, msg.uid)
+				modSeqs = append(modSeqs, msg.modSeq)
 			}
 		}
 		results = append(results, imapserver.MultiSearchMailboxResult{
 			Mailbox:     m.name,
 			UIDValidity: m.uidValidity,
 			UIDs:        matches,
+			ModSeqs:     modSeqs,
 		})
 	}
 	return results, nil

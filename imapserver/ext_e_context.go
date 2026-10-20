@@ -50,6 +50,10 @@ type searchContext struct {
 	uidMode bool
 	query   *SearchQuery
 	charset string
+	// mailbox and uidValidity are set for a MULTISEARCH registration, whose
+	// updates carry the MAILBOX and UIDVALIDITY correlators (RFC 7377 2.1).
+	mailbox     string
+	uidValidity uint32
 }
 
 func init() {
@@ -119,18 +123,24 @@ func registerSearchContext(c *conn, tag string, uids []imap.UID, uidMode bool, a
 	if c.state.selected == nil {
 		return
 	}
-	held := make(map[imap.UID]struct{}, len(uids))
+	putSearchContext(c, &searchContext{tag: tag, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids, c.state.selected.savedSearch), charset: args.charset}, uids)
+}
+
+// putSearchContext installs held for uids, replacing a registration with the
+// same tag.
+func putSearchContext(c *conn, held *searchContext, uids []imap.UID) {
+	held.uids = make(map[imap.UID]struct{}, len(uids))
 	for _, uid := range uids {
-		held[uid] = struct{}{}
+		held.uids[uid] = struct{}{}
 	}
 	contexts := c.state.selected.contexts
 	for i := range contexts {
-		if contexts[i].tag == tag {
-			contexts[i] = &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids, c.state.selected.savedSearch), charset: args.charset}
+		if contexts[i].tag == held.tag {
+			contexts[i] = held
 			return
 		}
 	}
-	c.state.selected.contexts = append(contexts, &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids, c.state.selected.savedSearch), charset: args.charset})
+	c.state.selected.contexts = append(contexts, held)
 }
 
 func parseCancelUpdate(decoder *imapwire.Decoder) (any, int64, error) {
@@ -268,7 +278,12 @@ func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, removals boo
 		if len(numbers) == 0 {
 			continue
 		}
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().Special('(').Atom("TAG").SP().Quoted(delta.context.tag).Special(')')
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().Special('(').Atom("TAG").SP().Quoted(delta.context.tag)
+		if delta.context.mailbox != "" {
+			c.encoder.SP().Atom("MAILBOX").SP().Mailbox(delta.context.mailbox).
+				SP().Atom("UIDVALIDITY").SP().Number(delta.context.uidValidity)
+		}
+		c.encoder.Special(')')
 		if delta.context.uidMode {
 			c.encoder.SP().Atom("UID")
 		}
