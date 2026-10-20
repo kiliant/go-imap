@@ -33,6 +33,7 @@ type capabilityDescriptor struct {
 	Name              string
 	RequiresBackend   func(context.Context, *sessionState, Backend) bool
 	RequiresFramework []frameworkComponent
+	DependsAny        []string
 	Depends           []string
 	States            stateMask
 	RequiresTLS       tlsRequirement
@@ -109,13 +110,15 @@ func init() {
 }
 
 // backendFeatureWitnesses are backend-only names, never wire capabilities.
-// They let an umbrella require a subset without claiming the full extension.
+// They let an umbrella require a subset without claiming the full extension
+// (BINARY-FETCH), or a new baseline item absent from rev1 (STATUS-DELETED).
 var backendFeatureWitnesses = map[string]func(context.Context, *sessionState, Backend) bool{
-	"BINARY-FETCH": backendSupportsCapability("BINARY-FETCH"),
+	"BINARY-FETCH":   backendSupportsCapability("BINARY-FETCH"),
+	"STATUS-DELETED": backendSupportsCapability("STATUS-DELETED"),
 }
 
 // rev2Incorporated names capabilities and backend-only feature witnesses for
-// the behaviour RFC 9051 §1 folds into IMAP4rev2 that only the backend can
+// the behaviour RFC 9051 §1 and Appendix E fold into IMAP4rev2 that only the backend can
 // supply. SERVER-DESIGN.md §1 sets the bar:
 // IMAP4REV2 is advertised only when *every* incorporated behaviour is
 // implemented, because "advertising it otherwise is a lie the client cannot
@@ -140,6 +143,7 @@ var rev2Incorporated = []string{
 	"MOVE",
 	"NAMESPACE",
 	"SPECIAL-USE",
+	"STATUS-DELETED",
 	"STATUS=SIZE",
 	"UIDPLUS",
 }
@@ -259,6 +263,11 @@ func deriveCapabilitiesContext(ctx context.Context, state *sessionState, server 
 		changed = false
 		for _, descriptor := range capabilityDescriptors {
 			if !available[descriptor.Name] {
+				continue
+			}
+			if len(descriptor.DependsAny) > 0 && !slices.ContainsFunc(descriptor.DependsAny, func(name string) bool { return available[name] }) {
+				delete(available, descriptor.Name)
+				changed = true
 				continue
 			}
 			for _, dependency := range descriptor.Depends {

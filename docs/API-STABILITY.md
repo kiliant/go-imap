@@ -587,6 +587,19 @@ obligations remain under the general documented-behaviour promise.
 and negative values for unlimited. All remaining non-positive fields select
 their documented defaults; retained queues, sizes and timeouts remain bounded.
 
+### Maildir format compatibility — approved 2026-10-20 (#180)
+
+A v1 minor release may introduce a forward-only Maildir format migration.
+Migration must preserve mailbox/message identities and unknown fields at the
+supported record boundaries, recover prepared older journals, and retain
+refusal of unsupported newer versions rather than risk stale or corrupt data.
+Every format bump must identify the new version and migration/rollback effects
+in the changelog. These documented migrations are compatible for the stability
+window; downgrade compatibility is not promised. To roll back to an older
+reader, restore a complete backup made before migration with the backend closed.
+This exception does not permit identity resets, data loss or silently dropping
+unknown fields.
+
 ### Atomic batches require an explicit backend contract — added 2026-10-19
 
 `MultiAppendSession.MultiAppend` receives the whole command's messages through
@@ -1037,6 +1050,29 @@ conversion; an empty section retains the message headers. Containers are
 rejected, unknown or malformed CTEs return UNKNOWN-CTE, and source I/O errors
 retain their identity. Source ownership and lifetime match OpenBodySection.
 The helper adds no backend interface requirement. (#126)
+
+### STATUS and quota witnesses — added 2026-10-20 (#176–#179)
+
+`STATUS-DELETED` is a backend-only witness required by IMAP4REV2, like
+`BINARY-FETCH`: it promises STATUS DELETED for selected and unselected mailboxes
+and is never advertised or passed to CapabilityFilter. RFC 9051 Appendix E
+items 2–3 are covered by the incorporated witnesses plus framework handling;
+SIZE and DELETED each have an explicit backend witness.
+
+STATUS and LIST-STATUS requests are classified before reaching a backend.
+Unknown items and items outside the baseline, enabled revision and advertised
+capabilities receive BAD. NOTIFY has no client STATUS-item list; its outgoing
+STATUS data is projected onto the same negotiated item set.
+
+Registered `QUOTA=RES-*` resources use the existing spoken CapabilitySupport
+mechanism, with one descriptor row per resource. New registrations add rows;
+no session interface changes. CapabilityFilter applies to each wire token.
+Bare QUOTA remains RFC 2087 for a QuotaSession declaring no resources.
+QUOTASET additionally requires at least one unfiltered resource token.
+RES-STORAGE promises STATUS DELETED-STORAGE; RES-MESSAGE promises DELETED.
+GetMetadataOptions carries only depth: the framework always applies MAXSIZE
+and computes LONGENTRIES from unfiltered values returned by the backend.
+
 ### RECENT selection ownership and source-route preservation (#160, #165)
 
 `UpdateRecent{NumRecent}` extends the existing closed-to-external-types update

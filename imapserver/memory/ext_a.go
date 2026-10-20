@@ -49,12 +49,15 @@ var supportedCapabilities = map[string]bool{
 	"QRESYNC":   true,
 	// Group B attribute extensions. Each is a FETCH or STATUS item this
 	// backend genuinely produces; see ext_b.go.
-	"OBJECTID":    true,
-	"SAVEDATE":    true,
-	"STATUS=SIZE": true,
-	"APPENDLIMIT": true,
-	"PREVIEW":     true,
-	"REPLACE":     true,
+	"OBJECTID":          true,
+	"SAVEDATE":          true,
+	"STATUS=SIZE":       true,
+	"STATUS-DELETED":    true,
+	"QUOTA=RES-STORAGE": true,
+	"QUOTA=RES-MESSAGE": true,
+	"APPENDLIMIT":       true,
+	"PREVIEW":           true,
+	"REPLACE":           true,
 	// Group D. QUOTA, ACL, METADATA, NAMESPACE and UNAUTHENTICATE witness
 	// themselves by implementing their optional interfaces; only JMAPACCESS
 	// is a spoken claim, and this backend serves no JMAP endpoint.

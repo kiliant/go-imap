@@ -2,10 +2,10 @@
 // [imapserver.Backend]. It is intended for tests, examples, and ephemeral
 // servers. It is not durable and must not be used for production mail storage.
 //
-// The package implements the mandatory rev1 backend contract with configured
-// PLAIN/LOGIN credentials, plus atomic MOVE. New optional server interfaces are
-// adopted deliberately rather than implied by this package being a reference
-// implementation.
+// The package implements the mandatory rev1 contract, all current optional
+// server interfaces, and PLAIN, LOGIN and SCRAM authentication with configured
+// credentials. The capability witnesses in ext_a.go specify its supported
+// extensions. Future optional interfaces are adopted deliberately.
 package memory
 
 import (
@@ -138,7 +138,7 @@ func mailboxKey(name string) string {
 	return name
 }
 
-// Authenticate authenticates a configured PLAIN or LOGIN username and returns
+// Authenticate authenticates a configured PLAIN, LOGIN or verified SCRAM username and returns
 // one session.
 func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, credentials *imapserver.Credentials, _ *imapserver.AuthenticateOptions) (imapserver.Session, error) {
 	if err := ctx.Err(); err != nil {

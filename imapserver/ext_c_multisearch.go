@@ -31,9 +31,9 @@ import (
 // The criteria carry the same guarantee as [SearchQuery.Criteria], at every
 // nesting depth: no [imap.SearchFilter] reaches the backend, because the
 // framework substitutes it for the criteria it names first, and no
-// [imap.SearchSeqNum] reaches it either. With no IN clause the source is the
-// selection, so sequence numbers are resolved to UIDs; with an IN clause the
-// command is refused. The refusal covers an IN clause naming the selected
+// [imap.SearchSeqNum] or [imap.SearchSavedResult] reaches it either.
+// With no IN clause the source is the selection, so sequence numbers and saved
+// results are resolved to UIDs; with an IN clause those keys are refused. The refusal covers an IN clause naming the selected
 // mailbox too — the framework compares no names, because a number that resolved
 // for one spelling of a mailbox and not another would be worse than a uniform
 // refusal.
@@ -203,15 +203,18 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	// does. Where it is not, there is nothing to resolve against and the number
 	// would reach the backend meaning nothing — so it is refused rather than
 	// answered wrongly, since an empty result reads as a successful search.
-	if searchMentionsSeqNum(criteria) {
-		if !selectedIsTheSource {
-			return c.writeBad(command.tag,
-				"ESEARCH with an IN clause cannot use message sequence numbers; use UIDs")
-		}
-		criteria = normalizeSearchCriteria(criteria, c.state.selected.uids)
+	if searchMentionsSavedResult(criteria) && !selectedIsTheSource {
+		return c.writeBad(command.tag, "ESEARCH with an IN clause cannot use a saved search result; use UIDs")
+	}
+	if searchMentionsSeqNum(criteria) && !selectedIsTheSource {
+		return c.writeBad(command.tag,
+			"ESEARCH with an IN clause cannot use message sequence numbers; use UIDs")
 	}
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if selectedIsTheSource {
+		criteria = normalizeSearchCriteria(criteria, c.state.selected.uids, c.state.selected.savedSearch)
 	}
 	results, err := session.MultiSearch(ctx, mailboxes, criteria, &MultiSearchOptions{Charset: args.charset})
 	if err != nil {

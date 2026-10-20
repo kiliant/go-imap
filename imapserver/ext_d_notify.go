@@ -492,11 +492,21 @@ func (c *conn) drainNotify() error {
 		// backend resources for a registration the client believes has ended.
 		return err
 	}
+	var advertised map[string]bool
+	if len(updates) > 0 {
+		advertised = advertisedCapabilities(c)
+	}
 	for _, update := range updates {
 		if update == nil || update.Status == nil {
 			continue
 		}
-		if err := imapcodec.WriteStatusResponse(c.encoder, update.Status); err != nil {
+		var items []imap.StatusItem
+		for item := range update.Status.Values {
+			if gate, ok := statusItemCapability(item); ok && gate(&c.state, advertised) {
+				items = append(items, item)
+			}
+		}
+		if err := imapcodec.WriteStatusResponse(c.encoder, c.statusReply(update.Status, items)); err != nil {
 			return err
 		}
 		if err := c.encoder.Flush(); err != nil {

@@ -126,11 +126,11 @@ func registerSearchContext(c *conn, tag string, uids []imap.UID, uidMode bool, a
 	contexts := c.state.selected.contexts
 	for i := range contexts {
 		if contexts[i].tag == tag {
-			contexts[i] = &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids), charset: args.charset}
+			contexts[i] = &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids, c.state.selected.savedSearch), charset: args.charset}
 			return
 		}
 	}
-	c.state.selected.contexts = append(contexts, &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids), charset: args.charset})
+	c.state.selected.contexts = append(contexts, &searchContext{tag: tag, uids: held, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids, c.state.selected.savedSearch), charset: args.charset})
 }
 
 func parseCancelUpdate(decoder *imapwire.Decoder) (any, int64, error) {

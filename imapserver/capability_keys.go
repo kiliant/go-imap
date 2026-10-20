@@ -6,7 +6,7 @@ import (
 	"github.com/kiliant/go-imap"
 )
 
-// Capability gating for search keys and fetch items
+// Capability gating for search keys, FETCH items and STATUS items
 //
 // Every extension *command* handler calls requireCapability before doing any
 // work. A search key is not a command and a fetch item is not a command, so
@@ -32,7 +32,7 @@ import (
 // framework cannot name is one it cannot gate, and handing it to a backend is
 // the exact thing this exists to prevent.
 
-// keyGate decides whether a session may use one search key or fetch item.
+// keyGate decides whether a session may use a search key, FETCH or STATUS item.
 //
 // It is a predicate over session state rather than a capability token, and that
 // is the whole design. A token can only answer "did the backend witness this
@@ -287,10 +287,7 @@ func requireFetchItemCapabilities(c *conn, items []imap.FetchItem) error {
 	return nil
 }
 
-// describeCriterion and describeFetchItem name a key the way the client spelled
-// it where that is knowable, and fall back to the Go type where it is not.
-// %T alone reports "imap.FetchItemKeyword" for MODSEQ, EMAILID and SAVEDATE
-// alike, which tells the client nothing it can act on.
+// Wire-facing descriptions never expose implementation type names.
 func describeCriterion(criterion imap.SearchCriteria) string {
 	switch criterion := criterion.(type) {
 	case imap.SearchKeyword:
@@ -301,14 +298,81 @@ func describeCriterion(criterion imap.SearchCriteria) string {
 		return string(criterion.Key)
 	case imap.SearchObjectID:
 		return string(criterion.Key)
+	case imap.SearchModSeq:
+		return "MODSEQ"
+	case imap.SearchFuzzy:
+		return "FUZZY"
+	case imap.SearchSavedResult:
+		return "$"
+	case imap.SearchFilter:
+		return "FILTER"
 	default:
-		return fmt.Sprintf("%T", criterion)
+		return "search criterion"
 	}
 }
 
 func describeFetchItem(item imap.FetchItem) string {
-	if keyword, ok := item.(imap.FetchItemKeyword); ok {
-		return string(keyword)
+	switch item := item.(type) {
+	case imap.FetchItemKeyword:
+		return string(item)
+	case *imap.FetchItemBodySection:
+		return "BODY[...]"
+	case *imap.FetchItemBodyStructure:
+		return "BODYSTRUCTURE"
+	case *imap.FetchItemBinarySection:
+		if item != nil && item.Peek {
+			return "BINARY.PEEK[...]"
+		}
+		return "BINARY[...]"
+	case *imap.FetchItemBinarySectionSize:
+		return "BINARY.SIZE[...]"
+	case *imap.FetchItemPreview:
+		return "PREVIEW"
+	default:
+		return "fetch data"
 	}
-	return fmt.Sprintf("%T", item)
+}
+
+// statusItemGates classify every known STATUS keyword. Unknown names and new
+// argument-carrying types are refused until they have an explicit gate.
+var statusItemGates = map[imap.StatusItemKeyword]keyGate{
+	imap.StatusItemMessages:      baselineKey,
+	imap.StatusItemUIDNext:       baselineKey,
+	imap.StatusItemUIDValidity:   baselineKey,
+	imap.StatusItemUnseen:        baselineKey,
+	imap.StatusItemRecent:        baselineKey,
+	imap.StatusItemHighestModSeq: requiresToken("CONDSTORE"),
+	imap.StatusItemAppendLimit:   requiresToken("APPENDLIMIT"),
+	imap.StatusItemMailboxID:     requiresToken("OBJECTID"),
+	imap.StatusItemSize: func(state *sessionState, advertised map[string]bool) bool {
+		return state.revision == revisionIMAP4rev2 || advertised["STATUS=SIZE"]
+	},
+	imap.StatusItemDeleted: func(state *sessionState, advertised map[string]bool) bool {
+		return state.revision == revisionIMAP4rev2 || advertised["QUOTA=RES-MESSAGE"]
+	},
+	imap.StatusItemDeletedStorage: requiresToken("QUOTA=RES-STORAGE"),
+}
+
+func statusItemCapability(item imap.StatusItem) (keyGate, bool) {
+	keyword, ok := item.(imap.StatusItemKeyword)
+	if !ok {
+		return nil, false
+	}
+	gate, ok := statusItemGates[keyword]
+	return gate, ok
+}
+
+func requireStatusItemCapabilities(c *conn, items []imap.StatusItem) error {
+	advertised := advertisedCapabilities(c)
+	for _, item := range items {
+		gate, ok := statusItemCapability(item)
+		if !ok || !gate(&c.state, advertised) {
+			name := "status item"
+			if keyword, ok := item.(imap.StatusItemKeyword); ok {
+				name = string(keyword)
+			}
+			return fmt.Errorf("STATUS item %s is not available in this session", name)
+		}
+	}
+	return nil
 }

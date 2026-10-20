@@ -124,6 +124,9 @@ func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil {
 		return c.writeBad(command.tag, "invalid STATUS arguments")
 	}
+	if err := requireStatusItemCapabilities(c, args.items); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	data, err := c.state.session.Status(ctx, args.mailbox, &StatusOptions{Items: args.items})
 	if err != nil {
 		return writeBackendError(c, command.tag, "STATUS", err)
@@ -149,6 +152,14 @@ func handleCreate(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	if err := c.state.session.Create(ctx, args.mailbox, options); err != nil {
 		return writeBackendError(c, command.tag, "CREATE", err)
+	}
+	if advertisedCapabilities(c)["OBJECTID"] {
+		id, err := mailboxIDResponse(ctx, c, args.mailbox)
+		if err != nil {
+			c.reportEvent(ServerEventBackendError, command.name, err)
+			return writeTaggedCondition(c, command.tag, "NO", imap.CodeServerBug, "", "mailbox created but its identity could not be retrieved")
+		}
+		return writeTaggedCondition(c, command.tag, "OK", imap.CodeMailboxID, id, "CREATE completed")
 	}
 	return c.writeTagged(command.tag, "OK", "CREATE completed")
 }

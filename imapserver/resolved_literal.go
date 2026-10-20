@@ -9,7 +9,7 @@ import (
 )
 
 func resolvedContentTooBig() error {
-	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeTooBig, Text: "resolved content exceeds the command byte limit"}
+	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeTooBig, Text: "content exceeds the server's size limit"}
 }
 
 type literalContextReader struct {

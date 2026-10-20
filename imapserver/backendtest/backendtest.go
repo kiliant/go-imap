@@ -121,6 +121,7 @@ func Run(t *testing.T, harness *Harness) {
 	// The optional interfaces T23 added. Each subtest skips when the backend
 	// does not implement the interface it covers or filters its capability. See ext.go.
 	runExtensions(t, harness)
+	runStatusWitnesses(t, harness)
 	runMultiAppend(t, harness)
 
 	t.Run("snapshot-consistency", func(t *testing.T) {

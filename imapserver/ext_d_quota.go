@@ -12,11 +12,14 @@ import (
 //
 // Resource names are an open registry, so they cross the backend boundary as
 // [imap.QuotaResourceName] strings rather than as an enumeration. A server that
-// serves a resource this library has never heard of needs no change here — which
-// is the same reasoning that keeps FETCH and SEARCH items open.
+// serves a newly registered resource can use it in quota data without changing
+// a method signature. Its capability witness needs a descriptor row here.
 
 // QuotaSession is the optional QUOTA support of RFC 9208. A Session implements
-// it when the authenticated user has quota information.
+// it when the authenticated user has quota information. Without resource
+// witnesses this advertises the older RFC 2087 QUOTA contract. For RFC 9208,
+// witness every handled QUOTA=RES-* resource through CapabilitySupport.
+// STORAGE also requires STATUS DELETED-STORAGE; MESSAGE requires DELETED.
 //
 // GetQuota answers a named quota root. QuotaRoots answers which roots apply to
 // a mailbox, which RFC 9208 section 4.1.2 allows to be none.
@@ -41,6 +44,8 @@ type QuotaSetSession interface {
 // Construct with keyed fields only; fields may be added in a future release.
 type QuotaOptions struct{ _ struct{} }
 
+var quotaResourceCapabilities = []string{"QUOTA=RES-STORAGE", "QUOTA=RES-MESSAGE", "QUOTA=RES-MAILBOX", "QUOTA=RES-ANNOTATION-STORAGE"}
+
 func init() {
 	registerCapabilities(
 		capabilityDescriptor{
@@ -53,8 +58,12 @@ func init() {
 			States:          stateMaskAuthenticated | stateMaskSelected,
 			Depends:         []string{"QUOTA"},
 			RequiresBackend: sessionImplements[QuotaSetSession](),
+			DependsAny:      quotaResourceCapabilities,
 		},
 	)
+	for _, name := range quotaResourceCapabilities {
+		registerCapabilities(capabilityDescriptor{Name: name, States: stateMaskAuthenticated | stateMaskSelected, Depends: []string{"QUOTA"}, RequiresBackend: backendSupportsCapability(name)})
+	}
 	registerCommand("GETQUOTA", stateMaskAuthenticated|stateMaskSelected, false, parseSingleAstring, handleGetQuota)
 	registerCommand("GETQUOTAROOT", stateMaskAuthenticated|stateMaskSelected, false, parseSingleAstring, handleGetQuotaRoot)
 	registerCommand("SETQUOTA", stateMaskAuthenticated|stateMaskSelected, false, parseSetQuota, handleSetQuota)

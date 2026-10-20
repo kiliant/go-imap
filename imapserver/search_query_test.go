@@ -15,7 +15,7 @@ func TestSearchQueryUIDNormalization(t *testing.T) {
 			Left:  imap.SearchNot{Criteria: imap.SearchSeqNum{Set: imap.SeqSetRange(2, 0)}},
 			Right: imap.SearchFuzzy{Criteria: imap.SearchSeqNum{Set: imap.SeqSetRange(0, 2)}},
 		},
-	}, []imap.UID{11, 22, 33})
+	}, []imap.UID{11, 22, 33}, nil)
 
 	assertUIDNormalizedSearch(t, query.Criteria())
 	criteria := query.Criteria().(imap.SearchAnd)
@@ -44,6 +44,9 @@ func FuzzSearchQueryUIDNormalization(f *testing.F) {
 		"OR 1:2 NOT 3:*",
 		"NOT OR 1 *",
 		"FUZZY NOT 2",
+		"$",
+		"OR $ NOT $",
+		"FUZZY $",
 	} {
 		f.Add(seed)
 	}
@@ -57,7 +60,7 @@ func FuzzSearchQueryUIDNormalization(f *testing.F) {
 		if err != nil {
 			return
 		}
-		query := newSearchQuery(criteria, []imap.UID{11, 22, 33, 44, 55})
+		query := newSearchQuery(criteria, []imap.UID{11, 22, 33, 44, 55}, nil)
 		assertUIDNormalizedSearch(t, query.Criteria())
 	})
 }
@@ -76,11 +79,13 @@ func assertUIDNormalizedSearch(t *testing.T, criteria imap.SearchCriteria) {
 		assertUIDNormalizedSearch(t, criteria.Criteria)
 	case imap.SearchFuzzy:
 		assertUIDNormalizedSearch(t, criteria.Criteria)
+	case imap.SearchSavedResult:
+		t.Fatal("UID-normalized query contains unresolved saved result")
 	case imap.SearchSeqNum:
 		t.Fatalf("UID-normalized query contains sequence set %v", criteria.Set)
 	case imap.SearchKeyword, imap.SearchFlagKeyword, imap.SearchHeaderField,
 		imap.SearchString, imap.SearchDate, imap.SearchSize, imap.SearchUID,
-		imap.SearchSavedResult, imap.SearchWithin, imap.SearchObjectID,
+		imap.SearchWithin, imap.SearchObjectID,
 		imap.SearchModSeq:
 		// Leaf criteria cannot contain another sequence set.
 	default:
@@ -94,15 +99,38 @@ func TestSearchQueryUIDWildcardUsesSelectedMaximum(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		query := newSearchQuery(imap.SearchNot{Criteria: imap.SearchUID{Set: set}}, []imap.UID{11, 22, 33})
+		query := newSearchQuery(imap.SearchNot{Criteria: imap.SearchUID{Set: set}}, []imap.UID{11, 22, 33}, nil)
 		got := query.Criteria().(imap.SearchNot).Criteria.(imap.SearchUID).Set
 		if got.Dynamic() || got.String() != "33" {
 			t.Fatalf("UID %s normalized to %s", raw, got.String())
 		}
 	}
 	set, _ := imap.ParseUIDSet("*")
-	got := newSearchQuery(imap.SearchUID{Set: set}, nil).Criteria().(imap.SearchUID).Set
+	got := newSearchQuery(imap.SearchUID{Set: set}, nil, nil).Criteria().(imap.SearchUID).Set
 	if !got.IsEmpty() {
 		t.Fatalf("empty mailbox wildcard = %s", got.String())
+	}
+}
+
+func TestSearchSavedResultNormalization(t *testing.T) {
+	for _, saved := range []imap.UIDSet{nil, imap.UIDSetNum(22)} {
+		query := newSearchQuery(imap.SearchAnd{
+			imap.SearchSavedResult{},
+			imap.SearchNot{Criteria: imap.SearchSavedResult{}},
+			imap.SearchOr{Left: imap.SearchSavedResult{}, Right: imap.SearchFuzzy{Criteria: imap.SearchSavedResult{}}},
+		}, []imap.UID{11, 22, 33}, saved)
+		assertUIDNormalizedSearch(t, query.Criteria())
+		root := query.Criteria().(imap.SearchAnd)
+		for _, key := range []imap.SearchCriteria{root[0], root[1].(imap.SearchNot).Criteria, root[2].(imap.SearchOr).Left, root[2].(imap.SearchOr).Right.(imap.SearchFuzzy).Criteria} {
+			if got := key.(imap.SearchUID).Set.String(); got != saved.String() {
+				t.Fatalf("saved result = %s, want %s", got, saved.String())
+			}
+		}
+		if len(saved) > 0 {
+			saved[0].Start = 999
+			if root[0].(imap.SearchUID).Set.Contains(999) {
+				t.Fatal("saved result alias reaches query")
+			}
+		}
 	}
 }

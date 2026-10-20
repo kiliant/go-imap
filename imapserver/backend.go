@@ -93,6 +93,9 @@ type Session interface {
 	// Create makes a mailbox. Creating one that exists is an error, and
 	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
 	// client to act on.
+	// When OBJECTID is advertised, the framework queries STATUS MAILBOXID after
+	// success. Failure to retrieve a valid ID returns NO [SERVERBUG] explicitly
+	// saying the mailbox was created; the creation is not rolled back.
 	Create(ctx context.Context, mailbox string, options *CreateOptions) error
 	// Delete removes a mailbox and the messages in it. RFC 3501 §6.3.4 forbids
 	// deleting INBOX, and refusing it here is the backend's job: the framework
@@ -111,14 +114,11 @@ type Session interface {
 	Unsubscribe(ctx context.Context, mailbox string, options *UnsubscribeOptions) error
 	// Append stores a message read from literal.
 	//
-	// The framework stages the complete command on disk before this call, so
-	// malformed later MULTIAPPEND input cannot leave a first message committed.
-	// literal is a stream, valid only for the duration of the call: read it,
-	// do not retain it. The framework drains whatever is left afterwards — the
-	// rest of the command cannot be parsed until the message's bytes are off
-	// the wire — so returning early is safe for the connection. It is not safe
-	// for memory: reading the whole literal into a buffer before storing it
-	// makes the server's footprint a function of what the client chose to send.
+	// The framework stages the complete command before this call. Multi-message
+	// commands go only to MultiAppendSession. literal is a staged stream, valid
+	// only during the call: read it, do not retain it. Returning before EOF is
+	// safe for the connection. Stream it into storage rather than buffering the
+	// whole message, so memory use stays independent of the client's input size.
 	//
 	// The returned AppendData carries the new UID and UIDVALIDITY when the
 	// backend can supply them, which is what RFC 4315's APPENDUID response code
@@ -230,7 +230,10 @@ type MoveMailbox interface {
 // alone when it does: the Backend is not consulted.
 //
 // name is an upper-case capability token such as "CONDSTORE" or "SPECIAL-USE",
-// or the backend-only "BINARY-FETCH" witness. BINARY-FETCH is never advertised:
+// or a backend-only witness such as "BINARY-FETCH" or "STATUS-DELETED".
+// STATUS-DELETED promises STATUS DELETED for selected and unselected mailboxes
+// and is required by IMAP4REV2. Neither backend-only name is advertised.
+// BINARY-FETCH promises the FETCH half of BINARY:
 // it promises BINARY, BINARY.PEEK and BINARY.SIZE FETCH support, including CTE
 // decoding, decoded partial ranges, CRLF text lines and PEEK/Seen semantics.
 // IMAP4REV2 requires it; it does not promise literal8 APPEND support. The wire
@@ -293,7 +296,7 @@ type MoveMailbox interface {
 // TestCapabilityWitnessCatalogue keeps this table level with the registries.
 //
 //	Token | Mode | Contract | States | Obligation
-//	ACL | gate | ACLSession | AS | Supply GETACL/LISTRIGHTS/MYRIGHTS; ACLSetSession separately enables writes.
+//	ACL | gate | ACLSession | AS | Supply RFC 4314 GETACL/LISTRIGHTS/MYRIGHTS including texk rights; framework advertises RIGHTS=texk. ACLSetSession separately enables writes.
 //	APPENDLIMIT | gate | CapabilitySupport | AS | Return per-mailbox STATUS APPENDLIMIT and enforce upload policy.
 //	AUTH=LOGIN | gate | Backend | N | Accept LOGIN password credentials; TLS or explicit insecure-auth policy.
 //	AUTH=OAUTHBEARER | gate | CapabilitySupport + Backend | N/TLS | Authenticate OAUTHBEARER token credentials.
@@ -312,7 +315,7 @@ type MoveMailbox interface {
 //	FILTERS | gate | FilterSession | AS | List available search filters and expand FILTER criteria.
 //	I18NLEVEL=1 | gate | CapabilitySupport | AS | Evaluate internationalized comparisons with i;unicode-casemap.
 //	I18NLEVEL=2 | gate | ComparatorSession | AS | List and select comparators; requires I18NLEVEL=1.
-//	IMAP4REV2 | gate | rev2Incorporated | NAS | Satisfy every incorporated member, including BINARY-FETCH.
+//	IMAP4REV2 | gate | rev2Incorporated | NAS | Satisfy every incorporated member, including BINARY-FETCH and STATUS-DELETED.
 //	JMAPACCESS | gate | CapabilitySupport | AS | Provide the account JMAP access information required by the extension.
 //	LANGUAGE | gate | LanguageSession | AS | List supported language tags and adopt a requested language.
 //	LIST-EXTENDED | route | CapabilitySupport | AS | Evaluate RECURSIVEMATCH natively; false uses framework evaluation.
@@ -328,11 +331,15 @@ type MoveMailbox interface {
 //	MULTISEARCH | gate | MultiSearchSession | AS | Evaluate extended searches across the requested mailboxes.
 //	NAMESPACE | gate | NamespaceSession | AS | Return namespace prefixes and delimiters for the account.
 //	NOTIFY | gate | NotifySession | AS | Validate and deliver the requested mailbox event subscriptions.
-//	OBJECTID | gate | CapabilitySupport | AS | Return stable MAILBOXID, EMAILID and THREADID data.
+//	OBJECTID | gate | CapabilitySupport | AS | Return stable MAILBOXID, EMAILID and THREADID data, including STATUS immediately after CREATE and SELECT.
 //	PREVIEW | gate | CapabilitySupport | AS | Produce message previews with PREVIEW/LAZY semantics.
 //	QRESYNC | gate | CapabilitySupport + QResyncMailbox | AS | Resynchronize known UIDs/modseqs and report vanished/changed messages.
 //	QUOTA | gate | QuotaSession | AS | Return quota roots and resource usage/limits.
-//	QUOTASET | gate | QuotaSetSession | AS | Set quota resource limits; requires QUOTA.
+//	QUOTASET | gate | QuotaSetSession | AS | Set quota resource limits; requires QUOTA and at least one unfiltered QUOTA=RES-* witness.
+//	QUOTA=RES-STORAGE | gate | CapabilitySupport + QuotaSession | AS | Handle STORAGE quotas and return STATUS DELETED-STORAGE in kibibytes.
+//	QUOTA=RES-MESSAGE | gate | CapabilitySupport + QuotaSession | AS | Handle MESSAGE quotas and return STATUS DELETED.
+//	QUOTA=RES-MAILBOX | gate | CapabilitySupport + QuotaSession | AS | Handle MAILBOX quotas.
+//	QUOTA=RES-ANNOTATION-STORAGE | gate | CapabilitySupport + QuotaSession | AS | Handle ANNOTATION-STORAGE quotas.
 //	REPLACE | gate | CapabilitySupport + ReplaceMailbox | AS | Provide atomic selected-message replacement into the destination mailbox.
 //	SASL-IR | gate | Backend | N | Have an authentication backend; framework handles initial-response syntax.
 //	SAVEDATE | gate | CapabilitySupport | AS | Return save dates and evaluate saved-date SEARCH criteria.
@@ -342,6 +349,7 @@ type MoveMailbox interface {
 //	SORT=DISPLAY | gate | CapabilitySupport + SortMailbox | AS | Evaluate DISPLAYFROM/DISPLAYTO sorting; requires SORT.
 //	SPECIAL-USE | gate | CapabilitySupport | AS | Return accurate LIST special-use attributes.
 //	STATUS=SIZE | gate | CapabilitySupport | AS | Return the mailbox SIZE status item.
+//	STATUS-DELETED | backend-only | CapabilitySupport | NAS | Return the count of Deleted messages in STATUS, including unselected mailboxes; required by IMAP4REV2.
 //	THREAD=ORDEREDSUBJECT | gate | CapabilitySupport + ThreadMailbox | AS | Produce the ORDEREDSUBJECT thread tree.
 //	THREAD=REFERENCES | gate | CapabilitySupport + ThreadMailbox | AS | Produce the REFERENCES thread tree.
 //	UIDPLUS | gate | CapabilitySupport | AS | Return assigned UIDs in APPEND/COPY results and honor UID EXPUNGE.
@@ -501,7 +509,10 @@ type ListOptions struct {
 // StatusOptions configures STATUS. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
 type StatusOptions struct {
-	// Items are the requested status values.
+	// Items are the requested status values. For framework-supplied calls, each
+	// item is in the IMAP4rev1 baseline, the enabled revision, or a capability
+	// this session advertised. Unknown or unadvertised client items receive
+	// BAD before Status is called, including through LIST-STATUS.
 	Items []imap.StatusItem
 	_     struct{}
 }
@@ -589,7 +600,9 @@ type QResyncSelect struct {
 	// SeqMatchSeqNums and SeqMatchUIDs are the optional sequence match data of
 	// RFC 7162 section 3.2.5.2, letting a backend detect a stale client view
 	// without reporting every UID. Both are empty when absent, and have equal
-	// length when present.
+	// counts when present. The framework supplies only static, validated sets:
+	// no wildcards, strictly ascending sequence-match data and equal expanded
+	// counts. Invalid wire parameters receive BAD before Select runs.
 	SeqMatchSeqNums imap.SeqSet `imapfeature:"qresync"`
 	// SeqMatchUIDs pairs positionally with SeqMatchSeqNums.
 	SeqMatchUIDs imap.UIDSet `imapfeature:"qresync"`
@@ -842,7 +855,8 @@ type SearchResult struct {
 }
 
 // SearchQuery is a UID-normalised SEARCH tree. The framework and NewSearchQuery
-// construct values containing no SearchSeqNum or unsubstituted SearchFilter.
+// construct values containing no SearchSeqNum, SearchSavedResult or
+// unsubstituted SearchFilter.
 // The framework and backendtest always pass non-nil queries to backends; a
 // backend is not required to accept a nil query or a query's zero value.
 type SearchQuery struct{ criteria imap.SearchCriteria }
@@ -853,13 +867,14 @@ type SearchQueryOptions struct{ _ struct{} }
 
 // NewSearchQuery constructs a query for direct backend calls, including tests.
 // Nil criteria mean ALL. It copies the tree and its UID sets, rejecting sequence
-// numbers, unsubstituted filters, unclassified criteria and malformed containers
-// at every depth. Trees deeper than 64 levels, including cyclic trees, are refused.
+// numbers, saved-result references, unsubstituted filters, unclassified criteria
+// and malformed containers at every depth. Trees deeper than 64 levels, including
+// cyclic trees, are refused.
 //
 // This constructor has no session and does not negotiate capabilities. The
 // caller must restrict extension keys to those the backend witnesses. Queries
 // supplied by the framework also carry the capability guarantee on Criteria.
-func NewSearchQuery(criteria imap.SearchCriteria, _ *SearchQueryOptions) (*SearchQuery, error) {
+func NewSearchQuery(criteria imap.SearchCriteria, options *SearchQueryOptions) (*SearchQuery, error) {
 	if criteria == nil {
 		criteria = imap.SearchAll
 	}
@@ -881,8 +896,8 @@ func copyBackendSearchCriteria(criteria imap.SearchCriteria, depth int) (imap.Se
 		return nil, fmt.Errorf("imapserver: unsupported SEARCH criterion %s", describeCriterion(criteria))
 	}
 	switch criteria.(type) {
-	case imap.SearchSeqNum, imap.SearchFilter:
-		return nil, fmt.Errorf("imapserver: SEARCH query requires resolved UIDs and filters")
+	case imap.SearchSeqNum, imap.SearchFilter, imap.SearchSavedResult:
+		return nil, fmt.Errorf("imapserver: SEARCH query requires resolved UIDs, saved results and filters")
 	}
 	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
 		copied := make([]imap.SearchCriteria, len(children))
@@ -904,8 +919,8 @@ func copyBackendSearchCriteria(criteria imap.SearchCriteria, depth int) (imap.Se
 
 // newSearchQuery constructs the only SEARCH tree that may cross the backend
 // boundary. uids is the selected mailbox's sequence-order snapshot.
-func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID) *SearchQuery {
-	return &SearchQuery{criteria: normalizeSearchCriteria(criteria, uids)}
+func newSearchQuery(criteria imap.SearchCriteria, uids []imap.UID, saved imap.UIDSet) *SearchQuery {
+	return &SearchQuery{criteria: normalizeSearchCriteria(criteria, uids, saved)}
 }
 
 // searchCriteriaChildren decomposes a container criterion into its children and
@@ -941,15 +956,25 @@ func searchMentionsSeqNum(criteria imap.SearchCriteria) bool {
 	return ok
 }
 
-func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID) imap.SearchCriteria {
+func searchMentionsSavedResult(criteria imap.SearchCriteria) bool {
+	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
+		return slices.ContainsFunc(children, searchMentionsSavedResult)
+	}
+	_, ok := criteria.(imap.SearchSavedResult)
+	return ok
+}
+
+func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID, saved imap.UIDSet) imap.SearchCriteria {
 	if children, rebuild := searchCriteriaChildren(criteria); rebuild != nil {
 		normalized := make([]imap.SearchCriteria, len(children))
 		for i, child := range children {
-			normalized[i] = normalizeSearchCriteria(child, uids)
+			normalized[i] = normalizeSearchCriteria(child, uids, saved)
 		}
 		return rebuild(normalized)
 	}
 	switch criteria := criteria.(type) {
+	case imap.SearchSavedResult:
+		return imap.SearchUID{Set: slices.Clone(saved)}
 	case imap.SearchUID:
 		// A UID wildcard denotes the highest UID in this selected view,
 		// including reversed ranges such as UIDNEXT:*. Resolve it before
@@ -1006,17 +1031,19 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 //
 // The framework guarantees the tree contains no [imap.SearchSeqNum] — sequence
 // numbers are resolved to UIDs before the backend sees them — and no
-// [imap.SearchFilter], which is substituted for the criteria it names. Both hold
-// at every nesting depth, including inside [imap.SearchNot] and
-// [imap.SearchFuzzy]. A backend therefore never has to handle either, which is
-// what allows the root package to grow new [imap.SearchCriteria]
+// [imap.SearchFilter], which is substituted for the criteria it names.
+// [imap.SearchSavedResult] is replaced with the saved UID set, or an empty set
+// when there is none. All three guarantees hold at every nesting depth,
+// including inside [imap.SearchNot], [imap.SearchOr] and [imap.SearchFuzzy].
+// A backend never has to handle these keys, allowing the root package to grow
+// new [imap.SearchCriteria]
 // implementations without breaking backends compiled against an earlier
 // version. See docs/API-STABILITY.md section 10.
 //
 // The same guarantee holds for [MultiSearchSession.MultiSearch], which takes
-// criteria directly rather than a query: with no IN clause sequence numbers
-// resolve against the selection, and with one the command is refused, so a
-// backend never receives an unresolvable number there either.
+// criteria directly rather than a query: with no IN clause, sequence numbers
+// and saved-result references resolve against the selection. With an IN clause
+// those keys are refused, so a backend never receives an unresolvable reference.
 //
 // A criterion outside that guarantee reaching a backend is a framework bug, not
 // a case for the backend to interpret. TestSearchQueryNormalisationGuarantee

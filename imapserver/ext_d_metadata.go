@@ -28,8 +28,8 @@ type MetadataSession interface {
 	// GetMetadata reads the named entries. An entry that does not exist is
 	// omitted from the result rather than reported as an error: RFC 5464
 	// section 4.2.2 makes absence a nil value, not a failure.
-	// The framework may request values without MAXSIZE so it can compute the
-	// largest omitted value and apply the client's limit to its wire response.
+	// Always return values without a size filter. The framework applies MAXSIZE
+	// and computes LONGENTRIES from the complete values at the requested depth.
 	GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *GetMetadataOptions) (*imap.MailboxMetadata, error)
 	// SetMetadata writes entries. An entry carrying a nil value is a deletion,
 	// which RFC 5464 section 4.3 defines as the only way to remove one.
@@ -43,17 +43,7 @@ type GetMetadataOptions struct {
 	// Depth limits how far below each requested entry the server descends:
 	// "0", "1" or "infinity" per RFC 5464 section 4.2.2. Empty means "0".
 	Depth string `imapfeature:"metadata"`
-	// MaxSize suppresses values larger than this many octets.
-	// RFC 5464 section 4.2.1.
-	//
-	// HasMaxSize carries presence separately: MAXSIZE 0 is a real request —
-	// it suppresses nonempty values, retaining present empty values. The
-	// framework reports the largest omitted size with METADATA LONGENTRIES.
-	// It is not the same as no MAXSIZE at all.
-	MaxSize uint32 `imapfeature:"metadata"`
-	// HasMaxSize reports whether the client supplied MAXSIZE.
-	HasMaxSize bool `imapfeature:"metadata"`
-	_          struct{}
+	_     struct{}
 }
 
 // SetMetadataOptions configures SETMETADATA. A nil pointer selects the defaults.
@@ -97,9 +87,11 @@ func init() {
 }
 
 type getMetadataArgs struct {
-	mailbox string
-	entries []imap.MetadataEntryName
-	options GetMetadataOptions
+	mailbox    string
+	entries    []imap.MetadataEntryName
+	options    GetMetadataOptions
+	maxSize    uint32
+	hasMaxSize bool
 }
 
 func parseGetMetadata(decoder *imapwire.Decoder) (any, int64, error) {
@@ -127,10 +119,10 @@ func parseGetMetadata(decoder *imapwire.Decoder) (any, int64, error) {
 					return fmt.Errorf("invalid GETMETADATA DEPTH %q", depth)
 				}
 			case "MAXSIZE":
-				if !decoder.ExpectNumber(&args.options.MaxSize) {
+				if !decoder.ExpectNumber(&args.maxSize) {
 					return decoder.Err()
 				}
-				args.options.HasMaxSize = true
+				args.hasMaxSize = true
 			default:
 				return fmt.Errorf("unsupported GETMETADATA option %q", name)
 			}
@@ -240,7 +232,6 @@ func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	// Fetch the requested depth without a size filter, then enforce MAXSIZE
 	// here so even an existing backend supplies enough information for the
 	// mandatory LONGENTRIES response (RFC 5464 section 4.2.1).
-	options.HasMaxSize, options.MaxSize = false, 0
 	data, err := session.GetMetadata(ctx, args.mailbox, args.entries, &options)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
@@ -249,11 +240,11 @@ func handleGetMetadata(ctx context.Context, c *conn, command *queuedCommand) err
 	var longest uint64
 	if data != nil {
 		entries = data.Entries
-		if args.options.HasMaxSize {
+		if args.hasMaxSize {
 			// Do not reuse the backing slice: the result belongs to the backend.
 			entries = make([]imap.MetadataEntry, 0, len(data.Entries))
 			for _, entry := range data.Entries {
-				if entry.Value != nil && uint64(len(*entry.Value)) > uint64(args.options.MaxSize) {
+				if entry.Value != nil && uint64(len(*entry.Value)) > uint64(args.maxSize) {
 					longest = max(longest, uint64(len(*entry.Value)))
 					continue
 				}

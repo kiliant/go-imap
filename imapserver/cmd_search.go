@@ -73,7 +73,7 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := validateSelectedCondStoreUse(c, searchHasModSeq(criteria), "SEARCH MODSEQ"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	query := newSearchQuery(criteria, c.state.selected.uids)
+	query := newSearchQuery(criteria, c.state.selected.uids, c.state.selected.savedSearch)
 	args.criteria = query.Criteria()
 	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
 	if err != nil {

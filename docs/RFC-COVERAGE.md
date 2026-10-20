@@ -329,13 +329,17 @@ CONDSTORE `MODIFIED` on tagged OK.
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
 | UIDBATCHES | 10022 | done [^t31uidbatches] | done [^t31uidbatches] |
 
-[^srvquotares]: Resource names cross the backend boundary as open
-    `imap.QuotaResourceName` strings, so a server serving a resource this
-    library has not heard of needs no change. The `QUOTA=RES-*` advertisement
-    tokens themselves are a backend concern.
+[^srvquotares]: Quota resource data uses open `imap.QuotaResourceName` strings.
+    Backends declare registered resources with spoken `QUOTA=RES-*` witnesses;
+    each registry addition needs a descriptor row, without changing an interface.
+    The framework advertises each unfiltered token alongside QUOTA. QUOTASET
+    requires at least one resource token; bare QUOTA retains RFC 2087 semantics.
+    RES-STORAGE includes STATUS DELETED-STORAGE; RES-MESSAGE includes DELETED.
 
 [^srvrights]: Rights are open `imap.ACLRights` strings in both directions; a
-    letter this library does not know passes through verbatim.
+    letter this library does not know passes through verbatim. The framework
+    advertises RIGHTS=texk with ACL for the RFC 4314 standard rights; filtering
+    ACL also withdraws RIGHTS=.
 
 [^srvuidonly]: All-or-nothing, as the RFC requires. Sequence-number commands are
     refused rather than reinterpreted as UIDs, unilateral FETCH becomes
