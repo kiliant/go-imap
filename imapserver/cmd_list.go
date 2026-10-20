@@ -154,6 +154,11 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireStatusItemCapabilities(c, args.statusItems); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	// LIST-STATUS answers as STATUS would (RFC 5819), so HIGHESTMODSEQ enables
+	// CONDSTORE here too.
+	if err := enableCondStoreForCommand(c, slices.Contains(args.statusItems, imap.StatusItem(imap.StatusItemHighestModSeq)), "LIST-STATUS HIGHESTMODSEQ"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	features := activeFeaturesContext(ctx, &c.state, c.server)
 	if len(args.patterns) > 1 && !features[featureListMulti] {
 		return c.writeBad(command.tag, "multiple LIST patterns are not enabled")

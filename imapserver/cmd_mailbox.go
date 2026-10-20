@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -125,6 +126,11 @@ func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, "invalid STATUS arguments")
 	}
 	if err := requireStatusItemCapabilities(c, args.items); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
+	// RFC 7162 section 3.1 lists STATUS (HIGHESTMODSEQ) among the CONDSTORE
+	// enabling commands.
+	if err := enableCondStoreForCommand(c, slices.Contains(args.items, imap.StatusItem(imap.StatusItemHighestModSeq)), "STATUS HIGHESTMODSEQ"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	data, err := c.state.session.Status(ctx, args.mailbox, &StatusOptions{Items: args.items})

@@ -93,7 +93,8 @@ type SessionUpdate struct {
 	// Include UIDNEXT and MESSAGES for MessageNew/MessageExpunge, UIDVALIDITY
 	// for identity changes, and HIGHESTMODSEQ for CONDSTORE/QRESYNC sessions
 	// (RFC 5465 section 5). A backend without the negotiated state may always
-	// include HIGHESTMODSEQ; the framework removes unadvertised items.
+	// include HIGHESTMODSEQ: the framework removes items the session has not
+	// negotiated, including HIGHESTMODSEQ until CONDSTORE is enabled.
 	Status *imap.StatusData
 	_      struct{}
 }
@@ -513,6 +514,11 @@ func (c *conn) drainNotify() error {
 		}
 		var items []imap.StatusItem
 		for item := range update.Status.Values {
+			// RFC 5465 section 5 includes HIGHESTMODSEQ once the client has
+			// enabled CONDSTORE or QRESYNC, not merely when it is advertised.
+			if item == imap.StatusItemHighestModSeq && !condStoreEnabled(c) {
+				continue
+			}
 			if gate, ok := statusItemCapability(item); ok && gate(&c.state, advertised) {
 				items = append(items, item)
 			}

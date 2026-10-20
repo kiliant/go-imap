@@ -482,6 +482,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   sent modified UTF-7. SEARCH and MULTISEARCH with a CHARSET, and SORT or
   THREAD with a non-UTF-8 charset, receive BAD after ENABLE UTF8=ACCEPT
   (RFC 9755 section 3). No signature change. (#54, pre-fourth review)
+- STATUS (HIGHESTMODSEQ), LIST-STATUS with HIGHESTMODSEQ and ESEARCH with a
+  MODSEQ key now enable CONDSTORE, as RFC 7162 section 3.1 lists them, and the
+  first reports the selected mailbox's HIGHESTMODSEQ. A NOMODSEQ selection
+  refuses ESEARCH MODSEQ only when that mailbox is searched. NOTIFY STATUS
+  carries HIGHESTMODSEQ only once CONDSTORE is enabled (RFC 5465 section 5);
+  `SessionUpdate.Status` documents this. MULTISEARCH source expansion lists the
+  hierarchy at most once per kind, is bounded like LIST (NO [LIMIT]), and keeps
+  shared and other-users namespaces out of `personal`. No signature change.
+  (#54, fourth review)
 - Memory's SORT, THREAD and MULTISEARCH evaluate with the same save dates,
   EMAILIDs and selection flags as SEARCH. No exported API change. (#54,
   pre-fourth review)

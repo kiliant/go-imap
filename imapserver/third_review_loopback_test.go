@@ -141,7 +141,8 @@ func TestReviewNotifyStatus(t *testing.T) {
 						t.Errorf("missing %s: %s", item, status)
 					}
 				}
-				if strings.Contains(status, "HIGHESTMODSEQ ") != (mode != "filtered") {
+				// RFC 5465 section 5: only a client that enabled CONDSTORE gets it.
+				if strings.Contains(status, "HIGHESTMODSEQ ") != (mode == "condstore") {
 					t.Errorf("HIGHESTMODSEQ projection: %s", status)
 				}
 				if strings.Contains(status, "RECENT ") != (mode != "rev2") {
