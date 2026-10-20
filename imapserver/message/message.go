@@ -100,17 +100,25 @@ func (m *Message) BodyStructure() imap.BodyStructure {
 	return cloneStructure(m.parsed.BodyStructure)
 }
 
+// SectionOptions configures [Message.OpenBodySection]. A nil pointer selects
+// the defaults: return the requested stored bytes without transformation.
+// Empty today; helper policy belongs here rather than in shared wire vocabulary.
+// Construct with keyed fields only; fields may be added in a future release.
+type SectionOptions struct{ _ struct{} }
+
 // OpenBodySection returns a streaming reader and its exact octet count. item
 // selects a part, HEADER/TEXT/MIME, header-field filters and optional partial.
 // It must be non-nil; an empty item selects the complete stored message.
 // Peek has no effect: this utility never changes mailbox flags.
+// A nil options pointer selects the defaults.
 //
 // Missing parts and invalid requests return errors. Offsets beyond the section
 // produce an empty reader. The reader is bound to ctx for its entire lifetime,
 // owns no source copy, and needs no Close. Keep the source open and immutable
 // until reading finishes; other Message operations and readers remain usable
 // if this reader's context is cancelled. A nil/zero Message is invalid.
-func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodySection) (io.Reader, int64, error) {
+func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodySection, options *SectionOptions) (io.Reader, int64, error) {
+	_ = options
 	if err := checkContext(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -119,6 +127,40 @@ func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodyS
 	}
 	source := &operationSource{ctx: ctx, source: m.source}
 	reader, size, err := m.parsed.WithReader(source).OpenBodySection(item)
+	if err := operationError(ctx, source, err); err != nil {
+		return nil, 0, err
+	}
+	return &sectionReader{ctx: ctx, reader: reader}, size, nil
+}
+
+// BinarySectionOptions configures [Message.OpenBinarySection]. A nil pointer
+// selects the defaults. Construct with keyed fields only; fields may be added.
+type BinarySectionOptions struct{ _ struct{} }
+
+// OpenBinarySection returns a leaf body's decoded bytes and exact octet count.
+// It supports identity, base64 and quoted-printable transfer encodings; text
+// line endings become CRLF. Parts follow BODY numbering, with an empty path
+// selecting the entire message, retaining its headers. Multipart and encapsulated
+// message containers are invalid; select a leaf within them instead.
+//
+// Partial ranges apply after decoding and line-ending conversion. Peek has no
+// effect on this utility. Nil items and invalid ranges fail; unknown transfer
+// encodings fail with *imap.Error carrying CodeUnknownCTE.
+//
+// Computing the exact count scans the decoded body with bounded buffers, then
+// reopens it for streaming; no complete body copy is retained. The returned
+// reader has the same context and source-lifetime guarantees as OpenBodySection.
+// A nil options pointer selects the defaults.
+func (m *Message) OpenBinarySection(ctx context.Context, item *imap.FetchItemBinarySection, options *BinarySectionOptions) (io.Reader, int64, error) {
+	_ = options
+	if err := checkContext(ctx); err != nil {
+		return nil, 0, err
+	}
+	if m == nil || m.parsed == nil {
+		return nil, 0, fmt.Errorf("message: nil or unanalysed message")
+	}
+	source := &operationSource{ctx: ctx, source: m.source}
+	reader, size, err := m.parsed.WithReader(source).OpenBinarySection(item)
 	if err := operationError(ctx, source, err); err != nil {
 		return nil, 0, err
 	}
@@ -171,6 +213,10 @@ func operationError(ctx context.Context, source *operationSource, err error) err
 	}
 	if source.err != nil {
 		return source.err // retain the caller's original I/O error identity
+	}
+	var protocolErr *imap.Error
+	if errors.As(err, &protocolErr) {
+		return protocolErr
 	}
 	if errors.Is(err, imapmessage.ErrUnsupportedCriteria) {
 		return fmt.Errorf("%w%s", ErrUnsupportedCriteria, strings.TrimPrefix(err.Error(), imapmessage.ErrUnsupportedCriteria.Error()))

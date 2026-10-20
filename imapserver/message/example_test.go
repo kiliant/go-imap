@@ -17,7 +17,7 @@ func ExampleAnalyze() {
 	if err != nil {
 		panic(err)
 	}
-	reader, size, err := m.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: imap.PartSpecifierText})
+	reader, size, err := m.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: imap.PartSpecifierText}, nil)
 	if err != nil {
 		panic(err)
 	}

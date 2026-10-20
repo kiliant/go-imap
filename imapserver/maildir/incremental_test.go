@@ -25,12 +25,12 @@ func TestIncrementalStoreAndRollback(t *testing.T) {
 		appendTest(t, s, "INBOX")
 	}
 	a := s.account
-	old := a.state
 	checkpoint, err := readFile(a.root, stateFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sel := selectTest(t, s, "INBOX")
+	old := a.state
 	if err := sel.Store(ctx, discardFetch(), imap.UIDSetNum(2), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen}}, nil); err != nil {
 		t.Fatal(err)
 	}

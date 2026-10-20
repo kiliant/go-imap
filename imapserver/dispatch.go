@@ -25,6 +25,7 @@ type queuedCommand struct {
 	args       any
 	bytes      int64
 	parseErr   error
+	stopErr    error // event-loop-owned BYE before terminating the reader
 	done       chan struct{}
 	// readerSettled closes after the reader publishes the amount of input
 	// buffered behind this command. Nil is used by synthetic/error commands.

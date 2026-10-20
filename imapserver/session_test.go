@@ -456,8 +456,8 @@ func (moveAndTokensBackend) SupportsCapability(_ context.Context, name string, _
 // not less, and the one no other test would notice.
 func TestRev2IncorporatedNamesResolve(t *testing.T) {
 	for _, name := range rev2Incorporated {
-		if !slices.ContainsFunc(capabilityDescriptors, func(d capabilityDescriptor) bool { return d.Name == name }) {
-			t.Errorf("rev2Incorporated names %q, which has no capability descriptor", name)
+		if backendFeatureWitnesses[name] == nil && !slices.ContainsFunc(capabilityDescriptors, func(d capabilityDescriptor) bool { return d.Name == name }) {
+			t.Errorf("rev2Incorporated names %q, which has no capability descriptor or backend feature witness", name)
 			continue
 		}
 		if capabilityWitness(name) == nil {

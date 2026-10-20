@@ -157,7 +157,7 @@ func writeSelectSnapshot(c *conn, snapshot *SelectSnapshot) error {
 	if snapshot == nil {
 		return fmt.Errorf("imapserver: nil SELECT snapshot")
 	}
-	flags := snapshot.Status.Flags
+	flags := wireFlags(c, snapshot.Status.Flags)
 	permanentFlags := snapshot.Status.PermanentFlags
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("FLAGS").SP().List(len(flags), func(i int) {
 		c.encoder.Flag(string(flags[i]))

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 )
 
 type message struct {
+	recent       bool
 	uid          imap.UID
 	flags        []imap.Flag
 	internalDate time.Time
@@ -34,6 +34,7 @@ type selected struct {
 	mailbox  *mailbox
 	readOnly bool
 	closed   bool
+	recent   map[imap.UID]bool
 }
 
 func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, options *imapserver.FetchOptions) error {
@@ -79,6 +80,7 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			}
 			flagUpdates = append(flagUpdates, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(msg.flags), ModSeq: msg.modSeq})
 		}
+		s.decorateRecent(data, msg.uid)
 		results = append(results, data)
 	}
 	if len(flagUpdates) != 0 {
@@ -128,7 +130,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 		metadata := servermessage.Metadata{
 			SeqNum:       imap.SeqNum(i + 1),
 			UID:          msg.uid,
-			Flags:        cloneFlags(msg.flags),
+			Flags:        s.recentFlags(msg.uid, msg.flags),
 			InternalDate: msg.internalDate,
 			RFC822Size:   int64(len(msg.raw)),
 			ModSeq:       msg.modSeq,
@@ -205,7 +207,9 @@ func (s *selected) Store(ctx context.Context, writer *imapserver.FetchWriter, ui
 		msg.modSeq = bumpModSeqLocked(s.mailbox)
 		changes = append(changes, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(flags), ModSeq: msg.modSeq})
 		if !silent {
-			results = append(results, flagsFetchData(imap.SeqNum(i+1), msg))
+			data := flagsFetchData(imap.SeqNum(i+1), msg)
+			s.decorateRecent(data, msg.uid)
+			results = append(results, data)
 		}
 	}
 	afterFlags := mailboxFlagsLocked(s.mailbox)
@@ -257,9 +261,6 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 	if destinationMailbox == nil {
 		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
 	}
-	if move && destinationMailbox == s.mailbox {
-		return nil, noError(imap.CodeCannot, "cannot move messages to the selected mailbox")
-	}
 	var sources, destinations []imap.UID
 	var additions []imapserver.Update
 	var removals []imapserver.Update
@@ -277,6 +278,8 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		destinationMailbox.uidNext++
 		clone := *msg
 		clone.uid = uid
+		clone.recent = true
+		clone.modSeq = bumpModSeqLocked(destinationMailbox)
 		clone.flags = cloneFlags(msg.flags)
 		destinationMailbox.messages = append(destinationMailbox.messages, &clone)
 		ensureMailboxFlagsLocked(destinationMailbox, clone.flags)
@@ -286,6 +289,14 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 			removals = append(removals, &imapserver.UpdateExpunge{UID: msg.uid})
 		}
 	}
+	if move && destinationMailbox == s.mailbox && len(additions) > 0 {
+		s.mailbox.messages = append(retained, destinationMailbox.messages[len(original):]...)
+		if !slices.Equal(beforeFlags, mailboxFlagsLocked(destinationMailbox)) {
+			additions = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(destinationMailbox)}}, additions...)
+		}
+		publishLocked(s.mailbox, advanceLocked(s.mailbox, origin, append(removals, additions...)))
+		return &imap.CopyData{HasUIDs: true, UIDValidity: s.mailbox.uidValidity, SourceUIDs: imap.UIDSetNum(sources...), DestinationUIDs: imap.UIDSetNum(destinations...)}, nil
+	}
 	if len(additions) != 0 {
 		if !slices.Equal(beforeFlags, mailboxFlagsLocked(destinationMailbox)) {
 			additions = append([]imapserver.Update{&imapserver.UpdateMailboxFlags{Flags: mailboxFlagsLocked(destinationMailbox)}}, additions...)
@@ -293,6 +304,9 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		publishLocked(destinationMailbox, advanceLocked(destinationMailbox, origin, additions))
 	}
 	if move && len(removals) != 0 {
+		if destinationMailbox == s.mailbox {
+			retained = append(retained, destinationMailbox.messages[len(original):]...)
+		}
 		s.mailbox.messages = retained
 		publishLocked(s.mailbox, advanceLocked(s.mailbox, origin, removals))
 	}
@@ -369,12 +383,6 @@ func advanceLocked(m *mailbox, origin imapserver.ChangeToken, changes []imapserv
 	before := revision(m.revision)
 	m.revision++
 	return &imapserver.UpdateBatch{Before: before, After: revision(m.revision), Origin: origin, Changes: changes}
-}
-
-func publishLocked(m *mailbox, batch *imapserver.UpdateBatch) {
-	for _, updater := range m.watchers {
-		_ = updater.Push(batch)
-	}
 }
 
 func cloneFlags(flags []imap.Flag) []imap.Flag { return append([]imap.Flag(nil), flags...) }
@@ -467,7 +475,7 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 					specifier = imap.PartSpecifierText
 					marksSeen = true
 				}
-				reader, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: specifier, Peek: item == imap.FetchItemRFC822Header})
+				reader, _, err := msg.analysis.OpenBodySection(ctx, &imap.FetchItemBodySection{Specifier: specifier, Peek: item == imap.FetchItemRFC822Header}, nil)
 				if err != nil {
 					return nil, false, err
 				}
@@ -485,29 +493,29 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 			// BINARY[] delivers the section with its content-transfer-encoding
 			// already undone, which is the whole point of RFC 3516: the client
 			// receives bytes rather than base64 it has to decode itself.
-			reader, err := openBinarySection(ctx, msg, item.Part)
+			reader, _, err := msg.analysis.OpenBinarySection(ctx, item, nil)
 			if err != nil {
 				return nil, false, err
 			}
 			key := imap.FetchDataKey(binarySectionKey(item, false))
-			data.Items[key] = append(data.Items[key], &imap.FetchDataBinarySection{
-				Part:    append([]int(nil), item.Part...),
-				Literal: reader,
-			})
+			section := &imap.FetchDataBinarySection{Part: append([]int(nil), item.Part...), Literal: reader}
+			if item.Partial != nil {
+				section.Origin, section.HasOrigin = item.Partial.Offset, true
+			}
+			data.Items[key] = append(data.Items[key], section)
 			marksSeen = marksSeen || !item.Peek
 		case *imap.FetchItemBinarySectionSize:
-			reader, err := openBinarySection(ctx, msg, item.Part)
+			_, size, err := msg.analysis.OpenBinarySection(ctx, &imap.FetchItemBinarySection{Part: item.Part}, nil)
 			if err != nil {
 				return nil, false, err
 			}
-			size, err := readerSize(reader)
-			if err != nil {
-				return nil, false, err
+			if size > 1<<32-1 {
+				return nil, false, noError(imap.CodeLimit, "decoded body exceeds BINARY.SIZE range")
 			}
 			key := imap.FetchDataKey(binarySectionKey(&imap.FetchItemBinarySection{Part: item.Part}, true))
 			data.Items[key] = append(data.Items[key], imap.FetchDataBinarySectionSize(size))
 		case *imap.FetchItemBodySection:
-			reader, _, err := msg.analysis.OpenBodySection(ctx, item)
+			reader, _, err := msg.analysis.OpenBodySection(ctx, item, nil)
 			if err != nil {
 				return nil, false, err
 			}
@@ -525,7 +533,7 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 			data.Items[key] = append(data.Items[key], section)
 			marksSeen = marksSeen || !item.Peek
 		default:
-			return nil, false, noError(imap.CodeCannot, fmt.Sprintf("unsupported FETCH item %T", item))
+			return nil, false, noError(imap.CodeCannot, "unsupported FETCH item")
 		}
 	}
 	return data, marksSeen, nil
@@ -547,20 +555,10 @@ func binarySectionKey(item *imap.FetchItemBinarySection, size bool) string {
 		b.WriteString(strconv.Itoa(number))
 	}
 	b.WriteByte(']')
+	if !size && item.Partial != nil {
+		fmt.Fprintf(&b, "<%d>", item.Partial.Offset)
+	}
 	return b.String()
-}
-
-// readerSize measures a section without retaining it. BINARY.SIZE reports the
-// decoded length, which is not derivable from the stored bytes.
-func readerSize(reader io.Reader) (uint32, error) {
-	count, err := io.Copy(io.Discard, reader)
-	if err != nil {
-		return 0, err
-	}
-	if closer, ok := reader.(io.Closer); ok {
-		_ = closer.Close()
-	}
-	return uint32(count), nil
 }
 
 func bodySectionKey(item *imap.FetchItemBodySection) string {

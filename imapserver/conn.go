@@ -253,11 +253,17 @@ func (c *conn) readCommands() error {
 			continue
 		}
 
-		commands++
-		if max := c.server.options.Limits.MaxCommands; max >= 0 && commands > max {
-			err := fmt.Errorf("imapserver: command limit exceeded")
-			c.cancel(err)
-			return err
+		if max := c.server.options.Limits.MaxCommands; max > 0 {
+			commands++
+			if commands > max {
+				err := fmt.Errorf("imapserver: command limit exceeded")
+				command := &queuedCommand{stopErr: err, done: make(chan struct{})}
+				if queueErr := c.queueCommand(command); queueErr != nil {
+					return queueErr
+				}
+				c.waitCommandDone(command)
+				return err
+			}
 		}
 
 		descriptor := commandDescriptors[name]
@@ -278,6 +284,11 @@ func (c *conn) readCommands() error {
 				if fatal {
 					if err := c.queueCommand(command); err != nil {
 						return err
+					}
+					if name == "APPEND" && appendLiteralTooBig(command.parseErr) {
+						// Flush the tagged policy refusal before closing an unread,
+						// oversized non-synchronising payload.
+						c.waitCommandDone(command)
 					}
 					c.cancel(command.parseErr)
 					return command.parseErr
@@ -354,12 +365,25 @@ func (c *conn) waitBarrier(decoder *imapwire.Decoder, command *queuedCommand) er
 			}
 			request.reply <- readerResult{value: value, err: err}
 			if decoder.Fatal() {
+				if command.name == "APPEND" && appendLiteralTooBig(err) {
+					c.waitCommandDone(command)
+				}
 				c.cancel(err)
 				return err
 			}
 		case <-c.ctx.Done():
 			return context.Cause(c.ctx)
 		}
+	}
+}
+
+// waitCommandDone keeps the reader from cancelling a connection while its
+// event loop is still flushing a terminal policy response. Transport write
+// deadlines and the connection context bound the wait.
+func (c *conn) waitCommandDone(command *queuedCommand) {
+	select {
+	case <-command.done:
+	case <-c.ctx.Done():
 	}
 }
 
@@ -618,7 +642,19 @@ func (c *conn) execute(command *queuedCommand) error {
 	// tagged response, not when this call returns — see completeCommand.
 	c.commandInProgress = true
 	defer func() { c.commandInProgress = false }()
+	if command.stopErr != nil {
+		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
+			Status: "BYE", Text: imapwire.RespText{Text: "command limit exceeded"},
+		}).CRLF()
+		if err := c.encoder.Flush(); err != nil {
+			return err
+		}
+		return command.stopErr
+	}
 	if command.parseErr != nil {
+		if command.name == "APPEND" {
+			return writeAppendDecodeError(c, command.tag, command.parseErr, "invalid command syntax")
+		}
 		return c.writeBad(command.tag, "invalid command syntax")
 	}
 	if command.descriptor == nil {
@@ -655,7 +691,11 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 	if request.descriptor == nil || !c.state.allows(request.descriptor.states) {
 		err = fmt.Errorf("literal is not accepted for this command")
 	} else if max := c.server.options.Limits.MaxLiteralBytes; max >= 0 && request.info.Size > max {
-		err = fmt.Errorf("literal exceeds the connection limit")
+		if request.descriptor.name == "APPEND" {
+			err = resolvedContentTooBig()
+		} else {
+			err = fmt.Errorf("literal exceeds the connection limit")
+		}
 	} else if request.info.NonSynchronising && request.info.Size > maxLiteralMinusSize &&
 		!slices.Contains(deriveCapabilitiesContext(c.ctx, &c.state, c.server), "LITERAL+") {
 		err = fmt.Errorf("non-synchronising literal exceeds the LITERAL- limit")
@@ -937,7 +977,13 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
 	// which of their matches went away. See ext_e_context.go.
-	var removed []imap.UID
+	removed := make(map[imap.UID]imap.SeqNum)
+	beforeSequences := make(map[imap.UID]imap.SeqNum)
+	if len(selected.contexts) > 0 {
+		for i, uid := range selected.uids {
+			beforeSequences[uid] = imap.SeqNum(i + 1)
+		}
+	}
 	var pending []deliveredUpdate
 	if !deferred && len(selected.withheld) != 0 {
 		var err error
@@ -965,20 +1011,28 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		}
 		pending = append(pending, updates...)
 	}
-	for _, update := range coalesceWireUpdates(pending) {
+	wireUpdates := coalesceWireUpdates(pending)
+	for _, update := range wireUpdates {
 		if update.kind == updateMessageExpunge {
-			removed = append(removed, update.uid)
+			removed[update.uid] = beforeSequences[update.uid]
 		} else if update.kind == updateMessageVanished {
 			// Only registered matches need individual notification; do not
 			// expand a possibly enormous VANISHED UID range.
 			for _, held := range selected.contexts {
 				for uid := range held.uids {
 					if update.uids.Contains(uid) {
-						removed = append(removed, uid)
+						removed[uid] = beforeSequences[uid]
 					}
 				}
 			}
 		}
+	}
+	// Report removals from contexts before EXPUNGE renumbers sequence IDs.
+	deltas := refreshSearchContexts(c, removed, beforeSequences)
+	if err := writeSearchContextDeltas(c, deltas, true); err != nil {
+		return err
+	}
+	for _, update := range wireUpdates {
 		if err := c.writeUpdate(update); err != nil {
 			return err
 		}
@@ -986,10 +1040,7 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if err := c.encoder.Flush(); err != nil {
 		return err
 	}
-	// CONTEXT registrations hear which of their matches were removed. This runs
-	// after the ordinary updates so the client sees the expunge before the
-	// REMOVEFROM that explains it.
-	return notifySearchContexts(c, removed)
+	return writeSearchContextDeltas(c, deltas, false)
 }
 
 // RFC 7162 sections 3.2 and 6 require an explicit safe checkpoint when
@@ -1009,9 +1060,14 @@ func (c *conn) writeDeferredModSeqFence() {
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {
+	update.flags = wireFlags(c, update.flags)
 	switch update.kind {
 	case updateExists:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(update.exists).SP().Atom("EXISTS").CRLF()
+	case updateRecent:
+		if c.state.revision != revisionIMAP4rev2 {
+			c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Number(update.exists).SP().Atom("RECENT").CRLF()
+		}
 	case updateMailboxFlags:
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("FLAGS").SP().List(len(update.flags), func(i int) {
 			c.encoder.Flag(string(update.flags[i]))

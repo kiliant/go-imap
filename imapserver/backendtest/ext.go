@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -426,7 +427,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 			t.Skip("backend does not implement URLAuthSession")
 		}
 		mailbox := populate(t, session, "urlauth")
-		url := "imap://" + instance.Credentials.Username + "@example.com/" + mailbox + "/;UID=1"
+		url := "imap://" + url.User(instance.Credentials.Username).String() + "@example.com/" + url.PathEscape(mailbox) + "/;UID=1;URLAUTH=anonymous"
 		authorized, err := urlAuth.GenerateURLAuth(context.Background(), url, "INTERNAL", nil)
 		if err != nil {
 			t.Fatalf("GenerateURLAuth: %v", err)
@@ -434,18 +435,37 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if authorized == url {
 			t.Fatal("GenerateURLAuth returned the URL unchanged, so it carries no token")
 		}
+		content, err := urlAuth.FetchURLAuth(context.Background(), authorized, nil)
+		if err != nil || content == nil || content.Body == nil {
+			if content != nil && content.Body != nil {
+				_ = content.Body.Close()
+			}
+			t.Fatalf("valid URLFETCH returned no body: %#v, %v", content, err)
+		}
+		raw, readErr := io.ReadAll(content.Body)
+		closeErr := content.Body.Close()
+		if readErr != nil || closeErr != nil {
+			t.Fatalf("valid URLFETCH body failed: %v, %v", readErr, closeErr)
+		}
+		if content.HasSize && (content.Size < 0 || content.Size != int64(len(raw))) {
+			t.Fatalf("URLFETCH known size %d differs from %d bytes", content.Size, len(raw))
+		}
 		// The security property: tampering with the token must not resolve.
-		// Everything else about URLAUTH is formatting.
+		// URL shape, owner/access restrictions and expiry need separate checks.
 		forged := authorized[:len(authorized)-1] + "x"
 		if content, _ := urlAuth.FetchURLAuth(context.Background(), forged, nil); content != nil {
-			_ = content.Close()
+			if content.Body != nil {
+				_ = content.Body.Close()
+			}
 			t.Error("a forged authorization token was honoured")
 		}
 		if err := urlAuth.ResetURLAuthKey(context.Background(), "", nil); err != nil {
 			t.Fatalf("ResetURLAuthKey: %v", err)
 		}
 		if content, _ := urlAuth.FetchURLAuth(context.Background(), authorized, nil); content != nil {
-			_ = content.Close()
+			if content.Body != nil {
+				_ = content.Body.Close()
+			}
 			t.Error("a reset key did not revoke an outstanding URL")
 		}
 	})

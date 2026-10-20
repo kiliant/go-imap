@@ -730,7 +730,7 @@ func TestBinaryMetadataSurvivesRewriteAndRestart(t *testing.T) {
 	check := func(when string, s *session) {
 		t.Helper()
 		for _, mailbox := range []string{"", "INBOX"} {
-			got, err := s.GetMetadata(ctx, mailbox, []imap.MetadataEntryName{"/private"}, &imapserver.MetadataOptions{Depth: "infinity"})
+			got, err := s.GetMetadata(ctx, mailbox, []imap.MetadataEntryName{"/private"}, &imapserver.GetMetadataOptions{Depth: "infinity"})
 			if err != nil {
 				t.Fatal(err)
 			}

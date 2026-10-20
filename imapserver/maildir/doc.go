@@ -41,6 +41,12 @@
 // allowed on filesystems that distinguish them. Open refuses aliased existing
 // state; it does not merge mailbox identities or rewrite that state.
 //
+// RECENT ownership is selection-specific. Pending delivery/APPEND/COPY state
+// is durable; a read-write selection atomically claims it while EXAMINE leaves
+// it available to a later read-write selection. Old records lacking explicit
+// state are conservatively considered recent. Recent flags are never stored as
+// client-controlled permanent flags or filename flags.
+//
 // APPEND preserves all bytes exactly.
 // new/ ingestion normalizes LF to CRLF without duplicating existing CRLF and
 // preserves delivery mtime. INTERNALDATE is the stored file mtime. Message

@@ -82,7 +82,7 @@ func metadataStore(state *accountState, name string) (map[imap.MetadataEntryName
 	}
 	return m.Metadata, nil
 }
-func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.MetadataEntryName, options *imapserver.MetadataOptions) (*imap.MailboxMetadata, error) {
+func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.MetadataEntryName, options *imapserver.GetMetadataOptions) (*imap.MailboxMetadata, error) {
 	for _, entry := range entries {
 		if !validEntryName(entry) {
 			return nil, invalidEntryName()
@@ -123,7 +123,7 @@ func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.M
 	slices.SortFunc(result.Entries, func(a, b imap.MetadataEntry) int { return strings.Compare(string(a.Name), string(b.Name)) })
 	return result, nil
 }
-func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.MetadataEntry, _ *imapserver.MetadataOptions) error {
+func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.MetadataEntry, _ *imapserver.SetMetadataOptions) error {
 	for _, entry := range entries {
 		if !validEntryName(entry.Name) {
 			return invalidEntryName()

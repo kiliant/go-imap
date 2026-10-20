@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -38,24 +39,19 @@ func (s *streamingAppendSession) Append(_ context.Context, _ string, literal io.
 	return &imap.AppendData{HasUID: true, UIDValidity: 1, UID: 1}, nil
 }
 
-type gatedAppendReader struct {
+type stagedAppendReader struct {
 	remaining int
 	started   <-chan struct{}
-	first     bool
 }
 
-func (r *gatedAppendReader) Read(p []byte) (int, error) {
+func (r *stagedAppendReader) Read(p []byte) (int, error) {
 	if r.remaining == 0 {
 		return 0, io.EOF
 	}
-	if r.first {
-		select {
-		case <-r.started:
-		case <-time.After(time.Second):
-			return 0, context.DeadlineExceeded
-		}
-	} else {
-		r.first = true
+	select {
+	case <-r.started:
+		return 0, fmt.Errorf("backend called before complete APPEND validation")
+	default:
 	}
 	if len(p) > 1024 {
 		p = p[:1024]
@@ -70,7 +66,7 @@ func (r *gatedAppendReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func TestAppendStreamsIntoBackendBeforeClientFinishesProducing(t *testing.T) {
+func TestAppendStagesCompleteCommandBeforeBackend(t *testing.T) {
 	backend := &streamingAppendBackend{started: make(chan struct{}), options: make(chan AppendOptions, 1)}
 	server := New(backend, &Options{AllowInsecureAuth: true})
 	serverSide, clientSide := net.Pipe()
@@ -87,7 +83,7 @@ func TestAppendStreamsIntoBackendBeforeClientFinishesProducing(t *testing.T) {
 		t.Fatal(err)
 	}
 	const size = 32 << 10
-	reader := &gatedAppendReader{remaining: size, started: backend.started}
+	reader := &stagedAppendReader{remaining: size, started: backend.started}
 	appendCommand := client.Append(ctx, "INBOX", nil, size, reader)
 	data, err := appendCommand.Wait(ctx)
 	if err != nil {

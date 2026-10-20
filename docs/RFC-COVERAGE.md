@@ -245,23 +245,27 @@ CONDSTORE `MODIFIED` on tagged OK.
     refused by the capability gate with a tagged `BAD` before the backend is
     reached, instead of by the backend with a `NO`.
 
-[^srvbinary]: FETCH side. `BINARY[]` and `BINARY.SIZE[]` decode the
-    content-transfer-encoding, and an encoding that cannot be undone fails with
-    UNKNOWN-CTE rather than handing the client base64 it believes is binary.
+[^srvbinary]: FETCH side. Both memory and Maildir use the public message
+    helper for `BINARY[]`, `BINARY.PEEK[]` and `BINARY.SIZE[]`, decoding CTE,
+    normalising text lines to CRLF and slicing decoded partial ranges. Unknown
+    or malformed CTEs fail with UNKNOWN-CTE. IMAP4REV2 requires the backend-only
+    BINARY-FETCH witness, independently of full BINARY advertisement. (#126)
     Binary APPEND (a literal8 payload) is blocked with CATENATE and MULTIAPPEND
     below.
 
 [^srvmultiappend]: Parsing continues between literals: the parser reads to the
     first literal's announcement, the handler consumes it, then asks the reader
-    for the next chunk over the same path continuations and IDLE use. Not atomic
-    across messages — `Session.Append` stores one at a time, so a failure leaves
-    the messages already stored, and the framework says so rather than
-    pretending. RFC 3502's UID-set form of APPENDUID is reported.
+    for the next chunk over the same path continuations and IDLE use. The whole
+    command is staged to a temporary file before backend calls. MULTIAPPEND is
+    advertised only for `MultiAppendSession`, whose batch must commit atomically
+    or leave the mailbox unchanged. Memory implements it; Maildir currently does
+    not. RFC 3502's UID-set form of APPENDUID is reported.
 
 [^srvcatenate]: Client text and server-side URLs assembled into one message
-    through the optional `CatenateSession`. Parts are read in order because each
-    literal's length is only knowable once the previous is off the wire; that
-    buffering is the grammar's price, not a design choice.
+    through optional `CatenateSession`. Parts spool to bounded temporary files;
+    aggregate APPEND bytes are limited by `Limits.MaxLiteralBytes`. Over-limit
+    input returns NO [TOOBIG] without committing, and remaining literals drain
+    without resolving further URLs.
 
 [^srvutf8]: **The only capabilities left unimplemented, and both by decision.**
     RFC 9755 deprecates UTF8=ALL and UTF8=USER outright — implementing a
@@ -430,7 +434,7 @@ break the client; full command support is best-effort.
 | LOGIN-REFERRALS | 2221 | done | done [^srvreferral] | referral response codes parse |
 | MAILBOX-REFERRALS | 2193 | done | done [^srvreferral] | as above |
 | URLAUTH | 4467 | done | done [^srvurlauth] | GENURLAUTH / URLFETCH / RESETKEY |
-| URLAUTH=BINARY | 5524 | done | done | capability accepted with URLAUTH |
+| URLAUTH=BINARY | 5524 | done | deferred | server extended URLFETCH syntax is not implemented or advertised |
 | URL-PARTIAL | 5550 | done | done | `;PARTIAL=` in IMAP URLs |
 | LANGUAGE | 5255 | done | done | |
 | I18NLEVEL=1 | 5255 | done | done | capability probe |
@@ -449,10 +453,14 @@ break the client; full command support is best-effort.
     the extension is a data change, not a type change.
 
 [^srvurlauth]: GENURLAUTH, URLFETCH and RESETKEY, with tokens minted and verified
-    by the backend since only it holds the per-mailbox secret. The reference
-    backend uses an HMAC and a constant-time comparison, and its test asserts
-    that a forged token is refused — the one property here that is a security
-    question rather than a formatting one.
+    by the backend since only it holds the per-mailbox secret. Memory validates
+    rump/full URL structure, key owners, access identifiers, expiry and
+    UIDVALIDITY. HMAC verification uses exact original rump bytes, with a
+    constant-time comparison of decoded hex tokens. Validated URLs resolve
+    through the owner's account, including stored BODY sections and partial
+    ranges. Keys cannot survive a deleted/recreated mailbox identity. The
+    backend grants no submit role. Scripted/direct and own-client coverage;
+    independent live implementations are not claimed. (#162)
 
 [^srvi18n2]: The COMPARATOR command, through the optional `ComparatorSession`.
     Comparator names are an open RFC 4790 registry and cross the boundary as

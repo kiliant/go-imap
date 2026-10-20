@@ -242,7 +242,7 @@ func sortedRights(rights string) string {
 
 // GetMetadata implements [imapserver.MetadataSession]. An empty mailbox name
 // addresses the server annotation space.
-func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.MetadataEntryName, options *imapserver.MetadataOptions) (*imap.MailboxMetadata, error) {
+func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.MetadataEntryName, options *imapserver.GetMetadataOptions) (*imap.MailboxMetadata, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.M
 }
 
 // SetMetadata implements [imapserver.MetadataSession].
-func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.MetadataEntry, _ *imapserver.MetadataOptions) error {
+func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.MetadataEntry, _ *imapserver.SetMetadataOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
