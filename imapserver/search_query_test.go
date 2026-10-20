@@ -122,6 +122,12 @@ func TestSearchSavedResultNormalization(t *testing.T) {
 		assertUIDNormalizedSearch(t, query.Criteria())
 		root := query.Criteria().(imap.SearchAnd)
 		for _, key := range []imap.SearchCriteria{root[0], root[1].(imap.SearchNot).Criteria, root[2].(imap.SearchOr).Left, root[2].(imap.SearchOr).Right.(imap.SearchFuzzy).Criteria} {
+			if saved.IsEmpty() {
+				if not, ok := key.(imap.SearchNot); !ok || not.Criteria != imap.SearchAll {
+					t.Fatalf("empty saved result = %#v, want NOT ALL", key)
+				}
+				continue
+			}
 			if got := key.(imap.SearchUID).Set.String(); got != saved.String() {
 				t.Fatalf("saved result = %s, want %s", got, saved.String())
 			}

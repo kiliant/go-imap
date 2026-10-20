@@ -33,10 +33,8 @@ func TestLoopbackQuota(t *testing.T) {
 		t.Errorf("QUOTAROOT = %q, want the root name", root)
 	}
 	quota := findResponse(t, untagged, "* QUOTA ")
-	for _, want := range []string{"STORAGE", "MESSAGE"} {
-		if !strings.Contains(quota, want) {
-			t.Errorf("QUOTA response has no %s: %q", want, quota)
-		}
+	if !strings.HasSuffix(quota, " ()") {
+		t.Errorf("unlimited resources must be omitted: %q", quota)
 	}
 
 	writeRawCommand(t, clientSide, "D2 SETQUOTA root (STORAGE 512)\r\n")

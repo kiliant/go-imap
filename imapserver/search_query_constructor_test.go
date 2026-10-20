@@ -41,6 +41,9 @@ func TestNewSearchQueryRejectsUnresolvedAndUnknownKeys(t *testing.T) {
 		imap.SearchSavedResult{},
 		imap.SearchSeqNum{Set: imap.SeqSetNum(1)}, imap.SearchFilter("filter"),
 		imap.SearchKeyword("FUTURE"), imap.SearchString{Key: "FUTURE"},
+		imap.SearchDate{Key: "FUTURE"}, imap.SearchSize{Key: "FUTURE"},
+		imap.SearchWithin{Key: "FUTURE"}, imap.SearchObjectID{Key: "FUTURE"},
+		imap.SearchModSeq{EntryType: "FUTURE"},
 		imap.SearchNot{}, imap.SearchOr{Left: imap.SearchAll}, imap.SearchFuzzy{},
 		imap.SearchModSeq{ModSeq: 1 << 63}, imap.SearchAnd{nil},
 	} {

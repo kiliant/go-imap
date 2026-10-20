@@ -50,8 +50,8 @@ func TestSortThreadMultiSearchModSeq(t *testing.T) {
 		{"THREAD ORDEREDSUBJECT US-ASCII MODSEQ 1", "* THREAD (1) (2) (3)"},
 		{fmt.Sprintf("UID THREAD ORDEREDSUBJECT US-ASCII FLAGGED MODSEQ %d", highest+1), "* THREAD (1)"},
 		{"THREAD ORDEREDSUBJECT US-ASCII MODSEQ 9223372036854775807", "* THREAD"},
-		{"ESEARCH IN (INBOX) MODSEQ 1", "ALL 1:3"},
-		{fmt.Sprintf("ESEARCH IN (INBOX) FLAGGED MODSEQ %d", highest+1), "ALL 1"},
+		{"ESEARCH IN (mailboxes INBOX) MODSEQ 1", "ALL 1:3"},
+		{fmt.Sprintf("ESEARCH IN (mailboxes INBOX) FLAGGED MODSEQ %d", highest+1), "ALL 1"},
 	} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			tag := fmt.Sprintf("c%d", i)

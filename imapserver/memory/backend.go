@@ -44,11 +44,13 @@ type account struct {
 	mailboxes       map[string]*mailbox
 	nextUIDValidity uint32
 	selectFailure   map[string]bool
-	// Group D per-account state. Zero limits mean unlimited, which is how
-	// RFC 9208 reports a resource with no configured bound. See ext_d.go.
-	quotaStorage  uint64
-	quotaMessages uint64
-	metadata      map[imap.MetadataEntryName]string
+	// Group D per-account state. An unset limit is unlimited; a configured
+	// zero is distinct and is reported as zero. See ext_d.go.
+	quotaStorage     uint64
+	quotaStorageSet  bool
+	quotaMessages    uint64
+	quotaMessagesSet bool
+	metadata         map[imap.MetadataEntryName]string
 	// urlAuthKeys holds the per-mailbox URLAUTH secrets. See ext_e.go.
 	urlAuthKeys map[string]urlAuthKey
 	// sessions are the live sessions on this account, so a change in one can

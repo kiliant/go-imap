@@ -87,6 +87,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- `imapclient.MultiSearchMailboxes` encodes multiple mailbox names as a
+  parenthesized list, as required by RFC 5465 and RFC 7377. Correct the
+  `MultiSearchInboxes` documentation to describe delivery destinations and
+  the personal-namespace fallback. No signature change. (#54, third review)
+
 - **imapcodec:** accept atom, quoted and literal astring arguments for SEARCH
   string keys and HEADER values, allowing commands such as `SEARCH FROM alice`.
   No exported API change. (#127)
@@ -133,6 +138,33 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** correct the `QUOTA=RES-STORAGE` backend obligation introduced
+  in #177: STATUS DELETED-STORAGE is in octets, not kibibytes. Memory now
+  returns the sum of deleted messages' octet sizes. STORAGE quota usage
+  remains in units of 1024 octets. (#54, third review A1)
+- **BREAKING behaviour:** gate SAVEDBEFORE, SAVEDON and SAVEDSINCE on
+  SAVEDATE. Reject unclassified date, size, interval, object-ID and MODSEQ
+  metadata keys before backend calls or `NewSearchQuery` construction,
+  enforcing the existing capability guarantee. STATUS RECENT and NOTIFY
+  RECENT are unavailable in rev2. No signature change. (#54, B1/D4)
+- **BREAKING:** remove `message.MatchOptions.SavedUIDs`, a field the
+  framework's SEARCHRES normalization made unusable by backends.
+  `message.Match` returns `ErrUnsupportedCriteria` for unresolved
+  `imap.SearchSavedResult`, including nested and short-circuited criteria.
+  The message package has not yet had a tagged release. (#54, B4)
+- Document `Session.Create`'s trailing hierarchy declaration: backends create
+  the name without the final delimiter. Memory and Maildir now do so, and
+  the framework uses the backend's delimiter for the post-CREATE MAILBOXID
+  lookup. Clarify `StatusOptions.Items` and `SessionUpdate.Status` contracts.
+  No signature change. (#54, B2/B5)
+- **BREAKING behaviour:** MULTISEARCH parses RFC 7377 source filters
+  (`mailboxes`, `subtree`, `subtree-one`, `personal`, `subscribed`,
+  `inboxes`, `selected`) and expands them through LIST and, for personal
+  sources, `NamespaceSession` when available. The previous non-standard
+  `IN (name …)` form receives BAD. Document on `MultiSearchSession` that
+  `inboxes` uses RFC 5465's personal-namespace fallback; no new interface or
+  method is required. No signature change. (#54, C9/D1)
+
 - **BREAKING:** IMAP4REV2 now requires the backend-only `STATUS-DELETED`
   witness. Memory and Maildir supply it and answer STATUS DELETED. Backends
   without it no longer advertise or enable rev2. (#176)
@@ -154,7 +186,6 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - Extend the request-field binding gate to `AppendMessage`. Correct APPEND
   staging, QRESYNC validation, memory authentication/support and server option
   defaults documentation; name `NewSearchQuery`'s options parameter. (#181, #182)
-
 
 - Maildir format 4 persists compact transaction changes between bounded full
   checkpoints, and indexes delivery directories with change timestamps.
@@ -422,6 +453,21 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- SEARCHRES substitutes `NOT ALL` for unset or empty saved results, so
+  `SearchQuery.Criteria` does not impose a new empty-UID-set convention on
+  existing backends. No signature change. (#54, B3)
+- Memory reports ACL creation right `k`, expands legacy `c`/`d` rights on
+  SETACL, and includes their aliases in ACL/MYRIGHTS replies. NOTIFY STATUS
+  includes HIGHESTMODSEQ when available. Unlimited quota resources are
+  omitted, explicit zero limits remain visible, and SETQUOTA validates and
+  replaces the entire limit set atomically. No exported API change.
+  (#54, D2/D3/D5)
+- NOTIFY STATUS responses pushed while the backend handles NOTIFY SET now
+  precede its tagged OK, as RFC 5465 section 3 requires for the STATUS
+  indicator; `NotifyConfig.StatusOnSet` documents the timing. Queued NOTIFY
+  events are also delivered at the start of every command, so a NOOP no
+  longer completes ahead of them. No signature change. (#54, third review)
 
 - Resolve SEARCHRES `$` to the selection's saved UIDs at every depth before
   SEARCH, SORT, THREAD and selected-source ESEARCH reach a backend; unset and

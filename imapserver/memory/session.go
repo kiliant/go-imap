@@ -136,6 +136,7 @@ func (s *session) Status(ctx context.Context, name string, options *imapserver.S
 }
 
 func (s *session) Create(ctx context.Context, name string, options *imapserver.CreateOptions) error {
+	name = strings.TrimSuffix(name, "/")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -419,7 +420,7 @@ func statusDataLocked(m *mailbox, options *imapserver.StatusOptions) *imap.Statu
 					size += uint64(len(msg.raw))
 				}
 			}
-			data.Values[keyword] = (size + 1023) / 1024
+			data.Values[keyword] = size
 		case imap.StatusItemDeleted:
 			var deleted uint64
 			for _, msg := range m.messages {

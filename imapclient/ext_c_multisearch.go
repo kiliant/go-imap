@@ -33,8 +33,9 @@ type MultiSearchSubscribed struct{ _ struct{} }
 
 func (MultiSearchSubscribed) multiSearchSource() {}
 
-// MultiSearchInboxes searches all mailboxes named "INBOX" or that have the
-// \Inbox special-use attribute. RFC 7377 via RFC 5465.
+// MultiSearchInboxes searches personal mailboxes that can receive delivery.
+// Servers unable to determine that set search all personal mailboxes instead.
+// RFC 7377 via RFC 5465 section 6.3.
 type MultiSearchInboxes struct{ _ struct{} }
 
 func (MultiSearchInboxes) multiSearchSource() {}
@@ -322,15 +323,9 @@ func writeMultiSearchSource(enc *imapwire.Encoder, src MultiSearchSource) {
 	case *MultiSearchInboxes:
 		enc.Atom("inboxes")
 	case MultiSearchMailboxes:
-		enc.Atom("mailboxes")
-		for _, name := range s.Names {
-			enc.SP().Mailbox(name)
-		}
+		writeMultiSearchMailboxNames(enc, s.Names)
 	case *MultiSearchMailboxes:
-		enc.Atom("mailboxes")
-		for _, name := range s.Names {
-			enc.SP().Mailbox(name)
-		}
+		writeMultiSearchMailboxNames(enc, s.Names)
 	case MultiSearchSubtree:
 		if s.OneLevel {
 			enc.Atom("subtree-one")
@@ -347,6 +342,16 @@ func writeMultiSearchSource(enc *imapwire.Encoder, src MultiSearchSource) {
 		enc.SP().Mailbox(s.Mailbox)
 	default:
 		enc.Atom("selected") // unreachable after validation; keeps encoder moving
+	}
+}
+
+// RFC 5465's one-or-more-mailbox is one name or a parenthesized list.
+func writeMultiSearchMailboxNames(enc *imapwire.Encoder, names []string) {
+	enc.Atom("mailboxes").SP()
+	if len(names) == 1 {
+		enc.Mailbox(names[0])
+	} else {
+		enc.List(len(names), func(i int) { enc.Mailbox(names[i]) })
 	}
 }
 

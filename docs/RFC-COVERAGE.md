@@ -276,9 +276,12 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 [^srvmultisearch]: The ESEARCH command, searching mailboxes the connection has
     not selected. Each result carries its mailbox and UIDVALIDITY, without which
-    a UID from another mailbox is meaningless. RFC 7377's scope options
-    (`subtree`, `mailboxes`, `personal`) are refused rather than misread as
-    mailbox names; plain names are supported. Message sequence numbers are
+    a UID from another mailbox is meaningless. RFC 7377's source filters
+    (`mailboxes`, `subtree`, `subtree-one`, `personal`, `subscribed`,
+    `inboxes`, `selected`) are expanded by the framework through LIST and
+    NAMESPACE; `inboxes` uses RFC 5465 section 6.3's fallback to `personal`.
+    Bare mailbox names are not RFC syntax and receive BAD. Only the ALL return
+    option is supported. Message sequence numbers and `$` are
     resolved against the selection when no IN clause is given and refused when
     one is: a sequence number indexes into a mailbox the client has not selected,
     so there is nothing to resolve it against and answering anyway would return a

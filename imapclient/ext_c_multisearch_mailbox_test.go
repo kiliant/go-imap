@@ -59,3 +59,33 @@ func TestMultiSearchMailboxEncoding(t *testing.T) {
 		})
 	}
 }
+
+func TestMultiSearchMailboxListSyntax(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source MultiSearchSource
+		want   string
+	}{
+		{"single", MultiSearchMailboxes{Names: []string{"INBOX"}}, "mailboxes INBOX"},
+		{"multiple", MultiSearchMailboxes{Names: []string{"INBOX", "Archive"}}, "mailboxes (INBOX Archive)"},
+		{"pointer", &MultiSearchMailboxes{Names: []string{"folder one", "Archive"}}, `mailboxes ("folder one" Archive)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent string
+			client, _ := extCDial(t, func(tag, line string) string {
+				sent = line
+				return tag + " OK done\r\n"
+			})
+			extCReady(client, []string{"IMAP4REV1", "MULTISEARCH", "ESEARCH"}, nil, true)
+			_, err := client.MultiSearch(imap.SearchAll, &MultiSearchOptions{
+				Sources: []MultiSearchSource{tc.source},
+			}).Wait(extCContext(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(sent, "IN ("+tc.want+") RETURN () ALL") {
+				t.Fatalf("sent = %q, want source %s", sent, tc.want)
+			}
+		})
+	}
+}

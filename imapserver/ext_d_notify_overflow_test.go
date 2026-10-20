@@ -89,15 +89,21 @@ func TestNotifyOverflowEndsRegistration(t *testing.T) {
 		t.Fatal(line)
 	}
 	writeUpdateOrderCommand(t, clientSide, "N1 NOTIFY SET (PERSONAL (MessageNew))\r\n")
-	if line := readLine(); !strings.HasPrefix(line, "N1 OK ") {
-		t.Fatal(line)
-	}
-	old := <-backend.updaters
-	for line := readLine(); !strings.HasPrefix(line, "* OK [NOTIFICATIONOVERFLOW]"); line = readLine() {
-		if !strings.HasPrefix(line, "* STATUS ") {
+	// Updates pushed during Notify are drained before the tagged OK (RFC 5465
+	// section 3), so an overflow of that initial burst is reported first.
+	overflowed := false
+	for line := readLine(); !strings.HasPrefix(line, "N1 OK "); line = readLine() {
+		switch {
+		case strings.HasPrefix(line, "* OK [NOTIFICATIONOVERFLOW]"):
+			overflowed = true
+		case !strings.HasPrefix(line, "* STATUS "):
 			t.Fatalf("unexpected overflow response: %q", line)
 		}
 	}
+	if !overflowed {
+		t.Fatal("NOTIFICATIONOVERFLOW did not precede NOTIFY's tagged OK")
+	}
+	old := <-backend.updaters
 	select {
 	case err := <-backend.stopped:
 		if !errors.Is(err, ErrUpdaterClosed) {
@@ -115,11 +121,11 @@ func TestNotifyOverflowEndsRegistration(t *testing.T) {
 	}
 	// A client can establish a fresh registration after the overflow.
 	writeUpdateOrderCommand(t, clientSide, "N3 NOTIFY SET (PERSONAL (MessageNew))\r\n")
+	if line := readLine(); !strings.HasPrefix(line, "* STATUS resumed (MESSAGES 5)") {
+		t.Fatalf("new registration did not deliver before its tagged OK: %q", line)
+	}
 	if line := readLine(); !strings.HasPrefix(line, "N3 OK ") {
 		t.Fatal(line)
-	}
-	if line := readLine(); !strings.HasPrefix(line, "* STATUS resumed (MESSAGES 5)") {
-		t.Fatalf("new registration did not deliver: %q", line)
 	}
 	if fresh := <-backend.updaters; fresh == old {
 		t.Fatal("new registration reused closed updater")
