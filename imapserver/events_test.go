@@ -137,6 +137,9 @@ func TestServerEventConnectionFailures(t *testing.T) {
 				_, _ = clientSide.Write([]byte("A NOOP\r\n"))
 				_, _ = reader.ReadString('\n')
 				_, _ = clientSide.Write([]byte("B NOOP\r\n"))
+				if line, err := reader.ReadString('\n'); err != nil || !strings.HasPrefix(line, "* BYE ") {
+					t.Fatalf("command limit response = %q, %v", line, err)
+				}
 			case "preauth":
 				want = ServerEventTimeout
 			case "tls":

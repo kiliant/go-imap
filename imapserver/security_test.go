@@ -57,12 +57,12 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "goroutines leaked after the suite:\n%s\n", leaked)
 			code = 1
 		}
-		// The FETCH spool (cmd_common.go) is the one path that puts a file on
-		// disk. A connection that dies mid-FETCH must still remove it, or a
+		// FETCH and APPEND stage literals on disk. A connection that dies
+		// mid-literal must still remove its temporary files, or a
 		// long-lived server accumulates them until the filesystem fills — a
 		// denial of service that leaves no trace in the protocol.
 		if after := tempSpoolFiles(); len(after) > len(before) {
-			fmt.Fprintf(os.Stderr, "FETCH spool files leaked: %v\n", after)
+			fmt.Fprintf(os.Stderr, "literal spool files leaked: %v\n", after)
 			code = 1
 		}
 	}
@@ -74,7 +74,7 @@ func TestMain(m *testing.M) {
 }
 
 func tempSpoolFiles() []string {
-	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "go-imap-fetch-*"))
+	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "go-imap-*-*"))
 	return matches
 }
 
@@ -202,8 +202,7 @@ func TestIncompleteLiteralThenDisconnect(t *testing.T) {
 
 // TestDisconnectDuringAppendPayload sends part of a literal and then vanishes,
 // which is the harder half of the same class: the payload reader is mid-stream
-// with a byte count it will never reach, and the backend already holds an open
-// Append call.
+// with a byte count it will never reach. No staged bytes may reach the backend.
 func TestDisconnectDuringAppendPayload(t *testing.T) {
 	h := newSecurityHarness(t, imapserver.Limits{})
 	h.login()

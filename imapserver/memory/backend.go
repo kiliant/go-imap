@@ -50,7 +50,7 @@ type account struct {
 	quotaMessages uint64
 	metadata      map[imap.MetadataEntryName]string
 	// urlAuthKeys holds the per-mailbox URLAUTH secrets. See ext_e.go.
-	urlAuthKeys map[string][]byte
+	urlAuthKeys map[string]urlAuthKey
 	// sessions are the live sessions on this account, so a change in one can
 	// be reported to a NOTIFY registration in another. See ext_d.go.
 	sessions map[*session]struct{}
@@ -118,12 +118,13 @@ func newAccount(password string) *account {
 // support modification sequences", which is what NOMODSEQ reports.
 func (a *account) createMailboxLocked(name string) *mailbox {
 	m := &mailbox{
-		name:        name,
-		uidValidity: a.nextUIDValidity,
-		uidNext:     1,
-		revision:    1,
-		flags:       defaultMailboxFlags(),
-		watchers:    make(map[*selected]*imapserver.Updater),
+		name:          name,
+		uidValidity:   a.nextUIDValidity,
+		uidNext:       1,
+		revision:      1,
+		highestModSeq: 1,
+		flags:         defaultMailboxFlags(),
+		watchers:      make(map[*selected]*imapserver.Updater),
 	}
 	a.nextUIDValidity++
 	a.mailboxes[mailboxKey(name)] = m
@@ -160,7 +161,7 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if a == nil || (!verified && credentials.Password != a.password) {
 		return nil, authenticationError()
 	}
-	s := &session{account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
+	s := &session{backend: b, account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
 	a.mu.Lock()
 	if a.sessions == nil {
 		a.sessions = make(map[*session]struct{})

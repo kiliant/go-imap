@@ -64,11 +64,14 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)",
 		},
 		"MetadataSession": {
-			"GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *MetadataOptions) (*imap.MailboxMetadata, error)",
-			"SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *MetadataOptions) error",
+			"GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *GetMetadataOptions) (*imap.MailboxMetadata, error)",
+			"SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *SetMetadataOptions) error",
 		},
 		"MoveMailbox": {
 			"Move(ctx context.Context, uids imap.UIDSet, destination string, options *MoveOptions) (*imap.CopyData, error)",
+		},
+		"MultiAppendSession": {
+			"MultiAppend(ctx context.Context, mailbox string, messages []AppendMessage, options *MultiAppendOptions) (*imap.MultiAppendData, error)",
 		},
 		"MultiSearchSession": {
 			"MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)",
@@ -122,9 +125,9 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"Thread(ctx context.Context, query *SearchQuery, algorithm imap.ThreadAlgorithm, options *ThreadOptions) ([]imap.ThreadNode, error)",
 		},
 		"URLAuthSession": {
-			"FetchURLAuth(ctx context.Context, url string, options *URLAuthOptions) (io.ReadCloser, error)",
-			"GenerateURLAuth(ctx context.Context, url, mechanism string, options *URLAuthOptions) (string, error)",
-			"ResetURLAuthKey(ctx context.Context, mailbox string, options *URLAuthOptions) error",
+			"FetchURLAuth(ctx context.Context, url string, options *URLFetchOptions) (*URLFetchResult, error)",
+			"GenerateURLAuth(ctx context.Context, url, mechanism string, options *GenURLAuthOptions) (string, error)",
+			"ResetURLAuthKey(ctx context.Context, mailbox string, options *ResetURLAuthKeyOptions) error",
 		},
 		"UnauthenticateSession": {
 			"Unauthenticate(ctx context.Context, options *UnauthenticateOptions) error",
@@ -247,14 +250,15 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 		"ExpungeOptions.MutationOptions": true,
 		// REPLACE carries the same mutation origin as every other mutating
 		// command; only its extension-specific fields bind to a feature.
-		"ReplaceOptions.MutationOptions": true,
-		"Options.TLSConfig":              true,
-		"Options.RequireTLS":             true,
-		"Options.AllowInsecureAuth":      true,
-		"Options.Greeting":               true,
-		"Options.ServerID":               true,
-		"Options.Limits":                 true,
-		"Options.OnError":                true,
+		"ReplaceOptions.MutationOptions":     true,
+		"MultiAppendOptions.MutationOptions": true,
+		"Options.TLSConfig":                  true,
+		"Options.RequireTLS":                 true,
+		"Options.AllowInsecureAuth":          true,
+		"Options.Greeting":                   true,
+		"Options.ServerID":                   true,
+		"Options.Limits":                     true,
+		"Options.OnError":                    true,
 		// STORE's operation and flag list are the rev1 command itself, not an
 		// extension of it.
 		"StoreFlags.Op":    true,
@@ -446,10 +450,8 @@ func TestBackendMethodsTakeOptions(t *testing.T) {
 		"message.Message.Size":          true,
 		"message.Message.Envelope":      true,
 		"message.Message.BodyStructure": true,
-		// The section request and suite harness are guarded, growable
-		// payloads, like the writer payloads above.
-		"message.Message.OpenBodySection": true,
-		"backendtest.Run":                 true,
+		// The suite harness is a guarded, growable configuration payload.
+		"backendtest.Run": true,
 	}
 
 	fset := token.NewFileSet()

@@ -27,6 +27,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imap.Address.SourceRoute` preserves the obsolete RFC 822 source-route
+  field in ENVELOPE decoding and encoding. Additive; no existing signature
+  changes. Stored routed addresses and addresses with comments in the local
+  part also remain searchable by their normalized mailbox. (#165)
+
 - `imap.UIDBatchesData`, `UIDBatch`, `UIDBatchIndexRange`, response codes
   `CodeTooFew` and `CodeTooMany`, and `imapclient.Client.UIDBatches` with
   client-owned `UIDBatchesData` and guarded `UIDBatchesOptions`: RFC 10022
@@ -138,6 +143,84 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** memory URLAUTH generation rejects missing/invalid access
+  identifiers, wrong key owners, nonexistent mailboxes, malformed message URLs
+  and expired requests with BAD. Valid generation preserves the exact signed
+  rump bytes. Resolution enforces access identities and expiry, reads from the
+  URL owner's account, and honors UIDVALIDITY, sections and partial ranges.
+  Hex verifiers are compared in constant time after decoding. Mailbox keys bind
+  to UIDVALIDITY and are removed on delete/rename, preventing old tokens from
+  exposing replacement mailboxes. The backend grants no submit role. No exported
+  signatures change; conformance fixtures now supply valid rump URLs. (#162)
+
+- `CapabilitySupport` documents the complete backend witness catalogue:
+  advertisement gates, the LIST-EXTENDED routing token, backend-only
+  BINARY-FETCH, required interfaces, states and obligations. Clarify that a
+  Session answer replaces the Backend answer even when false. A gate compares
+  the catalogue against compiled descriptors, backend feature witnesses and
+  static spoken tokens in both directions. No exported API change. (#134)
+
+- **BREAKING:** IMAP4REV2 advertisement now requires `CapabilitySupport`'s
+  backend-only BINARY-FETCH witness, independently of the full BINARY token.
+  Backends without it lose the rev2 umbrella before the v1 freeze. Memory and
+  Maildir witness the fetch half. `message.Message.OpenBinarySection` and
+  guarded `message.BinarySectionOptions` share bounded-buffer CTE decoding,
+  exact length measurement, text CRLF conversion and decoded partial ranges.
+  BINARY fetches report partial origins, respect PEEK/Seen, reject containers
+  and return UNKNOWN-CTE for unknown or malformed CTEs. Unsupported FETCH errors
+  no longer expose Go type names. No existing exported signatures change. (#126)
+
+- **BREAKING:** `Limits.MaxLiteralBytes` now defaults to 32 MiB instead of
+  64 KiB, and non-positive `Limits.MaxCommands` means unlimited instead of
+  selecting 10,000. Positive command limits send BYE before disconnecting.
+  Negative `Limits.MaxConnections` and `MaxConnectionsPerIP` disable those
+  connection limits; zero retains the existing defaults. Every `Limits` field
+  documents its default and sentinel semantics. Resource-limit defaults may be
+  retuned in minor releases, with a changelog entry; explicitly set positive
+  values to retain application policy across upgrades. (#124)
+- Oversized APPEND literals return `NO [TOOBIG]`, including later MULTIAPPEND
+  and CATENATE parts. An oversized non-synchronising literal receives its
+  refusal before the connection closes without reading its payload. STATUS
+  and LIST-STATUS cap APPENDLIMIT at the framework's literal limit, preserving
+  smaller backend limits without changing backend-owned maps. (#124)
+
+- **BREAKING:** `URLAuthSession` now uses guarded `GenURLAuthOptions`,
+  `URLFetchOptions` and `ResetURLAuthKeyOptions{Mechanisms}` in place of
+  `URLAuthOptions`. `FetchURLAuth` returns guarded `*URLFetchResult` with owned
+  `Body`, `Size` and `HasSize`; known-size bodies stream, unknown-size bodies
+  spool to disk. Correct URLFETCH's URL/nstring wire pairs, accept multiple
+  GENURLAUTH pairs and RESETKEY mechanisms, and withdraw unimplemented
+  URLAUTH=BINARY. Memory supplies exact sizes, hexadecimal tokens and atomic
+  mechanism validation for key resets. (#122)
+
+- **BREAKING:** `Limits.MaxLiteralBytes` also bounds aggregate APPEND and
+  URLFETCH payload bytes per command. CATENATE parts spool to a bounded temporary
+  file, with later literals drained and later URLs skipped after refusal.
+  Oversized resolved content returns NO [TOOBIG]; readers and temporary files
+  are released on success, refusal, cancellation and framing failure. (#133)
+
+- **BREAKING:** replace `imapserver.MetadataOptions` with guarded
+  `GetMetadataOptions` and `SetMetadataOptions`, and update `MetadataSession`
+  signatures and both backends. GETMETADATA retains the depth and size fields;
+  SETMETADATA has independent empty options. Document shared-command and future
+  field naming contracts on `ACLOptions`, `QuotaOptions`, `LanguageOptions`
+  and `ComparatorOptions`. (#131)
+
+- **BREAKING:** `message.Message.OpenBodySection` now ends in guarded
+  `*message.SectionOptions`. Nil preserves the existing stored-byte behaviour;
+  retain the reader, size and error results. Update both backends, examples,
+  tests and fuzzing, and remove the method's options-gate exemption. (#128)
+
+- **BREAKING:** MULTIAPPEND now requires the new optional `MultiAppendSession`
+  atomic batch interface, with guarded `AppendMessage` and `MultiAppendOptions`.
+  It returns shared `imap.MultiAppendData`; memory commits all messages and
+  publishes one update batch. Maildir and other backends without atomic support
+  no longer advertise MULTIAPPEND. Stage complete APPEND commands in a temporary
+  file before backend calls, including single-message commands, so malformed
+  later input and zero-length messages leave the mailbox unchanged. Plain
+  literals remain file streams rather than whole-message framework buffers.
+  Add opt-in backend conformance for rollback, cancellation and update chains.
+  (#121)
 - Interop acceptance recognises current imaptest group and per-command
   summaries as well as the legacy summary. Nonzero failures fail the test even
   without an Error-prefixed complaint; the synchronising-literal tool exception
@@ -229,6 +312,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `imapserver.UpdateRecent{NumRecent}` reports a selection-specific absolute
+  RECENT count through the existing extensible update vocabulary. Memory and
+  Maildir claim new messages for one read-write selection; EXAMINE leaves
+  pending claims intact. Maildir persists pending/claimed state across reopen,
+  and treats old records without that state conservatively as recent. FETCH,
+  STORE and SEARCH use the selection's flags; rev2 omits all RECENT wire data.
+  Additive; existing backend interfaces are unchanged. (#160)
+
 - `imapserver.CapabilityFilter` and guarded `CapabilityFilterOptions` let an
   opted-in Backend or Session withdraw backend-backed capabilities without
   changing legacy `CapabilitySupport` semantics. Session policy takes precedence;
@@ -299,6 +390,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- Resolve UID SEARCH wildcards against the selected maximum, normalize
+  reversed PARTIAL windows, and report the first CONDSTORE activation clock.
+  Flag MODSEQ searches may use the supported single message-wide clock.
+  Correct nested message/rfc822 and multipart/digest section interpretation.
+  Restore modified UTF-7 LIST matching, LSUB hierarchy entries and
+  same-mailbox MOVE. CONTEXT=SEARCH refreshes additions and flag changes, and
+  reports removals using pre-expunge sequence numbers. The interop ID corpus
+  uses an explicitly configured 64 KiB line allowance; production defaults
+  are unchanged. (#165)
 
 - **imapserver:** accept standalone FETCH items, including body sections and
   modifiers, through the shared item parser. Both reference backends return a

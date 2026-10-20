@@ -148,6 +148,8 @@ func startOn(ctx context.Context, address string, factory backendFactory) (*defi
 			// test in this suite is protocol conformance, and every other
 			// server in the matrix accepts the same fixture.
 			MaxLiteralBytes: 8 << 20,
+			// RFC 2971 allows 30 ID fields of up to 1024 value octets.
+			MaxCommandLineBytes: 64 << 10,
 		},
 	})
 

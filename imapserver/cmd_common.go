@@ -485,29 +485,33 @@ func replaceFetchLiteralReader(value imap.FetchData, reader io.Reader) (imap.Fet
 }
 
 func stageFetchLiteral(reader io.Reader, limit int64) (io.Reader, int64, func(), error) {
-	file, err := os.CreateTemp("", "go-imap-fetch-*")
+	return stageResponseLiteral(reader, limit, "fetch", commandLimitError("FETCH response byte limit exceeded"))
+}
+
+func stageResponseLiteral(reader io.Reader, limit int64, kind string, tooBig error) (io.Reader, int64, func(), error) {
+	file, err := os.CreateTemp("", "go-imap-"+kind+"-*")
 	if err != nil {
-		return nil, 0, func() {}, fmt.Errorf("stage FETCH literal: %w", err)
+		return nil, 0, func() {}, fmt.Errorf("stage %s literal: %w", kind, err)
 	}
 	cleanup := func() {
 		_ = file.Close()
 		_ = os.Remove(file.Name())
 	}
-	count, copyErr := io.Copy(file, io.LimitReader(reader, limit+1))
+	count, copyErr := io.Copy(file, io.LimitReader(reader, probingLimit(limit)))
 	if closer, ok := reader.(io.Closer); ok {
 		_ = closer.Close()
 	}
 	if copyErr != nil {
 		cleanup()
-		return nil, 0, func() {}, fmt.Errorf("stage FETCH literal: %w", copyErr)
+		return nil, 0, func() {}, fmt.Errorf("stage %s literal: %w", kind, copyErr)
 	}
 	if count > limit {
 		cleanup()
-		return nil, 0, func() {}, commandLimitError("FETCH response byte limit exceeded")
+		return nil, 0, func() {}, tooBig
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		cleanup()
-		return nil, 0, func() {}, fmt.Errorf("rewind FETCH literal: %w", err)
+		return nil, 0, func() {}, fmt.Errorf("rewind %s literal: %w", kind, err)
 	}
 	return file, count, cleanup, nil
 }

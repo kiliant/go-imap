@@ -50,7 +50,7 @@ func TestExactSections(t *testing.T) {
 		{"past-end", imap.FetchItemBodySection{Partial: &imap.SectionPartial{Offset: 1000, Size: 10}}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, size, err := m.OpenBodySection(context.Background(), &tc.item)
+			r, size, err := m.OpenBodySection(context.Background(), &tc.item, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,7 +61,7 @@ func TestExactSections(t *testing.T) {
 		})
 	}
 	for _, item := range []*imap.FetchItemBodySection{nil, {Part: []int{2}}, {Part: []int{0}}, {HeaderFields: []string{"Subject"}}} {
-		if _, _, err := m.OpenBodySection(context.Background(), item); err == nil {
+		if _, _, err := m.OpenBodySection(context.Background(), item, nil); err == nil {
 			t.Fatalf("invalid section accepted: %#v", item)
 		}
 	}
@@ -70,7 +70,7 @@ func TestExactSections(t *testing.T) {
 func TestMalformedMIME(t *testing.T) {
 	for _, raw := range []string{"", "Subject: no separator", "Content-Type: message/rfc822", "Content-Type: invalid\r\nBroken header\r\n\r\nbody", "Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\nunfinished"} {
 		m := analyze(t, raw)
-		r, size, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{})
+		r, size, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{}, nil)
 		if err != nil || size != int64(len(raw)) || m.BodyStructure() == nil || m.Envelope() == nil {
 			t.Fatalf("best-effort analysis of %q: %v", raw, err)
 		}
@@ -97,7 +97,7 @@ func TestInvalidAndZeroInputs(t *testing.T) {
 		if m.Size() != 0 || m.Envelope() != nil || m.BodyStructure() != nil {
 			t.Fatal("nil/zero accessors did not return zero values")
 		}
-		if _, _, err := m.OpenBodySection(ctx, &imap.FetchItemBodySection{}); err == nil {
+		if _, _, err := m.OpenBodySection(ctx, &imap.FetchItemBodySection{}, nil); err == nil {
 			t.Fatal("unanalysed section accepted")
 		}
 		if _, err := message.Match(ctx, m, message.Metadata{}, imap.SearchAll, nil); err == nil {
@@ -106,7 +106,7 @@ func TestInvalidAndZeroInputs(t *testing.T) {
 	}
 	m := analyze(t, raw)
 	//lint:ignore SA1012 Deliberately verify the documented nil-context refusal.
-	if _, _, err := m.OpenBodySection(nil, &imap.FetchItemBodySection{}); err == nil {
+	if _, _, err := m.OpenBodySection(nil, &imap.FetchItemBodySection{}, nil); err == nil {
 		t.Fatal("nil section context accepted")
 	}
 	//lint:ignore SA1012 Deliberately verify the documented nil-context refusal.
@@ -208,7 +208,7 @@ func TestLargeSourceRemainsStreaming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, size, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{})
+	r, size, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{}, nil)
 	if err != nil || size != source.size {
 		t.Fatalf("large section size = %d, %v", size, err)
 	}
@@ -233,7 +233,7 @@ func TestCancellationAndSourceErrors(t *testing.T) {
 	if _, err := message.Match(ctx, m, message.Metadata{}, imap.SearchAll, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled match = %v", err)
 	}
-	r, _, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{})
+	r, _, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestCancellationAndSourceErrors(t *testing.T) {
 		t.Fatalf("analysis context affected future reads: %q, %v", got, err)
 	}
 	sectionCtx, cancelSection := context.WithCancel(context.Background())
-	r, _, err = m.OpenBodySection(sectionCtx, &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"Missing"}})
+	r, _, err = m.OpenBodySection(sectionCtx, &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"Missing"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestCopiesAndConcurrentOperations(t *testing.T) {
 			defer wg.Done()
 			mutate(reflect.ValueOf(m.Envelope()))
 			mutate(reflect.ValueOf(m.BodyStructure()))
-			r, _, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{Part: []int{1}})
+			r, _, err := m.OpenBodySection(context.Background(), &imap.FetchItemBodySection{Part: []int{1}}, nil)
 			if err != nil {
 				t.Error(err)
 				return

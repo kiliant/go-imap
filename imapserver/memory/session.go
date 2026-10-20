@@ -14,6 +14,7 @@ import (
 )
 
 type session struct {
+	backend *Backend
 	account *account
 	// username is the authenticated identity, which ACL entries are keyed by.
 	// See ext_d.go.
@@ -182,6 +183,7 @@ func (s *session) Delete(ctx context.Context, name string, _ *imapserver.DeleteO
 		return noError(imap.CodeInUse, "mailbox is selected")
 	}
 	delete(s.account.mailboxes, key)
+	delete(s.account.urlAuthKeys, key)
 	return nil
 }
 
@@ -206,6 +208,7 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 		return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
 	}
 	delete(s.account.mailboxes, oldKey)
+	delete(s.account.urlAuthKeys, oldKey)
 	m.name = newName
 	s.account.mailboxes[newKey] = m
 	return nil
@@ -272,7 +275,7 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	uid := m.uidNext
 	m.uidNext++
 	m.messages = append(m.messages, &message{
-		uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
+		recent: true, uid: uid, flags: flags, internalDate: internalDate, raw: raw, analysis: analysis,
 		modSeq: bumpModSeqLocked(m), saveDate: time.Now(),
 	})
 	changes := []imapserver.Update{&imapserver.UpdateAdd{UIDs: []imap.UID{uid}}}
@@ -313,7 +316,18 @@ func (s *session) Select(ctx context.Context, name string, updater *imapserver.U
 		return nil, noError(imap.CodeServerBug, "forced selection failure")
 	}
 	s.selections[selected] = struct{}{}
+	selected.recent = make(map[imap.UID]bool)
+	for _, msg := range m.messages {
+		if msg.recent {
+			selected.recent[msg.uid] = true
+			if !selected.readOnly {
+				msg.recent = false
+			}
+		}
+	}
 	snapshot := snapshotLocked(m, selected.readOnly)
+	snapshot.Status.NumRecent = uint32(len(selected.recent))
+	snapshot.Status.Flags = append(snapshot.Status.Flags, imap.FlagRecent)
 	s.account.mu.Unlock()
 	return &imapserver.SelectResult{Mailbox: selected, Snapshot: snapshot}, nil
 }
@@ -352,6 +366,11 @@ func statusDataLocked(m *mailbox, options *imapserver.StatusOptions) *imap.Statu
 		UIDValidity: m.uidValidity,
 		NumUnseen:   unseen,
 		Values:      make(map[imap.StatusItemKeyword]any),
+	}
+	for _, msg := range m.messages {
+		if msg.recent {
+			data.NumRecent++
+		}
 	}
 	items := []imap.StatusItem{
 		imap.StatusItemMessages,

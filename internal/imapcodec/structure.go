@@ -170,6 +170,8 @@ func readAddress(dec *imapwire.Decoder) (imap.Address, error) {
 		switch field {
 		case 0:
 			addr.Name = imap.DecodeHeader(value)
+		case 1:
+			addr.SourceRoute = value
 		case 2:
 			addr.Mailbox = value
 		case 3:
@@ -189,7 +191,7 @@ func readAddress(dec *imapwire.Decoder) (imap.Address, error) {
 func writeAddress(enc *imapwire.Encoder, addr *imap.Address) {
 	enc.Special('(')
 	enc.NString(encodeHeader(addr.Name), addr.Name == "")
-	enc.SP().NIL() // obsolete source route
+	enc.SP().NString(addr.SourceRoute, addr.SourceRoute == "")
 	enc.SP().NString(addr.Mailbox, addr.Mailbox == "")
 	enc.SP().NString(addr.Host, addr.Host == "")
 	enc.Special(')')

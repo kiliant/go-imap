@@ -113,6 +113,10 @@ type part struct {
 }
 
 func (m *Message) parsePart(start, end int64, depth int) (*part, error) {
+	return m.parsePartType(start, end, depth, "text/plain")
+}
+
+func (m *Message) parsePartType(start, end int64, depth int, defaultType string) (*part, error) {
 	if depth > maxMIMEDepth || m.parts >= maxMIMEParts {
 		return &part{
 			start: start, end: end,
@@ -128,7 +132,11 @@ func (m *Message) parsePart(start, end int64, depth int) (*part, error) {
 		return nil, err
 	}
 	p := &part{start: start, end: end, headers: headers}
-	p.mediaType, p.params = parseContentType(headers.value("Content-Type"))
+	contentType := headers.value("Content-Type")
+	if strings.TrimSpace(contentType) == "" {
+		contentType = defaultType
+	}
+	p.mediaType, p.params = parseContentType(contentType)
 	p.typeName, p.subtype, _ = strings.Cut(p.mediaType, "/")
 	p.encoding = strings.TrimSpace(headers.value("Content-Transfer-Encoding"))
 	if p.encoding == "" {
@@ -178,6 +186,14 @@ func parseContentType(raw string) (string, map[string]string) {
 	return base, nil
 }
 
+func multipartDefaultType(parent *part) string {
+	// RFC 2046 5.1.5: omitted child Content-Type in a digest is message/rfc822.
+	if strings.EqualFold(parent.subtype, "digest") {
+		return "message/rfc822"
+	}
+	return "text/plain"
+}
+
 func (m *Message) multipartChildren(parent *part, boundary string, depth int) ([]*part, error) {
 	delim := "--" + boundary
 	var (
@@ -201,7 +217,7 @@ func (m *Message) multipartChildren(parent *part, boundary string, depth int) ([
 		}
 		if childStart >= 0 {
 			childEnd := stripBoundaryCRLF(m.r, start, childStart)
-			child, err := m.parsePart(childStart, childEnd, depth)
+			child, err := m.parsePartType(childStart, childEnd, depth, multipartDefaultType(parent))
 			if err != nil {
 				return err
 			}
@@ -219,7 +235,7 @@ func (m *Message) multipartChildren(parent *part, boundary string, depth int) ([
 		return nil, err
 	}
 	if childStart >= 0 {
-		child, err := m.parsePart(childStart, parent.end, depth)
+		child, err := m.parsePartType(childStart, parent.end, depth, multipartDefaultType(parent))
 		if err != nil {
 			return nil, err
 		}
@@ -531,11 +547,58 @@ func parseMailboxAddresses(raw string) []imap.Address {
 			continue
 		}
 		address := strings.Trim(token, "<>")
+		name, route := "", ""
+		if start := strings.IndexByte(token, '<'); start >= 0 && strings.HasSuffix(token, ">") {
+			name, address = strings.TrimSpace(token[:start]), token[start+1:len(token)-1]
+		}
+		address = stripAddressComments(address)
+		if strings.HasPrefix(address, "@") {
+			if colon := strings.IndexByte(address, ':'); colon > 0 {
+				route, address = address[:colon], address[colon+1:]
+			}
+		}
 		if at := strings.LastIndexByte(address, '@'); at > 0 && at+1 < len(address) {
-			out = append(out, imap.Address{Mailbox: address[:at], Host: address[at+1:]})
+			out = append(out, imap.Address{Name: cleanHeaderValue(imap.DecodeHeader(name)), SourceRoute: cleanHeaderValue(route), Mailbox: cleanHeaderValue(address[:at]), Host: cleanHeaderValue(address[at+1:])})
 		}
 	}
 	return out
+}
+
+func stripAddressComments(raw string) string {
+	var out strings.Builder
+	depth := 0
+	quoted, escaped := false, false
+	for _, r := range raw {
+		if escaped {
+			if depth == 0 {
+				out.WriteRune(r)
+			}
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			if depth == 0 {
+				out.WriteRune(r)
+			}
+			continue
+		}
+		if r == '"' && depth == 0 {
+			quoted = !quoted
+		}
+		if !quoted && r == '(' {
+			depth++
+			continue
+		}
+		if !quoted && r == ')' && depth > 0 {
+			depth--
+			continue
+		}
+		if depth == 0 && (quoted || r != ' ' && r != '\t') {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
 }
 
 func toIMAPAddress(addr *mail.Address) imap.Address {

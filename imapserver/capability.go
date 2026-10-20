@@ -108,8 +108,15 @@ func init() {
 	})
 }
 
-// rev2Incorporated names the capabilities RFC 9051 §1 folds into IMAP4rev2
-// whose behaviour only the backend can supply. SERVER-DESIGN.md §1 sets the bar:
+// backendFeatureWitnesses are backend-only names, never wire capabilities.
+// They let an umbrella require a subset without claiming the full extension.
+var backendFeatureWitnesses = map[string]func(context.Context, *sessionState, Backend) bool{
+	"BINARY-FETCH": backendSupportsCapability("BINARY-FETCH"),
+}
+
+// rev2Incorporated names capabilities and backend-only feature witnesses for
+// the behaviour RFC 9051 §1 folds into IMAP4rev2 that only the backend can
+// supply. SERVER-DESIGN.md §1 sets the bar:
 // IMAP4REV2 is advertised only when *every* incorporated behaviour is
 // implemented, because "advertising it otherwise is a lie the client cannot
 // detect" — the client has no way to ask which half it got.
@@ -128,6 +135,7 @@ func init() {
 // hand-written conjunction would make it a code change, and the one thing we
 // know about the next revision is that nobody will remember to edit it.
 var rev2Incorporated = []string{
+	"BINARY-FETCH",
 	"CHILDREN",
 	"MOVE",
 	"NAMESPACE",
@@ -136,8 +144,8 @@ var rev2Incorporated = []string{
 	"UIDPLUS",
 }
 
-// witnessesRev2 asks each incorporated capability's own witness rather than
-// repeating it, so a capability cannot be witnessed one way for its own token
+// witnessesRev2 asks each incorporated capability or feature's own witness
+// rather than repeating it, so a capability cannot be witnessed one way for its own token
 // and another way for the umbrella.
 //
 // It is one loop in every state, deliberately. Each witness decides for itself
@@ -159,18 +167,22 @@ func witnessesRev2(ctx context.Context, state *sessionState, backend Backend) bo
 		if witness != nil && !witness(ctx, state, backend) {
 			return false
 		}
-		if witness != nil && !backendAllowsCapability(ctx, state, backend, name) {
+		_, backendOnly := backendFeatureWitnesses[name]
+		if witness != nil && !backendOnly && !backendAllowsCapability(ctx, state, backend, name) {
 			return false
 		}
 	}
 	return true
 }
 
-// capabilityWitness returns the named descriptor's backend witness, or nil when
-// the capability needs no backend support. It returns nil for an unknown name
+// capabilityWitness resolves a backend-only feature or capability descriptor's
+// backend witness, or nil when the capability needs no backend support. It returns nil for an unknown name
 // as well; TestRev2IncorporatedNamesResolve is what stops that being silent,
 // because a typo here would otherwise widen the gate rather than break a build.
 func capabilityWitness(name string) func(context.Context, *sessionState, Backend) bool {
+	if witness := backendFeatureWitnesses[name]; witness != nil {
+		return witness
+	}
 	for _, descriptor := range capabilityDescriptors {
 		if descriptor.Name == name {
 			return descriptor.RequiresBackend

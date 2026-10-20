@@ -2,12 +2,14 @@ package imapserver
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// URLAUTH (RFC 4467), URLAUTH=BINARY (RFC 5524) and URL-PARTIAL (RFC 5550).
+// URLAUTH (RFC 4467) and URL-PARTIAL (RFC 5550).
+// URLAUTH=BINARY is not advertised until its extended syntax is implemented.
 //
 // URLAUTH lets a client hand a third party a URL that grants access to one
 // message, without handing over the account. The authorization token is derived
@@ -17,43 +19,63 @@ import (
 // URLAuthSession is the optional URLAUTH support of RFC 4467.
 type URLAuthSession interface {
 	// GenerateURLAuth returns the authorized form of an IMAP URL: the URL with
-	// its access identifier and authorization token appended.
-	GenerateURLAuth(ctx context.Context, url, mechanism string, options *URLAuthOptions) (string, error)
-	// FetchURLAuth returns the content an authorized URL names, verifying the
-	// token first. A nil reader means the URL did not resolve, which is not an
-	// error: RFC 4467 section 5.3 reports that as NIL beside the URL.
-	//
-	// It streams rather than returning bytes because the content is a whole
-	// message: RFC 4469 CATENATE builds a new message out of URL parts fetched
-	// through this path, and RFC 5524 URLAUTH=BINARY returns decoded binary.
-	// Buffering either in full before a single byte reaches the wire is the
-	// cost this signature exists to avoid.
-	FetchURLAuth(ctx context.Context, url string, options *URLAuthOptions) (io.ReadCloser, error)
+	// its mechanism and authorization token appended to the unmodified rump URL.
+	GenerateURLAuth(ctx context.Context, url, mechanism string, options *GenURLAuthOptions) (string, error)
+	// FetchURLAuth verifies an authorized URL and returns its content. Nil
+	// means it did not resolve and is reported as NIL, without failing other
+	// URLs. A non-nil result must supply Body, including for empty content.
+	// The framework closes Body exactly once, including on errors and refusal.
+	// Reads must respect ctx; known lengths stream directly to the client.
+	FetchURLAuth(ctx context.Context, url string, options *URLFetchOptions) (*URLFetchResult, error)
 	// ResetURLAuthKey invalidates the secrets behind a mailbox's URLs. An empty
-	// mailbox name resets every mailbox, which RFC 4467 section 5.1 defines as
-	// the way to revoke everything at once.
-	ResetURLAuthKey(ctx context.Context, mailbox string, options *URLAuthOptions) error
+	// mailbox name revokes every mailbox key, per RFC 4467's RESETKEY command.
+	ResetURLAuthKey(ctx context.Context, mailbox string, options *ResetURLAuthKeyOptions) error
 }
 
-// URLAuthOptions configures a URLAUTH operation. A nil pointer selects the
-// defaults.
+// GenURLAuthOptions configures GENURLAUTH. A nil pointer selects the defaults.
 // Construct with keyed fields only; fields may be added in a future release.
-type URLAuthOptions struct{ _ struct{} }
+type GenURLAuthOptions struct{ _ struct{} }
+
+// URLFetchOptions configures URLFETCH. A nil pointer selects the defaults.
+// Construct with keyed fields only; fields may be added in a future release.
+type URLFetchOptions struct{ _ struct{} }
+
+// ResetURLAuthKeyOptions configures RESETKEY. A nil pointer selects the defaults.
+// Construct with keyed fields only; fields may be added in a future release.
+type ResetURLAuthKeyOptions struct {
+	// Mechanisms selects the keys to replace for a nonempty mailbox. Empty
+	// selects INTERNAL. With an empty mailbox all keys are revoked and no
+	// mechanisms are supplied. Unknown mechanisms must fail without resetting
+	// keys for supported mechanisms.
+	Mechanisms []string `imapfeature:"urlauth"`
+	_          struct{}
+}
+
+// URLFetchResult is resolved URL content. Body transfers to the framework,
+// which closes it on every path, even when returned together with an error.
+// Construct with keyed fields only; fields may be added in a future release.
+type URLFetchResult struct {
+	// Body supplies the resolved message or section bytes. It must be non-nil.
+	Body io.ReadCloser
+	// Size is the exact remaining octet count when HasSize is true. The body
+	// must supply that many bytes; failure after literal framing closes the
+	// connection. Negative known sizes are invalid. A known zero is empty
+	// content, distinct from an unresolved URL (a nil result).
+	Size int64
+	// HasSize allows streaming without staging. Otherwise Body is spooled to
+	// a bounded temporary file before the literal is announced.
+	HasSize bool
+	_       struct{}
+}
+
+const featureURLAuth featureID = "urlauth"
 
 func init() {
+	registerFeatures(featureDescriptor{ID: featureURLAuth, Active: func(_ *sessionState, advertised map[string]bool) bool { return advertised["URLAUTH"] }})
 	registerCapabilities(
 		capabilityDescriptor{
 			Name:            "URLAUTH",
 			States:          stateMaskAuthenticated | stateMaskSelected,
-			RequiresBackend: sessionImplements[URLAuthSession](),
-		},
-		// URLAUTH=BINARY says URLFETCH can return the content with its
-		// transfer encoding undone, which needs the same BINARY decoding the
-		// backend already does for BINARY[].
-		capabilityDescriptor{
-			Name:            "URLAUTH=BINARY",
-			States:          stateMaskAuthenticated | stateMaskSelected,
-			Depends:         []string{"URLAUTH", "BINARY"},
 			RequiresBackend: sessionImplements[URLAuthSession](),
 		},
 		// URL-PARTIAL (RFC 5550) allows a byte range in the URL. The range is
@@ -71,23 +93,31 @@ func init() {
 	registerCommand("RESETKEY", stateMaskAuthenticated|stateMaskSelected, false, parseResetKey, handleResetKey)
 }
 
-type genURLAuthArgs struct{ url, mechanism string }
+type genURLAuthPair struct{ url, mechanism string }
+type genURLAuthArgs struct{ pairs []genURLAuthPair }
 
-// parseGenURLAuth reads "GENURLAUTH url mechanism [url mechanism ...]".
-// RFC 4467 section 5.2. Only the first pair is served; the rest are rejected
-// rather than silently dropped.
+// parseGenURLAuth reads one or more rump-URL/mechanism pairs (RFC 4467 §9).
 func parseGenURLAuth(decoder *imapwire.Decoder) (any, int64, error) {
+	args := &genURLAuthArgs{}
+	var size int64
 	if !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
-	args := &genURLAuthArgs{}
-	if !decoder.ExpectAstring(&args.url) || !decoder.ExpectSP() || !decoder.ExpectAtom(&args.mechanism) {
-		return nil, 0, decoder.Err()
+	for {
+		var pair genURLAuthPair
+		if !decoder.ExpectAstring(&pair.url) || !decoder.ExpectSP() || !decoder.ExpectAtom(&pair.mechanism) {
+			return nil, 0, decoder.Err()
+		}
+		args.pairs = append(args.pairs, pair)
+		size += int64(len(pair.url) + len(pair.mechanism))
+		if !decoder.SP() {
+			break
+		}
 	}
 	if !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
 	}
-	return args, int64(len(args.url) + len(args.mechanism)), nil
+	return args, size, nil
 }
 
 func parseURLFetch(decoder *imapwire.Decoder) (any, int64, error) {
@@ -115,33 +145,56 @@ func parseURLFetch(decoder *imapwire.Decoder) (any, int64, error) {
 	return urls, int64(size), nil
 }
 
+type resetURLAuthKeyArgs struct {
+	mailbox string
+	options ResetURLAuthKeyOptions
+}
+
 func parseResetKey(decoder *imapwire.Decoder) (any, int64, error) {
-	var mailbox string
+	args := &resetURLAuthKeyArgs{}
+	var size int64
 	if decoder.SP() {
-		if !decoder.ExpectMailbox(&mailbox) {
+		if !decoder.ExpectMailbox(&args.mailbox) {
 			return nil, 0, decoder.Err()
+		}
+		size += int64(len(args.mailbox))
+		for decoder.SP() {
+			var mechanism string
+			if !decoder.ExpectAtom(&mechanism) {
+				return nil, 0, decoder.Err()
+			}
+			args.options.Mechanisms = append(args.options.Mechanisms, mechanism)
+			size += int64(len(mechanism))
 		}
 	}
 	if !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
 	}
-	return mailbox, int64(len(mailbox)), nil
+	return args, size, nil
 }
 
 func handleGenURLAuth(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*genURLAuthArgs)
-	if args == nil {
+	if args == nil || len(args.pairs) == 0 {
 		return c.writeBad(command.tag, "invalid GENURLAUTH arguments")
 	}
 	session, err := urlAuthSession(c, command)
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	authorized, backendErr := session.GenerateURLAuth(ctx, args.url, args.mechanism, nil)
-	if backendErr != nil {
-		return writeBackendError(c, command.tag, command.name, backendErr)
+	urls := make([]string, 0, len(args.pairs))
+	for _, pair := range args.pairs {
+		authorized, backendErr := session.GenerateURLAuth(ctx, pair.url, pair.mechanism, nil)
+		if backendErr != nil {
+			return writeBackendError(c, command.tag, command.name, backendErr)
+		}
+		urls = append(urls, authorized)
 	}
-	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("GENURLAUTH").SP().String(authorized).CRLF()
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("GENURLAUTH")
+	for _, authorized := range urls {
+		c.encoder.SP().String(authorized)
+	}
+	c.encoder.CRLF()
 	if err := c.encoder.Flush(); err != nil {
 		return err
 	}
@@ -157,47 +210,84 @@ func handleURLFetch(ctx context.Context, c *conn, command *queuedCommand) error 
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	remaining := c.server.options.Limits.MaxLiteralBytes
+	var failure error
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("URLFETCH")
 	for _, url := range urls {
-		content, backendErr := session.FetchURLAuth(ctx, url, nil)
-		c.encoder.SP().Special('(').String(url).SP()
-		// RFC 4467 section 5.3: a URL that cannot be resolved is reported as
-		// NIL beside its URL rather than failing the command, so one bad URL
-		// does not discard the others.
-		if backendErr != nil || content == nil {
+		c.encoder.SP().String(url).SP()
+		if failure != nil {
 			c.encoder.NIL()
-			c.encoder.Special(')')
 			continue
 		}
-		// The literal must be measured before it is announced, so the reader is
-		// drained here. Streaming it straight to the wire needs a length the
-		// backend does not supply; a future URLAuthContent carrying Size would
-		// let this stay lazy, which is why the interface returns a reader
-		// rather than bytes.
-		raw, readErr := io.ReadAll(content)
-		_ = content.Close()
-		if readErr != nil {
+		framed, err := writeURLFetchContent(ctx, c, session, url, &remaining)
+		if err != nil {
+			if framed {
+				return err
+			}
+			failure = err
 			c.encoder.NIL()
-			c.encoder.Special(')')
-			continue
 		}
-		c.encoder.Literal8(string(raw))
-		c.encoder.Special(')')
 	}
 	c.encoder.CRLF()
 	if err := c.encoder.Flush(); err != nil {
 		return err
 	}
+	if failure != nil {
+		return writeBackendError(c, command.tag, command.name, failure)
+	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }
 
+func writeURLFetchContent(ctx context.Context, c *conn, session URLAuthSession, url string, remaining *int64) (framed bool, err error) {
+	content, backendErr := session.FetchURLAuth(ctx, url, nil)
+	if content != nil && content.Body != nil {
+		defer content.Body.Close()
+	}
+	if backendErr != nil || content == nil {
+		c.encoder.NIL()
+		return false, nil
+	}
+	if content.Body == nil {
+		c.encoder.NIL()
+		return false, nil
+	}
+	reader := io.Reader(&literalContextReader{ctx: ctx, reader: content.Body})
+	size := content.Size
+	if !content.HasSize {
+		staged, count, cleanup, err := stageResponseLiteral(reader, *remaining, "urlfetch", resolvedContentTooBig())
+		if err != nil {
+			return false, err
+		}
+		defer cleanup()
+		reader, size = staged, count
+	}
+	if size < 0 {
+		return false, fmt.Errorf("URLFETCH backend returned a negative size")
+	}
+	if size > *remaining {
+		return false, resolvedContentTooBig()
+	}
+	*remaining -= size
+	literal, err := c.encoder.ResponseLiteral(size, false)
+	if err != nil {
+		return true, err
+	}
+	if _, err := io.CopyN(literal, reader, size); err != nil {
+		return true, fmt.Errorf("stream URLFETCH literal: %w", err)
+	}
+	return true, literal.Close()
+}
+
 func handleResetKey(ctx context.Context, c *conn, command *queuedCommand) error {
-	mailbox, _ := command.args.(string)
+	args, _ := command.args.(*resetURLAuthKeyArgs)
+	if args == nil {
+		return c.writeBad(command.tag, "invalid RESETKEY arguments")
+	}
 	session, err := urlAuthSession(c, command)
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	if backendErr := session.ResetURLAuthKey(ctx, mailbox, nil); backendErr != nil {
+	if backendErr := session.ResetURLAuthKey(ctx, args.mailbox, &args.options); backendErr != nil {
 		return writeBackendError(c, command.tag, command.name, backendErr)
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
