@@ -45,11 +45,12 @@ import (
 // nesting depth: no [imap.SearchFilter] reaches the backend, because the
 // framework substitutes it for the criteria it names first, and no
 // [imap.SearchSeqNum] or [imap.SearchSavedResult] reaches it either.
-// With no IN clause the source is the selection, so sequence numbers and saved
-// results are resolved to UIDs; with an IN clause those keys are refused. The refusal covers an IN clause naming the selected
-// mailbox too — the framework compares no names, because a number that resolved
-// for one spelling of a mailbox and not another would be worse than a uniform
-// refusal.
+// When the selection is the only source — no IN clause, or "selected" alone,
+// which RFC 7377 section 2.2 makes equivalent — sequence numbers and saved
+// results are resolved to UIDs; with any other source those keys are refused.
+// The refusal covers a "mailboxes" source naming the selected mailbox too —
+// the framework compares no names, because a number that resolved for one
+// spelling of a mailbox and not another would be worse than a uniform refusal.
 type MultiSearchSession interface {
 	MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)
 }
@@ -227,11 +228,11 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if err := validateUTF8AcceptCharset(c, args.charset, false); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	selectedIsTheSource := len(args.sources) == 0
-	// RFC 7377 section 2.2: SAVE is valid only when "selected", given or
-	// defaulted, is the sole source; UPDATE applies only to the selected
-	// mailbox and needs one.
+	// RFC 7377 section 2.2: an absent source list means "selected", so either
+	// form makes the selection the sole source. SAVE is valid only then; UPDATE
+	// applies only to the selected mailbox and needs one.
 	selectedOnly := !slices.ContainsFunc(args.sources, func(source multiSearchSource) bool { return source.kind != "selected" })
+	selectedIsTheSource := selectedOnly
 	requested := searchReturnSet(&args.result)
 	if requested[searchReturnSave] && !selectedOnly {
 		return c.writeBad(command.tag, "ESEARCH SAVE requires the selected mailbox as the only source")
@@ -265,6 +266,17 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	}
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	// RFC 7162 section 3.1: a SEARCH using MODSEQ enables CONDSTORE. A NOMODSEQ
+	// selection refuses it only when that mailbox is among those searched.
+	if searchHasModSeq(criteria) {
+		enable := enableCondStoreForCommand
+		if c.state.selected != nil && slices.ContainsFunc(mailboxes, func(name string) bool { return mailboxNamesEqual(name, c.state.selected.name) }) {
+			enable = validateSelectedCondStoreUse
+		}
+		if err := enable(c, true, "ESEARCH MODSEQ"); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
 	}
 	if selectedIsTheSource {
 		criteria = normalizeSearchCriteria(criteria, c.state.selected.uids, c.state.selected.savedSearch)
@@ -422,86 +434,136 @@ func multiSearchModSeq(args *searchArgs, requested map[string]bool, modSeqs []ui
 
 // resolveMultiSearchSources expands filters without changing the selection.
 // List supplies canonical names and delimiters; deduplication also bounds a
-// backend hierarchy with aliases or loops to one visit per mailbox name.
+// backend hierarchy with aliases or loops to one visit per mailbox name. Each
+// LIST is made at most once per command and bounded like any LIST result, and
+// the source list as a whole is held to the same bound (RFC 7377 section 2.4).
 func resolveMultiSearchSources(ctx context.Context, c *conn, sources []multiSearchSource) ([]string, error) {
 	if len(sources) == 0 {
 		sources = []multiSearchSource{{kind: "selected"}}
 	}
 	var names []string
 	seen := make(map[string]bool)
-	add := func(name string) {
+	add := func(name string) error {
 		key := name
 		if strings.EqualFold(name, "INBOX") {
 			key = "INBOX"
 		}
-		if !seen[key] {
-			seen[key] = true
-			names = append(names, name)
+		if seen[key] {
+			return nil
 		}
+		if len(names) >= maxCommandListResults {
+			return commandLimitError("ESEARCH source limit exceeded")
+		}
+		seen[key] = true
+		names = append(names, name)
+		return nil
 	}
+	listed := make(map[bool][]*imap.ListData)
+	list := func(subscribed bool) ([]*imap.ListData, error) {
+		if data, ok := listed[subscribed]; ok {
+			return data, nil
+		}
+		results, err := collectList(ctx, c.state.session, "", []string{"*"}, &ListOptions{Subscribed: subscribed})
+		if err != nil {
+			return nil, err
+		}
+		data := make([]*imap.ListData, 0, len(results))
+		for _, item := range results {
+			if !slices.Contains(item.Attrs, imap.MailboxAttrNoSelect) && !slices.Contains(item.Attrs, imap.MailboxAttrNonExistent) {
+				data = append(data, item)
+			}
+		}
+		slices.SortFunc(data, func(a, b *imap.ListData) int { return strings.Compare(a.Mailbox, b.Mailbox) })
+		listed[subscribed] = data
+		return data, nil
+	}
+	var personal func(string) bool
 	for _, source := range sources {
 		switch source.kind {
 		case "selected":
 			if c.state.selected == nil {
 				return nil, &imap.Error{Type: imap.ErrorTypeBad, Text: "ESEARCH selected source requires a selected mailbox"}
 			}
-			add(c.state.selected.name)
+			if err := add(c.state.selected.name); err != nil {
+				return nil, err
+			}
+			continue
 		case "mailboxes":
 			for _, name := range source.names {
-				add(name)
-			}
-		default:
-			// Without NAMESPACE, LIST's default namespace is the personal one.
-			prefixes := []string{""}
-			if source.kind == "personal" || source.kind == "inboxes" {
-				if ns, ok := c.state.session.(NamespaceSession); ok {
-					data, err := ns.Namespace(ctx, nil)
-					if err != nil {
-						return nil, err
-					}
-					if data == nil {
-						return nil, fmt.Errorf("NAMESPACE returned no data")
-					}
-					prefixes = nil
-					for _, namespace := range data.Personal {
-						prefixes = append(prefixes, namespace.Prefix)
-					}
+				if err := add(name); err != nil {
+					return nil, err
 				}
 			}
-			writer := newListWriter(func(_ context.Context, data *imap.ListData) error {
-				if data == nil || slices.Contains(data.Attrs, imap.MailboxAttrNoSelect) || slices.Contains(data.Attrs, imap.MailboxAttrNonExistent) {
-					return nil
+			continue
+		case "personal", "inboxes":
+			if personal == nil {
+				var err error
+				if personal, err = personalNamespaceMatcher(ctx, c); err != nil {
+					return nil, err
 				}
-				match := source.kind == "subscribed"
-				if source.kind == "personal" || source.kind == "inboxes" {
-					// INBOX is personal even under a prefix such as "INBOX.".
-					match = strings.EqualFold(data.Mailbox, "INBOX")
-					for _, prefix := range prefixes {
-						match = match || strings.HasPrefix(data.Mailbox, prefix)
-					}
-				} else if source.kind == "subtree" || source.kind == "subtree-one" {
-					for _, parent := range source.names {
-						if mailboxNamesEqual(data.Mailbox, parent) {
-							match = true
-						} else if data.Delimiter != 0 {
-							prefix := strings.TrimSuffix(parent, string(data.Delimiter)) + string(data.Delimiter)
-							if child, ok := strings.CutPrefix(data.Mailbox, prefix); ok {
-								match = match || source.kind == "subtree" || !strings.ContainsRune(child, data.Delimiter)
-							}
+			}
+		}
+		mailboxes, err := list(source.kind == "subscribed")
+		if err != nil {
+			return nil, err
+		}
+		for _, data := range mailboxes {
+			match := source.kind == "subscribed"
+			switch source.kind {
+			case "personal", "inboxes":
+				match = personal(data.Mailbox)
+			case "subtree", "subtree-one":
+				for _, parent := range source.names {
+					if mailboxNamesEqual(data.Mailbox, parent) {
+						match = true
+					} else if data.Delimiter != 0 {
+						prefix := strings.TrimSuffix(parent, string(data.Delimiter)) + string(data.Delimiter)
+						if child, ok := strings.CutPrefix(data.Mailbox, prefix); ok {
+							match = match || source.kind == "subtree" || !strings.ContainsRune(child, data.Delimiter)
 						}
 					}
 				}
-				if match {
-					add(data.Mailbox)
+			}
+			if match {
+				if err := add(data.Mailbox); err != nil {
+					return nil, err
 				}
-				return nil
-			})
-			err := c.state.session.List(ctx, writer, "", []string{"*"}, &ListOptions{Subscribed: source.kind == "subscribed"})
-			writer.core.close()
-			if err != nil {
-				return nil, err
 			}
 		}
 	}
 	return names, nil
+}
+
+// personalNamespaceMatcher reports whether a listed name lies in the user's
+// personal namespaces (RFC 2342, RFC 5465 section 6.2). Without NAMESPACE the
+// LIST default namespace is the personal one. With it, a name belongs to the
+// namespace with the longest matching prefix, so a shared "#shared/" namespace
+// is not swallowed by an empty personal prefix. INBOX is always personal, even
+// under a prefix such as "INBOX.".
+func personalNamespaceMatcher(ctx context.Context, c *conn) (func(string) bool, error) {
+	ns, ok := c.state.session.(NamespaceSession)
+	if !ok {
+		return func(string) bool { return true }, nil
+	}
+	data, err := ns.Namespace(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, fmt.Errorf("NAMESPACE returned no data")
+	}
+	return func(name string) bool {
+		if strings.EqualFold(name, "INBOX") {
+			return true
+		}
+		best, isPersonal := -1, false
+		for class, namespaces := range [][]imap.NamespaceDescriptor{data.Personal, data.OtherUsers, data.Shared} {
+			for _, namespace := range namespaces {
+				if strings.HasPrefix(name, namespace.Prefix) && len(namespace.Prefix) > best {
+					best, isPersonal = len(namespace.Prefix), class == 0
+				}
+			}
+		}
+		return isPersonal
+	}, nil
 }

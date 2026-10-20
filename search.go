@@ -55,7 +55,8 @@ import "time"
 //
 //   - No [SearchSavedResult] reaches a backend. The framework substitutes the
 //     selected mailbox's saved UID set (NOT ALL if nothing is saved), including
-//     under NOT, OR and FUZZY. MULTISEARCH with an IN clause refuses this key.
+//     under NOT, OR and FUZZY. MULTISEARCH refuses this key unless the
+//     selected mailbox is its only source.
 //
 // See docs/API-STABILITY.md section 10 for why these guarantees are what allow
 // the root package to grow new SearchCriteria implementations at all.

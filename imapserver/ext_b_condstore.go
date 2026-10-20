@@ -304,11 +304,19 @@ func validateSelectedCondStoreUse(c *conn, used bool, what string) error {
 	if used && c.state.selected != nil && c.state.selected.noModSeq {
 		return fmt.Errorf("%s is unavailable in a NOMODSEQ mailbox", what)
 	}
+	return enableCondStoreForCommand(c, used, what)
+}
+
+// enableCondStoreForCommand applies a CONDSTORE enabling command that does not
+// necessarily concern the selected mailbox, such as STATUS (HIGHESTMODSEQ) for
+// another mailbox. RFC 7162 section 3.1: the first one executed with a mailbox
+// selected returns its HIGHESTMODSEQ, unless SELECT reported NOMODSEQ.
+func enableCondStoreForCommand(c *conn, used bool, what string) error {
 	first := used && !condStoreEnabled(c)
 	if err := validateCondStoreUse(c, used, what); err != nil {
 		return err
 	}
-	if first && c.state.selected != nil {
+	if first && c.state.selected != nil && !c.state.selected.noModSeq {
 		data, err := c.state.session.Status(c.ctx, c.state.selected.name, &StatusOptions{Items: []imap.StatusItem{imap.StatusItemHighestModSeq}})
 		if err != nil {
 			return err
