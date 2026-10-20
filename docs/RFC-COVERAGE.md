@@ -280,8 +280,10 @@ CONDSTORE `MODIFIED` on tagged OK.
     (`mailboxes`, `subtree`, `subtree-one`, `personal`, `subscribed`,
     `inboxes`, `selected`) are expanded by the framework through LIST and
     NAMESPACE; `inboxes` uses RFC 5465 section 6.3's fallback to `personal`.
-    Bare mailbox names are not RFC syntax and receive BAD. Only the ALL return
-    option is supported. Message sequence numbers and `$` are
+    Bare mailbox names are not RFC syntax and receive BAD. The framework
+    evaluates extended SEARCH's result options per mailbox, SAVE and
+    CONTEXT=SEARCH UPDATE for the selected mailbox only, and MODSEQ from the
+    backend's per-UID clocks. Message sequence numbers and `$` are
     resolved against the selection when no IN clause is given and refused when
     one is: a sequence number indexes into a mailbox the client has not selected,
     so there is nothing to resolve it against and answering anyway would return a

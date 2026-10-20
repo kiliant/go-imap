@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapcodec"
@@ -47,6 +48,22 @@ func parseSearch(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, int64(len(args.charset) + 64), nil
 }
 
+// validateUTF8AcceptCharset applies RFC 9755 section 3: once UTF8=ACCEPT is
+// enabled, search strings are UTF-8, so an optional CHARSET (SEARCH,
+// MULTISEARCH) conflicts and a mandatory one (SORT, THREAD) must be UTF-8.
+func validateUTF8AcceptCharset(c *conn, charset string, mandatory bool) error {
+	if !c.state.enabledCapability("UTF8=ACCEPT") {
+		return nil
+	}
+	if mandatory && !strings.EqualFold(charset, "UTF-8") {
+		return fmt.Errorf("charset %s conflicts with UTF8=ACCEPT; use UTF-8", charset)
+	}
+	if !mandatory && charset != "" {
+		return fmt.Errorf("CHARSET is not allowed after ENABLE UTF8=ACCEPT")
+	}
+	return nil
+}
+
 func searchStartsWithCharset(decoder *imapwire.Decoder) bool {
 	return decoder.PeekAtomEqual("CHARSET")
 }
@@ -57,6 +74,9 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, "invalid SEARCH arguments")
 	}
 	if err := validateSearchReturnOptions(c, args); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
+	if err := validateUTF8AcceptCharset(c, args.charset, false); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	// FILTERS substitutes stored criteria before the backend sees the tree.

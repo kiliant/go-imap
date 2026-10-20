@@ -127,18 +127,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	var highest uint64
 	needsEmailID := searchNeedsEmailID(criteria)
 	for i, msg := range s.mailbox.messages {
-		metadata := servermessage.Metadata{
-			SeqNum:       imap.SeqNum(i + 1),
-			UID:          msg.uid,
-			Flags:        s.recentFlags(msg.uid, msg.flags),
-			InternalDate: msg.internalDate,
-			RFC822Size:   int64(len(msg.raw)),
-			ModSeq:       msg.modSeq,
-			SaveDate:     saveDateOf(msg),
-		}
-		if needsEmailID {
-			metadata.EmailID = emailID(msg)
-		}
+		metadata := searchMetadata(i, msg, s.recentFlags(msg.uid, msg.flags), needsEmailID)
 		matched, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
 		if err != nil {
 			s.session.account.mu.Unlock()
@@ -154,6 +143,25 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 }
 
 // Avoid hashing every message for searches that do not use its object ID.
+// searchMetadata is the evaluator input for the message at index i, shared by
+// SEARCH, SORT, THREAD and MULTISEARCH so that each selects the same messages.
+// Computing an EMAILID costs a digest, so it is filled only when asked for.
+func searchMetadata(i int, msg *message, flags []imap.Flag, needsEmailID bool) servermessage.Metadata {
+	metadata := servermessage.Metadata{
+		SeqNum:       imap.SeqNum(i + 1),
+		UID:          msg.uid,
+		Flags:        flags,
+		InternalDate: msg.internalDate,
+		RFC822Size:   int64(len(msg.raw)),
+		ModSeq:       msg.modSeq,
+		SaveDate:     saveDateOf(msg),
+	}
+	if needsEmailID {
+		metadata.EmailID = emailID(msg)
+	}
+	return metadata
+}
+
 func searchNeedsEmailID(criteria imap.SearchCriteria) bool {
 	switch criteria := criteria.(type) {
 	case imap.SearchObjectID:

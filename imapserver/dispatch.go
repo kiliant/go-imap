@@ -203,7 +203,10 @@ func handleEnable(ctx context.Context, c *conn, command *queuedCommand) error {
 		c.encoder.CRLF()
 	}
 	if c.state.revision == revisionIMAP4rev2 || c.state.enabledCapability("UTF8=ACCEPT") {
+		// Both directions switch together: a client that sends UTF-8 mailbox
+		// names reads them as UTF-8 too (RFC 9051 section 5.1, RFC 9755).
 		c.utf8Accept.Store(true)
+		c.encoder.SetUTF8Accept(true)
 	}
 	return c.writeTagged(command.tag, "OK", "ENABLE completed")
 }

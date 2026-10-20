@@ -292,6 +292,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := validateSortReturnOptions(c, args.returnOptions); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	if err := validateUTF8AcceptCharset(c, args.charset, true); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	mailbox, ok := c.state.selected.mailbox.(SortMailbox)
 	if !ok {
 		return c.writeBad(command.tag, "SORT is not available")
@@ -363,6 +366,9 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	// which could only answer with an error the client had no way to anticipate
 	// from the capability list.
 	if err := requireCapability(c, "THREAD="+strings.ToUpper(string(args.algorithm))); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
+	if err := validateUTF8AcceptCharset(c, args.charset, true); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
 	mailbox, ok := c.state.selected.mailbox.(ThreadMailbox)

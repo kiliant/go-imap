@@ -232,9 +232,9 @@ func TestReviewMultiSearchSources(t *testing.T) {
 			if !strings.HasPrefix(line, "* ESEARCH ") {
 				continue
 			}
-			_, rest, _ := strings.Cut(line, `MAILBOX "`)
-			name, _, _ := strings.Cut(rest, `"`)
-			got = append(got, name)
+			if name, ok := esearchMailbox(line); ok {
+				got = append(got, name)
+			}
 		}
 		slices.Sort(got)
 		slices.Sort(tc.want)
@@ -298,8 +298,7 @@ func TestReviewMultiSearchPersonalPrefixIncludesInbox(t *testing.T) {
 		lines := reviewCommand(t, client, reader, "Q", "ESEARCH IN ("+source+") ALL", "OK")
 		var got []string
 		for _, line := range lines {
-			if _, rest, ok := strings.Cut(line, `MAILBOX "`); ok {
-				name, _, _ := strings.Cut(rest, `"`)
+			if name, ok := esearchMailbox(line); ok {
 				got = append(got, name)
 			}
 		}
@@ -370,4 +369,19 @@ func TestReviewRecursiveMatchRedundantChildInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// esearchMailbox extracts an ESEARCH MAILBOX correlator, which RFC 7377 encodes
+// as an astring: an atom where possible, a quoted string otherwise.
+func esearchMailbox(line string) (string, bool) {
+	_, rest, ok := strings.Cut(line, "MAILBOX ")
+	if !ok {
+		return "", false
+	}
+	if quoted, ok := strings.CutPrefix(rest, `"`); ok {
+		name, _, _ := strings.Cut(quoted, `"`)
+		return name, true
+	}
+	name, _, _ := strings.Cut(rest, " ")
+	return name, true
 }

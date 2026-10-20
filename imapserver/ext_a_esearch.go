@@ -164,6 +164,15 @@ func writeESearchResponse(c *conn, command *queuedCommand, args *searchArgs, num
 	if commandUsesUIDs(command) {
 		c.encoder.SP().Atom("UID")
 	}
+	writeESearchData(c, args, requested, numbers, args.modSeq)
+	c.encoder.CRLF()
+	return c.encoder.Flush()
+}
+
+// writeESearchData writes the result items after an ESEARCH correlator. SEARCH
+// and MULTISEARCH share it, so a return option implemented for one is not
+// silently missing from the other.
+func writeESearchData(c *conn, args *searchArgs, requested map[string]bool, numbers []uint32, modSeq uint64) {
 	// MIN, MAX and ALL describe messages, so they are omitted entirely on an
 	// empty result. COUNT describes the result itself and is always reported.
 	if len(numbers) > 0 {
@@ -183,11 +192,9 @@ func writeESearchResponse(c *conn, command *queuedCommand, args *searchArgs, num
 	if requested[searchReturnPartial] {
 		writeSearchPartial(c, args, numbers)
 	}
-	if args.modSeq != 0 {
-		c.encoder.SP().Atom("MODSEQ").SP().Number64(int64(args.modSeq))
+	if modSeq != 0 {
+		c.encoder.SP().Atom("MODSEQ").SP().Number64(int64(modSeq))
 	}
-	c.encoder.CRLF()
-	return c.encoder.Flush()
 }
 
 // searchReturnSet resolves which data items an ESEARCH response carries.
