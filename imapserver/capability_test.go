@@ -671,17 +671,43 @@ func TestEverySearchKeyAndFetchItemIsClassified(t *testing.T) {
 			t.Errorf("imap.%s is a StatusItem missing from statusItemCapability", name)
 		}
 	}
+	// Discover key types inside classified criteria, rather than maintaining a
+	// second list that could forget a new SearchDateKey-style container.
+	keyTypes := map[string]bool{"SearchKeyword": true, "FetchItemKeyword": true, "StatusItemKeyword": true}
+	for _, file := range pkg.Files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			spec, ok := node.(*ast.TypeSpec)
+			if !ok || !slices.Contains(criteria, spec.Name.Name) {
+				return true
+			}
+			if st, ok := spec.Type.(*ast.StructType); ok {
+				for _, field := range st.Fields.List {
+					if typ, ok := field.Type.(*ast.Ident); ok && strings.HasPrefix(typ.Name, "Search") {
+						keyTypes[typ.Name] = true
+					}
+				}
+			}
+			return false
+		})
+	}
 	for _, file := range pkg.Files {
 		for _, declaration := range file.Decls {
 			decl, ok := declaration.(*ast.GenDecl)
 			if !ok || decl.Tok != token.CONST {
 				continue
 			}
+			var valueType string
 			for _, spec := range decl.Specs {
 				value := spec.(*ast.ValueSpec)
+				if value.Type != nil || len(value.Values) > 0 {
+					valueType = ""
+					if typ, ok := value.Type.(*ast.Ident); ok {
+						valueType = typ.Name
+					}
+				}
 				for _, name := range value.Names {
-					if strings.HasPrefix(name.Name, "StatusItem") && !classificationMentions("imap."+name.Name) {
-						t.Errorf("imap.%s has no STATUS gate", name.Name)
+					if keyTypes[valueType] && !classificationMentions("imap."+name.Name) {
+						t.Errorf("imap.%s (%s) has no capability gate", name.Name, valueType)
 					}
 				}
 			}

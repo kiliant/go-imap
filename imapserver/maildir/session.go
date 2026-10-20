@@ -149,6 +149,7 @@ func mkdirMailbox(name string) []fileAction {
 }
 
 func (s *session) Create(ctx context.Context, name string, options *imapserver.CreateOptions) error {
+	name = strings.TrimSuffix(name, "/")
 	if err := validMailbox(name); err != nil {
 		return err
 	}

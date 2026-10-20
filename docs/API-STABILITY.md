@@ -763,6 +763,16 @@ declarations in `package imap` and fails when one is missing from them, because
 forgetting fails *open* — an unclassified key that nobody notices is one the
 framework would hand to a backend ungated, which is the state this rule ends.
 
+Classification is by value, not only by type. `imap.SearchDateKey` and the
+other key types inside a criterion are open string sets: RFC 8514 added
+SAVEDBEFORE, SAVEDON and SAVEDSINCE to `imap.SearchDate` without a new type.
+Classifying `SearchDate` wholesale as baseline let those keys reach backends
+that never witnessed SAVEDATE (third T33 review, B1). Every key constant is
+therefore a row, unknown values are refused, and the same test discovers the
+key types used by criterion fields and fails on any constant without a gate.
+MVS makes this matter even without a server release: a newer root module can
+add a key under a pinned `imapserver`.
+
 Refusing rather than forwarding is the deliberate half. A key the framework
 cannot name is one it cannot gate, and RFC 5257's `ANNOTATION` — the candidate
 §10 nominates — is exactly the case: when `package imap` learns it, backends
@@ -1060,8 +1070,8 @@ items 2–3 are covered by the incorporated witnesses plus framework handling;
 SIZE and DELETED each have an explicit backend witness.
 
 STATUS and LIST-STATUS requests are classified before reaching a backend.
-Unknown items and items outside the baseline, enabled revision and advertised
-capabilities receive BAD. NOTIFY has no client STATUS-item list; its outgoing
+Unknown items and items outside the enabled revision's baseline and advertised
+capabilities receive BAD, including RECENT in rev2. NOTIFY has no client STATUS-item list; its outgoing
 STATUS data is projected onto the same negotiated item set.
 
 Registered `QUOTA=RES-*` resources use the existing spoken CapabilitySupport

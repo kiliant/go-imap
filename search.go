@@ -54,7 +54,7 @@ import "time"
 //     backend never has to decide what an unresolvable one means.
 //
 //   - No [SearchSavedResult] reaches a backend. The framework substitutes the
-//     selected mailbox's saved UID set (empty if nothing is saved), including
+//     selected mailbox's saved UID set (NOT ALL if nothing is saved), including
 //     under NOT, OR and FUZZY. MULTISEARCH with an IN clause refuses this key.
 //
 // See docs/API-STABILITY.md section 10 for why these guarantees are what allow

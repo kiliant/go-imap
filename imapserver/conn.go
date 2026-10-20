@@ -693,6 +693,12 @@ func (c *conn) execute(command *queuedCommand) error {
 	if err != nil {
 		return err
 	}
+	// NOTIFY STATUS responses carry no sequence numbers, so any command start
+	// may deliver them. Draining here keeps a poll such as NOOP from completing
+	// ahead of events already queued.
+	if err := c.drainNotify(); err != nil {
+		return err
+	}
 	ctx := c.ctx
 	cancel := func() {}
 	if timeout := c.server.options.Limits.CommandTimeout; timeout > 0 {

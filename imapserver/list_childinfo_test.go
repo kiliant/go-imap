@@ -88,19 +88,21 @@ func testListRecursiveMatch(t *testing.T, backend func(*memory.Backend) imapserv
 		t.Errorf("subscribed parent Subbed = %#v, want \\Subscribed with CHILDINFO (SUBSCRIBED)", got)
 	}
 
+	// "*" returns every subscribed descendant itself, so CHILDINFO would be
+	// redundant everywhere: RFC 5258 section 3.5 suppresses it, and example 9
+	// omits the parents returned only for it.
 	all := list("*")
-	for _, name := range []string{"Foo", "Foo/Bar", "Deep", "Deep/Er", "Deep/Er/Child", "Subbed", "Subbed/Too"} {
+	for _, name := range []string{"Foo/Bar", "Deep/Er/Child", "Subbed", "Subbed/Too"} {
 		if all[name] == nil {
 			t.Errorf(`LIST "*" did not return %s: %v`, name, keys(all))
+		} else if all[name].ChildInfo != nil {
+			t.Errorf("%s carries redundant CHILDINFO %q", name, all[name].ChildInfo)
 		}
 	}
-	for _, leaf := range []string{"Foo/Bar", "Deep/Er/Child", "Subbed/Too"} {
-		if got := all[leaf]; got != nil && got.ChildInfo != nil {
-			t.Errorf("%s has no subscribed descendant but carries CHILDINFO %q", leaf, got.ChildInfo)
+	for _, name := range []string{"Foo", "Deep", "Deep/Er", "Moo", "INBOX"} {
+		if all[name] != nil {
+			t.Errorf(`LIST "*" returned %s, which neither is subscribed nor has an unreturned subscribed descendant: %v`, name, keys(all))
 		}
-	}
-	if all["Moo"] != nil || all["INBOX"] != nil {
-		t.Errorf(`LIST "*" returned a mailbox with nothing subscribed in it: %v`, keys(all))
 	}
 
 	// The reference is prefixed to the pattern: "Deep/" and "%" select the

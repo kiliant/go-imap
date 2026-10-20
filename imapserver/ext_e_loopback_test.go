@@ -399,7 +399,7 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 		{"SEARCH", "SEARCH FILTER \"flagged\"", "* SEARCH", "* SEARCH 1"},
 		{"SORT", "SORT (REVERSE DATE) UTF-8 FILTER \"flagged\"", "* SORT", "* SORT 1"},
 		{"THREAD", "THREAD ORDEREDSUBJECT UTF-8 FILTER \"flagged\"", "* THREAD", "* THREAD (1)"},
-		{"MULTISEARCH", "ESEARCH IN (\"INBOX\") FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
+		{"MULTISEARCH", "ESEARCH IN (mailboxes \"INBOX\") FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
 
 		// Nested, not just top-level. A FILTER under a container key is the
 		// case the first version of this test missed entirely: it only ever
@@ -410,7 +410,7 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 		{"SEARCH-not", "SEARCH NOT FILTER \"flagged\"", "* SEARCH", "* SEARCH 2"},
 		{"SEARCH-or", "SEARCH OR FILTER \"flagged\" FILTER \"flagged\"", "* SEARCH", "* SEARCH 1"},
 		{"SORT-fuzzy", "SORT (REVERSE DATE) UTF-8 FUZZY FILTER \"flagged\"", "* SORT", "* SORT 1"},
-		{"MULTISEARCH-fuzzy", "ESEARCH IN (\"INBOX\") FUZZY FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
+		{"MULTISEARCH-fuzzy", "ESEARCH IN (mailboxes \"INBOX\") FUZZY FILTER \"flagged\"", "* ESEARCH", "ALL 1"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			tag := "N" + testCase.name
@@ -457,18 +457,18 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 
 	t.Run("seqnum-refused-across-an-in-clause", func(t *testing.T) {
 		for _, command := range []string{
-			"ESEARCH IN (\"INBOX\") 1",
+			"ESEARCH IN (mailboxes \"INBOX\") 1",
 			// Nested, so the refusal cannot depend on the number being at the
 			// top of the tree.
-			"ESEARCH IN (\"INBOX\") NOT 1",
-			"ESEARCH IN (\"INBOX\") FUZZY 1",
+			"ESEARCH IN (mailboxes \"INBOX\") NOT 1",
+			"ESEARCH IN (mailboxes \"INBOX\") FUZZY 1",
 			// Arriving by filter expansion rather than off the wire. This is the
 			// one composition of the two halves — substitution then
 			// normalisation — and it is only safe because substitution runs
 			// first; if the order were reversed the number would appear after
 			// the check had already passed.
-			"ESEARCH IN (\"INBOX\") FILTER \"firstmessage\"",
-			"ESEARCH IN (\"INBOX\") NOT FILTER \"firstmessage\"",
+			"ESEARCH IN (mailboxes \"INBOX\") FILTER \"firstmessage\"",
+			"ESEARCH IN (mailboxes \"INBOX\") NOT FILTER \"firstmessage\"",
 		} {
 			writeRawCommand(t, clientSide, "NS3 "+command+"\r\n")
 			_, tagged := collectUntilTag(t, reader, "NS3 ")

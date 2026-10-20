@@ -99,8 +99,8 @@ func runSearch(t *testing.T, harness *Harness) {
 			{name: "uid", criteria: imap.SearchUID{Set: imap.UIDSetNum(ids[1])}, want: uids(1)},
 			// These are the forms produced when the framework substitutes SEARCHRES,
 			// including an unset or empty saved result under NOT and OR.
-			{name: "saved-empty", criteria: imap.SearchUID{}},
-			{name: "saved-empty-not", criteria: imap.SearchNot{Criteria: imap.SearchUID{}}, want: ids},
+			{name: "saved-empty", criteria: imap.SearchNot{Criteria: imap.SearchAll}},
+			{name: "saved-empty-not", criteria: imap.SearchNot{Criteria: imap.SearchNot{Criteria: imap.SearchAll}}, want: ids},
 			{name: "saved-or", criteria: imap.SearchOr{Left: imap.SearchUID{Set: imap.UIDSetNum(ids[0])}, Right: imap.SearchUID{Set: imap.UIDSetNum(ids[1])}}, want: uids(0, 1)},
 			{name: "missing-uid", criteria: imap.SearchUID{Set: imap.UIDSetNum(ids[2] + 1)}},
 			{name: "header", criteria: imap.SearchHeaderField{Field: "Subject", Value: "rED"}, want: uids(0, 2)},

@@ -126,9 +126,8 @@ func TestMetadataSearchAndCharsets(t *testing.T) {
 		imap.SearchDate{Key: imap.SearchDateKeySavedOn, Date: date},
 		imap.SearchModSeq{ModSeq: 9, EntryName: "/flags/\\seen", EntryType: imap.SearchModSeqMetadataPrivate},
 		imap.SearchObjectID{Key: imap.SearchObjectIDKeyEmail, Value: "email"},
-		imap.SearchSavedResult{},
 	} {
-		matched, err := message.Match(context.Background(), m, metadata, criterion, &message.MatchOptions{SavedUIDs: imap.UIDSetNum(7)})
+		matched, err := message.Match(context.Background(), m, metadata, criterion, nil)
 		if err != nil || !matched {
 			t.Fatalf("match %#v = %t, %v", criterion, matched, err)
 		}
@@ -161,6 +160,9 @@ func TestMetadataSearchAndCharsets(t *testing.T) {
 	for _, criterion := range []imap.SearchCriteria{
 		imap.SearchKeyword("FUTURE"),
 		imap.SearchFilter("unsubstituted"),
+		imap.SearchSavedResult{},
+		imap.SearchOr{Left: imap.SearchAll, Right: imap.SearchSavedResult{}},
+		imap.SearchNot{Criteria: imap.SearchFuzzy{Criteria: imap.SearchSavedResult{}}},
 		imap.SearchOr{Left: imap.SearchAll, Right: imap.SearchKeyword("FUTURE")},
 		imap.SearchAnd{imap.SearchUnseen, imap.SearchDate{Key: "FUTURE"}},
 		imap.SearchNot{Criteria: imap.SearchFuzzy{Criteria: imap.SearchString{Key: "FUTURE"}}},

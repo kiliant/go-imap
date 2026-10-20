@@ -70,7 +70,7 @@ func TestReviewSearchSavedResult(t *testing.T) {
 				reviewCommand(t, client, reader, fmt.Sprintf("A%d", i), fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw), "OK")
 			}
 			reviewCommand(t, client, reader, "S", "SELECT INBOX", "OK")
-			// No saved result means an empty UID set, not ALL or an invalid key.
+			// No saved result matches nothing, rather than ALL or an invalid key.
 			lines := reviewCommand(t, client, reader, "Q", "SEARCH $", "OK")
 			if !slices.Contains(lines, "* SEARCH") {
 				t.Fatalf("unsaved $ = %q", lines)
@@ -104,7 +104,7 @@ func TestReviewSearchSavedResult(t *testing.T) {
 					}
 				}
 				for _, criterion := range []string{"$", "NOT $", "OR $ ALL", "FUZZY $"} {
-					reviewCommand(t, client, reader, "Q", "ESEARCH IN (INBOX) "+criterion, "BAD")
+					reviewCommand(t, client, reader, "Q", "ESEARCH IN (mailboxes INBOX) "+criterion, "BAD")
 				}
 			}
 			reviewCommand(t, client, reader, "V", "SEARCH RETURN (SAVE) FROM nobody", "OK")
@@ -176,7 +176,7 @@ func TestReviewStatusAndSelection(t *testing.T) {
 					}
 					if kind == "memory" {
 						lines = reviewCommand(t, client, reader, "T", "STATUS INBOX (DELETED-STORAGE)", "OK")
-						if !strings.Contains(strings.Join(lines, ""), "DELETED-STORAGE 2") {
+						if !strings.Contains(strings.Join(lines, ""), fmt.Sprintf("DELETED-STORAGE %d)", len(raw))) {
 							t.Fatalf("DELETED-STORAGE = %q", lines)
 						}
 					}

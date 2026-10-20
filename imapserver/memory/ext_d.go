@@ -52,13 +52,15 @@ func (s *session) GetQuota(ctx context.Context, root string, _ *imapserver.Quota
 	}
 	// RFC 9208 section 5 measures STORAGE in kibibytes, rounded up, and MESSAGE
 	// as a plain count.
-	return &imap.QuotaData{
-		Root: root,
-		Resources: []imap.QuotaResource{
-			{Name: imap.QuotaResourceStorage, Usage: (storage + 1023) / 1024, Limit: s.account.quotaStorage},
-			{Name: imap.QuotaResourceMessage, Usage: messages, Limit: s.account.quotaMessages},
-		},
-	}, nil
+	data := &imap.QuotaData{Root: root}
+	// Omit unlimited resources; a present zero limit prohibits any usage.
+	if s.account.quotaStorageSet {
+		data.Resources = append(data.Resources, imap.QuotaResource{Name: imap.QuotaResourceStorage, Usage: (storage + 1023) / 1024, Limit: s.account.quotaStorage})
+	}
+	if s.account.quotaMessagesSet {
+		data.Resources = append(data.Resources, imap.QuotaResource{Name: imap.QuotaResourceMessage, Usage: messages, Limit: s.account.quotaMessages})
+	}
+	return data, nil
 }
 
 // SetQuota implements [imapserver.QuotaSetSession].
@@ -71,16 +73,17 @@ func (s *session) SetQuota(ctx context.Context, root string, limits []imap.Quota
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
+	// Validate the whole replacement before changing any state. Unlisted
+	// resources become unlimited (RFC 9208 section 4.1.3).
+	var storage, messages uint64
+	var storageSet, messagesSet bool
 	for _, limit := range limits {
 		switch limit.Name {
 		case imap.QuotaResourceStorage:
-			s.account.quotaStorage = limit.Limit
+			storage, storageSet = limit.Limit, true
 		case imap.QuotaResourceMessage:
-			s.account.quotaMessages = limit.Limit
+			messages, messagesSet = limit.Limit, true
 		default:
-			// RFC 9208 section 4.1.3: a resource the server does not support is
-			// refused rather than silently ignored, or the client believes it
-			// set a limit that does not exist.
 			return &imap.Error{
 				Type: imap.ErrorTypeNo,
 				Code: imap.CodeCannot,
@@ -88,6 +91,8 @@ func (s *session) SetQuota(ctx context.Context, root string, limits []imap.Quota
 			}
 		}
 	}
+	s.account.quotaStorage, s.account.quotaStorageSet = storage, storageSet
+	s.account.quotaMessages, s.account.quotaMessagesSet = messages, messagesSet
 	return nil
 }
 
@@ -104,7 +109,7 @@ func (s *session) GetACL(ctx context.Context, name string, _ *imapserver.ACLOpti
 	}
 	entries := make([]imap.ACLEntry, 0, len(m.acl))
 	for identifier, rights := range m.acl {
-		entries = append(entries, imap.ACLEntry{Identifier: identifier, Rights: rights})
+		entries = append(entries, imap.ACLEntry{Identifier: identifier, Rights: reportedRights(rights)})
 	}
 	slices.SortFunc(entries, func(a, b imap.ACLEntry) int {
 		return strings.Compare(a.Identifier, b.Identifier)
@@ -124,7 +129,7 @@ func (s *session) MyRights(ctx context.Context, name string, _ *imapserver.ACLOp
 		return "", nonexistentMailbox(name)
 	}
 	if rights, ok := m.acl[s.username]; ok {
-		return rights, nil
+		return reportedRights(rights), nil
 	}
 	// The account owner holds every right on their own mailboxes unless an
 	// entry says otherwise.
@@ -181,6 +186,10 @@ func (s *session) SetACL(ctx context.Context, name, identifier string, rights im
 	if _, ok := m.acl[identifier]; !ok && identifier == s.username {
 		current = ownerRights
 	}
+	// Keep virtual compatibility rights out of storage so removing one member
+	// does not accidentally restore it through a retained c/d alias.
+	current = imap.ACLRights(strings.NewReplacer("c", "", "d", "").Replace(string(current)))
+	rights = expandRights(rights)
 	switch op {
 	case imapserver.ACLRightsAdd:
 		m.acl[identifier] = mergeRights(current, rights, true)
@@ -212,7 +221,23 @@ func (s *session) DeleteACL(ctx context.Context, name, identifier string, _ *ima
 }
 
 // ownerRights is the full RFC 4314 section 2.1 rights set.
-const ownerRights imap.ACLRights = "acdeilprstwx"
+const ownerRights imap.ACLRights = "acdeiklprstwx"
+
+// Use RFC 4314's c=k, d=etx mapping for legacy clients.
+func expandRights(rights imap.ACLRights) imap.ACLRights {
+	return imap.ACLRights(sortedRights(strings.NewReplacer("c", "k", "d", "etx").Replace(string(rights))))
+}
+
+func reportedRights(rights imap.ACLRights) imap.ACLRights {
+	value := string(rights)
+	if strings.ContainsRune(value, 'k') {
+		value += "c"
+	}
+	if strings.ContainsAny(value, "etx") {
+		value += "d"
+	}
+	return imap.ACLRights(sortedRights(value))
+}
 
 func mergeRights(current, delta imap.ACLRights, add bool) imap.ACLRights {
 	held := make(map[rune]bool, len(current))
@@ -409,7 +434,7 @@ func (s *session) Notify(ctx context.Context, updater *imapserver.SessionUpdater
 			}
 			_ = updater.Push(&imapserver.SessionUpdate{
 				Mailbox: m.name,
-				Status:  statusDataLocked(m, nil),
+				Status:  notifyStatusDataLocked(m),
 			})
 		}
 	}
@@ -534,7 +559,7 @@ func notifyMailboxLocked(a *account, m *mailbox) {
 		}
 		_ = s.notify.Push(&imapserver.SessionUpdate{
 			Mailbox: m.name,
-			Status:  statusDataLocked(m, nil),
+			Status:  notifyStatusDataLocked(m),
 		})
 	}
 }
@@ -550,3 +575,11 @@ var (
 	_ imapserver.NamespaceSession      = (*session)(nil)
 	_ imapserver.UnauthenticateSession = (*session)(nil)
 )
+
+// Supply the mod-sequence even without negotiated session state. The framework
+// projects away fields unavailable to the receiving connection.
+func notifyStatusDataLocked(m *mailbox) *imap.StatusData {
+	data := statusDataLocked(m, nil)
+	data.Values[imap.StatusItemHighestModSeq] = m.highestModSeq
+	return data
+}

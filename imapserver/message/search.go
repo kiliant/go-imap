@@ -12,8 +12,8 @@ import (
 )
 
 // ErrUnsupportedCriteria identifies a criterion or key this helper cannot
-// evaluate. It includes unsubstituted FILTER and criteria exceeding the helper's
-// limits of 100 nesting levels or 10,000 nodes. Use errors.Is to identify it.
+// evaluate. It includes unsubstituted FILTER and SEARCHRES, and criteria
+// exceeding 100 nesting levels or 10,000 nodes. Use errors.Is to identify it.
 var ErrUnsupportedCriteria = errors.New("message: unsupported search criterion")
 
 // ErrUnsupportedCharset identifies an unsupported SEARCH argument charset.
@@ -54,14 +54,13 @@ type MatchOptions struct {
 	Charset string
 	// Now is the reference instant for OLDER/YOUNGER. Zero uses time.Now.
 	Now time.Time
-	// SavedUIDs supplies the connection's SEARCHRES "$" result.
-	SavedUIDs imap.UIDSet
-	_         struct{}
+	_   struct{}
 }
 
 // Match evaluates a SEARCH tree against a message and mailbox metadata. Use
 // value-form criteria from package imap; unsupported keys/types and unsubstituted
-// FILTER return ErrUnsupportedCriteria, including in short-circuited branches.
+// FILTER or SEARCHRES return ErrUnsupportedCriteria, including in
+// short-circuited branches.
 // Nil criteria and nil/zero Messages are invalid. An empty SearchAnd matches all.
 //
 // Headers and MIME transfer encodings are interpreted best-effort. Unknown
@@ -78,7 +77,7 @@ func Match(ctx context.Context, message *Message, metadata Metadata, criterion i
 	}
 	opts := imapmessage.MatchOptions{}
 	if options != nil {
-		opts.Charset, opts.Now, opts.SavedUIDs = options.Charset, options.Now, options.SavedUIDs
+		opts.Charset, opts.Now = options.Charset, options.Now
 	}
 	switch strings.ToLower(strings.TrimSpace(opts.Charset)) {
 	case "", "us-ascii", "ascii", "utf-8", "utf8", "iso-8859-1", "iso8859-1", "latin1", "latin-1":

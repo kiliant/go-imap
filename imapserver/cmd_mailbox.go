@@ -154,7 +154,11 @@ func handleCreate(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeBackendError(c, command.tag, "CREATE", err)
 	}
 	if advertisedCapabilities(c)["OBJECTID"] {
-		id, err := mailboxIDResponse(ctx, c, args.mailbox)
+		name, err := createdMailboxName(ctx, c.state.session, args.mailbox)
+		var id string
+		if err == nil {
+			id, err = mailboxIDResponse(ctx, c, name)
+		}
 		if err != nil {
 			c.reportEvent(ServerEventBackendError, command.name, err)
 			return writeTaggedCondition(c, command.tag, "NO", imap.CodeServerBug, "", "mailbox created but its identity could not be retrieved")
@@ -202,4 +206,29 @@ func handleRename(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeBackendError(c, command.tag, "RENAME", err)
 	}
 	return c.writeTagged(command.tag, "OK", "RENAME completed")
+}
+
+// CREATE retains the hierarchy declaration for the backend. Identity lookup
+// addresses the actual name, using the delimiter for this name's namespace.
+func createdMailboxName(ctx context.Context, session Session, name string) (string, error) {
+	var delimiter rune
+	found := false
+	writer := newListWriter(func(_ context.Context, data *imap.ListData) error {
+		if data != nil && !found {
+			delimiter, found = data.Delimiter, true
+		}
+		return nil
+	})
+	err := session.List(ctx, writer, name, []string{""}, nil)
+	writer.core.close()
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("CREATE hierarchy query returned no delimiter")
+	}
+	if delimiter != 0 {
+		name = strings.TrimSuffix(name, string(delimiter))
+	}
+	return name, nil
 }

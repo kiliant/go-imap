@@ -62,7 +62,7 @@ func validateCriteria(ctx context.Context, criterion imap.SearchCriteria, charse
 	case imap.SearchKeyword:
 		_, err := matchKeyword(Metadata{}, c)
 		return err
-	case imap.SearchFlagKeyword, imap.SearchSeqNum, imap.SearchUID, imap.SearchSavedResult:
+	case imap.SearchFlagKeyword, imap.SearchSeqNum, imap.SearchUID:
 		return nil
 	case imap.SearchHeaderField:
 		_, err := decodeSearchArgument(c.Value, charset)

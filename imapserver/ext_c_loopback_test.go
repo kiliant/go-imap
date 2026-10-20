@@ -166,7 +166,7 @@ func TestLoopbackMultiSearch(t *testing.T) {
 	defer cancel()
 	_, clientSide, reader := newGroupARawSession(t, ctx)
 
-	writeRawCommand(t, clientSide, "C1 ESEARCH IN (INBOX) ALL\r\n")
+	writeRawCommand(t, clientSide, "C1 ESEARCH IN (mailboxes INBOX) ALL\r\n")
 	untagged, tagged := collectUntilTag(t, reader, "C1 ")
 	if !strings.HasPrefix(tagged, "C1 OK") {
 		t.Fatalf("ESEARCH failed: %q", tagged)
@@ -182,7 +182,7 @@ func TestLoopbackMultiSearch(t *testing.T) {
 	// client distinguishes it from one that was not searched.
 	writeRawCommand(t, clientSide, "C2 CREATE Empty\r\n")
 	collectUntilTag(t, reader, "C2 ")
-	writeRawCommand(t, clientSide, "C3 ESEARCH IN (Empty) ALL\r\n")
+	writeRawCommand(t, clientSide, "C3 ESEARCH IN (mailboxes Empty) ALL\r\n")
 	untagged, tagged = collectUntilTag(t, reader, "C3 ")
 	if !strings.HasPrefix(tagged, "C3 OK") {
 		t.Fatalf("ESEARCH on an empty mailbox failed: %q", tagged)

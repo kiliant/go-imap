@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kiliant/go-imap"
@@ -22,7 +23,10 @@ import (
 //
 // The framework resolves the source mailboxes and owns the response encoding;
 // the backend evaluates the criteria against each named mailbox and reports the
-// matching UIDs per mailbox.
+// matching UIDs per mailbox. The framework expands personal sources using
+// NamespaceSession when available (otherwise the default LIST namespace).
+// Inboxes uses the personal-source fallback of RFC 5465 section 6.3 because
+// this interface does not expose the backend's delivery destinations.
 //
 // Results are keyed by mailbox because RFC 7377 requires each ESEARCH response
 // to name the mailbox and its UIDVALIDITY: a UID means nothing without them, and
@@ -85,10 +89,15 @@ func init() {
 	registerCommand("ESEARCH", stateMaskAuthenticated|stateMaskSelected, false, parseMultiSearch, handleMultiSearch)
 }
 
+type multiSearchSource struct {
+	kind  string
+	names []string
+}
+
 type multiSearchArgs struct {
-	mailboxes []string
-	charset   string
-	criteria  imap.SearchCriteria
+	sources  []multiSearchSource
+	charset  string
+	criteria imap.SearchCriteria
 }
 
 // parseMultiSearch reads the ESEARCH command:
@@ -107,31 +116,53 @@ func parseMultiSearch(decoder *imapwire.Decoder) (any, int64, error) {
 			return nil, 0, decoder.Err()
 		}
 		if err := decoder.ExpectList(func() error {
-			var scope string
-			if !decoder.ExpectAstring(&scope) {
+			var source multiSearchSource
+			if !decoder.ExpectAtom(&source.kind) {
 				return decoder.Err()
 			}
-			// RFC 7377 section 2.2 defines scope *options* such as "subtree"
-			// alongside plain mailbox names. Only plain names are supported;
-			// a scope option is refused rather than silently read as a mailbox
-			// name, which would search the wrong thing.
-			if strings.HasPrefix(scope, "subtree") || strings.HasPrefix(scope, "mailboxes") ||
-				strings.EqualFold(scope, "personal") || strings.EqualFold(scope, "inboxes") {
-				return fmt.Errorf("unsupported ESEARCH scope option %q", scope)
+			source.kind = strings.ToLower(source.kind)
+			switch source.kind {
+			case "selected", "personal", "subscribed", "inboxes":
+			case "mailboxes", "subtree", "subtree-one":
+				if !decoder.ExpectSP() {
+					return decoder.Err()
+				}
+				readName := func() error {
+					var name string
+					if !decoder.ExpectMailbox(&name) {
+						return decoder.Err()
+					}
+					source.names = append(source.names, name)
+					return nil
+				}
+				if decoder.PeekSpecial('(') {
+					if err := decoder.ExpectList(readName); err != nil {
+						return err
+					}
+				} else if err := readName(); err != nil {
+					return err
+				}
+				if len(source.names) == 0 {
+					return fmt.Errorf("empty ESEARCH mailbox list")
+				}
+			default:
+				return fmt.Errorf("unknown ESEARCH source %q", source.kind)
 			}
-			args.mailboxes = append(args.mailboxes, scope)
+			args.sources = append(args.sources, source)
 			return nil
 		}); err != nil {
 			return nil, 0, err
+		}
+		if len(args.sources) == 0 {
+			return nil, 0, fmt.Errorf("empty ESEARCH source list")
 		}
 		if !decoder.ExpectSP() {
 			return nil, 0, decoder.Err()
 		}
 	}
-	// A RETURN clause is accepted and ignored beyond ALL: RFC 7377 inherits
-	// ESEARCH's options, and ALL is the only one whose meaning is unambiguous
-	// across several mailboxes. MIN and MAX over a union of mailboxes would have
-	// to pick a mailbox to be the minimum of, which the RFC does not define.
+	// This handler currently supports ALL (including the empty RETURN list).
+	// Refuse other result options explicitly until their per-mailbox responses
+	// are implemented.
 	if decoder.PeekAtomEqual("RETURN") {
 		var keyword string
 		if !decoder.ExpectAtom(&keyword) || !decoder.ExpectSP() {
@@ -168,7 +199,14 @@ func parseMultiSearch(decoder *imapwire.Decoder) (any, int64, error) {
 		return nil, 0, decoder.Err()
 	}
 	args.criteria = criteria
-	return args, int64(len(args.charset)+len(args.mailboxes)*32) + 64, nil
+	cost := int64(len(args.charset)) + 64
+	for _, source := range args.sources {
+		cost += int64(len(source.kind)) + 32
+		for _, name := range source.names {
+			cost += int64(len(name)) + 16
+		}
+	}
+	return args, cost, nil
 }
 
 func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) error {
@@ -183,15 +221,10 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if !ok {
 		return c.writeBad(command.tag, "MULTISEARCH is not available")
 	}
-	mailboxes := args.mailboxes
-	selectedIsTheSource := len(mailboxes) == 0
-	if selectedIsTheSource {
-		// With no IN clause the source is the selected mailbox, and there must
-		// be one. RFC 7377 section 2.2.
-		if c.state.selected == nil {
-			return c.writeBad(command.tag, "ESEARCH without IN requires a selected mailbox")
-		}
-		mailboxes = []string{c.state.selected.name}
+	selectedIsTheSource := len(args.sources) == 0
+	mailboxes, err := resolveMultiSearchSources(ctx, c, args.sources)
+	if err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
 	}
 	criteria, err := applySearchFilters(ctx, c, args.criteria)
 	if err != nil {
@@ -232,6 +265,92 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 		}
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
+}
+
+// resolveMultiSearchSources expands filters without changing the selection.
+// List supplies canonical names and delimiters; deduplication also bounds a
+// backend hierarchy with aliases or loops to one visit per mailbox name.
+func resolveMultiSearchSources(ctx context.Context, c *conn, sources []multiSearchSource) ([]string, error) {
+	if len(sources) == 0 {
+		sources = []multiSearchSource{{kind: "selected"}}
+	}
+	var names []string
+	seen := make(map[string]bool)
+	add := func(name string) {
+		key := name
+		if strings.EqualFold(name, "INBOX") {
+			key = "INBOX"
+		}
+		if !seen[key] {
+			seen[key] = true
+			names = append(names, name)
+		}
+	}
+	for _, source := range sources {
+		switch source.kind {
+		case "selected":
+			if c.state.selected == nil {
+				return nil, &imap.Error{Type: imap.ErrorTypeBad, Text: "ESEARCH selected source requires a selected mailbox"}
+			}
+			add(c.state.selected.name)
+		case "mailboxes":
+			for _, name := range source.names {
+				add(name)
+			}
+		default:
+			// Without NAMESPACE, LIST's default namespace is the personal one.
+			prefixes := []string{""}
+			if source.kind == "personal" || source.kind == "inboxes" {
+				if ns, ok := c.state.session.(NamespaceSession); ok {
+					data, err := ns.Namespace(ctx, nil)
+					if err != nil {
+						return nil, err
+					}
+					if data == nil {
+						return nil, fmt.Errorf("NAMESPACE returned no data")
+					}
+					prefixes = nil
+					for _, namespace := range data.Personal {
+						prefixes = append(prefixes, namespace.Prefix)
+					}
+				}
+			}
+			writer := newListWriter(func(_ context.Context, data *imap.ListData) error {
+				if data == nil || slices.Contains(data.Attrs, imap.MailboxAttrNoSelect) || slices.Contains(data.Attrs, imap.MailboxAttrNonExistent) {
+					return nil
+				}
+				match := source.kind == "subscribed"
+				if source.kind == "personal" || source.kind == "inboxes" {
+					// INBOX is personal even under a prefix such as "INBOX.".
+					match = strings.EqualFold(data.Mailbox, "INBOX")
+					for _, prefix := range prefixes {
+						match = match || strings.HasPrefix(data.Mailbox, prefix)
+					}
+				} else if source.kind == "subtree" || source.kind == "subtree-one" {
+					for _, parent := range source.names {
+						if mailboxNamesEqual(data.Mailbox, parent) {
+							match = true
+						} else if data.Delimiter != 0 {
+							prefix := strings.TrimSuffix(parent, string(data.Delimiter)) + string(data.Delimiter)
+							if child, ok := strings.CutPrefix(data.Mailbox, prefix); ok {
+								match = match || source.kind == "subtree" || !strings.ContainsRune(child, data.Delimiter)
+							}
+						}
+					}
+				}
+				if match {
+					add(data.Mailbox)
+				}
+				return nil
+			})
+			err := c.state.session.List(ctx, writer, "", []string{"*"}, &ListOptions{Subscribed: source.kind == "subscribed"})
+			writer.core.close()
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return names, nil
 }
 
 // writeMultiSearchResult writes one mailbox's ESEARCH response, carrying the

@@ -174,18 +174,22 @@ var _ imapserver.CapabilitySupport = (*Backend)(nil)
 // \NonExistent. RFC 5258 section 3.5, and examples 9 and 10 in section 5.
 //
 // A subscribed mailbox with a subscribed descendant carries ChildInfo as well,
-// as in example 9. RFC 5258 section 3.5 says a server SHOULD suppress CHILDINFO
-// that is redundant because the matching children are returned anyway, but
-// its own examples do not, and a client must handle either.
+// as eps2 does in example 9. RFC 5258 section 3.5 says a server SHOULD
+// suppress CHILDINFO that is redundant because every subscribed descendant is
+// returned anyway; example 9 omits baz2 and qux2 for that reason. A name that
+// would be returned only for redundant CHILDINFO is omitted.
 //
 // The caller must hold the account lock.
 func (s *session) listRecursiveSubscribedLocked(reference string, patterns []string) []*imap.ListData {
 	// names maps every candidate name to its mailbox, nil for a hierarchy level
 	// that is not one.
 	names := make(map[string]*mailbox)
-	subscribedBelow := make(map[string]bool)
+	// unreturnedBelow marks names with a subscribed descendant the patterns do
+	// not return, the only case where CHILDINFO tells the client something.
+	unreturnedBelow := make(map[string]bool)
 	for _, m := range s.account.mailboxes {
 		names[m.name] = m
+		returned := m.subscribed && matchesAnyMailbox(m.name, reference, patterns)
 		for i := strings.IndexByte(m.name, '/'); i >= 0; i = nextDelimiter(m.name, i) {
 			parent := m.name[:i]
 			if parent == "" {
@@ -194,15 +198,15 @@ func (s *session) listRecursiveSubscribedLocked(reference string, patterns []str
 			if _, ok := names[parent]; !ok {
 				names[parent] = nil
 			}
-			if m.subscribed {
-				subscribedBelow[parent] = true
+			if m.subscribed && !returned {
+				unreturnedBelow[parent] = true
 			}
 		}
 	}
 	var results []*imap.ListData
 	for name, m := range names {
 		subscribed := m != nil && m.subscribed
-		if !subscribed && !subscribedBelow[name] || !matchesAnyMailbox(name, reference, patterns) {
+		if !subscribed && !unreturnedBelow[name] || !matchesAnyMailbox(name, reference, patterns) {
 			continue
 		}
 		data := &imap.ListData{Delimiter: '/', Mailbox: name}
@@ -211,7 +215,7 @@ func (s *session) listRecursiveSubscribedLocked(reference string, patterns []str
 		} else {
 			data.Attrs = []imap.MailboxAttr{imap.MailboxAttrNonExistent, imap.MailboxAttrHasChildren}
 		}
-		if subscribedBelow[name] {
+		if unreturnedBelow[name] {
 			data.ChildInfo = []string{"SUBSCRIBED"}
 		}
 		results = append(results, data)

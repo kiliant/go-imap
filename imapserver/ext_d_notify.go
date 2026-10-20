@@ -88,8 +88,12 @@ func (u *SessionUpdater) Push(update *SessionUpdate) error {
 type SessionUpdate struct {
 	// Mailbox is the mailbox the event concerns.
 	Mailbox string
-	// Status carries the mailbox's new state. The framework reports the items
-	// the client asked NOTIFY to include.
+	// Status carries the mailbox's new state. The framework projects Values
+	// onto the STATUS items available in the negotiated revision and capabilities.
+	// Include UIDNEXT and MESSAGES for MessageNew/MessageExpunge, UIDVALIDITY
+	// for identity changes, and HIGHESTMODSEQ for CONDSTORE/QRESYNC sessions
+	// (RFC 5465 section 5). A backend without the negotiated state may always
+	// include HIGHESTMODSEQ; the framework removes unadvertised items.
 	Status *imap.StatusData
 	_      struct{}
 }
@@ -120,7 +124,9 @@ type NotifyConfig struct {
 	// Watches are the watch groups, in the order the client listed them.
 	Watches []NotifyWatch `imapfeature:"notify"`
 	// StatusOnSet asks for an immediate STATUS of every watched mailbox, from
-	// the STATUS parameter of RFC 5465 section 6.
+	// the STATUS parameter of RFC 5465 section 6. Push them before Notify
+	// returns: the framework writes updates queued by then ahead of NOTIFY's
+	// tagged OK, as RFC 5465 section 3 requires.
 	StatusOnSet bool `imapfeature:"notify"`
 	_           struct{}
 }
@@ -442,6 +448,11 @@ func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := session.Notify(ctx, updater, config, nil); err != nil {
 		c.closeNotify()
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	// RFC 5465 section 3: STATUS responses requested by the STATUS indicator
+	// precede the tagged OK. The backend pushed them during Notify.
+	if err := c.drainNotify(); err != nil {
+		return err
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }

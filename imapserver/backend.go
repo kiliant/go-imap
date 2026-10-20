@@ -92,7 +92,9 @@ type Session interface {
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
 	// Create makes a mailbox. Creating one that exists is an error, and
 	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
-	// client to act on.
+	// client to act on. A trailing hierarchy delimiter is a declaration that
+	// the client intends to create children; the backend must create the name
+	// without that final delimiter (RFC 9051 section 6.3.4).
 	// When OBJECTID is advertised, the framework queries STATUS MAILBOXID after
 	// success. Failure to retrieve a valid ID returns NO [SERVERBUG] explicitly
 	// saying the mailbox was created; the creation is not rolled back.
@@ -336,7 +338,7 @@ type MoveMailbox interface {
 //	QRESYNC | gate | CapabilitySupport + QResyncMailbox | AS | Resynchronize known UIDs/modseqs and report vanished/changed messages.
 //	QUOTA | gate | QuotaSession | AS | Return quota roots and resource usage/limits.
 //	QUOTASET | gate | QuotaSetSession | AS | Set quota resource limits; requires QUOTA and at least one unfiltered QUOTA=RES-* witness.
-//	QUOTA=RES-STORAGE | gate | CapabilitySupport + QuotaSession | AS | Handle STORAGE quotas and return STATUS DELETED-STORAGE in kibibytes.
+//	QUOTA=RES-STORAGE | gate | CapabilitySupport + QuotaSession | AS | Handle STORAGE quotas and return STATUS DELETED-STORAGE in octets.
 //	QUOTA=RES-MESSAGE | gate | CapabilitySupport + QuotaSession | AS | Handle MESSAGE quotas and return STATUS DELETED.
 //	QUOTA=RES-MAILBOX | gate | CapabilitySupport + QuotaSession | AS | Handle MAILBOX quotas.
 //	QUOTA=RES-ANNOTATION-STORAGE | gate | CapabilitySupport + QuotaSession | AS | Handle ANNOTATION-STORAGE quotas.
@@ -466,7 +468,9 @@ type ListOptions struct {
 	// with a descendant that meets the criteria, sets [imap.ListData]'s
 	// ChildInfo to the options the descendant met, such as "SUBSCRIBED". A
 	// returned name that is not a mailbox carries \NonExistent. RFC 5258
-	// sections 3 and 3.5.
+	// sections 3 and 3.5. ChildInfo is redundant when every descendant
+	// meeting the criteria is itself returned; the backend should then omit
+	// it, and omit a name returned only for it (section 3.5, example 9).
 	//
 	// The framework sets it only together with Subscribed, the one base
 	// selection option it implements, and answers any other combination BAD
@@ -478,8 +482,9 @@ type ListOptions struct {
 	// framework evaluates RECURSIVEMATCH itself, from List calls without it.
 	// It starts from the backend's own answer to the command without the
 	// option, so the result never holds less than that, and adds the parents
-	// of descendants that meet the base options, found through List for "*".
-	// Limits follow, and only the added parents are affected. The framework
+	// of descendants that meet the base options, found through List for "*",
+	// unless all of those descendants are returned as well. Limits follow,
+	// and only the added parents and ChildInfo are affected. The framework
 	// decides which parents match the patterns by taking the canonical
 	// pattern to be the reference followed by the pattern, unless the pattern
 	// starts with the hierarchy delimiter (RFC 3501 section 6.3.8), and
@@ -510,7 +515,7 @@ type ListOptions struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type StatusOptions struct {
 	// Items are the requested status values. For framework-supplied calls, each
-	// item is in the IMAP4rev1 baseline, the enabled revision, or a capability
+	// item is in the enabled revision's baseline or belongs to a capability
 	// this session advertised. Unknown or unadvertised client items receive
 	// BAD before Status is called, including through LIST-STATUS.
 	Items []imap.StatusItem
@@ -974,6 +979,9 @@ func normalizeSearchCriteria(criteria imap.SearchCriteria, uids []imap.UID, save
 	}
 	switch criteria := criteria.(type) {
 	case imap.SearchSavedResult:
+		if saved.IsEmpty() {
+			return imap.SearchNot{Criteria: imap.SearchAll}
+		}
 		return imap.SearchUID{Set: slices.Clone(saved)}
 	case imap.SearchUID:
 		// A UID wildcard denotes the highest UID in this selected view,
@@ -1032,8 +1040,9 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 // The framework guarantees the tree contains no [imap.SearchSeqNum] — sequence
 // numbers are resolved to UIDs before the backend sees them — and no
 // [imap.SearchFilter], which is substituted for the criteria it names.
-// [imap.SearchSavedResult] is replaced with the saved UID set, or an empty set
-// when there is none. All three guarantees hold at every nesting depth,
+// [imap.SearchSavedResult] is replaced with the saved UID set, or
+// [imap.SearchNot]{Criteria: imap.SearchAll} when the result is unset or empty.
+// All three guarantees hold at every nesting depth,
 // including inside [imap.SearchNot], [imap.SearchOr] and [imap.SearchFuzzy].
 // A backend never has to handle these keys, allowing the root package to grow
 // new [imap.SearchCriteria]

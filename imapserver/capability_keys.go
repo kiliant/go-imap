@@ -131,6 +131,41 @@ var baselineSearchStringKeys = map[imap.SearchStringKey]bool{
 	imap.SearchKeyTo: true,
 }
 
+// Search key fields are open string types too. Classify each value so a newer
+// root module cannot silently widen the keys accepted by a pinned server.
+var searchDateGates = map[imap.SearchDateKey]keyGate{
+	imap.SearchDateKeyBefore:      baselineKey,
+	imap.SearchDateKeyOn:          baselineKey,
+	imap.SearchDateKeySince:       baselineKey,
+	imap.SearchDateKeySentBefore:  baselineKey,
+	imap.SearchDateKeySentOn:      baselineKey,
+	imap.SearchDateKeySentSince:   baselineKey,
+	imap.SearchDateKeySavedBefore: requiresToken("SAVEDATE"),
+	imap.SearchDateKeySavedOn:     requiresToken("SAVEDATE"),
+	imap.SearchDateKeySavedSince:  requiresToken("SAVEDATE"),
+}
+
+var searchSizeGates = map[imap.SearchSizeKey]keyGate{
+	imap.SearchSizeKeyLarger:  baselineKey,
+	imap.SearchSizeKeySmaller: baselineKey,
+}
+
+var searchWithinGates = map[imap.SearchWithinKey]keyGate{
+	imap.SearchWithinKeyOlder:   requiresToken("WITHIN"),
+	imap.SearchWithinKeyYounger: requiresToken("WITHIN"),
+}
+
+var searchObjectIDGates = map[imap.SearchObjectIDKey]keyGate{
+	imap.SearchObjectIDKeyEmail:  requiresToken("OBJECTID"),
+	imap.SearchObjectIDKeyThread: requiresToken("OBJECTID"),
+}
+
+var searchModSeqMetadata = map[imap.SearchModSeqMetadata]bool{
+	imap.SearchModSeqMetadataPrivate: true,
+	imap.SearchModSeqMetadataShared:  true,
+	imap.SearchModSeqMetadataAll:     true,
+}
+
 // criterionCapability reports which capability a single criterion belongs to.
 //
 // An empty capability with classified true is a baseline key, available to
@@ -157,15 +192,26 @@ func criterionCapability(criterion imap.SearchCriteria) (keyGate, bool) {
 			return keyGate(baselineKey), true
 		}
 		return nil, false
-	case imap.SearchDate, imap.SearchSize, imap.SearchUID, imap.SearchSeqNum,
+	case imap.SearchDate:
+		gate, ok := searchDateGates[criterion.Key]
+		return gate, ok
+	case imap.SearchSize:
+		gate, ok := searchSizeGates[criterion.Key]
+		return gate, ok
+	case imap.SearchUID, imap.SearchSeqNum,
 		imap.SearchFlagKeyword, imap.SearchHeaderField:
 		return keyGate(baselineKey), true
 	case imap.SearchModSeq:
+		if criterion.EntryType != "" && !searchModSeqMetadata[criterion.EntryType] {
+			return nil, false
+		}
 		return requiresToken("CONDSTORE"), true
 	case imap.SearchWithin:
-		return requiresToken("WITHIN"), true
+		gate, ok := searchWithinGates[criterion.Key]
+		return gate, ok
 	case imap.SearchObjectID:
-		return requiresToken("OBJECTID"), true
+		gate, ok := searchObjectIDGates[criterion.Key]
+		return gate, ok
 	case imap.SearchFuzzy:
 		return requiresToken("SEARCH=FUZZY"), true
 	case imap.SearchSavedResult:
@@ -294,6 +340,10 @@ func describeCriterion(criterion imap.SearchCriteria) string {
 		return string(criterion)
 	case imap.SearchString:
 		return string(criterion.Key)
+	case imap.SearchDate:
+		return string(criterion.Key)
+	case imap.SearchSize:
+		return string(criterion.Key)
 	case imap.SearchWithin:
 		return string(criterion.Key)
 	case imap.SearchObjectID:
@@ -336,11 +386,13 @@ func describeFetchItem(item imap.FetchItem) string {
 // statusItemGates classify every known STATUS keyword. Unknown names and new
 // argument-carrying types are refused until they have an explicit gate.
 var statusItemGates = map[imap.StatusItemKeyword]keyGate{
-	imap.StatusItemMessages:      baselineKey,
-	imap.StatusItemUIDNext:       baselineKey,
-	imap.StatusItemUIDValidity:   baselineKey,
-	imap.StatusItemUnseen:        baselineKey,
-	imap.StatusItemRecent:        baselineKey,
+	imap.StatusItemMessages:    baselineKey,
+	imap.StatusItemUIDNext:     baselineKey,
+	imap.StatusItemUIDValidity: baselineKey,
+	imap.StatusItemUnseen:      baselineKey,
+	imap.StatusItemRecent: func(state *sessionState, _ map[string]bool) bool {
+		return state.revision != revisionIMAP4rev2
+	},
 	imap.StatusItemHighestModSeq: requiresToken("CONDSTORE"),
 	imap.StatusItemAppendLimit:   requiresToken("APPENDLIMIT"),
 	imap.StatusItemMailboxID:     requiresToken("OBJECTID"),

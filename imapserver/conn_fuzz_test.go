@@ -244,6 +244,10 @@ func FuzzServeConnAuthenticated(f *testing.F) {
 		"b SELECT INBOX\r\nc SORT (SUBJECT) UTF-8 ALL\r\n",
 		"b SELECT INBOX\r\nc THREAD REFERENCES UTF-8 ALL\r\n",
 		"b NAMESPACE\r\n",
+		"b ESEARCH IN (mailboxes (INBOX other) subtree-one parent) ALL\r\n",
+		"b ESEARCH IN (personal subscribed inboxes) ALL\r\n",
+		"b ESEARCH IN (mailboxes ()) ALL\r\n",
+		"b ESEARCH IN (INBOX) ALL\r\n",
 		"",
 	} {
 		f.Add([]byte(seed))
