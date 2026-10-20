@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -176,10 +177,14 @@ func authenticateBackend(ctx context.Context, c *conn, tag string, credentials *
 		return writeBackendError(c, tag, "authentication", err)
 	}
 	if session == nil {
+		c.reportBackendError("AUTHENTICATE", fmt.Errorf("imapserver: authentication returned no session"))
 		return writeTaggedCondition(c, tag, "NO", imap.CodeServerBug, "", "authentication returned no session")
 	}
 	if !c.state.authenticate(session) {
-		_ = session.Close(ctx, nil)
+		c.reportBackendError("AUTHENTICATE", fmt.Errorf("imapserver: authentication state transition failed"))
+		if err := session.Close(ctx, nil); err != nil {
+			c.reportBackendError("LOGOUT", err)
+		}
 		return writeTaggedCondition(c, tag, "NO", imap.CodeServerBug, "", "authentication state transition failed")
 	}
 	// RFC 9738's advertised limits are resolved once, here, rather than during

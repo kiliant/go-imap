@@ -172,6 +172,14 @@ type UnilateralDataHandler struct {
 }
 ```
 
+Server diagnostics follow the same rule: `imapserver.Options.OnError` is a
+function field receiving a guarded `ServerEvent`, with an open string
+`ServerEventKind`. New diagnostic kinds and event fields are additive. The
+callback runs serially outside connection loops and locks; delivery is bounded
+and best effort, with overflow counts on subsequent events. Server shutdown
+does not wait for callbacks, so callback code may initiate shutdown. This is an
+application of rules 1, 4 and 7, with no new interface or error type. (#139)
+
 ### The hard case: a server backend — approved by the human, 2026-08-05
 
 The server framework's backend is the worst instance of this rule in the

@@ -254,6 +254,7 @@ func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 		"Options.Greeting":               true,
 		"Options.ServerID":               true,
 		"Options.Limits":                 true,
+		"Options.OnError":                true,
 		// STORE's operation and flag list are the rev1 command itself, not an
 		// extension of it.
 		"StoreFlags.Op":    true,
