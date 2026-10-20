@@ -54,11 +54,11 @@ func TestServerEventCallbackIsBoundedAndDoesNotBlockClose(t *testing.T) {
 			<-release
 		}
 	}})
-	s.reportEvent(nil, &ServerEvent{})
+	s.reportEvent(context.Background(), &ServerEvent{})
 	<-entered
 	defer close(release)
 	for range 1000 {
-		s.reportEvent(nil, &ServerEvent{})
+		s.reportEvent(context.Background(), &ServerEvent{})
 	}
 	s.eventMu.Lock()
 	queued, dropped := len(s.events), s.droppedEvents
@@ -76,7 +76,7 @@ func TestServerEventCallbackIsBoundedAndDoesNotBlockClose(t *testing.T) {
 	s.eventMu.Lock()
 	s.events = nil
 	s.eventMu.Unlock()
-	s.reportEvent(nil, &ServerEvent{Command: "last"})
+	s.reportEvent(context.Background(), &ServerEvent{Command: "last"})
 	s.eventMu.Lock()
 	got := s.events[0].event.Dropped
 	s.eventMu.Unlock()
@@ -94,8 +94,8 @@ func TestServerEventCallbackPanicIsContained(t *testing.T) {
 		}
 		close(done)
 	}})
-	s.reportEvent(nil, &ServerEvent{})
-	s.reportEvent(nil, &ServerEvent{})
+	s.reportEvent(context.Background(), &ServerEvent{})
+	s.reportEvent(context.Background(), &ServerEvent{})
 	select {
 	case <-done:
 	case <-time.After(time.Second):
