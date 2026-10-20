@@ -17,6 +17,10 @@ on:
         description: 'Duration per target'
         required: false
         default: '10m'
+      shards:
+        description: 'JSON list of shards to run, e.g. [1] for a targeted rerun'
+        required: false
+        default: '[0, 1, 2, 3, 4, 5, 6, 7]'
 
 permissions:
   contents: read
@@ -37,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: ${{ fromJSON(github.event.inputs.shards || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
     env:
       SHARD_INDEX: ${{ matrix.shard }}
       SHARD_TOTAL: 8
@@ -53,7 +57,18 @@ jobs:
       - name: campaign
         env:
           FUZZTIME: ${{ github.event.inputs.fuzztime || '10m' }}
-        run: .github/scripts/fuzz.sh "$FUZZTIME"
+          # Cap each test binary so a memory blow-up fails as a finding with
+          # its input saved instead of killing the runner (#192).
+          GOFLAGS: -exec=${{ github.workspace }}/.github/scripts/fuzz-limit.sh
+        # The watchdog writes to the job log, which survives a runner shutdown
+        # that would lose the uploaded logs.
+        run: |
+          .github/scripts/fuzz-watchdog.sh &
+          watchdog=$!
+          status=0
+          .github/scripts/fuzz.sh "$FUZZTIME" || status=$?
+          kill "$watchdog"
+          exit "$status"
 
       - name: upload logs and any crashers
         if: always()

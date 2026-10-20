@@ -2,7 +2,6 @@ package imapclient
 
 import (
 	"context"
-	"net"
 	"reflect"
 	"testing"
 	"time"
@@ -65,7 +64,7 @@ func FuzzContextUpdateStream(f *testing.F) {
 		"A3": {uid: true, sorted: true, tag: "A3"},
 	}
 	f.Fuzz(func(t *testing.T, stream string) {
-		clientConn, serverConn := net.Pipe()
+		clientConn, serverConn := fuzzStreamPipe()
 		defer serverConn.Close()
 		c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
 			StatusResponse: func(*StatusResponse) {},

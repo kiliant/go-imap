@@ -214,6 +214,9 @@ jobs:
       SHARD_TOTAL: 4
       FUZZ_PARALLEL: 1
       FUZZ_OUT: ${{ github.workspace }}/fuzz-out
+      # The same per-binary memory cap as fuzz-long.yml (#192). A job-level
+      # GOFLAGS replaces the workflow's, so -mod=readonly is repeated here.
+      GOFLAGS: -mod=readonly -exec=${{ github.workspace }}/.github/scripts/fuzz-limit.sh
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

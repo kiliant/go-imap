@@ -2,9 +2,56 @@ package imapclient
 
 import (
 	"context"
+	"io"
+	"net"
+	"runtime"
 	"testing"
 	"time"
 )
+
+// net.Pipe does not stop deadline timers on Close. The client's default
+// 30-minute read deadline would therefore retain each pipe for the entire fuzz
+// campaign, eventually exhausting the worker. These stream targets already
+// bound the reader with a context and close the peer after writing, so their
+// transport does not need a second read timer. Real read deadlines are covered
+// separately by TestStalledLiteralObservesReadDeadline in internal/imapwire.
+type fuzzStreamConn struct{ net.Conn }
+
+func (fuzzStreamConn) SetReadDeadline(time.Time) error { return nil }
+
+func fuzzStreamPipe() (net.Conn, net.Conn) {
+	client, server := net.Pipe()
+	return fuzzStreamConn{client}, server
+}
+
+func TestFuzzStreamConnectionsAreReclaimed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := 0; i < 10_000; i++ {
+		clientConn, serverConn := fuzzStreamPipe()
+		go func() {
+			_, _ = io.WriteString(serverConn, "* OK ready\r\n")
+			_ = serverConn.Close()
+		}()
+		c := NewClient(clientConn, nil)
+		finished := fuzzReaderFinished(ctx, c.readerDone)
+		_ = c.Close()
+		if !finished {
+			t.Fatal("reader did not finish on a closed connection")
+		}
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	// A deadline timer that survives Close retains roughly 1 KiB per pipe.
+	// Allow runtime bookkeeping, but not one retained connection per input.
+	if after.HeapAlloc > before.HeapAlloc+4<<20 {
+		t.Fatalf("closed fuzz connections retained %d bytes", after.HeapAlloc-before.HeapAlloc)
+	}
+}
 
 // fuzzReaderFinished bounds a live reader, then confirms whether shutdown has
 // already finished before reporting a timeout. Under fuzzing load the worker
