@@ -126,7 +126,10 @@ type SessionUpdate struct {
 // what the selection's Updater publishes according to the SELECTED or
 // SELECTED-DELAYED group, keeping the client's sequence numbers stable while
 // it withholds them, so a backend publishes every change there regardless of
-// the registration.
+// the registration. A successful SET reports accumulated selected changes,
+// including flags, before its tagged OK. If Notify refuses a replacement,
+// the previous selected policy remains in force, although its session updater
+// has been closed as described above.
 type NotifySession interface {
 	Notify(ctx context.Context, updater *SessionUpdater, config *NotifyConfig, options *NotifyOptions) error
 }

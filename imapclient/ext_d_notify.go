@@ -95,7 +95,7 @@ type NotifyFilter struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type NotifyOptions struct {
 	// Status, when true, asks for STATUS notifications for non-selected
-	// mailboxes (NOTIFY STATUS ...). RFC 5465 section 4.
+	// mailboxes (NOTIFY SET STATUS ...). RFC 5465 section 4.
 	Status bool
 
 	// None cancels all notifications (NOTIFY NONE). When set, filters must
@@ -224,12 +224,15 @@ func writeNotify(enc *imapwire.Encoder, filters []NotifyFilter, options *NotifyO
 		enc.Atom("NONE")
 		return
 	}
+	enc.Atom("SET")
 	if options != nil && options.Status {
-		enc.Atom("STATUS").SP()
+		enc.SP().Atom("STATUS")
 	}
-	enc.Atom("SET").SP().List(len(filters), func(i int) {
-		writeNotifyFilter(enc, filters[i])
-	})
+	for _, filter := range filters {
+		enc.SP().Special('(')
+		writeNotifyFilter(enc, filter)
+		enc.Special(')')
+	}
 }
 
 func writeNotifyFilter(enc *imapwire.Encoder, filter NotifyFilter) {

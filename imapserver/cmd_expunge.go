@@ -71,14 +71,11 @@ func handleClose(ctx context.Context, c *conn, command *queuedCommand) error {
 }
 
 func closeSelected(ctx context.Context, c *conn, command *queuedCommand) error {
-	selected := c.state.unselect()
+	selected := c.state.selected
 	if selected == nil {
 		return c.writeBad(command.tag, "no mailbox is selected")
 	}
-	selected.close()
-	if err := selected.mailbox.Unselect(ctx, nil); err != nil {
-		return writeBackendError(c, command.tag, "CLOSE", err)
-	}
+	releaseInstalledSelection(ctx, c, selected)
 	return c.writeTagged(command.tag, "OK", "CLOSE completed")
 }
 
@@ -127,11 +124,51 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	if silent {
 		effect = effectExpunge
 	}
-	if err := c.drainUpdatesThrough(updateAccounting{origin: origin, effect: effect}); err != nil {
+	clock := removalCheckpoint(ctx, c)
+	// STATUS is captured before this drain, so changes reflected in its clock
+	// are delivered (or retained behind the checkpoint fence) before the OK.
+	if err := c.drainUpdatesAllowingRemovals(updateAccounting{origin: origin, effect: effect}); err != nil {
 		return false, err
 	}
 	if silent {
 		return true, nil
 	}
-	return true, c.writeTagged(command.tag, "OK", "EXPUNGE completed")
+	return true, writeRemovalCompletion(c, command, clock)
+}
+
+// removalCheckpoint uses the existing selected-mailbox STATUS contract, so a
+// QRESYNC backend needs no new interface or update field. Query before the
+// final drain: every change included in this clock must reach the client or
+// keep the explicit checkpoint behind it. A failure cannot undo a successful
+// mutation; report it privately and retain the selection's safe checkpoint.
+func removalCheckpoint(ctx context.Context, c *conn) uint64 {
+	s := c.state.selected
+	if s == nil || !c.state.enabled["QRESYNC"] || s.noModSeq {
+		return 0
+	}
+	data, err := c.state.session.Status(ctx, s.name, &StatusOptions{Items: []imap.StatusItem{imap.StatusItemHighestModSeq}})
+	if err == nil && data != nil {
+		clock := data.HighestModSeq
+		if value, ok := data.Number(imap.StatusItemHighestModSeq); ok {
+			clock = value
+		}
+		if clock != 0 {
+			return clock
+		}
+	}
+	if err == nil {
+		err = fmt.Errorf("imapserver: missing QRESYNC removal clock")
+	}
+	c.reportBackendError("STATUS HIGHESTMODSEQ", err)
+	return max(uint64(1), s.snapshotModSeq)
+}
+
+func writeRemovalCompletion(c *conn, command *queuedCommand, clock uint64) error {
+	if clock == 0 {
+		return c.writeTagged(command.tag, "OK", command.name+" completed")
+	}
+	if c.hasUnreportedChanges() {
+		clock = max(uint64(1), c.state.selected.snapshotModSeq)
+	}
+	return writeTaggedCondition(c, command.tag, "OK", imap.CodeHighestModSeq, fmt.Sprint(clock), command.name+" completed")
 }

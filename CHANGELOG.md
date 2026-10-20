@@ -87,6 +87,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- `imapclient.Client.Notify` writes `NOTIFY SET STATUS (group) (group)`:
+  STATUS follows SET, and each watch group has its own parentheses (RFC 5465
+  section 8). Previously STATUS and multiple groups were rejected by compliant
+  servers. No exported signature change. (#197)
+
 - **imapcodec:** the server-direction UIDFETCH response is written as RFC 9586
   section 7's `* <uid> UIDFETCH (...)`, not `* UIDFETCH <uid> (...)`. Only
   `imapserver` writes it; a standalone server build receives the fix with the
@@ -513,6 +518,39 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Live `UpdateVanished` batches use the client's negotiated removal form:
+  EXPUNGE for ordinary sessions and VANISHED after QRESYNC or UIDONLY. UIDs
+  never announced by EXISTS are omitted, and `Earlier` is normalized to live
+  removal semantics; SELECT/FETCH resync reports alone use EARLIER. The
+  exported field remains source-compatible and its documentation is corrected.
+  (#54, review N1)
+- Selected NOTIFY retains the latest withheld flags per UID and returns them
+  on successful SET, including SET with NONE. Resync checkpoints remain behind
+  withheld flags and removals, including after an own silent STORE of the
+  same UID. Document selected policy, refused replacement registrations,
+  own additions and operations on removed placeholders. (#54, N2/L1)
+- EXPUNGE, UID EXPUNGE and MOVE report HIGHESTMODSEQ after QRESYNC. The
+  framework uses the existing selected-mailbox STATUS contract before its
+  final update drain, then fences the checkpoint if changes remain withheld.
+  No new backend interface or obligation. (#54, N3)
+- STORE fills missing MODSEQ in a FLAGS-only backend response through FETCH
+  after CONDSTORE is enabled, merging it into that response before accounting
+  for the own update. The exported Store contract still permits FLAGS-only
+  output. (#54, N4)
+- A completed CLOSE, UNSELECT or UNAUTHENTICATE answers OK after cleanup
+  errors, reports those errors through `Options.OnError`, and leaves the
+  connection usable in its new state. Replacing SELECT continues after a
+  release error. A refused UNAUTHENTICATE preserves the selection. Document
+  once-only release, fresh bounded cleanup contexts and error handling on
+  `SelectedMailbox.Unselect` and `Session.Close`. (#54, N5)
+- `backendtest`'s RENAME INBOX case accepts arbitrary FETCH order, a recreated
+  INBOX with new UIDVALIDITY and MAILBOXID, and checks clocks and resync only
+  within one incarnation. Clarify unique, unordered `SearchResult.UIDs`.
+  (#54, N6/O1)
+- Memory assigns a new SAVEDATE on COPY, MOVE and RENAME INBOX, preserving
+  INTERNALDATE (RFC 8514 section 3). Both backend package docs describe the
+  refusal of a RENAME INBOX destination beneath INBOX. (#54, N7/L1)
+
 - A SELECT or EXAMINE failing in QRESYNC's Resync or changed-message FETCH, or
   in its OBJECTID or rev2 LIST response, releases the installed selection
   before answering: the connection returns to the authenticated state, the
@@ -532,7 +570,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   behaviour is unchanged. A new baseline case covers RENAME INBOX.
   (#54, second independent review R4)
 - Memory implements RENAME INBOX: messages move to a new mailbox identity
-  with new UIDs, keeping flags, dates and content; INBOX, its inferiors and
+  with new UIDs, keeping flags, INTERNALDATE and content; INBOX, its inferiors and
   identity remain; INBOX selections see the removals, QRESYNC reports them,
   and a destination conflict changes nothing. Memory MOVE now records its
   source removals for QRESYNC and advances the source clock (RFC 7162 section

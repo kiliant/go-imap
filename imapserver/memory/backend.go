@@ -6,6 +6,11 @@
 // server interfaces, and PLAIN, LOGIN and SCRAM authentication with configured
 // credentials. The capability witnesses in ext_a.go specify its supported
 // extensions. Future optional interfaces are adopted deliberately.
+//
+// RENAME INBOX moves its messages to a newly created mailbox and leaves the
+// empty INBOX, its identity, metadata, subscription and inferiors in place.
+// A destination beneath INBOX is refused with NO [CANNOT]. COPY, MOVE and
+// RENAME INBOX preserve INTERNALDATE and assign a new SAVEDATE on arrival.
 package memory
 
 import (

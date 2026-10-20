@@ -301,6 +301,7 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		destinationMailbox.uidNext++
 		clone := *msg
 		clone.uid = uid
+		clone.saveDate = time.Now()
 		clone.recent = true
 		clone.modSeq = bumpModSeqLocked(destinationMailbox)
 		clone.flags = cloneFlags(msg.flags)

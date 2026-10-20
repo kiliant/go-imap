@@ -39,8 +39,9 @@ func handleMove(ctx context.Context, c *conn, command *queuedCommand) error {
 	// The backend's source-removal batch is the canonical ordering. Writing the
 	// returned UIDs first can race an older queued removal and map them through a
 	// stale sequence view, just like EXPUNGE.
-	if err := c.drainUpdatesThrough(updateAccounting{origin: origin}); err != nil {
+	clock := removalCheckpoint(ctx, c)
+	if err := c.drainUpdatesAllowingRemovals(updateAccounting{origin: origin}); err != nil {
 		return err
 	}
-	return c.writeTagged(command.tag, "OK", command.name+" completed")
+	return writeRemovalCompletion(c, command, clock)
 }

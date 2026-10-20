@@ -1018,7 +1018,7 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			}
 		}
 	}()
-	releasable := !suppressMessages && (len(selected.pendingAdds) != 0 || selected.hasPendingRecent || !deferred && len(selected.suppressed) != 0)
+	releasable := !suppressFlags && len(selected.pendingFlags) != 0 || !suppressMessages && (len(selected.pendingAdds) != 0 || selected.hasPendingRecent || !deferred && len(selected.suppressed) != 0)
 	if len(batches) == 0 && !releasable && (deferred || len(selected.withheld) == 0) {
 		return nil
 	}
@@ -1069,6 +1069,9 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		}
 		pending = append(pending, updates...)
 	}
+	if !suppressFlags {
+		pending = append(pending, selected.releaseFlags()...)
+	}
 	wireUpdates := coalesceWireUpdates(pending)
 	for _, update := range wireUpdates {
 		if update.kind == updateMessageExpunge {
@@ -1102,19 +1105,27 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 }
 
 // RFC 7162 sections 3.2 and 6 require an explicit safe checkpoint when
-// higher per-message MODSEQs pass a delayed removal. A client MUST prefer
-// this code over the larger FETCH values when completing the command.
+// higher per-message MODSEQs pass an unreported flag change or removal.
+// A client MUST prefer this code over larger FETCH values at completion.
 func (c *conn) writeDeferredModSeqFence() {
 	selected := c.state.selected
 	if selected == nil || !condStoreMailboxEnabled(c) {
 		return
 	}
 	// A backend may emit a FETCH and then fail before the handler's normal
-	// drain. Its already-published removal still needs to fence that response.
-	if !selected.withholdsRemovals() && !selected.queue.hasRemovals() {
+	// drain. Its already-published changes still need to fence that response.
+	if !c.hasUnreportedChanges() {
 		return
 	}
-	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "removal announcements pending")
+	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "change announcements pending")
+}
+
+// hasUnreportedChanges also checks queued changes: a backend may publish
+// and then fail before the handler drains its updates.
+func (c *conn) hasUnreportedChanges() bool {
+	s := c.state.selected
+	return s != nil && (s.withholdsRemovals() || s.queue.hasRemovals() ||
+		len(s.pendingFlags) != 0 || c.notifySelected.suppressesFlags() && s.queue.hasFlags())
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {

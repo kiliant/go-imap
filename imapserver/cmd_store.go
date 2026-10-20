@@ -140,23 +140,27 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
-	if args.hasUnchangedSince {
-		if args.silent {
-			responses.silenceStored(condStore.Modified)
+	if args.hasUnchangedSince && args.silent {
+		responses.silenceStored(condStore.Modified)
+	}
+	if !discardOutput && condStoreMailboxEnabled(c) {
+		var modified imap.UIDSet
+		if condStore != nil {
+			modified = condStore.Modified
 		}
 		// A backend may honour Silent by writing nothing, so the framework
 		// supplies the mandatory MODSEQ itself rather than requiring the
 		// backend to ignore the option. MODSEQ is an existing CONDSTORE
 		// FETCH obligation, and Fetch skips messages that no longer exist.
-		if err := responses.fetchMissingModSeq(ctx, c, uids, condStore.Modified, includeUID); err != nil {
+		if err := responses.fetchMissingModSeq(ctx, c, uids, modified, includeUID); err != nil {
 			return writeBackendError(c, command.tag, command.name, err)
 		}
 	}
-	accounting := updateAccounting{origin: origin, effect: effectStore}
+	accounting := updateAccounting{origin: origin, effect: effectStore, silent: args.silent}
 	if !discardOutput {
 		// Only what the response reported is accounted for. A changed
 		// message the backend did not report keeps its unsolicited update.
-		accounting.covered = responses.reported(args.silent)
+		accounting.covered = responses.reported(args.silent, condStoreMailboxEnabled(c))
 	}
 	// A keyword must appear in the mailbox's untagged FLAGS response before it
 	// first appears in a FETCH FLAGS response (RFC 3501 section 7.2.6). The
@@ -269,9 +273,40 @@ func (r *storeResponses) silenceStored(modified imap.UIDSet) {
 // response lacks it. Stored means requested and not named in MODIFIED.
 func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, requested, modified imap.UIDSet, includeUID bool) error {
 	have := make(map[imap.UID]bool, len(r.items))
+	byUID := make(map[imap.UID][]int, len(r.items))
+	for i, response := range r.items {
+		byUID[response.uid] = append(byUID[response.uid], i)
+	}
+	// A backend may split a message's output across responses. Fill each
+	// response, and index by UID so a FLAGS-only mailbox stays linear in size.
+	merge := func(uid imap.UID, data *imap.FetchMessageData) (bool, error) {
+		if !hasFetchItem(data, imap.FetchItemModSeq) || len(byUID[uid]) == 0 {
+			return false, nil
+		}
+		for _, i := range byUID[uid] {
+			response := r.items[i].data
+			if hasFetchItem(response, imap.FetchItemModSeq) {
+				continue
+			}
+			const maxModSeqBytes = 32
+			if r.bytes > maxCommandFetchBytes-maxModSeqBytes {
+				return false, commandLimitError("STORE response byte limit exceeded")
+			}
+			r.bytes += maxModSeqBytes
+			for key, values := range data.Items {
+				if strings.EqualFold(string(key), string(imap.FetchItemModSeq)) {
+					response.Items[key] = slices.Clone(values)
+				}
+			}
+		}
+		return true, nil
+	}
 	for _, response := range r.items {
-		if hasFetchItem(response.data, imap.FetchItemModSeq) {
+		if hasFetchItem(response.data, imap.FetchItemModSeq) && !have[response.uid] {
 			have[response.uid] = true
+			if _, err := merge(response.uid, response.data); err != nil {
+				return err
+			}
 		}
 	}
 	var missing []imap.UID
@@ -284,6 +319,10 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 		return nil
 	}
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
+		uid, _ := extractFetchUID(data)
+		if merged, err := merge(uid, data); merged || err != nil {
+			return err
+		}
 		return r.add(c, data, includeUID)
 	})
 	err := c.state.selected.mailbox.Fetch(ctx, writer, imap.UIDSetNum(missing...), &FetchOptions{
@@ -293,6 +332,17 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 	if err != nil {
 		return err
 	}
+	kept := r.items[:0]
+	for _, response := range r.items {
+		if hasFetchItem(response.data, imap.FetchItemModSeq) {
+			kept = append(kept, response)
+		} else {
+			// FETCH may skip a message expunged since Store returned it.
+			// Do not send its stale FLAGS without the mandatory MODSEQ.
+			response.cleanup()
+		}
+	}
+	r.items = kept
 	// The written order is the client's sequence order, whatever order the
 	// backend and the fallback produced their halves in.
 	slices.SortStableFunc(r.items, func(a, b storeResponse) int { return cmp.Compare(a.data.SeqNum, b.data.SeqNum) })
@@ -302,10 +352,11 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 // reported lists the messages whose new state the collected responses tell
 // the client: their FLAGS, or under .SILENT, which may omit FLAGS, their
 // MODSEQ.
-func (r *storeResponses) reported(silent bool) map[imap.UID]struct{} {
+func (r *storeResponses) reported(silent, requireModSeq bool) map[imap.UID]struct{} {
 	covered := make(map[imap.UID]struct{}, len(r.items))
 	for _, response := range r.items {
-		if hasFetchItem(response.data, imap.FetchItemFlags) || silent && hasFetchItem(response.data, imap.FetchItemModSeq) {
+		hasModSeq := hasFetchItem(response.data, imap.FetchItemModSeq)
+		if (hasFetchItem(response.data, imap.FetchItemFlags) || silent && hasModSeq) && (!requireModSeq || hasModSeq) {
 			covered[response.uid] = struct{}{}
 		}
 	}

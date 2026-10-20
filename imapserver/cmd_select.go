@@ -23,15 +23,12 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, err.Error())
 	}
 	hadSelection := c.state.selected != nil
-	unselectErr := abandonCurrentSelection(ctx, c)
+	abandonCurrentSelection(ctx, c)
 	if hadSelection {
 		writeUntaggedOK(c, imap.CodeClosed, "", "previous mailbox closed")
 		if err := c.encoder.Flush(); err != nil {
 			return err
 		}
-	}
-	if unselectErr != nil {
-		return writeBackendError(c, command.tag, command.name, unselectErr)
 	}
 	selected, snapshot, err := selectAtomic(ctx, c, mailbox, options)
 	if err != nil {
@@ -144,20 +141,19 @@ func releaseInstalledSelection(ctx context.Context, c *conn, selected *selectedS
 		return
 	}
 	selected.close()
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.server.options.Limits.CommandTimeout)
-	defer cancel()
+	releaseCtx := context.WithoutCancel(ctx)
+	if timeout := c.server.options.Limits.CommandTimeout; timeout > 0 {
+		var cancel context.CancelFunc
+		releaseCtx, cancel = context.WithTimeout(releaseCtx, timeout)
+		defer cancel()
+	}
 	if err := selected.mailbox.Unselect(releaseCtx, nil); err != nil {
 		c.reportBackendError("UNSELECT", err)
 	}
 }
 
-func abandonCurrentSelection(ctx context.Context, c *conn) error {
-	selected := c.state.unselect()
-	if selected == nil {
-		return nil
-	}
-	selected.close()
-	return selected.mailbox.Unselect(ctx, nil)
+func abandonCurrentSelection(ctx context.Context, c *conn) {
+	releaseInstalledSelection(ctx, c, c.state.selected)
 }
 
 func selectAtomic(ctx context.Context, c *conn, mailbox string, options *SelectOptions) (selected *selectedState, snapshot *SelectSnapshot, err error) {

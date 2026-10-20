@@ -33,6 +33,24 @@
 // and is supported, not a toy — it is the backend this project's own conformance
 // and interoperability suites run against.
 //
+// # Selected notifications
+//
+// The framework applies NOTIFY's selected-mailbox policy to every Updater
+// batch; backends continue to publish all changes. Suppressed additions stay
+// outside the client's sequence view, removals leave stable placeholders in
+// it, and the latest flags per UID are retained. A successful NOTIFY SET
+// reports accumulated changes, including when the new registration requests
+// NONE. Until they are reported, an explicit HIGHESTMODSEQ checkpoint keeps
+// later per-message MODSEQs from concealing those changes on resynchronisation.
+// Commands on a removed placeholder succeed without message data, as commands
+// on an expunged UID do. The client's own mutations bypass the selected policy;
+// an own addition first announces any earlier withheld additions in UID order.
+//
+// A backend's refusal of a replacement NOTIFY leaves the previous selected
+// policy in force. Its session-scoped updater has already been closed; the
+// next successful registration installs a new one. Validation refusals before
+// the backend call leave both the registration and selected policy untouched.
+//
 // # Backend errors
 //
 // The framework finds *imap.Error values with errors.As. It sends their Code,
@@ -133,7 +151,8 @@ type Session interface {
 	// Close releases everything the session holds. The framework calls it once,
 	// when the connection ends, including after an error and after
 	// UNAUTHENTICATE. No other method is called afterwards, and the session is
-	// discarded even if Close returns an error.
+	// discarded even if Close returns an error. Cleanup errors go to
+	// Options.OnError; a successful UNAUTHENTICATE still answers OK.
 	Close(ctx context.Context, options *SessionCloseOptions) error
 }
 
@@ -180,7 +199,9 @@ type SelectedMailbox interface {
 	//
 	// A conditional store (UNCHANGEDSINCE) does not arrive here; it goes to
 	// [CondStoreMailbox.StoreCondStore], so this method never implements the
-	// modification-sequence comparison.
+	// modification-sequence comparison. Store need not include MODSEQ in its
+	// output: when required by CONDSTORE, the framework fetches missing values
+	// through Fetch before writing the response.
 	Store(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) error
 	// Copy copies messages to another mailbox. The returned CopyData carries
 	// the source and destination UIDs when the backend can supply them, which
@@ -202,7 +223,11 @@ type SelectedMailbox interface {
 	Expunge(ctx context.Context, writer *ExpungeWriter, uids *imap.UIDSet, options *ExpungeOptions) error
 	// Unselect releases the selection. The framework calls it once per
 	// selection — on CLOSE, UNSELECT, a replacing SELECT, or connection
-	// teardown — after which this handle is not used again.
+	// teardown or UNAUTHENTICATE — after which this handle is not used again,
+	// even on error. The updater is closed first. Cleanup uses a fresh
+	// context bounded by Limits.CommandTimeout, and errors go to
+	// Options.OnError. A completed CLOSE, UNSELECT or UNAUTHENTICATE answers
+	// OK; replacing SELECT continues with the new selection.
 	Unselect(ctx context.Context, options *UnselectOptions) error
 }
 
@@ -837,13 +862,17 @@ type UpdateExpunge struct {
 
 func (*UpdateExpunge) update() {}
 
-// UpdateVanished removes one or more UIDs using QRESYNC VANISHED semantics.
-// Earlier and non-Earlier values are never coalesced together.
+// UpdateVanished removes one or more UIDs from the live selection. Unknown
+// UIDs and additions not yet announced to the client produce no response.
+// The framework projects removals to EXPUNGE or VANISHED according to the
+// session's enabled features; a backend need not track QRESYNC negotiation.
 // Construct with keyed fields only; fields may be added in a future release.
 type UpdateVanished struct {
 	// UIDs is a concrete, non-dynamic set of removed UIDs.
 	UIDs imap.UIDSet
-	// Earlier selects the VANISHED (EARLIER) wire form.
+	// Earlier is retained for source compatibility but ignored in live update
+	// batches. EARLIER is legal only in SELECT/FETCH resynchronisation reports;
+	// use QResyncResult.Vanished for those.
 	Earlier bool
 	_       struct{}
 }
@@ -853,7 +882,8 @@ func (*UpdateVanished) update() {}
 // SearchResult is the UID-keyed result returned by SelectedMailbox.Search.
 // Construct with keyed fields only; fields may be added in a future release.
 type SearchResult struct {
-	// UIDs are the matching message identifiers.
+	// UIDs are the matching message identifiers, without duplicates. Their
+	// order is unrestricted.
 	UIDs []imap.UID
 	// ModSeq is the highest modification sequence among the matching messages,
 	// or zero when the backend does not track them. The framework reports it

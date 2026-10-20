@@ -133,15 +133,12 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	if !ok {
 		return c.writeBad(command.tag, "UNAUTHENTICATE is not available")
 	}
-	// Any selection is abandoned first. RFC 8437 section 3 returns the
-	// connection to the not-authenticated state, in which a selected mailbox
-	// cannot exist, and leaving the backend handle attached would leak it.
-	if err := abandonCurrentSelection(ctx, c); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
-	}
+	// A refusal leaves the session and selection usable. After success,
+	// cleanup errors are diagnostics: the state transition has completed.
 	if err := session.Unauthenticate(ctx, nil); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	abandonCurrentSelection(ctx, c)
 	// The session is discarded whether or not Close succeeded, and the state
 	// transition happens before the error is reported. An error from Close does
 	// not mean the session is still usable, and leaving it attached means the
@@ -156,7 +153,7 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	closeErr := c.state.session.Close(ctx, nil)
 	c.state.unauthenticate()
 	if closeErr != nil {
-		return writeBackendError(c, command.tag, command.name, closeErr)
+		c.reportBackendError("CLOSE", closeErr)
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }

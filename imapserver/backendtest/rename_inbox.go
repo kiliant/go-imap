@@ -131,18 +131,20 @@ func runRenameInbox(t *testing.T, harness *Harness) {
 		}
 	}
 
-	// INBOX stays the same mailbox: its UIDs are not reused.
+	// UIDs may be reused only if INBOX has a new UIDVALIDITY (RFC 3501
+	// section 6.3.5). Clocks and resync history apply to one incarnation.
 	after := selectMailbox(t, session, "INBOX", discardUpdater())
 	if len(after.Snapshot.UIDs) != 0 {
 		t.Errorf("INBOX still lists %v after RENAME", after.Snapshot.UIDs)
 	}
-	if after.Snapshot.Status.UIDValidity != before.Status.UIDValidity || after.Snapshot.Status.UIDNext < before.Status.UIDNext {
+	sameIncarnation := after.Snapshot.Status.UIDValidity == before.Status.UIDValidity
+	if sameIncarnation && after.Snapshot.Status.UIDNext < before.Status.UIDNext {
 		t.Errorf("INBOX UIDVALIDITY/UIDNEXT went from %d/%d to %d/%d", before.Status.UIDValidity, before.Status.UIDNext, after.Snapshot.Status.UIDValidity, after.Snapshot.Status.UIDNext)
 	}
-	if supportsCapability(instance, session, "CONDSTORE") && !before.Status.NoModSeq && after.Snapshot.Status.HighestModSeq <= before.Status.HighestModSeq {
+	if sameIncarnation && supportsCapability(instance, session, "CONDSTORE") && !before.Status.NoModSeq && after.Snapshot.Status.HighestModSeq <= before.Status.HighestModSeq {
 		t.Errorf("INBOX HIGHESTMODSEQ did not advance past %d for the removals: %d", before.Status.HighestModSeq, after.Snapshot.Status.HighestModSeq)
 	}
-	if resync, ok := after.Mailbox.(imapserver.QResyncMailbox); ok && supportsCapability(instance, session, "QRESYNC") && !before.Status.NoModSeq {
+	if resync, ok := after.Mailbox.(imapserver.QResyncMailbox); ok && sameIncarnation && supportsCapability(instance, session, "QRESYNC") && !before.Status.NoModSeq {
 		report, err := resync.Resync(ctx, &imapserver.QResyncSelect{UIDValidity: before.Status.UIDValidity, ModSeq: before.Status.HighestModSeq}, nil)
 		if err != nil || report == nil {
 			t.Fatalf("Resync after RENAME INBOX = %#v, %v", report, err)
@@ -157,15 +159,13 @@ func runRenameInbox(t *testing.T, harness *Harness) {
 		t.Fatal(err)
 	}
 	if beforeID != "" {
-		if id := mailboxObjectID(t, session, "INBOX"); id != beforeID {
-			t.Errorf("INBOX MAILBOXID changed from %s to %s", beforeID, id)
-		}
 		if id := mailboxObjectID(t, session, archive); id == beforeID {
 			t.Errorf("the new mailbox took INBOX's MAILBOXID %s", id)
 		}
 	}
 
-	// The messages arrive in order with their flags, dates and bytes.
+	// The messages retain their flags, INTERNALDATE and bytes. FETCH order
+	// is unrestricted, so identify each fixture by its body.
 	moved := selectMailbox(t, session, archive, discardUpdater())
 	defer moved.Mailbox.Unselect(context.Background(), nil)
 	if len(moved.Snapshot.UIDs) != len(raws) {
@@ -190,7 +190,20 @@ func runRenameInbox(t *testing.T, harness *Harness) {
 	if len(fetched) != len(raws) {
 		t.Fatalf("FETCH from %s returned %d messages", archive, len(fetched))
 	}
-	for i, message := range fetched {
+	seen := make(map[int]bool)
+	for _, message := range fetched {
+		i := -1
+		for j, raw := range raws {
+			if bytes.Equal(message.body, raw) {
+				i = j
+				break
+			}
+		}
+		if i < 0 || seen[i] {
+			t.Errorf("unexpected or duplicate moved message: %q", message.body)
+			continue
+		}
+		seen[i] = true
 		for _, flag := range flags[i] {
 			if !imap.ContainsFlag(message.flags, flag) {
 				t.Errorf("moved message %d lost %s: %v", i, flag, message.flags)

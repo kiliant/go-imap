@@ -243,7 +243,7 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 // identity, subscription and metadata, stays where it is, empty.
 //
 // The new mailbox is created as CREATE would create it, so it has its own
-// UIDVALIDITY, MAILBOXID and UIDs. Each message keeps its flags, dates and
+// UIDVALIDITY, MAILBOXID and UIDs. Each message keeps its flags, INTERNALDATE and
 // content, and with the content its EMAILID; in its new mailbox it is recent,
 // as a copied message is. INBOX records each removal at a new modification
 // sequence for QRESYNC, and its selections see the removals like an EXPUNGE.
@@ -271,6 +271,7 @@ func (s *session) renameInboxLocked(newName string) error {
 	for _, msg := range inbox.messages {
 		clone := *msg
 		clone.uid = destination.uidNext
+		clone.saveDate = time.Now()
 		destination.uidNext++
 		clone.recent = true
 		clone.flags = cloneFlags(msg.flags)
