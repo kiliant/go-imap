@@ -468,7 +468,9 @@ type ListOptions struct {
 	// with a descendant that meets the criteria, sets [imap.ListData]'s
 	// ChildInfo to the options the descendant met, such as "SUBSCRIBED". A
 	// returned name that is not a mailbox carries \NonExistent. RFC 5258
-	// sections 3 and 3.5.
+	// sections 3 and 3.5. ChildInfo is redundant when every descendant
+	// meeting the criteria is itself returned; the backend should then omit
+	// it, and omit a name returned only for it (section 3.5, example 9).
 	//
 	// The framework sets it only together with Subscribed, the one base
 	// selection option it implements, and answers any other combination BAD
@@ -480,8 +482,9 @@ type ListOptions struct {
 	// framework evaluates RECURSIVEMATCH itself, from List calls without it.
 	// It starts from the backend's own answer to the command without the
 	// option, so the result never holds less than that, and adds the parents
-	// of descendants that meet the base options, found through List for "*".
-	// Limits follow, and only the added parents are affected. The framework
+	// of descendants that meet the base options, found through List for "*",
+	// unless all of those descendants are returned as well. Limits follow,
+	// and only the added parents and ChildInfo are affected. The framework
 	// decides which parents match the patterns by taking the canonical
 	// pattern to be the reference followed by the pattern, unless the pattern
 	// starts with the hierarchy delimiter (RFC 3501 section 6.3.8), and

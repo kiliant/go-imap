@@ -309,3 +309,65 @@ func TestReviewMultiSearchPersonalPrefixIncludesInbox(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewRecursiveMatchRedundantChildInfo mirrors imaptest's listext script:
+// RFC 5258 section 3.5 suppresses CHILDINFO when every subscribed descendant is
+// returned anyway, and omits a parent returned only for it. memory evaluates
+// natively; the other two exercise the framework's evaluation.
+func TestReviewRecursiveMatchRedundantChildInfo(t *testing.T) {
+	for _, kind := range []string{"memory", "framework", "maildir"} {
+		t.Run(kind, func(t *testing.T) {
+			var backend imapserver.Backend
+			if kind == "framework" {
+				backend = &withoutRecursiveMatchBackend{inner: memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}}), t: t}
+			} else {
+				backend = reviewBackend(t, kind)
+			}
+			client, reader := reviewRawSession(t, backend, nil)
+			for _, name := range []string{"p/", "p/test1", "p/test2/", "p/test2/test1", "p/test8/test8", "p/test8/test9"} {
+				reviewCommand(t, client, reader, "C", "CREATE "+name, "OK")
+			}
+			for _, name := range []string{"p/test1", "p/test2/test1", "p/test8/test8", "p/test8/test9"} {
+				reviewCommand(t, client, reader, "U", "SUBSCRIBE "+name, "OK")
+			}
+			list := func(args string) map[string]string {
+				t.Helper()
+				lines := reviewCommand(t, client, reader, "L", "LIST (SUBSCRIBED RECURSIVEMATCH) "+args, "OK")
+				byName := make(map[string]string)
+				for _, line := range lines {
+					_, rest, ok := strings.Cut(line, `* LIST `)
+					if !ok {
+						continue
+					}
+					_, rest, _ = strings.Cut(rest, `"/" `)
+					name, _, _ := strings.Cut(strings.TrimRight(rest, "\r\n"), " ")
+					byName[strings.Trim(name, `"`)] = line
+				}
+				return byName
+			}
+			childInfo := func(line string) bool { return strings.Contains(line, `"CHILDINFO" ("SUBSCRIBED")`) }
+
+			if got := list(`"" (p/test2)`); !childInfo(got["p/test2"]) {
+				t.Errorf("parent alone = %q, want p/test2 with CHILDINFO", got)
+			}
+			got := list(`"" (p/test2 p/test2/test1)`)
+			if _, ok := got["p/test2"]; ok || got["p/test2/test1"] == "" || childInfo(got["p/test2/test1"]) {
+				t.Errorf("parent and child = %q, want only p/test2/test1 without CHILDINFO", got)
+			}
+			if got := list(`"" "p*test8"`); !childInfo(got["p/test8"]) || got["p/test8/test8"] == "" {
+				t.Errorf("partial children = %q, want p/test8 with CHILDINFO and p/test8/test8", got)
+			}
+			got = list(`"" "p/*"`)
+			for _, name := range []string{"p/test2", "p/test8"} {
+				if line, ok := got[name]; ok {
+					t.Errorf("all children returned, but %s was too: %q", name, line)
+				}
+			}
+			for _, name := range []string{"p/test1", "p/test2/test1", "p/test8/test8", "p/test8/test9"} {
+				if got[name] == "" || childInfo(got[name]) {
+					t.Errorf("%s = %q, want it subscribed without CHILDINFO", name, got[name])
+				}
+			}
+		})
+	}
+}

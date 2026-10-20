@@ -53,8 +53,10 @@ func backendEvaluatesRecursiveMatch(ctx context.Context, c *conn) bool {
 // RECURSIVEMATCH adds (RFC 5258 sections 3.1 and 3.5): each name matching the
 // patterns that has a descendant meeting the base selection options, with
 // ChildInfo naming them. The descendant need not match the patterns. A
-// hierarchy level that is not a mailbox is added as \NonExistent. These are the
-// semantics of imapserver/memory's native implementation.
+// hierarchy level that is not a mailbox is added as \NonExistent. CHILDINFO is
+// suppressed when every such descendant is returned anyway, and a parent added
+// only for it is then omitted (RFC 5258 section 3.5 and example 9). These are
+// the semantics of imapserver/memory's native implementation.
 //
 // None of its List calls carries RECURSIVEMATCH:
 //
@@ -116,6 +118,8 @@ func listRecursiveMatch(ctx context.Context, session Session, writer *ListWriter
 			parents = append(parents, name)
 		}
 	}
+	// added names the parents returned only for their CHILDINFO.
+	added := make(map[string]bool)
 	if len(parents) > 0 {
 		attrsOptions := command
 		attrsOptions.Subscribed = false
@@ -151,6 +155,7 @@ func listRecursiveMatch(ctx context.Context, session Session, writer *ListWriter
 			if descendants[name] != nil && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrSubscribed) {
 				data.Attrs = append(data.Attrs, imap.MailboxAttrSubscribed)
 			}
+			added[name] = descendants[name] == nil
 			results[name] = data
 		}
 	}
@@ -162,20 +167,22 @@ func listRecursiveMatch(ctx context.Context, session Session, writer *ListWriter
 	slices.Sort(names)
 	for _, name := range names {
 		data := results[name]
-		if len(args.patterns) > 1 && imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrSubscribed) {
-			covered := false
-			for child := range results {
-				if strings.HasPrefix(child, name+string(data.Delimiter)) {
-					covered = true
+		if delimiter, ok := below[name]; ok {
+			// RFC 5258 section 3.5: CHILDINFO is redundant, and SHOULD be
+			// suppressed, when every descendant meeting the base options is
+			// returned anyway. A parent added only for it is then omitted.
+			redundant := true
+			for descendant := range descendants {
+				if strings.HasPrefix(descendant, name+string(delimiter)) && results[descendant] == nil {
+					redundant = false
 					break
 				}
 			}
-			if covered {
+			if !redundant {
+				data.ChildInfo = []string{listSelectSubscribed}
+			} else if added[name] {
 				continue
 			}
-		}
-		if _, ok := below[name]; ok {
-			data.ChildInfo = []string{listSelectSubscribed}
 		}
 		if err := writer.WriteList(ctx, data); err != nil {
 			return err

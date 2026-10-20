@@ -157,6 +157,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   the framework uses the backend's delimiter for the post-CREATE MAILBOXID
   lookup. Clarify `StatusOptions.Items` and `SessionUpdate.Status` contracts.
   No signature change. (#54, B2/B5)
+- **BREAKING behaviour:** LIST (SUBSCRIBED RECURSIVEMATCH) suppresses
+  redundant CHILDINFO, as RFC 5258 section 3.5 and example 9 do: a parent
+  carries CHILDINFO only while a subscribed descendant is not itself
+  returned, and a parent returned only for it is omitted. Applies to the
+  framework's evaluation and memory's native one; `ListOptions.SelectRecursiveMatch`
+  documents the same for witnessing backends. Maildir's RFC 9051 CREATE fix
+  exposed the previous redundant response in imaptest's listext script.
+  No signature change. (#54, third review)
 - **BREAKING behaviour:** MULTISEARCH parses RFC 7377 source filters
   (`mailboxes`, `subtree`, `subtree-one`, `personal`, `subscribed`,
   `inboxes`, `selected`) and expands them through LIST and, for personal
