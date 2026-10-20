@@ -276,11 +276,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   boolean; nil options restore normal selection. Document the callback shape
   for future controls and verify restoration in the conformance suite. (#129)
 
-- **Maildir storage policy:** account state/journals migrate to
-  version 3, preserving identities and unknown fields; older readers refuse
-  its bounded-history semantics. Rollback requires a pre-migration backup;
-  this follows the documented minor-release migration policy (#180).
-  `maildir.Options.MaxTombstones` defaults to
+- **Maildir format migration:** account state/journals migrate to version 3,
+  preserving identities and unknown fields; older readers refuse its
+  bounded-history semantics. Rollback requires a pre-migration backup; this
+  follows the documented minor-release migration policy (#180). (#74)
+- **BREAKING, Maildir resource policy:** `maildir.Options.MaxTombstones` defaults to
   10000 per mailbox with a durable QRESYNC checkpoint and conservative older
   requests. `MaxMetadataValueBytes` defaults to 65536 and `MaxMetadataEntries`
   to 1024 per mailbox/server scope, with atomic METADATA MAXSIZE/TOOMANY
