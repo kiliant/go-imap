@@ -69,21 +69,26 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		defer result.Mailbox.Unselect(context.Background(), nil)
+		// The assigned UID names the appended message, the last one.
+		if uids := result.Snapshot.UIDs; data.UIDValidity != result.Snapshot.Status.UIDValidity || len(uids) == 0 || uids[len(uids)-1] != data.UID {
+			t.Fatalf("Append data = %#v, but the mailbox has UIDVALIDITY %d and UIDs %v", data, result.Snapshot.Status.UIDValidity, uids)
+		}
 		copied, err := result.Mailbox.Copy(context.Background(), imap.UIDSetNum(data.UID), destination, nil)
 		if err != nil || copied == nil || !copied.HasUIDs || !copied.SourceUIDs.Contains(data.UID) || copied.DestinationUIDs.IsEmpty() {
 			t.Fatalf("Copy data = %#v, %v", copied, err)
 		}
+		checkReportedCopy(t, instance, "COPY", copied, []imap.UID{data.UID}, destination)
 	})
 
 	t.Run("condstore-conditional-store", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
-		requireAllowedCapabilities(t, instance, session, "CONDSTORE")
+		requireWitness(t, instance, session, "CONDSTORE")
 		mailbox := populate(t, session, "condstore")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		condStore, ok := result.Mailbox.(imapserver.CondStoreMailbox)
 		if !ok {
-			t.Skip("backend does not implement CondStoreMailbox")
+			t.Fatal("CONDSTORE is witnessed but the selected mailbox does not implement CondStoreMailbox")
 		}
 		uids := result.Snapshot.UIDs
 		if len(uids) < 2 {
@@ -123,12 +128,13 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("qresync-vanished-excludes-present-messages", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
-		requireAllowedCapabilities(t, instance, session, "QRESYNC", "CONDSTORE")
+		requireWitness(t, instance, session, "QRESYNC")
+		requireAllowedCapabilities(t, instance, session, "CONDSTORE")
 		mailbox := populate(t, session, "qresync")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		resync, ok := result.Mailbox.(imapserver.QResyncMailbox)
 		if !ok {
-			t.Skip("backend does not implement QResyncMailbox")
+			t.Fatal("QRESYNC is witnessed but the selected mailbox does not implement QResyncMailbox")
 		}
 		present := slices.Clone(result.Snapshot.UIDs)
 		// Resynchronising from the beginning reports everything that changed,
@@ -155,7 +161,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("replace-is-atomic", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
-		requireAllowedCapabilities(t, instance, session, "REPLACE")
+		requireWitness(t, instance, session, "REPLACE")
 		mailbox := populate(t, session, "replace")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		replacer, ok := result.Mailbox.(imapserver.ReplaceMailbox)
@@ -203,7 +209,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("sort-returns-a-permutation", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
-		requireAllowedCapabilities(t, instance, session, "SORT")
+		requireWitness(t, instance, session, "SORT")
 		mailbox := populate(t, session, "sort")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		sorter, ok := result.Mailbox.(imapserver.SortMailbox)
@@ -232,7 +238,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 	t.Run("thread-reports-each-message-once", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
-		requireAllowedCapabilities(t, instance, session, "THREAD=ORDEREDSUBJECT")
+		requireWitness(t, instance, session, "THREAD=ORDEREDSUBJECT")
 		mailbox := populate(t, session, "thread")
 		result := selectMailbox(t, session, mailbox, discardUpdater())
 		threader, ok := result.Mailbox.(imapserver.ThreadMailbox)
@@ -469,7 +475,13 @@ func runExtensions(t *testing.T, harness *Harness) {
 			t.Skip("backend does not implement URLAuthSession")
 		}
 		mailbox := populate(t, session, "urlauth")
-		url := "imap://" + url.User(instance.Credentials.Username).String() + "@example.com/" + url.PathEscape(mailbox) + "/;UID=1;URLAUTH=anonymous"
+		// UIDs are the backend's to assign; take one from the mailbox.
+		fixture := selectMailbox(t, session, mailbox, discardUpdater())
+		uid := fixture.Snapshot.UIDs[0]
+		if err := fixture.Mailbox.Unselect(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+		url := "imap://" + url.User(instance.Credentials.Username).String() + "@example.com/" + url.PathEscape(mailbox) + fmt.Sprintf("/;UID=%d;URLAUTH=anonymous", uid)
 		authorized, err := urlAuth.GenerateURLAuth(context.Background(), url, "INTERNAL", nil)
 		if err != nil {
 			t.Fatalf("GenerateURLAuth: %v", err)
@@ -655,14 +667,12 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 		url := fmt.Sprintf("imap://localhost/%s/;UID=%d", mailbox, result.Snapshot.UIDs[0])
 		reader, err := catenate.ResolveCatenateURL(context.Background(), url, nil)
-		if err != nil {
-			// Refusing a URL is valid — the backend decides what it can resolve.
-			// What it must not do is succeed with nothing, which APPEND would
-			// then store as an empty message part.
-			t.Skipf("backend refused its own message URL: %v", err)
-		}
-		if reader == nil {
-			t.Fatal("ResolveCatenateURL returned no error and no reader")
+		if err != nil || reader == nil {
+			// Refusing a URL is valid — the backend decides what it can
+			// resolve, and this one names a made-up authority. A nil reader is
+			// the documented unresolved result, which fails the APPEND with
+			// BADURL exactly as an error does.
+			t.Skipf("backend did not resolve the fixture URL: %v", err)
 		}
 		defer reader.Close()
 		content, err := io.ReadAll(reader)
@@ -768,16 +778,18 @@ func runExtensions(t *testing.T, harness *Harness) {
 		updater := &imapserver.SessionUpdater{
 			PushFunc: func(*imapserver.SessionUpdate) error { return nil },
 		}
-		// A registration the backend can serve must be accepted.
+		// A registration the backend can serve must be accepted. The framework
+		// only passes legal ones: RFC 5465 section 5 requires MessageNew and
+		// MessageExpunge together.
 		supported := &imapserver.NotifyConfig{
 			Watches: []imapserver.NotifyWatch{{
 				Specifier: imap.NotifyMailboxes,
 				Names:     []string{mailbox},
-				Events:    []imap.NotifyEventName{imap.NotifyEventMessageNew},
+				Events:    []imap.NotifyEventName{imap.NotifyEventMessageNew, imap.NotifyEventMessageExpunge},
 			}},
 		}
 		if err := notifier.Notify(context.Background(), updater, supported, nil); err != nil {
-			t.Fatalf("Notify with MessageNew on an explicit mailbox: %v", err)
+			t.Fatalf("Notify with MessageNew and MessageExpunge on an explicit mailbox: %v", err)
 		}
 		// An unrecognised specifier or event must be refused. Accepting one and
 		// then never delivering is indistinguishable to the client from a mailbox
@@ -785,7 +797,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		unknown := &imapserver.NotifyConfig{
 			Watches: []imapserver.NotifyWatch{{
 				Specifier: imap.NotifyMailboxSpecifier("NO-SUCH-SPECIFIER"),
-				Events:    []imap.NotifyEventName{imap.NotifyEventMessageNew},
+				Events:    []imap.NotifyEventName{imap.NotifyEventMessageNew, imap.NotifyEventMessageExpunge},
 			}},
 		}
 		if err := notifier.Notify(context.Background(), updater, unknown, nil); err == nil {

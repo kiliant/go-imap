@@ -70,6 +70,29 @@ func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, int64(len(args.set) + len(args.items)*24), nil
 }
 
+// fetchItemsSetSeen reports whether items include one that implicitly sets
+// \Seen in a read-write selection: RFC822, RFC822.TEXT, and BODY[...] or
+// BINARY[...] without .PEEK (RFC 3501 section 6.4.5, RFC 3516 section 4.1).
+func fetchItemsSetSeen(items []imap.FetchItem) bool {
+	for _, item := range items {
+		switch item := item.(type) {
+		case imap.FetchItemKeyword:
+			if strings.EqualFold(string(item), string(imap.FetchItemRFC822)) || strings.EqualFold(string(item), string(imap.FetchItemRFC822Text)) {
+				return true
+			}
+		case *imap.FetchItemBodySection:
+			if item != nil && !item.Peek {
+				return true
+			}
+		case *imap.FetchItemBinarySection:
+			if item != nil && !item.Peek {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*fetchArgs)
 	if args == nil {
@@ -100,7 +123,12 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	items, requestedUID := withFetchUID(args.items)
 	items = applyCondStoreFetchItems(c, items)
-	includeUID := uidMode || requestedUID
+	// RFC 7162 section 3.2.4 adds UID once CONDSTORE is enabled to responses
+	// of a FETCH that asked for MODSEQ (CHANGEDSINCE implies it) or that
+	// implicitly sets \Seen. Its exceptions keep a plain FETCH of other items
+	// without the UID it did not ask for.
+	includeUID := uidMode || requestedUID ||
+		condStoreRequiresUID(c) && (usesModSeq || !c.state.selected.readOnly && fetchItemsSetSeen(args.items))
 	var responseBytes int64
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
 		mapped, err := mapFetchResponse(c.state.selected, data, includeUID)

@@ -49,7 +49,9 @@ func runSearch(t *testing.T, harness *Harness) {
 		if err := empty.Mailbox.Unselect(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
-		var ids []imap.UID
+		// reported[i] is the UID APPEND reported for message i, or zero when it
+		// reported none. Without UIDPLUS each result is optional on its own.
+		var reported []imap.UID
 		var sizes []int
 		flags := [][]imap.Flag{{imap.FlagSeen, "$search-fixture"}, {imap.FlagFlagged}, {imap.FlagAnswered, imap.FlagDeleted, imap.FlagDraft}}
 		for i, subject := range []string{"Red apple", "Blue berry", "Red berry"} {
@@ -61,21 +63,26 @@ func runSearch(t *testing.T, harness *Harness) {
 			if err != nil {
 				t.Fatalf("seed SEARCH message: %#v, %v", data, err)
 			}
+			uid := imap.UID(0)
 			if data != nil && data.HasUID {
-				ids = append(ids, data.UID)
+				uid = data.UID
 			}
+			reported = append(reported, uid)
 			sizes = append(sizes, len(raw))
 		}
 		selected := selectMailbox(t, session, name, discardUpdater())
 		// The mailbox held nothing before, so the snapshot lists the seeded
-		// messages in append order. A backend need not report APPEND UIDs
-		// unless it witnesses UIDPLUS; when it does, they must agree.
-		if len(ids) != 0 && !slices.Equal(ids, selected.Snapshot.UIDs) {
-			t.Fatalf("APPEND reported UIDs %v, but the snapshot lists %v", ids, selected.Snapshot.UIDs)
+		// messages in append order and is the fixture's source of UIDs. A UID
+		// APPEND did report must name its own message; reporting is optional
+		// per call without UIDPLUS, so absent ones are not compared.
+		ids := selected.Snapshot.UIDs
+		if len(ids) != len(reported) {
+			t.Fatalf("seeded SEARCH mailbox lists %v, want %d messages", ids, len(reported))
 		}
-		ids = selected.Snapshot.UIDs
-		if len(ids) != 3 {
-			t.Fatalf("seeded SEARCH mailbox lists %v, want three messages", ids)
+		for i, uid := range reported {
+			if uid != 0 && uid != ids[i] {
+				t.Fatalf("APPEND %d reported UID %d, but the snapshot lists %v", i, uid, ids)
+			}
 		}
 		defer func() {
 			if err := selected.Mailbox.Unselect(context.Background(), nil); err != nil {

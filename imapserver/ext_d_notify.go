@@ -2,7 +2,9 @@ package imapserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -110,6 +112,21 @@ type SessionUpdate struct {
 // rather than delivering into a registration the client has replaced.
 // Queue overflow also closes the updater and calls Notify with a nil updater
 // and configuration, just like NOTIFY NONE.
+//
+// Before any of that, the framework applies RFC 5465's rules itself: an
+// invalid registration is BAD, and one naming an event the framework cannot
+// deliver is NO [BADEVENT], in both cases without calling Notify or touching
+// the current registration. A backend therefore sees only legal
+// configurations of MessageNew, MessageExpunge and FlagChange, but must still
+// refuse what it cannot serve, since a later release may pass more. A
+// BADEVENT refusal from Notify reaches the client with the server's complete
+// event list.
+//
+// Events for the selected mailbox are the framework's to filter. It reports
+// what the selection's Updater publishes according to the SELECTED or
+// SELECTED-DELAYED group, keeping the client's sequence numbers stable while
+// it withholds them, so a backend publishes every change there regardless of
+// the registration.
 type NotifySession interface {
 	Notify(ctx context.Context, updater *SessionUpdater, config *NotifyConfig, options *NotifyOptions) error
 }
@@ -170,7 +187,7 @@ type NotifyWatch struct {
 // silently discarding it would leave the client watching for an event that will
 // never arrive.
 func canonicalNotifyEvent(name string) imap.NotifyEventName {
-	for _, known := range imap.NotifyEventNames() {
+	for _, known := range append(imap.NotifyEventNames(), notifyEventAnnotationChange) {
 		if strings.EqualFold(name, string(known)) {
 			return known
 		}
@@ -320,12 +337,19 @@ func init() {
 }
 
 type notifyArgs struct {
-	config          *NotifyConfig
-	messageNewFetch bool
+	config *NotifyConfig
+	// fetchAttrs reports, per watch, whether its MessageNew carried a
+	// fetch-att list. Only validateNotifySet reads it.
+	fetchAttrs []bool
 }
 
 // parseNotify reads "NOTIFY SET [STATUS] (group events)..." or "NOTIFY NONE".
-// RFC 5465 section 6.
+// RFC 5465 section 8:
+//
+//	notify-set = "SET" [status-indicator] SP event-groups
+//
+// Only the grammar is checked here; the rules that relate groups and events
+// to each other are validateNotifySet's.
 func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 	if !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
@@ -346,23 +370,27 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 	}
 	config := &NotifyConfig{}
 	args := &notifyArgs{config: config}
-	for decoder.SP() {
-		if decoder.PeekAtomEqual("STATUS") {
-			var keyword string
-			if !decoder.ExpectAtom(&keyword) {
-				return nil, 0, decoder.Err()
-			}
-			config.StatusOnSet = true
-			continue
+	if !decoder.ExpectSP() {
+		return nil, 0, decoder.Err()
+	}
+	// The STATUS indicator comes once, before the first group.
+	if decoder.PeekAtomEqual("STATUS") {
+		var keyword string
+		if !decoder.ExpectAtom(&keyword) || !decoder.ExpectSP() {
+			return nil, 0, decoder.Err()
 		}
-		group, err := parseNotifyGroup(decoder, args)
+		config.StatusOnSet = true
+	}
+	for {
+		group, fetchAttrs, err := parseNotifyGroup(decoder)
 		if err != nil {
 			return nil, 0, err
 		}
 		config.Watches = append(config.Watches, *group)
-	}
-	if len(config.Watches) == 0 {
-		return nil, 0, fmt.Errorf("NOTIFY SET requires at least one mailbox group")
+		args.fetchAttrs = append(args.fetchAttrs, fetchAttrs)
+		if !decoder.SP() {
+			break
+		}
 	}
 	if !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
@@ -370,14 +398,17 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, int64(len(config.Watches) * 64), nil
 }
 
-func parseNotifyGroup(decoder *imapwire.Decoder, args *notifyArgs) (*NotifyWatch, error) {
+// parseNotifyGroup reads one event-group. It reports whether MessageNew
+// carried a fetch-att list.
+func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, bool, error) {
 	group := &NotifyWatch{}
+	fetchAttrs := false
 	if !decoder.ExpectSpecial('(') {
-		return nil, decoder.Err()
+		return nil, false, decoder.Err()
 	}
 	var specifier string
 	if !decoder.ExpectAtom(&specifier) {
-		return nil, decoder.Err()
+		return nil, false, decoder.Err()
 	}
 	// Specifiers are registered upper-case, so folding to upper is already the
 	// canonical form; events are mixed-case and need the table.
@@ -385,7 +416,7 @@ func parseNotifyGroup(decoder *imapwire.Decoder, args *notifyArgs) (*NotifyWatch
 	switch group.Specifier {
 	case imap.NotifySubtree, imap.NotifyMailboxes:
 		if !decoder.ExpectSP() {
-			return nil, decoder.Err()
+			return nil, false, decoder.Err()
 		}
 		readName := func() error {
 			var name string
@@ -397,22 +428,26 @@ func parseNotifyGroup(decoder *imapwire.Decoder, args *notifyArgs) (*NotifyWatch
 		}
 		if decoder.PeekSpecial('(') {
 			if err := decoder.ExpectList(readName); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		} else if err := readName(); err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		// one-or-more-mailbox: "()" names nothing and is not a list.
+		if len(group.Names) == 0 {
+			return nil, false, fmt.Errorf("NOTIFY %s requires at least one mailbox", group.Specifier)
 		}
 	}
 	if !decoder.ExpectSP() {
-		return nil, decoder.Err()
+		return nil, false, decoder.Err()
 	}
 	// NONE silences a group without removing it. RFC 5465 section 6.
 	if decoder.PeekAtomEqual("NONE") {
 		var keyword string
 		if !decoder.ExpectAtom(&keyword) || !decoder.ExpectSpecial(')') {
-			return nil, decoder.Err()
+			return nil, false, decoder.Err()
 		}
-		return group, nil
+		return group, false, nil
 	}
 	if err := decoder.ExpectList(func() error {
 		var event string
@@ -432,16 +467,152 @@ func parseNotifyGroup(decoder *imapwire.Decoder, args *notifyArgs) (*NotifyWatch
 			if len(items) == 0 {
 				return fmt.Errorf("MessageNew requires at least one fetch attribute")
 			}
-			args.messageNewFetch = true
+			fetchAttrs = true
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	// events = "(" event *(SP event) ")" / "NONE": an empty list is neither.
+	if len(group.Events) == 0 {
+		return nil, false, fmt.Errorf("NOTIFY event list is empty")
 	}
 	if !decoder.ExpectSpecial(')') {
-		return nil, decoder.Err()
+		return nil, false, decoder.Err()
 	}
-	return group, nil
+	return group, fetchAttrs, nil
+}
+
+// notifyEventAnnotationChange is RFC 5465's message event for RFC 5257
+// annotations. The root vocabulary has no constant for it because this
+// library implements no ANNOTATE, but the pairing rules still name it.
+const notifyEventAnnotationChange imap.NotifyEventName = "AnnotationChange"
+
+// notifyDeliverableEvents are the events the framework can put on the wire:
+// for the selected mailbox through the selection's update stream, and for
+// other mailboxes as the untagged STATUS a SessionUpdate carries. Every other
+// event needs a response form the framework does not have (LIST, METADATA,
+// ANNOTATION), so no backend can serve it through this framework. The
+// framework itself serves all three for the selected mailbox, which makes this
+// the server's complete list for BADEVENT.
+var notifyDeliverableEvents = []imap.NotifyEventName{
+	imap.NotifyEventMessageNew,
+	imap.NotifyEventMessageExpunge,
+	imap.NotifyEventFlagChange,
+}
+
+func notifyBadEventArgs() string {
+	names := make([]string, len(notifyDeliverableEvents))
+	for i, event := range notifyDeliverableEvents {
+		names[i] = string(event)
+	}
+	return "(" + strings.Join(names, " ") + ")"
+}
+
+func isNotifyMessageEvent(event imap.NotifyEventName) bool {
+	switch event {
+	case imap.NotifyEventMessageNew, imap.NotifyEventMessageExpunge, imap.NotifyEventFlagChange, notifyEventAnnotationChange:
+		return true
+	}
+	return false
+}
+
+func isNotifySelectedSpecifier(specifier imap.NotifyMailboxSpecifier) bool {
+	return specifier == imap.NotifySelected || specifier == imap.NotifySelectedDelayed
+}
+
+// validateNotifySet applies RFC 5465's rules to a parsed NOTIFY SET before
+// anything changes: no backend call, no registration closed. Every rule that
+// makes the command invalid is checked before any refusal of a valid but
+// unsupported request, so a malformed command is BAD whatever else it names.
+func validateNotifySet(args *notifyArgs) *imap.Error {
+	bad := func(text string) *imap.Error { return &imap.Error{Type: imap.ErrorTypeBad, Text: text} }
+	selectedGroups := 0
+	for i, watch := range args.config.Watches {
+		// filter-mailboxes is a closed production; a specifier outside it is
+		// unparseable rather than unsupported.
+		if !slices.Contains(imap.NotifyMailboxSpecifiers(), watch.Specifier) {
+			return bad("unknown NOTIFY mailbox specifier " + string(watch.Specifier))
+		}
+		selected := isNotifySelectedSpecifier(watch.Specifier)
+		if selected {
+			// Section 6.1: only one specifier affecting the selected mailbox.
+			if selectedGroups++; selectedGroups > 1 {
+				return bad("NOTIFY accepts one SELECTED or SELECTED-DELAYED group")
+			}
+		}
+		// Section 8: a fetch-att list only for the selected mailbox.
+		if args.fetchAttrs[i] && !selected {
+			return bad("MessageNew fetch attributes apply only to SELECTED and SELECTED-DELAYED")
+		}
+		has := func(event imap.NotifyEventName) bool { return slices.Contains(watch.Events, event) }
+		// Section 5: MessageNew and MessageExpunge come together, and the
+		// per-message change events require both.
+		if has(imap.NotifyEventMessageNew) != has(imap.NotifyEventMessageExpunge) {
+			return bad("NOTIFY MessageNew and MessageExpunge must be requested together")
+		}
+		if (has(imap.NotifyEventFlagChange) || has(notifyEventAnnotationChange)) && !has(imap.NotifyEventMessageNew) {
+			return bad("NOTIFY FlagChange and AnnotationChange require MessageNew and MessageExpunge")
+		}
+		// Section 6.1: only message events for the selected mailbox. A name
+		// this library has never heard of may be a newer message event, so
+		// it is left to the BADEVENT refusal below rather than called invalid.
+		if selected {
+			for _, event := range watch.Events {
+				if !isNotifyMessageEvent(event) && slices.Contains(imap.NotifyEventNames(), event) {
+					return bad("NOTIFY " + string(event) + " does not apply to the selected mailbox")
+				}
+			}
+		}
+	}
+	// Section 3.1: an unsupported event is NO, not BAD, and BADEVENT lists
+	// every event the server supports.
+	for _, watch := range args.config.Watches {
+		for _, event := range watch.Events {
+			if !slices.Contains(notifyDeliverableEvents, event) {
+				return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadEvent, CodeArgs: notifyBadEventArgs(), Text: "unsupported NOTIFY event " + string(event)}
+			}
+		}
+	}
+	// Legal, but not delivered yet (#195): refused rather than registered
+	// with the attributes silently dropped.
+	if slices.Contains(args.fetchAttrs, true) {
+		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "MessageNew fetch attributes are unsupported"}
+	}
+	return nil
+}
+
+// completeBadEvent replaces a backend's BADEVENT list with the server's.
+// A backend lists what it serves for other mailboxes; RFC 5465 section 3.1
+// requires every event the server supports, including those the framework
+// serves for the selected mailbox.
+func completeBadEvent(err error) error {
+	var protocol *imap.Error
+	if !errors.As(err, &protocol) || !strings.EqualFold(string(protocol.Code), string(imap.CodeBadEvent)) {
+		return err
+	}
+	complete := *protocol
+	complete.CodeArgs = notifyBadEventArgs()
+	return &complete
+}
+
+// selectedNotifyPolicyFor is the selected-mailbox half of a registration. A
+// SET without a SELECTED or SELECTED-DELAYED group means SELECTED NONE (RFC
+// 5465 section 3.1); a nil configuration is NOTIFY NONE.
+func selectedNotifyPolicyFor(config *NotifyConfig) selectedNotifyPolicy {
+	policy := selectedNotifyPolicy{registered: true}
+	if config == nil {
+		return policy
+	}
+	for _, watch := range config.Watches {
+		if !isNotifySelectedSpecifier(watch.Specifier) {
+			continue
+		}
+		policy.immediate = watch.Specifier == imap.NotifySelected
+		policy.messages = slices.Contains(watch.Events, imap.NotifyEventMessageNew)
+		policy.flags = slices.Contains(watch.Events, imap.NotifyEventFlagChange)
+	}
+	return policy
 }
 
 func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
@@ -453,14 +624,12 @@ func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCapability(c, "NOTIFY"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	// Parse the legal syntax completely, then refuse the unsupported behavior
-	// before changing an existing registration or calling the backend.
-	if args.messageNewFetch {
-		return writeBackendError(c, command.tag, command.name, &imap.Error{
-			Type: imap.ErrorTypeNo,
-			Code: imap.CodeCannot,
-			Text: "MessageNew fetch attributes are unsupported",
-		})
+	// Every refusal the framework can decide is answered here, before the
+	// previous registration is closed or the backend is asked.
+	if config != nil {
+		if refusal := validateNotifySet(args); refusal != nil {
+			return writeTaggedCondition(c, command.tag, strings.ToUpper(string(refusal.Type)), refusal.Code, refusal.CodeArgs, refusal.Text)
+		}
 	}
 	session, ok := c.state.session.(NotifySession)
 	if !ok {
@@ -468,12 +637,16 @@ func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	// The previous registration is closed first, so a backend that kept its
 	// old updater finds it closed rather than delivering into a registration
-	// the client has already replaced.
+	// the client has already replaced. A refusal by the backend therefore
+	// leaves no registration for other mailboxes; the selected mailbox keeps
+	// its previous policy, which only a successful NOTIFY changes.
 	c.closeNotify()
 	if config == nil {
 		if err := session.Notify(ctx, nil, nil, nil); err != nil {
 			return writeBackendError(c, command.tag, command.name, err)
 		}
+		// NOTIFY NONE has no implicit NOOP: what is pending stays pending.
+		c.notifySelected = selectedNotifyPolicyFor(nil)
 		return c.writeTagged(command.tag, "OK", command.name+" completed")
 	}
 	queue := newSessionUpdateQueue(c.server.options.Limits.MaxQueuedUpdates)
@@ -481,11 +654,21 @@ func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
 	c.notifyQueue, c.notifyUpdater = queue, updater
 	if err := session.Notify(ctx, updater, config, nil); err != nil {
 		c.closeNotify()
-		return writeBackendError(c, command.tag, command.name, err)
+		return writeBackendError(c, command.tag, command.name, completeBadEvent(err))
 	}
 	// RFC 5465 section 3: STATUS responses requested by the STATUS indicator
 	// precede the tagged OK. The backend pushed them during Notify.
 	if err := c.drainNotify(); err != nil {
+		return err
+	}
+	// A successful SET is an implicit NOOP: it returns every change to the
+	// selected mailbox accumulated so far, including those the previous
+	// registration withheld, before the new policy filters what follows.
+	c.notifySelected = selectedNotifyPolicyFor(config)
+	c.releasingNotify = true
+	err := c.drainUpdates(updateAccounting{})
+	c.releasingNotify = false
+	if err != nil {
 		return err
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
@@ -524,8 +707,11 @@ func (c *conn) drainNotify() error {
 	updates, dropped := c.notifyQueue.popAll()
 	if dropped {
 		// Close before calling the backend, so even a producer racing with
-		// teardown cannot publish into the ended registration.
+		// teardown cannot publish into the ended registration. RFC 5465
+		// section 5.8: the server then behaves as if NOTIFY NONE had been
+		// received, which silences the selected mailbox too.
 		c.closeNotify()
+		c.notifySelected = selectedNotifyPolicyFor(nil)
 		ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
 		err := c.state.session.(NotifySession).Notify(ctx, nil, nil, nil)
 		cancel()
@@ -564,4 +750,33 @@ func (c *conn) drainNotify() error {
 		}
 	}
 	return nil
+}
+
+// selectedNotifyPolicy is what the client asked to hear about the selected
+// mailbox. Backends publish every change through the selection's Updater
+// regardless; the framework decides what reaches the wire, because only it
+// holds the client's sequence-number view that suppression must preserve.
+type selectedNotifyPolicy struct {
+	// registered is false until the first successful NOTIFY. Before it, the
+	// selected mailbox reports MessageNew, MessageExpunge and FlagChange as
+	// RFC 3501 always has (RFC 5465 section 3.1).
+	registered bool
+	// messages is MessageNew with MessageExpunge, which RFC 5465 section 5
+	// only accepts together.
+	messages bool
+	// flags is FlagChange.
+	flags bool
+	// immediate is SELECTED, as opposed to SELECTED-DELAYED: removals are
+	// delivered as they happen rather than at the next command that allows
+	// them (RFC 5465 section 6.1).
+	immediate bool
+}
+
+func (p selectedNotifyPolicy) suppressesMessages() bool { return p.registered && !p.messages }
+func (p selectedNotifyPolicy) suppressesFlags() bool    { return p.registered && !p.flags }
+func (p selectedNotifyPolicy) flagChangeRegistered() bool {
+	return p.registered && p.flags
+}
+func (p selectedNotifyPolicy) immediateRemovals() bool {
+	return p.registered && p.messages && p.immediate
 }

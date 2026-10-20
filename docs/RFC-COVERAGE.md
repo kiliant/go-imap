@@ -167,7 +167,11 @@ servers, Dovecot and Stalwart.
 
 [^srvcondstore]: Backend-delegated through the optional `CondStoreMailbox`.
     Conditional STORE reports rejected messages via MODIFIED on a successful
-    tagged OK, never as an error.
+    tagged OK, never as an error. A successful conditional STORE.SILENT still
+    returns MODSEQ for each stored message; the framework fetches it when the
+    backend honoured Silent. After any CONDSTORE enabling command, untagged
+    FETCH from STORE, implicit `\Seen`, MODSEQ/CHANGEDSINCE FETCH and other
+    sessions carries UID (RFC 7162 sections 3.1.3, 3.2.4). (#54, R2/R3)
 
 [^srvqresync]: Backend-delegated through the optional `QResyncMailbox`. The
     reference `memory` backend implements it exactly within one process
@@ -349,7 +353,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvuidonly]: All-or-nothing, as the RFC requires. Sequence-number commands are
     refused rather than reinterpreted as UIDs, unilateral FETCH becomes
     UIDFETCH, and EXPUNGE becomes VANISHED because an untagged EXPUNGE carries a
-    sequence number and cannot be sent at all. `WriteUIDFetchResponse` was added
+    sequence number and cannot be sent at all. The wire form is RFC 9586
+    section 7's `* <uid> UIDFETCH (...)`. `WriteUIDFetchResponse` was added
     to `internal/imapcodec`, sharing the item grammar with `WriteFetchResponse`
     rather than duplicating it.
 
@@ -360,13 +365,20 @@ CONDSTORE `MODIFIED` on tagged OK.
     no sequence numbers, because the client has not selected the mailbox and has
     no sequence-number view of it; RFC 5465 §6 reports them as STATUS for that
     reason. The queue coalesces per mailbox. Overflow ends the registration and
-    reports NOTIFICATIONOVERFLOW without closing the connection. Memory supports
-    MessageNew, MessageExpunge and FlagChange; LIST/METADATA events are refused
-    with BADEVENT listing all supported events. NONE groups request no events,
-    SUBSCRIBED uses current subscriptions, and selected mailboxes receive no
-    STATUS. MessageNew fetch-attribute syntax is recognized but refused with
-    `NO [CANNOT]` before backend calls; unsolicited FETCH attributes remain
-    deferred. (#54, independent review B3)
+    reports NOTIFICATIONOVERFLOW without closing the connection; like NOTIFY
+    NONE it then silences the selected mailbox too. The framework validates
+    every registration before the backend or the current registration is
+    touched: event pairing, one selected specifier and selected-only message
+    events are BAD; events it cannot deliver (LIST/METADATA/ANNOTATION) are
+    `NO [BADEVENT (MessageNew MessageExpunge FlagChange)]`. It enforces the
+    selected mailbox's policy itself — NONE, omitted, per-event and
+    SELECTED's immediate removals — withholding suppressed additions and
+    removals so sequence numbers stay stable, and a NOTIFY SET returns what
+    accumulated. Selected FlagChange carries UID. NONE groups request no
+    events, SUBSCRIBED uses current subscriptions, and selected mailboxes
+    receive no STATUS. MessageNew fetch-attribute syntax is recognized but
+    refused with `NO [CANNOT]` before backend calls; unsolicited FETCH
+    attributes remain deferred. (#54, independent review B3, R3/R5/R6)
 
 [^srvmsglistlimit]: Server advertisements and the incorrect mailbox-size/retention
     API were removed after the independent review (#54, A1). RFC 9738 limits

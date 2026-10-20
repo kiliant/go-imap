@@ -148,6 +148,11 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	// connection's teardown closes it a second time — which a backend that
 	// releases a pooled handle or decrements a refcount in Close experiences as
 	// a double release, on an error path, where it is hardest to find.
+	// The NOTIFY registration belongs to the session being discarded. Leaving
+	// its queue attached would deliver the previous user's events, and its
+	// selected policy, to whoever authenticates next.
+	c.closeNotify()
+	c.notifySelected = selectedNotifyPolicy{}
 	closeErr := c.state.session.Close(ctx, nil)
 	c.state.unauthenticate()
 	if closeErr != nil {

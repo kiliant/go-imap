@@ -192,13 +192,16 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if newName == "" || mailboxKey(oldName) == "INBOX" {
+	if newName == "" {
 		return noError(imap.CodeCannot, "mailbox cannot be renamed")
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
 	if s.closed {
 		return noError(imap.CodeClosed, "session is closed")
+	}
+	if mailboxKey(oldName) == "INBOX" {
+		return s.renameInboxLocked(newName)
 	}
 	oldKey := mailboxKey(oldName)
 	m := s.account.mailboxes[oldKey]
@@ -231,6 +234,57 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 	for key, target := range moving {
 		moved[key].name = target
 		s.account.mailboxes[mailboxKey(target)] = moved[key]
+	}
+	return nil
+}
+
+// renameInboxLocked is RFC 3501 section 6.3.5's special case: INBOX's
+// messages move to a new mailbox, and INBOX itself, with its inferiors,
+// identity, subscription and metadata, stays where it is, empty.
+//
+// The new mailbox is created as CREATE would create it, so it has its own
+// UIDVALIDITY, MAILBOXID and UIDs. Each message keeps its flags, dates and
+// content, and with the content its EMAILID; in its new mailbox it is recent,
+// as a copied message is. INBOX records each removal at a new modification
+// sequence for QRESYNC, and its selections see the removals like an EXPUNGE.
+// Every check precedes the first change, all under the account lock, so a
+// refusal changes nothing and no session observes half a rename.
+//
+// The caller must hold the account lock.
+func (s *session) renameInboxLocked(newName string) error {
+	inbox := s.account.mailboxes["INBOX"]
+	if inbox == nil {
+		return nonexistentMailbox("INBOX")
+	}
+	if s.account.mailboxes[mailboxKey(newName)] != nil {
+		return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
+	}
+	// INBOX remains, so a name beneath it would be one of its own inferiors.
+	// Refused, as the Maildir backend does, rather than created below the
+	// mailbox it is being emptied out of.
+	if strings.HasPrefix(newName, inbox.name+"/") {
+		return noError(imap.CodeCannot, "INBOX cannot be renamed into its own hierarchy")
+	}
+	destination := s.account.createMailboxLocked(newName)
+	var added []imap.UID
+	var removals []imapserver.Update
+	for _, msg := range inbox.messages {
+		clone := *msg
+		clone.uid = destination.uidNext
+		destination.uidNext++
+		clone.recent = true
+		clone.flags = cloneFlags(msg.flags)
+		clone.modSeq = bumpModSeqLocked(destination)
+		destination.messages = append(destination.messages, &clone)
+		ensureMailboxFlagsLocked(destination, clone.flags)
+		added = append(added, clone.uid)
+		recordVanishedLocked(inbox, msg.uid)
+		removals = append(removals, &imapserver.UpdateExpunge{UID: msg.uid})
+	}
+	inbox.messages = nil
+	if len(removals) != 0 {
+		publishLocked(inbox, advanceLocked(inbox, 0, removals))
+		publishLocked(destination, advanceLocked(destination, 0, []imapserver.Update{&imapserver.UpdateAdd{UIDs: added}}))
 	}
 	return nil
 }

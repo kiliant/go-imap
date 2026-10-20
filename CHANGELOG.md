@@ -87,6 +87,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapcodec:** the server-direction UIDFETCH response is written as RFC 9586
+  section 7's `* <uid> UIDFETCH (...)`, not `* UIDFETCH <uid> (...)`. Only
+  `imapserver` writes it; a standalone server build receives the fix with the
+  next root release. No exported API change. (#54)
+
 - `imapclient.MultiSearchMailboxes` encodes multiple mailbox names as a
   parenthesized list, as required by RFC 5465 and RFC 7377. Correct the
   `MultiSearchInboxes` documentation to describe delivery destinations and
@@ -137,6 +142,39 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed
+
+- **BREAKING behaviour:** NOTIFY validates registrations before calling the
+  backend or closing the current one. Unpaired MessageNew/MessageExpunge,
+  FlagChange or AnnotationChange without both, two selected specifiers,
+  non-message events for the selected mailbox, fetch attributes outside it,
+  empty lists and a misplaced STATUS indicator are BAD; events the framework
+  cannot deliver are `NO [BADEVENT (MessageNew MessageExpunge FlagChange)]`,
+  and a backend's BADEVENT list is completed the same way (RFC 5465 sections
+  3.1, 5, 6.1). Backends now receive only legal configurations.
+  `NotifySession` documents both. No signature change. (#54, second
+  independent review R6)
+- **BREAKING behaviour:** the framework enforces NOTIFY's selected-mailbox
+  policy. NOTIFY NONE, SELECTED NONE or an omitted selected group suppress
+  other sessions' EXISTS, EXPUNGE/VANISHED, RECENT, FLAGS and FETCH;
+  per-event groups suppress FlagChange alone. Suppressed removals stay in the
+  client's sequence view and suppressed additions stay out of it; the
+  client's own commands still report their effects. A NOTIFY SET returns what
+  accumulated, SELECTED delivers removals immediately, overflow and
+  UNAUTHENTICATE end the policy. Backends keep publishing every change.
+  No signature change. (#54, second independent review R5)
+- **BREAKING behaviour:** once any CONDSTORE enabling command has been issued,
+  untagged FETCH from STORE, from FETCH with MODSEQ or CHANGEDSINCE or an
+  implicit `\Seen`, and from other sessions carries UID (RFC 7162 section
+  3.2.4); a FETCH asking for neither keeps its exemption. Selected NOTIFY
+  FlagChange carries UID with or without CONDSTORE (RFC 5465 section 5.1).
+  UIDONLY responses use RFC 9586's `* <uid> UIDFETCH` form. No signature
+  change. (#54, second independent review R3)
+- `StoreOptions.Silent` documents that a successful conditional STORE.SILENT
+  reports MODSEQ for each stored message, which the framework supplies itself
+  when the backend honoured Silent; no new backend obligation. `QResyncMailbox`
+  documents that Resync runs after the ordinary SELECT responses and that its
+  failure releases the selection. `Session.Rename` states that INBOX keeps its
+  inferiors. No signature change. (#54, second independent review R1/R2/R7)
 
 - **BREAKING:** remove `MessageLimitSession`, `MessageLimits` and
   `MessageLimitOptions`, and withdraw MESSAGELIMIT/SAVELIMIT advertisements.
@@ -474,6 +512,33 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- A SELECT or EXAMINE failing in QRESYNC's Resync or changed-message FETCH, or
+  in its OBJECTID or rev2 LIST response, releases the installed selection
+  before answering: the connection returns to the authenticated state, the
+  updater is closed and Unselect runs once on a fresh bounded context. The
+  tagged response keeps the original error's mapping; a failed Unselect goes
+  to `Options.OnError`. (#54, second independent review R1)
+- A successful conditional STORE.SILENT returns MODSEQ (and UID) for each
+  stored message instead of nothing. Only responses actually written are
+  accounted against the command's own flag updates, so a change the backend
+  did not report still reaches the client. (#54, second independent review R2)
+- `backendtest` accepts APPEND, COPY and MOVE results reported on some calls
+  but not others without UIDPLUS, checks every reported value against its own
+  message, accepts CATENATE's nil-reader refusal, checks CONDSTORE, QRESYNC,
+  REPLACE, SORT and THREAD only when witnessed, takes URLAUTH fixture UIDs and
+  LIST hierarchy delimiters from the backend, and passes NOTIFY only legal
+  registrations. Strict UIDPLUS, per-family SCRAM and zero `HighestModSeq`
+  behaviour is unchanged. A new baseline case covers RENAME INBOX.
+  (#54, second independent review R4)
+- Memory implements RENAME INBOX: messages move to a new mailbox identity
+  with new UIDs, keeping flags, dates and content; INBOX, its inferiors and
+  identity remain; INBOX selections see the removals, QRESYNC reports them,
+  and a destination conflict changes nothing. Memory MOVE now records its
+  source removals for QRESYNC and advances the source clock (RFC 7162 section
+  3.2). In both backends a message moved by RENAME INBOX is recent in its new
+  mailbox, as a COPY or MOVE destination is. (#54, second independent
+  review R7)
 
 - CONDSTORE activation routes backend failures through the normal error mapping,
   preserving protocol response codes and keeping private diagnostics off the

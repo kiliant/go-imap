@@ -37,13 +37,15 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	// The selection is installed from here on. Every failure below fails the
+	// command, and RFC 3501 section 6.3.1 and RFC 9051 section 6.3.2 leave no
+	// mailbox selected after a failed SELECT, so each one goes through
+	// failInstalledSelection. Answering NO while the selection stays installed
+	// would accept selected-state commands the client believes are invalid.
 	if advertisedCapabilities(c)["OBJECTID"] {
 		id, err := mailboxIDResponse(ctx, c, mailbox)
 		if err != nil {
-			if abandonErr := abandonCurrentSelection(ctx, c); abandonErr != nil {
-				return writeBackendError(c, command.tag, command.name, abandonErr)
-			}
-			return writeBackendError(c, command.tag, command.name, err)
+			return failInstalledSelection(ctx, c, command, selected, err)
 		}
 		writeUntaggedOK(c, imap.CodeMailboxID, id, "mailbox identity")
 	}
@@ -51,19 +53,13 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 		return err
 	}
 	if err := writeSelectedMailboxList(ctx, c, mailbox); err != nil {
-		// RFC 9051 section 6.3.2: a SELECT that fails leaves no mailbox
-		// selected. Answering NO without undoing the installed selection leaves the client
-		// believing nothing is selected while the server disagrees.
-		if abandonErr := abandonCurrentSelection(ctx, c); abandonErr != nil {
-			return writeBackendError(c, command.tag, command.name, abandonErr)
-		}
-		return writeBackendError(c, command.tag, command.name, err)
+		return failInstalledSelection(ctx, c, command, selected, err)
 	}
 	// The QRESYNC resynchronisation report follows the ordinary selection
 	// responses, so the client has UIDVALIDITY and HIGHESTMODSEQ before it is
 	// told what vanished. See ext_b_qresync.go.
 	if err := writeQResyncSelection(ctx, c, options.QResync, snapshot); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
+		return failInstalledSelection(ctx, c, command, selected, err)
 	}
 	if err := c.drainUpdates(updateAccounting{}); err != nil {
 		return err
@@ -122,6 +118,37 @@ func mailboxNamesEqual(a, b string) bool {
 		return true
 	}
 	return strings.EqualFold(a, "INBOX") && strings.EqualFold(b, "INBOX")
+}
+
+// failInstalledSelection answers a SELECT or EXAMINE that failed after its
+// selection was installed. The selection is released before the tagged
+// response, so the client and the server agree that nothing is selected.
+//
+// The tagged response maps the error that failed the command, exactly as it
+// would before installation: a release failure must not replace a protocol
+// refusal, or expose private text through it. The release runs on a fresh
+// bounded context because the command's own context is often the reason the
+// command failed — a cancelled Resync must still release its selection, and
+// it must do so before the next command can run, not at connection teardown.
+// A failed Unselect is reported to Options.OnError instead.
+func failInstalledSelection(ctx context.Context, c *conn, command *queuedCommand, selected *selectedState, err error) error {
+	releaseInstalledSelection(ctx, c, selected)
+	return writeBackendError(c, command.tag, command.name, err)
+}
+
+// releaseInstalledSelection ends selected exactly once: the state transition
+// is what makes a second call a no-op, so the updater, the queue and the
+// backend handle are each released by whichever call wins it.
+func releaseInstalledSelection(ctx context.Context, c *conn, selected *selectedState) {
+	if selected == nil || c.state.selected != selected || c.state.unselect() != selected {
+		return
+	}
+	selected.close()
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.server.options.Limits.CommandTimeout)
+	defer cancel()
+	if err := selected.mailbox.Unselect(releaseCtx, nil); err != nil {
+		c.reportBackendError("UNSELECT", err)
+	}
 }
 
 func abandonCurrentSelection(ctx context.Context, c *conn) error {

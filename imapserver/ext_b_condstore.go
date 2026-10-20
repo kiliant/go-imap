@@ -71,6 +71,21 @@ func condStoreMailboxEnabled(c *conn) bool {
 	return condStoreEnabled(c) && (c.state.selected == nil || !c.state.selected.noModSeq)
 }
 
+// condStoreRequiresUID reports whether untagged FETCH responses must carry UID
+// alongside MODSEQ.
+//
+// RFC 7162 section 3.2.4 requires it of a QRESYNC server once any CONDSTORE
+// enabling command has been issued — ENABLE CONDSTORE, SELECT (CONDSTORE),
+// FETCH MODSEQ and the rest, not only ENABLE QRESYNC — and section 3.1.4.2
+// asks CONDSTORE-only servers to do the same. The rule covers responses
+// caused by STORE, by a FETCH that implicitly sets \Seen, and by other
+// sessions. A FETCH that asked for neither UID nor MODSEQ and sets nothing,
+// and a UID FETCH without MODSEQ, are exempt; handleFetch applies that.
+// UIDONLY sessions already key every FETCH by UID (RFC 9586).
+func condStoreRequiresUID(c *conn) bool {
+	return condStoreEnabled(c)
+}
+
 // enableCondStoreSideEffect implements the second route above. It is deliberately
 // not routed through the capability descriptor's Enable hook: that hook answers
 // the ENABLE command, whereas this fires when a command *parameter* is used,

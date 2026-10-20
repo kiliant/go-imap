@@ -19,8 +19,17 @@ import (
 // QResyncMailbox is the optional resynchronisation report of QRESYNC. A selected
 // mailbox implements it when the backend witnesses QRESYNC.
 //
-// The framework calls Resync once, immediately after a SELECT carrying the
-// QRESYNC parameter, before it writes the selection's untagged responses.
+// The framework calls Resync at most once per SELECT or EXAMINE carrying the
+// QRESYNC parameter: after Select has returned and the selection's ordinary
+// untagged responses have been written, as RFC 7162 section 3.2.5 orders them,
+// and only when the client's UIDVALIDITY matches the snapshot's. Changes
+// published after the snapshot still arrive through the selection's Updater.
+//
+// An error from Resync, or from the Fetch that reports its Changed set, fails
+// the command. The framework then releases the selection before answering:
+// the Updater is closed and Unselect is called once, on a fresh bounded
+// context, so a cancelled or timed-out Resync releases its selection too. The
+// tagged response maps the Resync or Fetch error like any backend error.
 type QResyncMailbox interface {
 	// Resync reports the messages removed since the client's claimed
 	// modification sequence. Changed messages are reported by the framework
@@ -245,6 +254,19 @@ func writeQResyncChanged(ctx context.Context, c *conn, changed imap.UIDSet) erro
 	if changed.IsEmpty() || changed.Dynamic() {
 		return nil
 	}
+	// The report describes the backend's current state, which may already
+	// include messages added after the snapshot. Those have no sequence number
+	// yet; the selection's updates announce them, with their flags.
+	var known []imap.UID
+	for _, uid := range c.state.selected.uids {
+		if changed.Contains(uid) {
+			known = append(known, uid)
+		}
+	}
+	if len(known) == 0 {
+		return nil
+	}
+	changed = imap.UIDSetNum(known...)
 	items := applyCondStoreFetchItems(c, []imap.FetchItem{imap.FetchItemFlags, imap.FetchItemUID})
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
 		mapped, err := mapFetchResponse(c.state.selected, data, true)

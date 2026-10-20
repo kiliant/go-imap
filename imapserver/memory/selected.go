@@ -309,6 +309,9 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		sources, destinations = append(sources, msg.uid), append(destinations, uid)
 		additions = append(additions, &imapserver.UpdateAdd{UIDs: []imap.UID{uid}})
 		if move {
+			// RFC 7162 section 3.2: a MOVE is a removal from the source at a
+			// new modification sequence, which QRESYNC reports as VANISHED.
+			recordVanishedLocked(s.mailbox, msg.uid)
 			removals = append(removals, &imapserver.UpdateExpunge{UID: msg.uid})
 		}
 	}

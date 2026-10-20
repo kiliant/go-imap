@@ -98,6 +98,11 @@ type conn struct {
 	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
 	notifyQueue   *sessionUpdateQueue
 	notifyUpdater *SessionUpdater
+	// notifySelected is the selected-mailbox half of the registration, which
+	// the framework enforces itself on the selection's update stream.
+	notifySelected selectedNotifyPolicy
+	// releasingNotify is set for the implicit NOOP of a NOTIFY SET.
+	releasingNotify bool
 
 	state sessionState // event-loop owned
 	// executingSeqSensitive is event-loop owned, like state: it is set and
@@ -110,7 +115,7 @@ type conn struct {
 	// batch could not yet be applied because an earlier unsolicited removal
 	// remains deferred. It is event-loop owned. When that batch is eventually
 	// applied, its original accounting still suppresses the duplicate response.
-	updateEffects map[ChangeToken]commandEffect
+	updateEffects map[ChangeToken]updateAccounting
 	logout        bool
 
 	fatalMu sync.Mutex
@@ -895,6 +900,12 @@ func (c *conn) updateSignal() <-chan struct{} {
 // pipelined behind it — §7.4.1's forbidden window, reached through the
 // exemption meant for the command's own changes. See drainUpdates.
 func (c *conn) expungeDeliveryDeferred() bool {
+	// NOTIFY's SELECTED specifier asks for removals as they happen; a client
+	// registering it has stopped using sequence numbers in commands (RFC 5465
+	// sections 5.3 and 6.1.1). SELECTED-DELAYED keeps the rules below.
+	if c.notifySelected.immediateRemovals() {
+		return false
+	}
 	// §7.4.1 opens with the condition this missed for a release: "An EXPUNGE
 	// response MUST NOT be sent when no command is in progress". Between
 	// commands the server knows nothing about what the client has already put on
@@ -973,12 +984,20 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if selected == nil || selected.queue == nil {
 		return nil
 	}
-	if accounting.origin != 0 && accounting.effect != effectNone {
+	// Every origin a command of this connection drains with is recorded, even
+	// without an effect: it is also what identifies the command's own
+	// batches, whose changes are command results that NOTIFY never filters.
+	if accounting.origin != 0 {
 		if c.updateEffects == nil {
-			c.updateEffects = make(map[ChangeToken]commandEffect)
+			c.updateEffects = make(map[ChangeToken]updateAccounting)
 		}
-		c.updateEffects[accounting.origin] = accounting.effect
+		c.updateEffects[accounting.origin] = accounting
 	}
+	// NOTIFY's selected policy decides what other sessions' changes may
+	// announce. A NOTIFY SET's implicit NOOP releases everything accumulated
+	// under the previous registration first (RFC 5465 section 3.1).
+	suppressMessages := c.notifySelected.suppressesMessages() && !c.releasingNotify
+	suppressFlags := c.notifySelected.suppressesFlags() && !c.releasingNotify
 	// Revisions always advance in order. Only removal announcements and the
 	// corresponding client sequence-number changes wait; later EXISTS and
 	// FLAGS updates use that unchanged client view.
@@ -999,7 +1018,8 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			}
 		}
 	}()
-	if len(batches) == 0 && (deferred || len(selected.withheld) == 0) {
+	releasable := !suppressMessages && (len(selected.pendingAdds) != 0 || selected.hasPendingRecent || !deferred && len(selected.suppressed) != 0)
+	if len(batches) == 0 && !releasable && (deferred || len(selected.withheld) == 0) {
 		return nil
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
@@ -1012,23 +1032,34 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		}
 	}
 	var pending []deliveredUpdate
+	if !suppressMessages {
+		pending = selected.releaseSuppressed(!deferred)
+	}
 	if !deferred && len(selected.withheld) != 0 {
-		var err error
-		pending, err = selected.deliverWithheldRemovals()
-		if err != nil {
-			c.failFatal(err)
-			return err
+		if suppressMessages {
+			selected.suppressWithheld()
+		} else {
+			delivered, err := selected.deliverWithheldRemovals()
+			if err != nil {
+				c.failFatal(err)
+				return err
+			}
+			pending = append(pending, delivered...)
 		}
 	}
 	for _, batch := range batches {
-		batchAccounting := updateAccounting{
-			origin: batch.Origin,
-			effect: c.updateEffects[batch.Origin],
+		batchAccounting, own := c.updateEffects[batch.Origin]
+		if !own {
+			batchAccounting = updateAccounting{origin: batch.Origin}
 		}
 		if batch.Origin != 0 && batch.Origin == accounting.origin {
-			batchAccounting = accounting
+			batchAccounting, own = accounting, true
 		}
-		updates, err := selected.applyBatchDeferringRemovals(batch, batchAccounting, deferred)
+		updates, err := selected.applyBatchWith(batch, batchAccounting, batchDelivery{
+			deferRemovals:    deferred,
+			suppressMessages: suppressMessages && !own,
+			suppressFlags:    suppressFlags && !own,
+		})
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
 			// knows the selected mailbox's sequence view. Continuing would risk
@@ -1080,7 +1111,7 @@ func (c *conn) writeDeferredModSeqFence() {
 	}
 	// A backend may emit a FETCH and then fail before the handler's normal
 	// drain. Its already-published removal still needs to fence that response.
-	if len(selected.withheld) == 0 && !selected.queue.hasRemovals() {
+	if !selected.withholdsRemovals() && !selected.queue.hasRemovals() {
 		return
 	}
 	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "removal announcements pending")
@@ -1118,6 +1149,12 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		// See ext_d_uidonly.go.
 		if uidOnlyEnabled(c) {
 			return imapcodec.WriteUIDFetchResponse(c.encoder, update.uid, data, nil)
+		}
+		// Otherwise the UID is a data item: RFC 7162 section 3.2.4 requires it
+		// once CONDSTORE is enabled, and RFC 5465 section 5.1 in a FlagChange
+		// notification for the selected mailbox, with or without CONDSTORE.
+		if condStoreRequiresUID(c) || c.notifySelected.flagChangeRegistered() {
+			data.Items[imap.FetchDataKey("UID")] = []imap.FetchData{imap.FetchDataUID(update.uid)}
 		}
 		return imapcodec.WriteFetchResponse(c.encoder, data, nil)
 	case updateMessageExpunge:

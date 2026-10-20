@@ -67,10 +67,13 @@ func (s *countingNotifySession) Notify(ctx context.Context, updater *imapserver.
 func TestIndependentNotifyWire(t *testing.T) {
 	b := &countingNotifyBackend{Backend: memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})}
 	client, reader := reviewRawSession(t, b, nil)
-	for _, event := range []string{"MailboxName", "SubscriptionChange", "AnnotationChange", "NoSuchEvent"} {
-		lines := reviewCommand(t, client, reader, "N", "NOTIFY SET (personal ("+event+"))", "NO")
+	// Legal registrations naming an event the server cannot deliver. RFC
+	// 5465 section 5 pairs AnnotationChange with MessageNew and
+	// MessageExpunge, so it is named with them.
+	for _, events := range []string{"MailboxName", "SubscriptionChange", "MessageNew MessageExpunge AnnotationChange", "NoSuchEvent"} {
+		lines := reviewCommand(t, client, reader, "N", "NOTIFY SET (personal ("+events+"))", "NO")
 		if !strings.Contains(strings.Join(lines, ""), "[BADEVENT (MessageNew MessageExpunge FlagChange)]") {
-			t.Errorf("%s refusal did not list all supported events: %q", event, lines)
+			t.Errorf("%s refusal did not list all supported events: %q", events, lines)
 		}
 	}
 	// A legal fetch-att list, including nested header fields, is a refusal
@@ -96,20 +99,26 @@ func TestIndependentNotifyMutations(t *testing.T) {
 	raw := "Subject: x\r\n\r\nbody"
 	appendOther := fmt.Sprintf("APPEND other {%d+}\r\n%s", len(raw), raw)
 	replace := fmt.Sprintf("REPLACE 1 dest {%d+}\r\n%s", len(raw), raw)
+	// RFC 5465 section 5 only accepts MessageNew with MessageExpunge, and
+	// FlagChange with both. An empty want asserts that nothing is delivered.
+	const messages, flags = "MessageNew MessageExpunge", "MessageNew MessageExpunge FlagChange"
 	for _, tc := range []struct {
 		name, events, command, mailbox, want string
 	}{
-		{"append", "MessageNew", appendOther, "other", "MESSAGES 2"},
-		{"multiappend", "MessageNew", appendOther + fmt.Sprintf(" {%d+}\r\n%s", len(raw), raw), "other", "MESSAGES 3"},
-		{"copy", "MessageNew", "COPY 1 dest", "dest", "MESSAGES 1"},
-		{"move-add", "MessageNew", "MOVE 1 dest", "dest", "MESSAGES 1"},
-		{"move-remove", "MessageExpunge", "MOVE 1 dest", "other", "MESSAGES 0"},
-		{"replace-add", "MessageNew", replace, "dest", "MESSAGES 1"},
-		{"replace-remove", "MessageExpunge", replace, "other", "MESSAGES 0"},
-		{"store", "FlagChange", `STORE 1 +FLAGS (\Flagged)`, "other", "HIGHESTMODSEQ "},
-		{"condstore", "FlagChange", `STORE 1 (UNCHANGEDSINCE 100) +FLAGS (\Flagged)`, "other", "HIGHESTMODSEQ "},
-		{"fetch-seen", "FlagChange", "FETCH 1 BODY[]", "other", "UNSEEN 0"},
-		{"expunge", "MessageExpunge", "EXPUNGE", "other", "MESSAGES 0"},
+		{"append", messages, appendOther, "other", "MESSAGES 2"},
+		{"multiappend", messages, appendOther + fmt.Sprintf(" {%d+}\r\n%s", len(raw), raw), "other", "MESSAGES 3"},
+		{"copy", messages, "COPY 1 dest", "dest", "MESSAGES 1"},
+		{"move-add", messages, "MOVE 1 dest", "dest", "MESSAGES 1"},
+		{"move-remove", messages, "MOVE 1 dest", "other", "MESSAGES 0"},
+		{"replace-add", messages, replace, "dest", "MESSAGES 1"},
+		{"replace-remove", messages, replace, "other", "MESSAGES 0"},
+		{"store", flags, `STORE 1 +FLAGS (\Flagged)`, "other", "HIGHESTMODSEQ "},
+		{"store-unwatched", messages, `STORE 1 +FLAGS (\Flagged)`, "other", ""},
+		{"condstore", flags, `STORE 1 (UNCHANGEDSINCE 100) +FLAGS (\Flagged)`, "other", "HIGHESTMODSEQ "},
+		{"condstore-unwatched", messages, `STORE 1 (UNCHANGEDSINCE 100) +FLAGS (\Flagged)`, "other", ""},
+		{"fetch-seen", flags, "FETCH 1 BODY[]", "other", "UNSEEN 0"},
+		{"fetch-seen-unwatched", messages, "FETCH 1 BODY[]", "other", ""},
+		{"expunge", messages, "EXPUNGE", "other", "MESSAGES 0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := reviewBackend(t, "memory")
@@ -135,6 +144,12 @@ func TestIndependentNotifyMutations(t *testing.T) {
 					statuses = append(statuses, line)
 				}
 			}
+			if tc.want == "" {
+				if len(statuses) != 0 {
+					t.Fatalf("mutation STATUS = %q for an event the registration omits", statuses)
+				}
+				return
+			}
 			if len(statuses) != 1 || !strings.Contains(statuses[0], tc.mailbox) || !strings.Contains(statuses[0], tc.want) {
 				t.Fatalf("mutation STATUS = %q, want one for %s with %s", statuses, tc.mailbox, tc.want)
 			}
@@ -151,16 +166,16 @@ func TestIndependentNotifyEventUnion(t *testing.T) {
 	appendOther := fmt.Sprintf("APPEND other {%d+}\r\n%s", len(raw), raw)
 	reviewCommand(t, mutator, mutations, "A", appendOther, "OK")
 	reviewCommand(t, mutator, mutations, "S", "SELECT other", "OK")
-	// A matching MessageNew group must not cause a FlagChange delivery.
-	reviewCommand(t, client, reader, "N", "NOTIFY SET (personal (MessageNew))", "OK")
+	// A matching message group must not cause a FlagChange delivery.
+	reviewCommand(t, client, reader, "N", "NOTIFY SET (personal (MessageNew MessageExpunge))", "OK")
 	reviewCommand(t, mutator, mutations, "M", `STORE 1 +FLAGS (\Flagged)`, "OK")
 	lines := reviewCommand(t, client, reader, "Q", "NOOP", "OK")
 	if strings.Contains(strings.Join(lines, ""), "* STATUS ") {
 		t.Fatalf("MessageNew-only watch delivered FlagChange: %q", lines)
 	}
-	// NONE contributes nothing, and the union includes events from both of
-	// the other groups even though all three groups match the same mailbox.
-	reviewCommand(t, client, reader, "N", "NOTIFY SET (personal NONE) (personal (MessageNew)) (mailboxes other (FlagChange))", "OK")
+	// NONE contributes nothing, and the union includes FlagChange from the
+	// last group even though all three groups match the same mailbox.
+	reviewCommand(t, client, reader, "N", "NOTIFY SET (personal NONE) (personal (MessageNew MessageExpunge)) (subtree other (MessageNew MessageExpunge FlagChange))", "OK")
 	for _, command := range []string{`STORE 1 -FLAGS (\Flagged)`, appendOther} {
 		reviewCommand(t, mutator, mutations, "M", command, "OK")
 		lines := reviewCommand(t, client, reader, "Q", "NOOP", "OK")

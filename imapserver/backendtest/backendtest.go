@@ -10,6 +10,13 @@
 // expose defects in a backend that passed an earlier version. Passing Run is
 // evidence for the exercised cases, not a replacement for the backend contract.
 //
+// A result the backend contract makes optional is optional on every call. The
+// suite derives its fixtures from the backend's own state, checks a value the
+// backend did report against the message it names, and requires the result
+// only from a backend witnessing the capability that makes it mandatory, such
+// as UIDPLUS. A capability witnessed through CapabilitySupport is checked only
+// when witnessed, not because a backend implements the matching interface.
+//
 // New obligations must be opt-in through an extensible harness control or an
 // optional interface and its capability witness. A backend that does not opt
 // in must keep its existing requirements and advertised capabilities. New test
@@ -310,6 +317,10 @@ func Run(t *testing.T, harness *Harness) {
 		}
 	})
 
+	t.Run("rename-inbox-moves-messages", func(t *testing.T) {
+		runRenameInbox(t, harness)
+	})
+
 	runList(t, harness)
 	runSearch(t, harness)
 
@@ -361,22 +372,24 @@ func Run(t *testing.T, harness *Harness) {
 		// checked for everyone through the destination's message count.
 		uidplus := supportsCapability(instance, session, "UIDPLUS")
 		copyData, err := result.Mailbox.Copy(context.Background(), imap.UIDSetNum(remainingUID), destination, nil)
-		if err != nil || uidplus && (copyData == nil || !copyData.HasUIDs || !copyData.SourceUIDs.Contains(remainingUID)) {
+		if err != nil || uidplus && (copyData == nil || !copyData.HasUIDs) {
 			t.Fatalf("COPY = %#v, %v", copyData, err)
 		}
 		copied, err := session.Status(context.Background(), destination, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
 		if n, ok := copied.Number(imap.StatusItemMessages); err != nil || !ok || n != 1 {
 			t.Fatalf("destination after COPY = %#v, %v", copied, err)
 		}
+		checkReportedCopy(t, instance, "COPY", copyData, []imap.UID{remainingUID}, destination)
 		if supportsCapability(instance, session, "MOVE") {
 			moveMailbox, ok := result.Mailbox.(imapserver.MoveMailbox)
 			if !ok {
 				t.Fatal("MOVE is advertised but selected mailbox does not implement MoveMailbox")
 			}
 			moveData, err := moveMailbox.Move(context.Background(), imap.UIDSetNum(remainingUID), destination, nil)
-			if err != nil || uidplus && (moveData == nil || !moveData.HasUIDs || !moveData.SourceUIDs.Contains(remainingUID)) {
+			if err != nil || uidplus && (moveData == nil || !moveData.HasUIDs) {
 				t.Fatalf("MOVE = %#v, %v", moveData, err)
 			}
+			checkReportedCopy(t, instance, "MOVE", moveData, []imap.UID{remainingUID}, destination)
 			status, err := session.Status(context.Background(), mailbox, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
 			if err != nil || status == nil {
 				t.Fatalf("source status after MOVE = %#v, %v", status, err)
@@ -492,6 +505,39 @@ func appendMessage(t *testing.T, session imapserver.Session, mailbox, subject st
 		t.Fatalf("Append reported UID zero: %#v", data)
 	}
 	return data.UID
+}
+
+// checkReportedCopy validates COPY or MOVE data the backend chose to report:
+// whether or not UIDPLUS obliges it, reported data becomes COPYUID, so it must
+// name the copied messages and UIDs that exist in the destination under its
+// current UIDVALIDITY. Absent data is the caller's business. The destination
+// is inspected from a second session, since the framework never holds two
+// selections in one.
+func checkReportedCopy(t *testing.T, instance *Instance, operation string, data *imap.CopyData, sources []imap.UID, destination string) {
+	t.Helper()
+	if data == nil || !data.HasUIDs {
+		return
+	}
+	if data.SourceUIDs.Dynamic() || data.DestinationUIDs.Dynamic() {
+		t.Fatalf("%s reported a dynamic UID set: %#v", operation, data)
+	}
+	reportedSources, _ := data.SourceUIDs.Nums()
+	reportedDestinations, _ := data.DestinationUIDs.Nums()
+	if !slices.Equal(reportedSources, sources) || len(reportedDestinations) != len(sources) {
+		t.Fatalf("%s reported %#v for source UIDs %v", operation, data, sources)
+	}
+	_, session := authenticate(t, instance)
+	defer closeSession(t, instance, session)
+	selected := selectMailbox(t, session, destination, discardUpdater())
+	defer selected.Mailbox.Unselect(context.Background(), nil)
+	if data.UIDValidity != selected.Snapshot.Status.UIDValidity {
+		t.Fatalf("%s reported UIDVALIDITY %d, destination has %d", operation, data.UIDValidity, selected.Snapshot.Status.UIDValidity)
+	}
+	for _, uid := range reportedDestinations {
+		if !slices.Contains(selected.Snapshot.UIDs, uid) {
+			t.Fatalf("%s reported destination UID %d, destination lists %v", operation, uid, selected.Snapshot.UIDs)
+		}
+	}
 }
 
 // soleAddedUID returns the one UID a batch adds, or zero if it adds another
@@ -648,6 +694,17 @@ func capabilityAllowed(instance *Instance, session imapserver.Session, name stri
 		return filter.AllowCapability(context.Background(), name, nil)
 	}
 	return true
+}
+
+// requireWitness skips unless the backend witnesses name through
+// CapabilitySupport and does not filter it. Tokens the framework gates on that
+// spoken witness carry no obligation for a backend that merely happens to
+// implement the matching interface: the framework never calls it then.
+func requireWitness(t *testing.T, instance *Instance, session imapserver.Session, name string) {
+	t.Helper()
+	if !supportsCapability(instance, session, name) {
+		t.Skipf("backend does not witness %s", name)
+	}
 }
 
 func requireAllowedCapabilities(t *testing.T, instance *Instance, session imapserver.Session, names ...string) {

@@ -105,7 +105,7 @@ type Session interface {
 	Delete(ctx context.Context, mailbox string, options *DeleteOptions) error
 	// Rename moves a mailbox, and by RFC 3501 §6.3.5 its inferiors with it.
 	// Renaming INBOX is the documented special case: its messages move to the
-	// new name and INBOX itself remains.
+	// new name, and INBOX itself remains, empty, with its inferiors.
 	Rename(ctx context.Context, oldName, newName string, options *RenameOptions) error
 	// Subscribe adds a mailbox to the subscription list. RFC 3501 §6.3.6 allows
 	// subscribing to a name that does not exist, so this is not required to
@@ -668,7 +668,13 @@ type StoreFlags struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type StoreOptions struct {
 	MutationOptions
-	// Silent suppresses the command's FETCH responses, but not state updates.
+	// Silent reports the client's .SILENT suffix. It suppresses the new FLAGS
+	// the command would return, never the mutation or the updates other
+	// sessions see. The framework applies it: a backend may write nothing, or
+	// what it writes without Silent. A conditional store (HasUnchangedSince)
+	// still reports each stored message's MODSEQ, as RFC 7162 section 3.1.3
+	// requires; the framework keeps it from what the backend wrote and
+	// fetches it for any stored message the backend did not report.
 	Silent bool
 	// UnchangedSince makes the store conditional: a message whose modification
 	// sequence exceeds this value must be left unmodified. Backends report the

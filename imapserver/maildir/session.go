@@ -234,6 +234,9 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 		var removals []imapserver.Update
 		for _, original := range source.Messages {
 			copy := *original
+			// Recent in the new mailbox, as a COPY or MOVE destination is:
+			// no session has seen the message there (RFC 3501 section 2.3.2).
+			copy.Recent = true
 			copy.UID, err = allocateUID(destination)
 			if err != nil {
 				return err

@@ -88,7 +88,7 @@ func TestNotifyOverflowEndsRegistration(t *testing.T) {
 	if line := readLine(); !strings.HasPrefix(line, "L OK ") {
 		t.Fatal(line)
 	}
-	writeUpdateOrderCommand(t, clientSide, "N1 NOTIFY SET (PERSONAL (MessageNew))\r\n")
+	writeUpdateOrderCommand(t, clientSide, "N1 NOTIFY SET (PERSONAL (MessageNew MessageExpunge))\r\n")
 	// Updates pushed during Notify are drained before the tagged OK (RFC 5465
 	// section 3), so an overflow of that initial burst is reported first.
 	overflowed := false
@@ -120,7 +120,7 @@ func TestNotifyOverflowEndsRegistration(t *testing.T) {
 		t.Fatalf("notification after overflow: %q", line)
 	}
 	// A client can establish a fresh registration after the overflow.
-	writeUpdateOrderCommand(t, clientSide, "N3 NOTIFY SET (PERSONAL (MessageNew))\r\n")
+	writeUpdateOrderCommand(t, clientSide, "N3 NOTIFY SET (PERSONAL (MessageNew MessageExpunge))\r\n")
 	if line := readLine(); !strings.HasPrefix(line, "* STATUS resumed (MESSAGES 5)") {
 		t.Fatalf("new registration did not deliver before its tagged OK: %q", line)
 	}
