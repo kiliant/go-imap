@@ -36,10 +36,7 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 		return nil, err
 	}
 	a := s.session.account
-	next, err := cloneState(a.state)
-	if err != nil {
-		return nil, err
-	}
+	next := mutationState(a.state, name)
 	m := next.Mailboxes[name]
 	var changes []imapserver.Update
 	var actions []fileAction
@@ -67,6 +64,9 @@ func (s *selected) StoreCondStore(ctx context.Context, writer *imapserver.FetchW
 			return nil, err
 		}
 		if !sameFlags(msg.Flags, flags) {
+			copy := *msg
+			msg = &copy
+			m.Messages[i] = msg
 			old := messagePath(name, msg)
 			msg.Flags = flags
 			modseq, err := bump(m)
@@ -163,10 +163,7 @@ func (s *selected) copyMove(ctx context.Context, uids imap.UIDSet, destination s
 	if a.state.Mailboxes[destination] == nil {
 		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
 	}
-	next, err := cloneState(a.state)
-	if err != nil {
-		return nil, err
-	}
+	next := mutationState(a.state, name, destination)
 	from, to := next.Mailboxes[name], next.Mailboxes[destination]
 	var actions []fileAction
 	changes := make(map[uint32][]imapserver.Update)
@@ -263,10 +260,7 @@ func (s *selected) Expunge(ctx context.Context, writer *imapserver.ExpungeWriter
 		return noError(imap.CodeReadOnly, "mailbox is read-only")
 	}
 	a := s.session.account
-	next, err := cloneState(a.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(a.state, name)
 	m := next.Mailboxes[name]
 	var retained []*messageRecord
 	var removed []imap.UID
@@ -569,10 +563,7 @@ func (s *selected) markSeen(ctx context.Context, name string, uids []imap.UID, o
 		return nil
 	}
 	a := s.session.account
-	next, err := cloneState(a.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(a.state, name)
 	m := next.Mailboxes[name]
 	mark := make(map[imap.UID]bool, len(uids))
 	for _, uid := range uids {
@@ -580,10 +571,14 @@ func (s *selected) markSeen(ctx context.Context, name string, uids []imap.UID, o
 	}
 	var actions []fileAction
 	var changes []imapserver.Update
-	for _, msg := range m.Messages {
+	for i, msg := range m.Messages {
 		if !mark[msg.UID] {
 			continue
 		}
+		copy := *msg
+		copy.Flags = slices.Clone(msg.Flags)
+		msg = &copy
+		m.Messages[i] = msg
 		old := messagePath(name, msg)
 		msg.Flags = append(msg.Flags, imap.FlagSeen)
 		modseq, err := bump(m)

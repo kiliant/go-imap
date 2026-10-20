@@ -435,7 +435,7 @@ func TestStorageVersionsAndUnknownFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(accountPath(root), stateFile)
-	raw = bytes.Replace(raw, []byte(`"version":3`), []byte(`"version":1`), 1)
+	raw = bytes.Replace(raw, []byte(`"version":4`), []byte(`"version":1`), 1)
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestStorageVersionsAndUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"future":{"value":17}`, `"future-mailbox":[1,2]`, `"future-message":true`, `"version":3`} {
+	for _, want := range []string{`"future":{"value":17}`, `"future-mailbox":[1,2]`, `"future-message":true`, `"version":4`} {
 		if !bytes.Contains(raw, []byte(want)) {
 			t.Fatalf("lost %s in %s", want, raw)
 		}
@@ -454,7 +454,7 @@ func TestStorageVersionsAndUnknownFields(t *testing.T) {
 	if err := b.Close(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	raw = bytes.Replace(raw, []byte(`"version":3`), []byte(`"version":999`), 1)
+	raw = bytes.Replace(raw, []byte(`"version":4`), []byte(`"version":999`), 1)
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}

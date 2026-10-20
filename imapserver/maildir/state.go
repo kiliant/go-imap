@@ -15,9 +15,9 @@ import (
 	"github.com/kiliant/go-imap"
 )
 
-// Version 3 makes the bounded-history checkpoint mandatory knowledge. An older
-// reader must refuse this state rather than silently omit forgotten expunges.
-const stateVersion = 3
+// Version 4 requires replaying incremental changes after the checkpoint.
+// Older readers must refuse it rather than serve a stale checkpoint.
+const stateVersion = 4
 const stateFile = ".imap-state.json"
 const journalFile = ".imap-journal.json"
 const identityFile = ".imap-identity.json"
@@ -26,6 +26,8 @@ const maxStateFileBytes = 256 << 20
 type extraFields map[string]json.RawMessage
 
 type accountState struct {
+	Generation    uint32                                   `json:"generation,omitempty"`
+	Sequence      uint64                                   `json:"sequence,omitempty"`
 	Version       int                                      `json:"version"`
 	Mailboxes     map[string]*mailboxState                 `json:"mailboxes"`
 	Subscriptions map[string]bool                          `json:"subscriptions"`
@@ -68,6 +70,9 @@ type identityState struct {
 
 // Unknown fields survive rewriting at every persistent object boundary.
 func marshalExtra(value any, extra extraFields) ([]byte, error) {
+	if len(extra) == 0 {
+		return json.Marshal(value)
+	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -215,6 +220,9 @@ func decodeState(raw []byte) (*accountState, error) {
 			}
 		}
 	}
+	if s.Generation == 0 && s.Mailboxes["INBOX"] != nil {
+		s.Generation = s.Mailboxes["INBOX"].UIDValidity
+	}
 	s.Version = stateVersion
 	return &s, nil
 }
@@ -230,7 +238,8 @@ func cloneState(s *accountState) (*accountState, error) {
 type fileAction struct{ Kind, From, To, Stage string }
 type diskJournal struct {
 	Version int
-	State   *accountState
+	State   *accountState `json:",omitempty"`
+	Change  *stateChange  `json:",omitempty"`
 	Actions []fileAction
 }
 
@@ -261,13 +270,18 @@ func (a *account) newMailbox() (*mailboxState, error) {
 }
 
 func (a *account) commit(next *accountState, actions []fileAction) error {
-	return a.commitWithLimit(next, actions, maxStateFileBytes)
+	return a.commitIncremental(next, actions)
 }
 
 // The production budget is the read limit. Taking it as an argument keeps
 // boundary/recovery tests small while exercising the actual commit path.
 func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxBytes int64) error {
 	a.pruneHistory(next)
+	return a.commitJournal(&diskJournal{Version: stateVersion, State: next, Actions: actions}, maxBytes)
+}
+
+func (a *account) commitJournal(j *diskJournal, maxBytes int64) error {
+	next, actions := j.State, j.Actions
 	if a.state == nil || !sameMailboxNames(a.state, next) {
 		if err := a.checkMailboxLayout(next); err != nil {
 			return noError(imap.CodeCannot, err.Error())
@@ -293,15 +307,17 @@ func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxB
 			return err
 		}
 	}
-	j := diskJournal{Version: stateVersion, State: next, Actions: actions}
-	raw, err := json.Marshal(j)
+	disk := *j
+	if disk.Change != nil {
+		disk.State = nil
+	}
+	raw, err := json.Marshal(disk)
 	if err != nil {
 		return err
 	}
-	// The journal contains the complete state plus its filesystem actions, so
-	// bounding it also bounds the state recovery will publish. Refuse before
-	// any prepared transaction exists; an ordinary LIMIT must not poison the
-	// account or leave filesystem actions for a future Open to replay.
+	// Bound the prepared transaction before publication. Incremental commits
+	// separately bound checkpoint plus changes, hence reconstructed state too.
+	// An ordinary LIMIT must leave no prepared transaction or filesystem action.
 	if err := checkStateFileSize(int64(len(raw)), maxBytes); err != nil {
 		return err
 	}
@@ -312,7 +328,7 @@ func (a *account) commitWithLimit(next *accountState, actions []fileAction, maxB
 		return err
 	}
 	if err = a.backend.fault("journal"); err == nil {
-		err = a.replay(&j, false)
+		err = a.replay(j, false)
 	}
 	if err != nil {
 		a.failure = err
@@ -356,20 +372,16 @@ func (a *account) replay(j *diskJournal, recoverMissing bool) error {
 		}
 	}
 	a.pruneHistory(j.State)
-	raw, err := json.Marshal(j.State)
-	if err != nil {
+	if err := a.persistJournalState(j); err != nil {
 		return err
 	}
-	if err = atomicFile(a.root, stateFile, raw); err != nil {
+	if err := a.backend.fault("state"); err != nil {
 		return err
 	}
-	if err = a.backend.fault("state"); err != nil {
+	if err := a.root.Remove(journalFile); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err = a.root.Remove(journalFile); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err = syncDir(a.root, "."); err != nil {
+	if err := syncDir(a.root, "."); err != nil {
 		return err
 	}
 	for _, action := range j.Actions {
@@ -547,13 +559,17 @@ func mergeTree(root *os.Root, from, to string) error {
 }
 
 func (a *account) load() error {
-	if err := cleanupAtomicFiles(a.root, stateFile, journalFile, identityFile); err != nil {
+	if err := cleanupAtomicFiles(a.root, stateFile, journalFile, identityFile, headFile); err != nil {
 		return err
 	}
 	stateRaw, stateErr := readFile(a.root, stateFile)
 	var state *accountState
 	var err error
+	var checkpointHeader struct{ Version int }
 	if stateErr == nil {
+		if err := json.Unmarshal(stateRaw, &checkpointHeader); err != nil {
+			return err
+		}
 		state, err = decodeState(stateRaw)
 		if err != nil {
 			return err
@@ -568,20 +584,58 @@ func (a *account) load() error {
 		if err := json.Unmarshal(journalRaw, &j); err != nil {
 			return err
 		}
-		if j.Version < 1 || j.Version > stateVersion || j.State == nil {
+		if j.Version < 1 || j.Version > stateVersion || j.State == nil && j.Change == nil || j.Change != nil && (j.Version != stateVersion || j.State != nil) {
 			return fmt.Errorf("maildir: unsupported journal version")
 		}
-		raw, err := json.Marshal(j.State)
-		if err != nil {
-			return err
-		}
-		j.State, err = decodeState(raw)
-		if err != nil {
-			return err
+		if j.State != nil {
+			raw, err := json.Marshal(j.State)
+			if err != nil {
+				return err
+			}
+			j.State, err = decodeState(raw)
+			if err != nil {
+				return err
+			}
 		}
 		pending = &j
 	} else if !os.IsNotExist(journalErr) {
 		return journalErr
+	}
+	a.checkpointBytes = int64(len(stateRaw))
+	state, err = a.loadChanges(state, pending)
+	if err != nil {
+		return err
+	}
+	if state != nil && checkpointHeader.Version == stateVersion {
+		if err := a.validateHead(state, pending); err != nil {
+			return err
+		}
+	}
+	// Validate the fully reconstructed state before touching filesystem actions.
+	if state != nil {
+		raw, err := json.Marshal(state)
+		if err != nil {
+			return err
+		}
+		state, err = decodeState(raw)
+		if err != nil {
+			return err
+		}
+	}
+	a.state = state
+	if pending != nil && pending.Change != nil {
+		pending.State, err = applyChange(state, pending.Change)
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(pending.State)
+		if err != nil {
+			return err
+		}
+		pending.State, err = decodeState(raw)
+		if err != nil {
+			return err
+		}
 	}
 	idRaw, idErr := readFile(a.root, identityFile)
 	if idErr == nil {
@@ -658,7 +712,18 @@ func (a *account) load() error {
 			}
 		}
 	}
+	if state.Generation == 0 {
+		state.Generation = state.Mailboxes["INBOX"].UIDValidity
+	}
 	a.state = state
+	if stateErr != nil || checkpointHeader.Version < stateVersion {
+		// Publish format 4 before preparing any incremental transaction, so
+		// older readers cannot miss a committed delivery after a migration
+		// crash. Fresh identities also retire a reconstructed account's history.
+		if err := a.checkpoint(state); err != nil {
+			return err
+		}
+	}
 	if err := a.reconcile(); err != nil {
 		return err
 	}
@@ -678,11 +743,7 @@ func (a *account) load() error {
 	}
 	// Also persists version-1 migrations, retaining unrecognised fields.
 	a.pruneHistory(a.state)
-	raw, err := json.Marshal(a.state)
-	if err != nil {
-		return err
-	}
-	return atomicFile(a.root, stateFile, raw)
+	return a.checkpoint(a.state)
 }
 
 type rootRegistry struct {

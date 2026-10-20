@@ -16,10 +16,13 @@ func (a *account) pruneHistory(state *accountState) {
 	if limit <= 0 {
 		return
 	}
-	for _, m := range state.Mailboxes {
+	for name, m := range state.Mailboxes {
 		if len(m.Tombstones) <= limit {
 			continue
 		}
+		copy := *m
+		m = &copy
+		state.Mailboxes[name] = m
 		cut := len(m.Tombstones) - limit
 		for _, dead := range m.Tombstones[:cut] {
 			m.TombstoneFloor = max(m.TombstoneFloor, dead.ModSeq)

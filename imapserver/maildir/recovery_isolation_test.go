@@ -16,7 +16,13 @@ import (
 	"github.com/kiliant/go-imap/imapserver"
 )
 
-func TestVersion2PreparedJournalMigrates(t *testing.T) {
+func TestOlderPreparedJournalsMigrate(t *testing.T) {
+	for _, version := range []int{1, 2, 3} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) { testOlderPreparedJournalMigrates(t, version) })
+	}
+}
+
+func testOlderPreparedJournalMigrates(t *testing.T, version int) {
 	ctx := context.Background()
 	root := t.TempDir()
 	b := openTest(t, root)
@@ -44,7 +50,14 @@ func TestVersion2PreparedJournalMigrates(t *testing.T) {
 	if err := json.Unmarshal(raw, &journal); err != nil {
 		t.Fatal(err)
 	}
-	journal.Version, journal.State.Version = 2, 2
+	if journal.Change != nil {
+		journal.State, err = applyChange(s.account.state, journal.Change)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal.Change = nil
+	}
+	journal.Version, journal.State.Version = version, version
 	raw, err = json.Marshal(journal)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +67,7 @@ func TestVersion2PreparedJournalMigrates(t *testing.T) {
 	}
 	b = openTest(t, root)
 	s = loginTest(t, b)
-	if s.account.state.Version != 3 || !imap.ContainsFlag(s.account.state.Mailboxes["INBOX"].Messages[0].Flags, imap.FlagSeen) {
+	if s.account.state.Version != stateVersion || !imap.ContainsFlag(s.account.state.Mailboxes["INBOX"].Messages[0].Flags, imap.FlagSeen) {
 		t.Fatal("old prepared transaction did not migrate and commit")
 	}
 }
