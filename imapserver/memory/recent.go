@@ -73,4 +73,30 @@ func publishLocked(m *mailbox, batch *imapserver.UpdateBatch) {
 		}
 		_ = updater.Push(&imapserver.UpdateBatch{Before: batch.Before, After: batch.After, Origin: batch.Origin, Changes: changes})
 	}
+	// Every mutation publishes a batch, including changes made without a
+	// selected watcher. Derive NOTIFY events here to keep all paths covered.
+	var messageNew, messageExpunge, flagChange bool
+	for _, change := range batch.Changes {
+		switch change.(type) {
+		case *imapserver.UpdateAdd:
+			messageNew = true
+		case *imapserver.UpdateExpunge, *imapserver.UpdateVanished:
+			messageExpunge = true
+		case *imapserver.UpdateFlags:
+			flagChange = true
+		}
+	}
+	var events []imap.NotifyEventName
+	if messageNew {
+		events = append(events, imap.NotifyEventMessageNew)
+	}
+	if messageExpunge {
+		events = append(events, imap.NotifyEventMessageExpunge)
+	}
+	if flagChange {
+		events = append(events, imap.NotifyEventFlagChange)
+	}
+	if len(events) > 0 {
+		notifyMailboxLocked(m, events...)
+	}
 }

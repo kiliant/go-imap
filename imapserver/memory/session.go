@@ -306,7 +306,6 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	batch := advanceLocked(m, origin, changes)
 	publishLocked(m, batch)
 	// NOTIFY watchers hear about a mailbox they have not selected.
-	notifyMailboxLocked(s.account, m)
 	uidValidity := m.uidValidity
 	s.account.mu.Unlock()
 	return &imap.AppendData{HasUID: true, UIDValidity: uidValidity, UID: uid}, nil

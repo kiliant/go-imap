@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,214 @@ import (
 )
 
 // Regressions for the independent T33 review of 2631f2c.
+
+func TestIndependentNotifyNoneWatch(t *testing.T) {
+	for _, groups := range []string{
+		"(mailboxes other NONE)",
+		"(personal NONE)",
+		"(mailboxes other NONE) (personal NONE)",
+	} {
+		t.Run(groups, func(t *testing.T) {
+			b := reviewBackend(t, "memory")
+			client, reader := reviewRawSession(t, b, nil)
+			mutator, mutations := reviewRawSession(t, b, nil)
+			reviewCommand(t, mutator, mutations, "C", "CREATE other", "OK")
+			lines := reviewCommand(t, client, reader, "N", "NOTIFY SET STATUS "+groups, "OK")
+			raw := "Subject: x\r\n\r\nbody"
+			reviewCommand(t, mutator, mutations, "A", fmt.Sprintf("APPEND other {%d+}\r\n%s", len(raw), raw), "OK")
+			lines = append(lines, reviewCommand(t, client, reader, "Q", "NOOP", "OK")...)
+			if strings.Contains(strings.Join(lines, ""), "* STATUS ") {
+				t.Fatalf("NONE watch delivered STATUS: %q", lines)
+			}
+		})
+	}
+}
+
+type countingNotifyBackend struct {
+	*memory.Backend
+	calls atomic.Int32
+}
+
+type countingNotifySession struct {
+	imapserver.Session
+	imapserver.NotifySession
+	calls *atomic.Int32
+}
+
+func (b *countingNotifyBackend) Authenticate(ctx context.Context, info *imapserver.ConnInfo, credentials *imapserver.Credentials, options *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	s, err := b.Backend.Authenticate(ctx, info, credentials, options)
+	if err != nil {
+		return nil, err
+	}
+	return &countingNotifySession{Session: s, NotifySession: s.(imapserver.NotifySession), calls: &b.calls}, nil
+}
+
+func (s *countingNotifySession) Notify(ctx context.Context, updater *imapserver.SessionUpdater, config *imapserver.NotifyConfig, options *imapserver.NotifyOptions) error {
+	s.calls.Add(1)
+	return s.NotifySession.Notify(ctx, updater, config, options)
+}
+
+func TestIndependentNotifyWire(t *testing.T) {
+	b := &countingNotifyBackend{Backend: memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})}
+	client, reader := reviewRawSession(t, b, nil)
+	for _, event := range []string{"MailboxName", "SubscriptionChange", "AnnotationChange", "NoSuchEvent"} {
+		lines := reviewCommand(t, client, reader, "N", "NOTIFY SET (personal ("+event+"))", "NO")
+		if !strings.Contains(strings.Join(lines, ""), "[BADEVENT (MessageNew MessageExpunge FlagChange)]") {
+			t.Errorf("%s refusal did not list all supported events: %q", event, lines)
+		}
+	}
+	// A legal fetch-att list, including nested header fields, is a refusal
+	// of unsupported behavior. It must never reach Notify on the backend.
+	before := b.calls.Load()
+	for _, group := range []string{
+		"(selected (MessageNew (UID FLAGS) MessageExpunge))",
+		"(selected-delayed (MessageNew (UID BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)]) MessageExpunge))",
+	} {
+		lines := reviewCommand(t, client, reader, "N", "NOTIFY SET "+group, "NO")
+		wire := strings.Join(lines, "")
+		if !strings.Contains(wire, "[CANNOT]") || !strings.Contains(wire, "MessageNew fetch attributes are unsupported") {
+			t.Errorf("fetch attribute refusal = %q", lines)
+		}
+	}
+	if got := b.calls.Load(); got != before {
+		t.Errorf("fetch attributes reached backend: Notify calls = %d, was %d", got, before)
+	}
+	reviewCommand(t, client, reader, "Q", "NOOP", "OK")
+}
+
+func TestIndependentNotifyMutations(t *testing.T) {
+	raw := "Subject: x\r\n\r\nbody"
+	appendOther := fmt.Sprintf("APPEND other {%d+}\r\n%s", len(raw), raw)
+	replace := fmt.Sprintf("REPLACE 1 dest {%d+}\r\n%s", len(raw), raw)
+	for _, tc := range []struct {
+		name, events, command, mailbox, want string
+	}{
+		{"append", "MessageNew", appendOther, "other", "MESSAGES 2"},
+		{"multiappend", "MessageNew", appendOther + fmt.Sprintf(" {%d+}\r\n%s", len(raw), raw), "other", "MESSAGES 3"},
+		{"copy", "MessageNew", "COPY 1 dest", "dest", "MESSAGES 1"},
+		{"move-add", "MessageNew", "MOVE 1 dest", "dest", "MESSAGES 1"},
+		{"move-remove", "MessageExpunge", "MOVE 1 dest", "other", "MESSAGES 0"},
+		{"replace-add", "MessageNew", replace, "dest", "MESSAGES 1"},
+		{"replace-remove", "MessageExpunge", replace, "other", "MESSAGES 0"},
+		{"store", "FlagChange", `STORE 1 +FLAGS (\Flagged)`, "other", "HIGHESTMODSEQ "},
+		{"condstore", "FlagChange", `STORE 1 (UNCHANGEDSINCE 100) +FLAGS (\Flagged)`, "other", "HIGHESTMODSEQ "},
+		{"fetch-seen", "FlagChange", "FETCH 1 BODY[]", "other", "UNSEEN 0"},
+		{"expunge", "MessageExpunge", "EXPUNGE", "other", "MESSAGES 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := reviewBackend(t, "memory")
+			client, reader := reviewRawSession(t, b, nil)
+			mutator, mutations := reviewRawSession(t, b, nil)
+			for _, mailbox := range []string{"other", "dest"} {
+				reviewCommand(t, mutator, mutations, "C", "CREATE "+mailbox, "OK")
+			}
+			reviewCommand(t, mutator, mutations, "A", appendOther, "OK")
+			reviewCommand(t, mutator, mutations, "S", "SELECT other", "OK")
+			if tc.name == "expunge" {
+				reviewCommand(t, mutator, mutations, "D", `STORE 1 +FLAGS (\Deleted)`, "OK")
+			}
+			reviewCommand(t, client, reader, "E", "ENABLE CONDSTORE", "OK")
+			// The first group must not shadow the event in the second group.
+			groups := "(personal NONE) (mailboxes " + tc.mailbox + " (" + tc.events + "))"
+			reviewCommand(t, client, reader, "N", "NOTIFY SET "+groups, "OK")
+			reviewCommand(t, mutator, mutations, "M", tc.command, "OK")
+			lines := reviewCommand(t, client, reader, "Q", "NOOP", "OK")
+			var statuses []string
+			for _, line := range lines {
+				if strings.HasPrefix(line, "* STATUS ") {
+					statuses = append(statuses, line)
+				}
+			}
+			if len(statuses) != 1 || !strings.Contains(statuses[0], tc.mailbox) || !strings.Contains(statuses[0], tc.want) {
+				t.Fatalf("mutation STATUS = %q, want one for %s with %s", statuses, tc.mailbox, tc.want)
+			}
+		})
+	}
+}
+
+func TestIndependentNotifyEventUnion(t *testing.T) {
+	b := reviewBackend(t, "memory")
+	client, reader := reviewRawSession(t, b, nil)
+	mutator, mutations := reviewRawSession(t, b, nil)
+	reviewCommand(t, mutator, mutations, "C", "CREATE other", "OK")
+	raw := "Subject: x\r\n\r\nbody"
+	appendOther := fmt.Sprintf("APPEND other {%d+}\r\n%s", len(raw), raw)
+	reviewCommand(t, mutator, mutations, "A", appendOther, "OK")
+	reviewCommand(t, mutator, mutations, "S", "SELECT other", "OK")
+	// A matching MessageNew group must not cause a FlagChange delivery.
+	reviewCommand(t, client, reader, "N", "NOTIFY SET (personal (MessageNew))", "OK")
+	reviewCommand(t, mutator, mutations, "M", `STORE 1 +FLAGS (\Flagged)`, "OK")
+	lines := reviewCommand(t, client, reader, "Q", "NOOP", "OK")
+	if strings.Contains(strings.Join(lines, ""), "* STATUS ") {
+		t.Fatalf("MessageNew-only watch delivered FlagChange: %q", lines)
+	}
+	// NONE contributes nothing, and the union includes events from both of
+	// the other groups even though all three groups match the same mailbox.
+	reviewCommand(t, client, reader, "N", "NOTIFY SET (personal NONE) (personal (MessageNew)) (mailboxes other (FlagChange))", "OK")
+	for _, command := range []string{`STORE 1 -FLAGS (\Flagged)`, appendOther} {
+		reviewCommand(t, mutator, mutations, "M", command, "OK")
+		lines := reviewCommand(t, client, reader, "Q", "NOOP", "OK")
+		if !strings.Contains(strings.Join(lines, ""), "* STATUS ") {
+			t.Fatalf("union lost an event from %s: %q", command, lines)
+		}
+	}
+}
+
+func TestIndependentNotifySubscribed(t *testing.T) {
+	b := reviewBackend(t, "memory")
+	client, reader := reviewRawSession(t, b, nil)
+	mutator, mutations := reviewRawSession(t, b, nil)
+	reviewCommand(t, mutator, mutations, "C", "CREATE other", "OK")
+	raw := "Subject: x\r\n\r\nbody"
+	reviewCommand(t, client, reader, "N", "NOTIFY SET (subscribed (MessageNew MessageExpunge))", "OK")
+	for _, subscribed := range []bool{false, true, false} {
+		verb := "UNSUBSCRIBE"
+		if subscribed {
+			verb = "SUBSCRIBE"
+		}
+		reviewCommand(t, mutator, mutations, "U", verb+" other", "OK")
+		reviewCommand(t, mutator, mutations, "A", fmt.Sprintf("APPEND other {%d+}\r\n%s", len(raw), raw), "OK")
+		lines := reviewCommand(t, client, reader, "Q", "NOOP", "OK")
+		if got := strings.Contains(strings.Join(lines, ""), "* STATUS "); got != subscribed {
+			t.Fatalf("APPEND with subscribed=%v: %q", subscribed, lines)
+		}
+		// Replacing the registration also checks the STATUS indicator.
+		lines = reviewCommand(t, client, reader, "N", "NOTIFY SET STATUS (subscribed (MessageNew MessageExpunge))", "OK")
+		if got := strings.Contains(strings.Join(lines, ""), "* STATUS "); got != subscribed {
+			t.Fatalf("STATUS indicator with subscribed=%v: %q", subscribed, lines)
+		}
+	}
+}
+
+func TestIndependentNotifySelectedHasNoStatus(t *testing.T) {
+	for _, groups := range []string{
+		"(personal (MessageNew MessageExpunge))",
+		"(mailboxes INBOX (MessageNew MessageExpunge))",
+		"(selected (MessageNew MessageExpunge))",
+		"(selected-delayed (MessageNew MessageExpunge))",
+		"(selected NONE) (personal (MessageNew MessageExpunge))",
+	} {
+		t.Run(groups, func(t *testing.T) {
+			b := reviewBackend(t, "memory")
+			client, reader := reviewRawSession(t, b, nil)
+			mutator, mutations := reviewRawSession(t, b, nil)
+			reviewCommand(t, client, reader, "S", "SELECT INBOX", "OK")
+			lines := reviewCommand(t, client, reader, "N", "NOTIFY SET STATUS "+groups, "OK")
+			raw := "Subject: x\r\n\r\nbody"
+			reviewCommand(t, mutator, mutations, "A", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw), "OK")
+			lines = append(lines, reviewCommand(t, client, reader, "Q", "NOOP", "OK")...)
+			wire := strings.Join(lines, "")
+			if strings.Contains(wire, "* STATUS ") {
+				t.Fatalf("selected mailbox delivered STATUS: %q", lines)
+			}
+			if strings.HasPrefix(groups, "(selected (") || strings.HasPrefix(groups, "(selected-delayed (") {
+				if !strings.Contains(wire, "* 1 EXISTS") {
+					t.Fatalf("selected updater lost the addition: %q", lines)
+				}
+			}
+		})
+	}
+}
 
 type activationBackend struct {
 	*memory.Backend

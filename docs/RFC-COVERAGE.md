@@ -329,8 +329,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
 | INPROGRESS | 9585 | done [^t27inprogress] | done [^srvinprogress] |
-| MESSAGELIMIT= | 9738 | done | done |
-| SAVELIMIT= | 9738 | done | done |
+| MESSAGELIMIT= | 9738 | done | deferred [^srvmsglistlimit] |
+| SAVELIMIT= | 9738 | done | deferred [^srvmsglistlimit] |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
 | UIDBATCHES | 10022 | done [^t31uidbatches] | done [^t31uidbatches] |
 
@@ -359,11 +359,20 @@ CONDSTORE `MODIFIED` on tagged OK.
     selection-scoped push outlive its selection. Events name a mailbox and carry
     no sequence numbers, because the client has not selected the mailbox and has
     no sequence-number view of it; RFC 5465 §6 reports them as STATUS for that
-    reason. The queue coalesces per mailbox and drops oldest on overflow rather
-    than killing the connection — the opposite of the selection queue's rule,
-    because a dropped notification costs a refresh while a dropped selection
-    update desynchronises a view in active use. Overflow is reported rather than
-    hidden.
+    reason. The queue coalesces per mailbox. Overflow ends the registration and
+    reports NOTIFICATIONOVERFLOW without closing the connection. Memory supports
+    MessageNew, MessageExpunge and FlagChange; LIST/METADATA events are refused
+    with BADEVENT listing all supported events. NONE groups request no events,
+    SUBSCRIBED uses current subscriptions, and selected mailboxes receive no
+    STATUS. MessageNew fetch-attribute syntax is recognized but refused with
+    `NO [CANNOT]` before backend calls; unsolicited FETCH attributes remain
+    deferred. (#54, independent review B3)
+
+[^srvmsglistlimit]: Server advertisements and the incorrect mailbox-size/retention
+    API were removed after the independent review (#54, A1). RFC 9738 limits
+    messages processed per command; support is deferred until the framework
+    enforces that contract, including the associated SEARCH keys and partial
+    completion responses.
 
 [^t27notify]: Events for other mailboxes are the unsolicited STATUS and LIST
     responses of RFC 5465 section 5. The client discarded them until T27 added

@@ -319,6 +319,11 @@ func init() {
 	registerCommand("NOTIFY", stateMaskAuthenticated|stateMaskSelected, false, parseNotify, handleNotify)
 }
 
+type notifyArgs struct {
+	config          *NotifyConfig
+	messageNewFetch bool
+}
+
 // parseNotify reads "NOTIFY SET [STATUS] (group events)..." or "NOTIFY NONE".
 // RFC 5465 section 6.
 func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
@@ -334,12 +339,13 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 		if !decoder.ExpectCRLF() {
 			return nil, 0, decoder.Err()
 		}
-		return (*NotifyConfig)(nil), 0, nil
+		return &notifyArgs{}, 0, nil
 	case "SET":
 	default:
 		return nil, 0, fmt.Errorf("unsupported NOTIFY verb %q", verb)
 	}
 	config := &NotifyConfig{}
+	args := &notifyArgs{config: config}
 	for decoder.SP() {
 		if decoder.PeekAtomEqual("STATUS") {
 			var keyword string
@@ -349,7 +355,7 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 			config.StatusOnSet = true
 			continue
 		}
-		group, err := parseNotifyGroup(decoder)
+		group, err := parseNotifyGroup(decoder, args)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -361,10 +367,10 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 	if !decoder.ExpectCRLF() {
 		return nil, 0, decoder.Err()
 	}
-	return config, int64(len(config.Watches) * 64), nil
+	return args, int64(len(config.Watches) * 64), nil
 }
 
-func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, error) {
+func parseNotifyGroup(decoder *imapwire.Decoder, args *notifyArgs) (*NotifyWatch, error) {
 	group := &NotifyWatch{}
 	if !decoder.ExpectSpecial('(') {
 		return nil, decoder.Err()
@@ -413,7 +419,21 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, error) {
 		if !decoder.ExpectAtom(&event) {
 			return decoder.Err()
 		}
-		group.Events = append(group.Events, canonicalNotifyEvent(event))
+		name := canonicalNotifyEvent(event)
+		group.Events = append(group.Events, name)
+		if name == imap.NotifyEventMessageNew && decoder.SPListAhead() {
+			if !decoder.ExpectSP() {
+				return decoder.Err()
+			}
+			items, err := imapcodec.ReadFetchItems(decoder)
+			if err != nil {
+				return err
+			}
+			if len(items) == 0 {
+				return fmt.Errorf("MessageNew requires at least one fetch attribute")
+			}
+			args.messageNewFetch = true
+		}
 		return nil
 	}); err != nil {
 		return nil, err
@@ -425,9 +445,22 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, error) {
 }
 
 func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
-	config, _ := command.args.(*NotifyConfig)
+	args, _ := command.args.(*notifyArgs)
+	if args == nil {
+		return c.writeBad(command.tag, "invalid NOTIFY arguments")
+	}
+	config := args.config
 	if err := requireCapability(c, "NOTIFY"); err != nil {
 		return c.writeBad(command.tag, err.Error())
+	}
+	// Parse the legal syntax completely, then refuse the unsupported behavior
+	// before changing an existing registration or calling the backend.
+	if args.messageNewFetch {
+		return writeBackendError(c, command.tag, command.name, &imap.Error{
+			Type: imap.ErrorTypeNo,
+			Code: imap.CodeCannot,
+			Text: "MessageNew fetch attributes are unsupported",
+		})
 	}
 	session, ok := c.state.session.(NotifySession)
 	if !ok {

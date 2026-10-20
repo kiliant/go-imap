@@ -628,7 +628,7 @@ backend-backed capability after its ordinary witnesses succeed; true never
 grants support. The Session's filter answers alone when present, otherwise the
 Backend's filter is used. Without either, the existing witness rules are
 unchanged. The name is the upper-case descriptor token before a dynamic value
-is appended, such as `MESSAGELIMIT`; nil options select the defaults. A filter
+is appended, such as `APPENDLIMIT`; nil options select the defaults. A filter
 that only suppresses specific tokens should return true for all other names.
 
 Do not reinterpret false from `CapabilitySupport` as a veto of structural

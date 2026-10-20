@@ -138,6 +138,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING:** remove `MessageLimitSession`, `MessageLimits` and
+  `MessageLimitOptions`, and withdraw MESSAGELIMIT/SAVELIMIT advertisements.
+  Their mailbox-size/retention meanings contradicted RFC 9738's per-command
+  processing limits, which the framework did not enforce. Server support is
+  deferred until the framework can enforce the RFC contract.
+  (#54, independent review A1)
 - **BREAKING:** correct the `QUOTA=RES-STORAGE` backend obligation introduced
   in #177: STATUS DELETED-STORAGE is in octets, not kibibytes. Memory now
   returns the sum of deleted messages' octet sizes. STORAGE quota usage
@@ -468,6 +474,32 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- CONDSTORE activation routes backend failures through the normal error mapping,
+  preserving protocol response codes and keeping private diagnostics off the
+  wire. Its extra STATUS lookup uses the command context and timeout.
+  (#54, independent review A2/B1)
+- `backendtest` derives fixture UIDs when UIDPLUS is unwitnessed, requires
+  APPEND/COPY/REPLACE assigned results only for UIDPLUS witnesses, tests only
+  witnessed SCRAM families, and accepts the documented optional zero
+  `CondStoreResult.HighestModSeq`. (#54, independent review B2)
+- Memory NOTIFY matches the union of requested events, honors NONE and
+  SUBSCRIBED, and publishes message additions, expunges and flag changes from
+  every mutation. Selected mailboxes use their selected updater and receive no
+  NOTIFY STATUS; the STATUS indicator reports only watched message events.
+  Unsupported LIST/METADATA events receive `NO [BADEVENT (MessageNew
+  MessageExpunge FlagChange)]`. Legal MessageNew fetch-attribute lists are parsed
+  and refused with `NO [CANNOT]` before backend calls.
+  (#54, independent review B3)
+- Memory FETCH prepares all results before applying implicit `\Seen` changes,
+  preventing an error on a later message from leaving unpublished changes.
+  (#54, independent review B4)
+- APPEND stops resolving CATENATE URLs after refusal and bounds each assembled
+  message by the command's remaining aggregate byte budget.
+  (#54, independent review B5)
+- Memory RENAME moves inferiors atomically, refuses destination conflicts and
+  moves into its own hierarchy, and preserves the whole hierarchy on refusal.
+  `backendtest` now checks inferior renaming. (#54, independent review B6)
 
 - MULTISEARCH accepts the result options of extended SEARCH: MIN, MAX, ALL,
   COUNT, PARTIAL and CONTEXT per mailbox (RFC 7377 section 2.1), SAVE only

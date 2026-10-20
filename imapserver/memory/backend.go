@@ -59,6 +59,7 @@ type account struct {
 }
 
 type mailbox struct {
+	account     *account
 	name        string
 	uidValidity uint32
 	uidNext     imap.UID
@@ -120,6 +121,7 @@ func newAccount(password string) *account {
 // support modification sequences", which is what NOMODSEQ reports.
 func (a *account) createMailboxLocked(name string) *mailbox {
 	m := &mailbox{
+		account:       a,
 		name:          name,
 		uidValidity:   a.nextUIDValidity,
 		uidNext:       1,
