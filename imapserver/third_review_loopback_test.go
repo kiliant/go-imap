@@ -261,3 +261,51 @@ func TestReviewMultiSearchClientRoundTrip(t *testing.T) {
 		t.Fatalf("client MULTISEARCH = %+v, %v", data, err)
 	}
 }
+
+type prefixNamespaceBackend struct{ *memory.Backend }
+
+// prefixNamespaceSession keeps memory's MULTISEARCH while presenting a
+// Courier-style personal namespace whose prefix excludes INBOX itself.
+type prefixNamespaceSession struct {
+	imapserver.Session
+	imapserver.MultiSearchSession
+}
+
+func (b *prefixNamespaceBackend) Authenticate(ctx context.Context, info *imapserver.ConnInfo, credentials *imapserver.Credentials, options *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	s, err := b.Backend.Authenticate(ctx, info, credentials, options)
+	if err != nil {
+		return nil, err
+	}
+	return &prefixNamespaceSession{Session: s, MultiSearchSession: s.(imapserver.MultiSearchSession)}, nil
+}
+
+func (s *prefixNamespaceSession) Namespace(context.Context, *imapserver.NamespaceOptions) (*imap.NamespaceData, error) {
+	return &imap.NamespaceData{Personal: []imap.NamespaceDescriptor{{Prefix: "INBOX/", Delimiter: '/'}}}, nil
+}
+
+func TestReviewMultiSearchPersonalPrefixIncludesInbox(t *testing.T) {
+	b := &prefixNamespaceBackend{memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})}
+	client, reader := reviewRawSession(t, b, nil)
+	for _, name := range []string{"INBOX", "INBOX/sub", "other"} {
+		if name != "INBOX" {
+			reviewCommand(t, client, reader, "C", "CREATE "+name, "OK")
+		}
+		// Empty mailboxes produce no ESEARCH response, so give each a message.
+		raw := "Subject: source\r\n\r\nmessage\r\n"
+		reviewCommand(t, client, reader, "A", fmt.Sprintf("APPEND %s {%d+}\r\n%s", name, len(raw), raw), "OK")
+	}
+	for _, source := range []string{"personal", "inboxes"} {
+		lines := reviewCommand(t, client, reader, "Q", "ESEARCH IN ("+source+") ALL", "OK")
+		var got []string
+		for _, line := range lines {
+			if _, rest, ok := strings.Cut(line, `MAILBOX "`); ok {
+				name, _, _ := strings.Cut(rest, `"`)
+				got = append(got, name)
+			}
+		}
+		slices.Sort(got)
+		if want := []string{"INBOX", "INBOX/sub"}; !slices.Equal(got, want) {
+			t.Errorf("%s = %q, want %q", source, got, want)
+		}
+	}
+}

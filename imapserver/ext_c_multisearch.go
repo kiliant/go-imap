@@ -321,6 +321,8 @@ func resolveMultiSearchSources(ctx context.Context, c *conn, sources []multiSear
 				}
 				match := source.kind == "subscribed"
 				if source.kind == "personal" || source.kind == "inboxes" {
+					// INBOX is personal even under a prefix such as "INBOX.".
+					match = strings.EqualFold(data.Mailbox, "INBOX")
 					for _, prefix := range prefixes {
 						match = match || strings.HasPrefix(data.Mailbox, prefix)
 					}
