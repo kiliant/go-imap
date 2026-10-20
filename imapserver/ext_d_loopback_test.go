@@ -197,29 +197,6 @@ func TestLoopbackUnauthenticate(t *testing.T) {
 	}
 }
 
-// RFC 9738 puts the value inside the advertised token, so "MESSAGELIMIT" alone
-// would not be a legal advertisement.
-func TestLoopbackMessageLimitsCarryTheirValue(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	_, clientSide, reader := newGroupARawSession(t, ctx)
-
-	writeRawCommand(t, clientSide, "D1 CAPABILITY\r\n")
-	untagged, _ := collectUntilTag(t, reader, "D1 ")
-	line := findResponse(t, untagged, "* CAPABILITY")
-	for _, want := range []string{"MESSAGELIMIT=", "SAVELIMIT="} {
-		if !strings.Contains(line, want) {
-			t.Errorf("capability list has no %s: %q", want, line)
-		}
-	}
-	// The bare prefix must never appear on its own.
-	for _, field := range strings.Fields(line) {
-		if field == "MESSAGELIMIT" || field == "SAVELIMIT" {
-			t.Errorf("%s advertised without its value: %q", field, line)
-		}
-	}
-}
-
 // UIDONLY is all-or-nothing: once enabled, no sequence number may reach the
 // client in any response, and no command may name one. RFC 9586.
 func TestLoopbackUIDOnly(t *testing.T) {

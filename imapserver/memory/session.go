@@ -200,18 +200,38 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 	if s.closed {
 		return noError(imap.CodeClosed, "session is closed")
 	}
-	oldKey, newKey := mailboxKey(oldName), mailboxKey(newName)
+	oldKey := mailboxKey(oldName)
 	m := s.account.mailboxes[oldKey]
 	if m == nil {
 		return nonexistentMailbox(oldName)
 	}
-	if s.account.mailboxes[newKey] != nil {
-		return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
+	// RFC 3501 section 6.3.5: inferiors move with the mailbox. Plan the whole
+	// hierarchy and check every destination before renaming anything, so a
+	// conflict leaves no partial rename; identities move with their mailboxes.
+	if strings.HasPrefix(newName, m.name+"/") {
+		return noError(imap.CodeCannot, "a mailbox cannot be renamed into its own hierarchy")
 	}
-	delete(s.account.mailboxes, oldKey)
-	delete(s.account.urlAuthKeys, oldKey)
-	m.name = newName
-	s.account.mailboxes[newKey] = m
+	moving := map[string]string{oldKey: newName}
+	for key, child := range s.account.mailboxes {
+		if suffix, ok := strings.CutPrefix(child.name, m.name+"/"); ok {
+			moving[key] = newName + "/" + suffix
+		}
+	}
+	for _, target := range moving {
+		if _, ok := moving[mailboxKey(target)]; !ok && s.account.mailboxes[mailboxKey(target)] != nil {
+			return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
+		}
+	}
+	moved := make(map[string]*mailbox, len(moving))
+	for key := range moving {
+		moved[key] = s.account.mailboxes[key]
+		delete(s.account.mailboxes, key)
+		delete(s.account.urlAuthKeys, key)
+	}
+	for key, target := range moving {
+		moved[key].name = target
+		s.account.mailboxes[mailboxKey(target)] = moved[key]
+	}
 	return nil
 }
 

@@ -50,7 +50,6 @@ type filteredFixtureSession struct {
 	// These deliberately have no implementation. Their filtered conformance
 	// cases must not invoke the forwarding methods.
 	imapserver.NamespaceSession
-	imapserver.MessageLimitSession
 	reads *int
 }
 

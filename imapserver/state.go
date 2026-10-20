@@ -65,12 +65,6 @@ type sessionState struct {
 	compressed bool
 	session    Session
 	selected   *selectedState
-	// limits holds RFC 9738's advertised values, resolved once at
-	// authentication rather than per capability derivation: deriving
-	// capabilities happens on every extension command, and a backend call from
-	// there would be an uncancellable round trip the caller never asked for.
-	// See ext_d_listret.go.
-	limits *MessageLimits
 }
 
 func newSessionState(tlsActive bool) sessionState {
@@ -137,7 +131,6 @@ func (s *sessionState) unauthenticate() {
 	s.state = stateNotAuthenticated
 	s.revision = revisionIMAP4rev1
 	s.enabled = make(map[string]bool)
-	s.limits = nil
 }
 
 // enable records a capability as enabled for this session and applies any

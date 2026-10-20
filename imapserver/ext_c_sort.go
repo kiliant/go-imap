@@ -309,8 +309,8 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	usesModSeq := sortHasModSeqCriterion(criteria)
-	if err := validateSelectedCondStoreUse(c, usesModSeq, "SORT MODSEQ"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := validateSelectedCondStoreUse(ctx, c, usesModSeq, "SORT MODSEQ"); err != nil {
+		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids, c.state.selected.savedSearch)
 	uids, err := mailbox.Sort(ctx, query, args.keys, &SortOptions{Charset: args.charset})
@@ -383,8 +383,8 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids, c.state.selected.savedSearch)
-	if err := validateSelectedCondStoreUse(c, searchHasModSeq(criteria), "THREAD MODSEQ"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := validateSelectedCondStoreUse(ctx, c, searchHasModSeq(criteria), "THREAD MODSEQ"); err != nil {
+		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	roots, err := mailbox.Thread(ctx, query, args.algorithm, &ThreadOptions{Charset: args.charset})
 	if err != nil {

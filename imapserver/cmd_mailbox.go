@@ -130,8 +130,8 @@ func handleStatus(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	// RFC 7162 section 3.1 lists STATUS (HIGHESTMODSEQ) among the CONDSTORE
 	// enabling commands.
-	if err := enableCondStoreForCommand(c, slices.Contains(args.items, imap.StatusItem(imap.StatusItemHighestModSeq)), "STATUS HIGHESTMODSEQ"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := enableCondStoreForCommand(ctx, c, slices.Contains(args.items, imap.StatusItem(imap.StatusItemHighestModSeq)), "STATUS HIGHESTMODSEQ"); err != nil {
+		return writeCondStoreUseError(c, command.tag, "STATUS", err)
 	}
 	data, err := c.state.session.Status(ctx, args.mailbox, &StatusOptions{Items: args.items})
 	if err != nil {

@@ -58,6 +58,14 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 		changedSince = options.ChangedSince
 		origin = options.Origin
 	}
+	// Build every result before marking anything \Seen: a later failure must
+	// not leave an earlier message's flag change stored but unpublished.
+	type built struct {
+		msg       *message
+		data      *imap.FetchMessageData
+		marksSeen bool
+	}
+	var pending []built
 	for i, msg := range s.mailbox.messages {
 		if !uids.Contains(msg.uid) {
 			continue
@@ -72,11 +80,18 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			s.session.account.mu.Unlock()
 			return err
 		}
-		if marksSeen && !s.readOnly && !imap.ContainsFlag(msg.flags, imap.FlagSeen) {
+		pending = append(pending, built{msg: msg, data: data, marksSeen: marksSeen})
+	}
+	for _, p := range pending {
+		msg, data := p.msg, p.data
+		if p.marksSeen && !s.readOnly && !imap.ContainsFlag(msg.flags, imap.FlagSeen) {
 			msg.flags = append(msg.flags, imap.FlagSeen)
 			msg.modSeq = bumpModSeqLocked(s.mailbox)
 			if _, requested := data.Items[imap.FetchDataKey(imap.FetchItemFlags)]; requested {
 				data.Items[imap.FetchDataKey(imap.FetchItemFlags)] = []imap.FetchData{imap.FetchDataFlags(cloneFlags(msg.flags))}
+			}
+			if _, requested := data.Items[imap.FetchDataKey(imap.FetchItemModSeq)]; requested {
+				data.Items[imap.FetchDataKey(imap.FetchItemModSeq)] = []imap.FetchData{imap.FetchDataModSeq(msg.modSeq)}
 			}
 			flagUpdates = append(flagUpdates, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(msg.flags), ModSeq: msg.modSeq})
 		}

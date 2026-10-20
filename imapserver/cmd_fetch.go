@@ -95,8 +95,8 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 			usesModSeq = true
 		}
 	}
-	if err := validateSelectedCondStoreUse(c, usesModSeq, "FETCH MODSEQ/CHANGEDSINCE"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := validateSelectedCondStoreUse(ctx, c, usesModSeq, "FETCH MODSEQ/CHANGEDSINCE"); err != nil {
+		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	items, requestedUID := withFetchUID(args.items)
 	items = applyCondStoreFetchItems(c, items)

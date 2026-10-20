@@ -164,8 +164,14 @@ func Run(t *testing.T, harness *Harness) {
 		if got[0].Before != result.Snapshot.Revision || got[1].Before != got[0].After {
 			t.Fatalf("update chain = snapshot %q, %q→%q, %q→%q", result.Snapshot.Revision, got[0].Before, got[0].After, got[1].Before, got[1].After)
 		}
-		if !batchAddsUID(got[0], first.UID) || !batchAddsUID(got[1], second.UID) {
-			t.Fatalf("update batches omit appended UIDs %d and %d", first.UID, second.UID)
+		if first == 0 {
+			first = soleAddedUID(got[0])
+		}
+		if second == 0 {
+			second = soleAddedUID(got[1])
+		}
+		if first == 0 || second == 0 || !batchAddsUID(got[0], first) || !batchAddsUID(got[1], second) {
+			t.Fatalf("update batches omit appended UIDs %d and %d", first, second)
 		}
 		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -224,24 +230,40 @@ func Run(t *testing.T, harness *Harness) {
 			if selectResult.err != nil || selectResult.result == nil || selectResult.result.Mailbox == nil {
 				t.Fatalf("Select iteration %d = %#v, %v", i, selectResult.result, selectResult.err)
 			}
-			if appendResult.err != nil || appendResult.data == nil || !appendResult.data.HasUID || appendResult.data.UID == 0 {
+			if appendResult.err != nil {
 				t.Fatalf("Append iteration %d = %#v, %v", i, appendResult.data, appendResult.err)
 			}
 			validateSnapshot(t, selectResult.result.Snapshot)
+			// The mailbox is new, so the appended message is its only one. A
+			// backend not witnessing UIDPLUS may report no UID; then it is the
+			// snapshot's sole UID or the one a later batch adds.
+			uid := imap.UID(0)
+			if appendResult.data != nil && appendResult.data.HasUID {
+				uid = appendResult.data.UID
+			} else if len(selectResult.result.Snapshot.UIDs) == 1 {
+				uid = selectResult.result.Snapshot.UIDs[0]
+			} else if waitForAnyBatch(&mu, &batches, notifications) {
+				mu.Lock()
+				uid = soleAddedUID(batches[0])
+				mu.Unlock()
+			}
+			if uid == 0 {
+				t.Fatalf("iteration %d: appended message not identified (data %#v, snapshot %v)", i, appendResult.data, selectResult.result.Snapshot.UIDs)
+			}
 			snapshotCount := 0
-			if slices.Contains(selectResult.result.Snapshot.UIDs, appendResult.data.UID) {
+			if slices.Contains(selectResult.result.Snapshot.UIDs, uid) {
 				snapshotCount = 1
 			}
 			updateCount := 0
 			if snapshotCount == 0 {
-				updateCount = waitForAddedUID(&mu, &batches, notifications, appendResult.data.UID)
+				updateCount = waitForAddedUID(&mu, &batches, notifications, uid)
 			} else {
 				mu.Lock()
-				updateCount = countBatchAddsUID(batches, appendResult.data.UID)
+				updateCount = countBatchAddsUID(batches, uid)
 				mu.Unlock()
 			}
 			if snapshotCount+updateCount != 1 {
-				t.Fatalf("iteration %d: appended UID %d appears %d times in snapshot and %d times in updates", i, appendResult.data.UID, snapshotCount, updateCount)
+				t.Fatalf("iteration %d: appended UID %d appears %d times in snapshot and %d times in updates", i, uid, snapshotCount, updateCount)
 			}
 			if updateCount == 1 && (len(batches) == 0 || batches[0].Before != selectResult.result.Snapshot.Revision) {
 				t.Fatalf("iteration %d: first update does not start at snapshot revision %q", i, selectResult.result.Snapshot.Revision)
@@ -252,6 +274,40 @@ func Run(t *testing.T, harness *Harness) {
 		}
 		closeSession(t, instance, selecting)
 		closeSession(t, instance, mutating)
+	})
+
+	t.Run("rename-moves-inferiors", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		// Session.Rename: inferiors move with the mailbox (RFC 3501 section
+		// 6.3.5). Names use the backend's own hierarchy delimiter.
+		var delimiter rune
+		for _, data := range listMailboxes(t, session, "", []string{""}, nil) {
+			delimiter = data.Delimiter
+		}
+		if delimiter == 0 {
+			t.Skip("backend has a flat namespace")
+		}
+		d := string(delimiter)
+		for _, name := range []string{"backendtest-rename", "backendtest-rename" + d + "child"} {
+			if err := session.Create(context.Background(), name, nil); err != nil {
+				t.Fatalf("Create %s: %v", name, err)
+			}
+		}
+		if err := session.Rename(context.Background(), "backendtest-rename", "backendtest-renamed", nil); err != nil {
+			t.Fatalf("Rename: %v", err)
+		}
+		listed := listMailboxes(t, session, "", []string{"backendtest-rename*"}, nil)
+		for _, name := range []string{"backendtest-renamed", "backendtest-renamed" + d + "child"} {
+			if data := listed[name]; data == nil || imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) {
+				t.Errorf("after RENAME, %s is missing: %v", name, listed)
+			}
+		}
+		for _, name := range []string{"backendtest-rename", "backendtest-rename" + d + "child"} {
+			if data := listed[name]; data != nil && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) {
+				t.Errorf("after RENAME, %s still exists: %v", name, listed)
+			}
+		}
 	})
 
 	runList(t, harness)
@@ -301,9 +357,16 @@ func Run(t *testing.T, harness *Harness) {
 			t.Fatal(err)
 		}
 		remainingUID := result.Snapshot.UIDs[1]
+		// COPY data is required only from UIDPLUS witnesses; the effect is
+		// checked for everyone through the destination's message count.
+		uidplus := supportsCapability(instance, session, "UIDPLUS")
 		copyData, err := result.Mailbox.Copy(context.Background(), imap.UIDSetNum(remainingUID), destination, nil)
-		if err != nil || copyData == nil || !copyData.HasUIDs || !copyData.SourceUIDs.Contains(remainingUID) {
+		if err != nil || uidplus && (copyData == nil || !copyData.HasUIDs || !copyData.SourceUIDs.Contains(remainingUID)) {
 			t.Fatalf("COPY = %#v, %v", copyData, err)
+		}
+		copied, err := session.Status(context.Background(), destination, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
+		if n, ok := copied.Number(imap.StatusItemMessages); err != nil || !ok || n != 1 {
+			t.Fatalf("destination after COPY = %#v, %v", copied, err)
 		}
 		if supportsCapability(instance, session, "MOVE") {
 			moveMailbox, ok := result.Mailbox.(imapserver.MoveMailbox)
@@ -311,7 +374,7 @@ func Run(t *testing.T, harness *Harness) {
 				t.Fatal("MOVE is advertised but selected mailbox does not implement MoveMailbox")
 			}
 			moveData, err := moveMailbox.Move(context.Background(), imap.UIDSetNum(remainingUID), destination, nil)
-			if err != nil || moveData == nil || !moveData.HasUIDs || !moveData.SourceUIDs.Contains(remainingUID) {
+			if err != nil || uidplus && (moveData == nil || !moveData.HasUIDs || !moveData.SourceUIDs.Contains(remainingUID)) {
 				t.Fatalf("MOVE = %#v, %v", moveData, err)
 			}
 			status, err := session.Status(context.Background(), mailbox, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
@@ -411,17 +474,39 @@ func populate(t *testing.T, session imapserver.Session, suffix string) string {
 	return mailbox
 }
 
-func appendMessage(t *testing.T, session imapserver.Session, mailbox, subject string) *imap.AppendData {
+// appendMessage appends a fixture message and returns the UID the backend
+// reported, or zero when it reported none. Session.Append may return nil data
+// unless the backend witnesses UIDPLUS, which uidplus-assigned-results checks,
+// so fixtures must not depend on it.
+func appendMessage(t *testing.T, session imapserver.Session, mailbox, subject string) imap.UID {
 	t.Helper()
 	raw := []byte(fmt.Sprintf("From: sender@example.com\r\nTo: receiver@example.com\r\nSubject: %s\r\n\r\nbody %s\r\n", subject, subject))
 	data, err := session.Append(context.Background(), mailbox, bytes.NewReader(raw), nil)
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	if data == nil || !data.HasUID || data.UID == 0 {
-		t.Fatalf("Append data = %#v", data)
+	if data == nil || !data.HasUID {
+		return 0
 	}
-	return data
+	if data.UID == 0 {
+		t.Fatalf("Append reported UID zero: %#v", data)
+	}
+	return data.UID
+}
+
+// soleAddedUID returns the one UID a batch adds, or zero if it adds another
+// number of messages.
+func soleAddedUID(batch *imapserver.UpdateBatch) imap.UID {
+	var added []imap.UID
+	for _, change := range batch.Changes {
+		if add, ok := change.(*imapserver.UpdateAdd); ok {
+			added = append(added, add.UIDs...)
+		}
+	}
+	if len(added) != 1 {
+		return 0
+	}
+	return added[0]
 }
 
 func selectMailbox(t *testing.T, session imapserver.Session, mailbox string, updater *imapserver.Updater) *imapserver.SelectResult {
@@ -498,6 +583,25 @@ func waitForBatchCount(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notif
 		case <-notifications:
 		case <-timer.C:
 			return got
+		}
+	}
+}
+
+// waitForAnyBatch waits up to a second for at least one batch.
+func waitForAnyBatch(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notifications <-chan struct{}) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		mu.Lock()
+		count := len(*batches)
+		mu.Unlock()
+		if count != 0 {
+			return true
+		}
+		select {
+		case <-notifications:
+		case <-timer.C:
+			return false
 		}
 	}
 }

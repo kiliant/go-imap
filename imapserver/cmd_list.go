@@ -156,8 +156,8 @@ func handleList(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	// LIST-STATUS answers as STATUS would (RFC 5819), so HIGHESTMODSEQ enables
 	// CONDSTORE here too.
-	if err := enableCondStoreForCommand(c, slices.Contains(args.statusItems, imap.StatusItem(imap.StatusItemHighestModSeq)), "LIST-STATUS HIGHESTMODSEQ"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := enableCondStoreForCommand(ctx, c, slices.Contains(args.statusItems, imap.StatusItem(imap.StatusItemHighestModSeq)), "LIST-STATUS HIGHESTMODSEQ"); err != nil {
+		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	features := activeFeaturesContext(ctx, &c.state, c.server)
 	if len(args.patterns) > 1 && !features[featureListMulti] {

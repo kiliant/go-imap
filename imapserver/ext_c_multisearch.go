@@ -274,8 +274,8 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 		if c.state.selected != nil && slices.ContainsFunc(mailboxes, func(name string) bool { return mailboxNamesEqual(name, c.state.selected.name) }) {
 			enable = validateSelectedCondStoreUse
 		}
-		if err := enable(c, true, "ESEARCH MODSEQ"); err != nil {
-			return c.writeBad(command.tag, err.Error())
+		if err := enable(ctx, c, true, "ESEARCH MODSEQ"); err != nil {
+			return writeCondStoreUseError(c, command.tag, command.name, err)
 		}
 	}
 	if selectedIsTheSource {

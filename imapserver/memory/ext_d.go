@@ -380,31 +380,6 @@ func (s *session) Unauthenticate(ctx context.Context, _ *imapserver.Unauthentica
 	return ctx.Err()
 }
 
-// MessageLimits implements [imapserver.MessageLimitSession].
-//
-// RFC 9738 puts the value inside the advertised capability token. Presence is
-// carried by the Has fields, so a backend can enforce one limit and not the
-// other, and a genuine limit of zero stays expressible.
-func (s *session) MessageLimits(ctx context.Context, _ *imapserver.MessageLimitOptions) (*imapserver.MessageLimits, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return &imapserver.MessageLimits{
-		MessageLimit:    memoryMessageLimit,
-		HasMessageLimit: true,
-		SaveLimit:       memorySaveLimit,
-		HasSaveLimit:    true,
-	}, nil
-}
-
-// The reference backend keeps everything in memory, so these are modest on
-// purpose: a limit a test can actually reach is worth more than a large one
-// that never fires.
-const (
-	memoryMessageLimit = 10_000
-	memorySaveLimit    = 1_000
-)
-
 // Notify implements [imapserver.NotifySession].
 //
 // The registration is recorded on the session and every mutating path publishes
@@ -566,7 +541,6 @@ func notifyMailboxLocked(a *account, m *mailbox) {
 
 var (
 	_ imapserver.NotifySession         = (*session)(nil)
-	_ imapserver.MessageLimitSession   = (*session)(nil)
 	_ imapserver.QuotaSession          = (*session)(nil)
 	_ imapserver.QuotaSetSession       = (*session)(nil)
 	_ imapserver.ACLSession            = (*session)(nil)

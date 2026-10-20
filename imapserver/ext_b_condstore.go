@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -285,6 +286,23 @@ func stripModSeqUnlessEnabled(c *conn, data *imap.FetchMessageData) *imap.FetchM
 	return data
 }
 
+// condStoreUseError is a client's misuse of a CONDSTORE parameter, answered
+// BAD. Backend failures while activating CONDSTORE are not this type: they go
+// through writeBackendError, so their text stays private (see Backend errors
+// in the package documentation).
+type condStoreUseError struct{ text string }
+
+func (e *condStoreUseError) Error() string { return e.text }
+
+// writeCondStoreUseError answers a failed CONDSTORE check for command name.
+func writeCondStoreUseError(c *conn, tag, name string, err error) error {
+	var use *condStoreUseError
+	if errors.As(err, &use) {
+		return c.writeBad(tag, use.text)
+	}
+	return writeBackendError(c, tag, name, err)
+}
+
 // validateCondStoreUse refuses a CONDSTORE parameter the session may not use,
 // and records the enabling side effect when it may.
 func validateCondStoreUse(c *conn, used bool, what string) error {
@@ -292,7 +310,7 @@ func validateCondStoreUse(c *conn, used bool, what string) error {
 		return nil
 	}
 	if !condStoreAvailable(c) {
-		return fmt.Errorf("%s requires CONDSTORE", what)
+		return &condStoreUseError{text: what + " requires CONDSTORE"}
 	}
 	enableCondStoreSideEffect(c)
 	return nil
@@ -300,24 +318,33 @@ func validateCondStoreUse(c *conn, used bool, what string) error {
 
 // Unlike SELECT's parameter, a CONDSTORE item on a selected mailbox requires
 // persistent clocks for that mailbox (RFC 7162 section 3.1.2.2).
-func validateSelectedCondStoreUse(c *conn, used bool, what string) error {
+func validateSelectedCondStoreUse(ctx context.Context, c *conn, used bool, what string) error {
 	if used && c.state.selected != nil && c.state.selected.noModSeq {
-		return fmt.Errorf("%s is unavailable in a NOMODSEQ mailbox", what)
+		return &condStoreUseError{text: what + " is unavailable in a NOMODSEQ mailbox"}
 	}
-	return enableCondStoreForCommand(c, used, what)
+	return enableCondStoreForCommand(ctx, c, used, what)
 }
 
 // enableCondStoreForCommand applies a CONDSTORE enabling command that does not
 // necessarily concern the selected mailbox, such as STATUS (HIGHESTMODSEQ) for
 // another mailbox. RFC 7162 section 3.1: the first one executed with a mailbox
 // selected returns its HIGHESTMODSEQ, unless SELECT reported NOMODSEQ.
-func enableCondStoreForCommand(c *conn, used bool, what string) error {
-	first := used && !condStoreEnabled(c)
-	if err := validateCondStoreUse(c, used, what); err != nil {
-		return err
+//
+// ctx is the command's context, so the lookup honours Limits.CommandTimeout.
+// CONDSTORE is recorded as enabled only after that lookup succeeds; a failed
+// command leaves the next enabling command to report the clock.
+func enableCondStoreForCommand(ctx context.Context, c *conn, used bool, what string) error {
+	if !used {
+		return nil
 	}
-	if first && c.state.selected != nil && !c.state.selected.noModSeq {
-		data, err := c.state.session.Status(c.ctx, c.state.selected.name, &StatusOptions{Items: []imap.StatusItem{imap.StatusItemHighestModSeq}})
+	if !condStoreAvailable(c) {
+		return &condStoreUseError{text: what + " requires CONDSTORE"}
+	}
+	if condStoreEnabled(c) {
+		return nil
+	}
+	if c.state.selected != nil && !c.state.selected.noModSeq {
+		data, err := c.state.session.Status(ctx, c.state.selected.name, &StatusOptions{Items: []imap.StatusItem{imap.StatusItemHighestModSeq}})
 		if err != nil {
 			return err
 		}
@@ -333,6 +360,7 @@ func enableCondStoreForCommand(c *conn, used bool, what string) error {
 		}
 		writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(clock), "highest modification sequence")
 	}
+	enableCondStoreSideEffect(c)
 	return nil
 }
 

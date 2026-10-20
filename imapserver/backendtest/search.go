@@ -58,13 +58,25 @@ func runSearch(t *testing.T, harness *Harness) {
 			data, err := session.Append(t.Context(), name, strings.NewReader(raw), &imapserver.AppendOptions{
 				Flags: flags[i], InternalDate: date.AddDate(0, 0, 1),
 			})
-			if err != nil || data == nil || !data.HasUID || data.UID == 0 {
+			if err != nil {
 				t.Fatalf("seed SEARCH message: %#v, %v", data, err)
 			}
-			ids = append(ids, data.UID)
+			if data != nil && data.HasUID {
+				ids = append(ids, data.UID)
+			}
 			sizes = append(sizes, len(raw))
 		}
 		selected := selectMailbox(t, session, name, discardUpdater())
+		// The mailbox held nothing before, so the snapshot lists the seeded
+		// messages in append order. A backend need not report APPEND UIDs
+		// unless it witnesses UIDPLUS; when it does, they must agree.
+		if len(ids) != 0 && !slices.Equal(ids, selected.Snapshot.UIDs) {
+			t.Fatalf("APPEND reported UIDs %v, but the snapshot lists %v", ids, selected.Snapshot.UIDs)
+		}
+		ids = selected.Snapshot.UIDs
+		if len(ids) != 3 {
+			t.Fatalf("seeded SEARCH mailbox lists %v, want three messages", ids)
+		}
 		defer func() {
 			if err := selected.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Error(err)

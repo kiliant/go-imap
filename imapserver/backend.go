@@ -325,7 +325,6 @@ type MoveMailbox interface {
 //	LIST-MYRIGHTS | gate | ACLSession | AS | Supply MYRIGHTS for each listed mailbox; requires ACL.
 //	LOGIN-REFERRALS | gate | CapabilitySupport | N | Support login referral response codes.
 //	MAILBOX-REFERRALS | gate | CapabilitySupport | AS | Support mailbox referral response codes.
-//	MESSAGELIMIT | gate | MessageLimitSession | AS | Return message-count limits and honor advertised limits.
 //	METADATA | gate | MetadataSession | AS | Get and set mailbox and server metadata with depth/size semantics.
 //	METADATA-SERVER | gate | MetadataSession | AS | Get and set server-scope metadata.
 //	MOVE | gate | CapabilitySupport + MoveMailbox | AS | Provide atomic MOVE with the selected mailbox interface.
@@ -345,7 +344,6 @@ type MoveMailbox interface {
 //	REPLACE | gate | CapabilitySupport + ReplaceMailbox | AS | Provide atomic selected-message replacement into the destination mailbox.
 //	SASL-IR | gate | Backend | N | Have an authentication backend; framework handles initial-response syntax.
 //	SAVEDATE | gate | CapabilitySupport | AS | Return save dates and evaluate saved-date SEARCH criteria.
-//	SAVELIMIT | gate | MessageLimitSession | AS | Return search-result saving limits and honor advertised limits.
 //	SEARCH=FUZZY | gate | CapabilitySupport | AS | Evaluate FUZZY criteria using the supported matching policy.
 //	SORT | gate | CapabilitySupport + SortMailbox | AS | Evaluate SORT keys on the selected mailbox.
 //	SORT=DISPLAY | gate | CapabilitySupport + SortMailbox | AS | Evaluate DISPLAYFROM/DISPLAYTO sorting; requires SORT.
@@ -380,8 +378,8 @@ type CapabilitySupportOptions struct{ _ struct{} }
 // CapabilitySupport retains its existing meaning, including for structural
 // capabilities it does not witness.
 //
-// name is the upper-case descriptor token, before backend-supplied values are
-// appended (for example "MESSAGELIMIT"). Return true for tokens that should
+// name is the upper-case descriptor token, such as "ACL" or "QUOTA=RES-STORAGE";
+// a token whose advertisement carries a value is named without it. Return true for tokens that should
 // remain available, including names the filter does not intend to suppress.
 // False also withdraws dependent capabilities and an IMAP4REV2 umbrella that
 // incorporates the withdrawn behaviour. Framework-only tokens such as

@@ -62,7 +62,9 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 		if failure == nil {
 			failure = validateAppendShape(c, count, len(message.catenate) != 0)
 		}
-		payload, collectErr := c.collectAppendPayload(ctx, &message)
+		// After a refusal, later messages are only drained: API-STABILITY
+		// promises no further URL resolution, and the budget is the command's.
+		payload, collectErr := c.collectAppendPayload(ctx, &message, c.server.options.Limits.MaxLiteralBytes-offset, failure != nil)
 		if collectErr != nil {
 			var protocolErr *imap.Error
 			if !errors.As(collectErr, &protocolErr) {
@@ -166,7 +168,10 @@ func writeAppendDecodeError(c *conn, tag string, err error, text string) error {
 // temporary file, so their byte counts and later syntax can be checked before
 // any backend append. On refusal, later literals are drained without resolving
 // more URLs, keeping the next command synchronized.
-func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage) (*appendPayload, error) {
+// collectAppendPayload reads one message's payload. budget is what remains of
+// the command's aggregate byte limit. When refused, the command has already
+// failed: CATENATE literals are drained and no URL is resolved.
+func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage, budget int64, refused bool) (*appendPayload, error) {
 	if len(message.catenate) == 0 {
 		// Defence in depth behind decodeFailure. A parse that neither collected
 		// a CATENATE part nor a literal must already have failed; if some future
@@ -183,12 +188,19 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 		session = nil
 	}
 	payload := &appendPayload{}
-	file, err := os.CreateTemp("", "go-imap-catenate-*")
 	var failure error
-	if err != nil {
-		failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeServerBug, Text: "cannot stage CATENATE content"}
+	var file *os.File
+	if refused {
+		// Its text is never sent: the command's earlier failure is reported.
+		failure = &imap.Error{Type: imap.ErrorTypeNo, Text: "APPEND already refused"}
 	} else {
-		payload.cleanup = func() { _ = file.Close(); _ = os.Remove(file.Name()) }
+		var err error
+		file, err = os.CreateTemp("", "go-imap-catenate-*")
+		if err != nil {
+			failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeServerBug, Text: "cannot stage CATENATE content"}
+		} else {
+			payload.cleanup = func() { _ = file.Close(); _ = os.Remove(file.Name()) }
+		}
 	}
 	success := false
 	defer func() {
@@ -201,7 +213,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 	for {
 		for _, part := range parts {
 			if part.literal != nil {
-				if failure == nil && part.literal.Size() > c.server.options.Limits.MaxLiteralBytes-total {
+				if failure == nil && part.literal.Size() > budget-total {
 					failure = resolvedContentTooBig()
 				}
 				if failure == nil {
@@ -210,7 +222,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 						return nil, err
 					}
 					total += n
-					if total > c.server.options.Limits.MaxLiteralBytes {
+					if total > budget {
 						failure = resolvedContentTooBig()
 					}
 				} else {
@@ -235,13 +247,13 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage)
 				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: "CATENATE URL did not resolve"}
 				continue
 			}
-			n, readErr := io.Copy(file, io.LimitReader(&literalContextReader{ctx: ctx, reader: resolved}, probingLimit(c.server.options.Limits.MaxLiteralBytes-total)))
+			n, readErr := io.Copy(file, io.LimitReader(&literalContextReader{ctx: ctx, reader: resolved}, probingLimit(budget-total)))
 			_ = resolved.Close()
 			total += n
 			if readErr != nil {
 				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeUnavailable, Text: "CATENATE URL could not be read"}
 			}
-			if total > c.server.options.Limits.MaxLiteralBytes {
+			if total > budget {
 				failure = resolvedContentTooBig()
 			}
 		}

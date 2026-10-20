@@ -49,6 +49,32 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 	})
 
+	t.Run("uidplus-assigned-results", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		if !supportsCapability(instance, session, "UIDPLUS") {
+			t.Skip("backend does not witness UIDPLUS; APPEND and COPY results are optional")
+		}
+		// UIDPLUS is the promise that APPEND and COPY report assigned UIDs,
+		// which RFC 4315's APPENDUID and COPYUID are made of.
+		mailbox := populate(t, session, "uidplus")
+		raw := "Subject: uidplus\r\n\r\nbody\r\n"
+		data, err := session.Append(context.Background(), mailbox, strings.NewReader(raw), nil)
+		if err != nil || data == nil || !data.HasUID || data.UID == 0 || data.UIDValidity == 0 {
+			t.Fatalf("Append data = %#v, %v", data, err)
+		}
+		destination := mailbox + "-copy"
+		if err := session.Create(context.Background(), destination, nil); err != nil {
+			t.Fatal(err)
+		}
+		result := selectMailbox(t, session, mailbox, discardUpdater())
+		defer result.Mailbox.Unselect(context.Background(), nil)
+		copied, err := result.Mailbox.Copy(context.Background(), imap.UIDSetNum(data.UID), destination, nil)
+		if err != nil || copied == nil || !copied.HasUIDs || !copied.SourceUIDs.Contains(data.UID) || copied.DestinationUIDs.IsEmpty() {
+			t.Fatalf("Copy data = %#v, %v", copied, err)
+		}
+	})
+
 	t.Run("condstore-conditional-store", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
@@ -72,8 +98,10 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if err != nil {
 			t.Fatalf("StoreCondStore: %v", err)
 		}
-		if bump == nil || bump.HighestModSeq == 0 {
-			t.Fatalf("StoreCondStore reported no modification sequence: %#v", bump)
+		// HighestModSeq is optional (zero when unreported), so only the result
+		// itself is required here.
+		if bump == nil {
+			t.Fatal("StoreCondStore returned no result")
 		}
 		conditional, err := condStore.StoreCondStore(context.Background(), discardFetchWriter(),
 			imap.UIDSetNum(uids[0]), &imapserver.StoreFlags{Op: imapserver.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagAnswered}},
@@ -144,10 +172,12 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
-		if data == nil || !data.HasUID || data.UID == 0 {
+		// The new UID is required only from a UIDPLUS witness, as for APPEND.
+		reported := data != nil && data.HasUID
+		if supportsCapability(instance, session, "UIDPLUS") && (!reported || data.UID == 0) {
 			t.Fatalf("Replace reported no new UID: %#v", data)
 		}
-		if data.UID == replaced {
+		if reported && data.UID == replaced {
 			t.Error("the replacement reused the replaced UID, so the two are indistinguishable")
 		}
 		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
@@ -162,7 +192,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if slices.Contains(after.Snapshot.UIDs, replaced) {
 			t.Errorf("UID %d survived the replace", replaced)
 		}
-		if !slices.Contains(after.Snapshot.UIDs, data.UID) {
+		if reported && !slices.Contains(after.Snapshot.UIDs, data.UID) {
 			t.Errorf("the replacement UID %d is not present", data.UID)
 		}
 		if err := after.Mailbox.Unselect(context.Background(), nil); err != nil {
@@ -386,8 +416,20 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if !ok {
 			t.Skip("backend does not implement SCRAMCredentials")
 		}
-		requireAllowedCapabilities(t, instance, nil, "AUTH=SCRAM-SHA-256")
-		stored, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username, nil)
+		// Each mechanism family is a separate witness, so only one the backend
+		// witnesses (bound or unbound) and does not filter is checked.
+		mechanism := ""
+		for _, family := range []string{"SCRAM-SHA-256", "SCRAM-SHA-1"} {
+			for _, token := range []string{"AUTH=" + family, "AUTH=" + family + "-PLUS"} {
+				if mechanism == "" && supportsCapability(instance, nil, token) {
+					mechanism = family
+				}
+			}
+		}
+		if mechanism == "" {
+			t.Skip("backend witnesses no SCRAM mechanism")
+		}
+		stored, err := store.SCRAMCredentials(context.Background(), mechanism, instance.Credentials.Username, nil)
 		if err != nil {
 			t.Fatalf("SCRAMCredentials: %v", err)
 		}
@@ -397,14 +439,14 @@ func runExtensions(t *testing.T, harness *Harness) {
 		if len(stored.Salt) == 0 || len(stored.StoredKey) == 0 || len(stored.ServerKey) == 0 {
 			t.Errorf("incomplete derivation: %#v", stored)
 		}
-		// RFC 7677 section 4 sets the floor. A backend below it is offering
+		// RFC 7677 section 4 (RFC 5802 for SHA-1) sets the floor. A backend below it is offering
 		// SCRAM that is not worth the round trips.
 		if stored.Iterations < 4096 {
 			t.Errorf("iteration count %d is below the RFC 7677 minimum", stored.Iterations)
 		}
 		// The derivation must be stable, or every login would need a fresh one
 		// and no client could ever authenticate twice.
-		again, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", instance.Credentials.Username, nil)
+		again, err := store.SCRAMCredentials(context.Background(), mechanism, instance.Credentials.Username, nil)
 		if err != nil || again == nil {
 			t.Fatalf("second SCRAMCredentials call: %v", err)
 		}
@@ -413,7 +455,7 @@ func runExtensions(t *testing.T, harness *Harness) {
 		}
 		// An unknown user must not be distinguishable by a different error
 		// shape, so this only asserts it does not succeed.
-		if unknown, err := store.SCRAMCredentials(context.Background(), "SCRAM-SHA-256", "no-such-user-9999", nil); err == nil && unknown != nil {
+		if unknown, err := store.SCRAMCredentials(context.Background(), mechanism, "no-such-user-9999", nil); err == nil && unknown != nil {
 			t.Error("SCRAMCredentials answered for an unknown user")
 		}
 	})
@@ -566,49 +608,6 @@ func runExtensions(t *testing.T, harness *Harness) {
 			return
 		}
 		t.Errorf("resource %q disappeared from the quota root after SetQuota", resource.Name)
-	})
-
-	t.Run("message-limits-are-constant-within-a-session", func(t *testing.T) {
-		instance, session := newSession(t, harness)
-		defer closeSession(t, instance, session)
-		limited, ok := session.(imapserver.MessageLimitSession)
-		if !ok {
-			t.Skip("backend does not implement MessageLimitSession")
-		}
-		if !capabilityAllowed(instance, session, "MESSAGELIMIT") && !capabilityAllowed(instance, session, "SAVELIMIT") {
-			t.Skip("backend filters both message limits")
-		}
-		// The framework resolves these once, against the authentication context,
-		// and reuses the answer for every later capability derivation — because
-		// deriving capabilities happens inside command handling, where a fresh
-		// backend round trip would be an uncancellable hidden I/O. A backend that
-		// varied its answer would see only the first one honoured.
-		first, err := limited.MessageLimits(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("MessageLimits: %v", err)
-		}
-		if first == nil {
-			t.Fatal("a backend implementing MessageLimitSession must report limits")
-		}
-		second, err := limited.MessageLimits(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("MessageLimits (second call): %v", err)
-		}
-		if second == nil || *first != *second {
-			t.Errorf("MessageLimits is not stable within a session: %#v then %#v", first, second)
-		}
-		// Presence is carried by the Has fields, not by a zero value. RFC 9738
-		// lets a server advertise one limit without the other, and
-		// MESSAGELIMIT=0 is a legal — if unwelcoming — advertisement, so reading
-		// the value fields to decide whether a limit exists would fail a backend
-		// the framework documents as correct.
-		//
-		// What is worth refusing is implementing the interface and reporting no
-		// limit at all: the capability is then advertised on the strength of a
-		// promise the backend does not make.
-		if !first.HasMessageLimit && !first.HasSaveLimit {
-			t.Error("MessageLimitSession reports neither limit; implement it only when one is enforced")
-		}
 	})
 
 	t.Run("unauthenticate-returns-to-a-usable-state", func(t *testing.T) {

@@ -186,35 +186,3 @@ func TestCapabilityFilterMetadataScopes(t *testing.T) {
 		})
 	}
 }
-
-type filteredLimitsSession struct {
-	filterSession
-	calls int
-}
-
-func (s *filteredLimitsSession) MessageLimits(context.Context, *MessageLimitOptions) (*MessageLimits, error) {
-	s.calls++
-	return &MessageLimits{HasMessageLimit: true, MessageLimit: 9, HasSaveLimit: true, SaveLimit: 7}, nil
-}
-
-func TestCapabilityFilterSkipsWithdrawnLimitQuery(t *testing.T) {
-	for _, allowSave := range []bool{false, true} {
-		session := &filteredLimitsSession{filterSession: filterSession{Session: &stubSession{}, allow: func(_ context.Context, name string, _ *CapabilityFilterOptions) bool {
-			return name == "SAVELIMIT" && allowSave
-		}}}
-		state := newSessionState(true)
-		state.authenticate(session)
-		resolveMessageLimits(t.Context(), &state, nil)
-		want := 0
-		if allowSave {
-			want = 1
-		}
-		if session.calls != want {
-			t.Fatalf("limit calls=%d, want %d", session.calls, want)
-		}
-		got := deriveCapabilities(&state, New(nil, nil))
-		if slices.Contains(got, "SAVELIMIT=7") != allowSave || slices.Contains(got, "MESSAGELIMIT=9") {
-			t.Fatalf("filtered value tokens: %v", got)
-		}
-	}
-}
