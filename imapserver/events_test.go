@@ -107,7 +107,11 @@ func TestServerEventConnectionFailures(t *testing.T) {
 	for _, scenario := range []string{"commands", "preauth", "overflow", "tls", "panic"} {
 		t.Run(scenario, func(t *testing.T) {
 			events := make(chan *ServerEvent, 8)
-			s := New(nil, &Options{OnError: func(_ context.Context, e *ServerEvent) { events <- e }, Limits: Limits{MaxCommands: 1, PreAuthTimeout: 30 * time.Millisecond}})
+			timeout := 2 * time.Second
+			if scenario == "preauth" {
+				timeout = 30 * time.Millisecond
+			}
+			s := New(nil, &Options{OnError: func(_ context.Context, e *ServerEvent) { events <- e }, Limits: Limits{MaxCommands: 1, PreAuthTimeout: timeout}})
 			serverSide, clientSide := net.Pipe()
 			defer clientSide.Close()
 			_ = clientSide.SetDeadline(time.Now().Add(3 * time.Second))
