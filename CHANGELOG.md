@@ -489,8 +489,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   carries HIGHESTMODSEQ only once CONDSTORE is enabled (RFC 5465 section 5);
   `SessionUpdate.Status` documents this. MULTISEARCH source expansion lists the
   hierarchy at most once per kind, is bounded like LIST (NO [LIMIT]), and keeps
-  shared and other-users namespaces out of `personal`. No signature change.
-  (#54, fourth review)
+  shared and other-users namespaces out of `personal`. `IN (selected)` is
+  treated like an absent source list, so `$` and sequence numbers resolve
+  there too (RFC 7377 section 2.2). No signature change. (#54, fourth review)
 - Memory's SORT, THREAD and MULTISEARCH evaluate with the same save dates,
   EMAILIDs and selection flags as SEARCH. No exported API change. (#54,
   pre-fourth review)

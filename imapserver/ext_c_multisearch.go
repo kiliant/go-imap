@@ -45,11 +45,12 @@ import (
 // nesting depth: no [imap.SearchFilter] reaches the backend, because the
 // framework substitutes it for the criteria it names first, and no
 // [imap.SearchSeqNum] or [imap.SearchSavedResult] reaches it either.
-// With no IN clause the source is the selection, so sequence numbers and saved
-// results are resolved to UIDs; with an IN clause those keys are refused. The refusal covers an IN clause naming the selected
-// mailbox too — the framework compares no names, because a number that resolved
-// for one spelling of a mailbox and not another would be worse than a uniform
-// refusal.
+// When the selection is the only source — no IN clause, or "selected" alone,
+// which RFC 7377 section 2.2 makes equivalent — sequence numbers and saved
+// results are resolved to UIDs; with any other source those keys are refused.
+// The refusal covers a "mailboxes" source naming the selected mailbox too —
+// the framework compares no names, because a number that resolved for one
+// spelling of a mailbox and not another would be worse than a uniform refusal.
 type MultiSearchSession interface {
 	MultiSearch(ctx context.Context, mailboxes []string, criteria imap.SearchCriteria, options *MultiSearchOptions) ([]MultiSearchMailboxResult, error)
 }
@@ -227,11 +228,11 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if err := validateUTF8AcceptCharset(c, args.charset, false); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	selectedIsTheSource := len(args.sources) == 0
-	// RFC 7377 section 2.2: SAVE is valid only when "selected", given or
-	// defaulted, is the sole source; UPDATE applies only to the selected
-	// mailbox and needs one.
+	// RFC 7377 section 2.2: an absent source list means "selected", so either
+	// form makes the selection the sole source. SAVE is valid only then; UPDATE
+	// applies only to the selected mailbox and needs one.
 	selectedOnly := !slices.ContainsFunc(args.sources, func(source multiSearchSource) bool { return source.kind != "selected" })
+	selectedIsTheSource := selectedOnly
 	requested := searchReturnSet(&args.result)
 	if requested[searchReturnSave] && !selectedOnly {
 		return c.writeBad(command.tag, "ESEARCH SAVE requires the selected mailbox as the only source")

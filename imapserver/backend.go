@@ -1050,9 +1050,10 @@ func searchSeqSetContains(set imap.SeqSet, seqNum, maximum imap.SeqNum) bool {
 // version. See docs/API-STABILITY.md section 10.
 //
 // The same guarantee holds for [MultiSearchSession.MultiSearch], which takes
-// criteria directly rather than a query: with no IN clause, sequence numbers
-// and saved-result references resolve against the selection. With an IN clause
-// those keys are refused, so a backend never receives an unresolvable reference.
+// criteria directly rather than a query: when the selection is the only source
+// (no IN clause, or "selected" alone), sequence numbers and saved-result
+// references resolve against it. With any other source those keys are refused,
+// so a backend never receives an unresolvable reference.
 //
 // A criterion outside that guarantee reaching a backend is a framework bug, not
 // a case for the backend to interpret. TestSearchQueryNormalisationGuarantee

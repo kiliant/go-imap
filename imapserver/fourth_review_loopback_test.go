@@ -106,3 +106,28 @@ func TestMultiSearchSourceExpansion(t *testing.T) {
 		t.Errorf("source expansion listed the hierarchy %d times, want once", lists)
 	}
 }
+
+// TestMultiSearchExplicitSelectedSource checks that IN (selected) behaves like
+// an absent source list (RFC 7377 section 2.2): "$" and sequence numbers
+// resolve against the selection, while a "mailboxes" source is still refused.
+func TestMultiSearchExplicitSelectedSource(t *testing.T) {
+	client, reader := reviewRawSession(t, reviewBackend(t, "memory"), nil)
+	for i := range 3 {
+		raw := fmt.Sprintf("Subject: %d\r\n\r\nbody\r\n", i)
+		reviewCommand(t, client, reader, "P", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw), "OK")
+	}
+	reviewCommand(t, client, reader, "S", "SELECT INBOX", "OK")
+	reviewCommand(t, client, reader, "V", `SEARCH RETURN (SAVE) SUBJECT "1"`, "OK")
+	for command, want := range map[string]string{
+		"ESEARCH IN (selected) $":     "UID ALL 2",
+		"ESEARCH IN (selected) NOT $": "UID ALL 1,3",
+		"ESEARCH IN (selected) 3":     "UID ALL 3",
+	} {
+		if line := esearchLines(reviewCommand(t, client, reader, "Q", command, "OK"))["INBOX"]; !strings.HasSuffix(line, want) {
+			t.Errorf("%s = %q, want %s", command, line, want)
+		}
+	}
+	for _, command := range []string{"ESEARCH IN (mailboxes INBOX) $", "ESEARCH IN (selected mailboxes INBOX) 1"} {
+		reviewCommand(t, client, reader, "Q", command, "BAD")
+	}
+}
