@@ -66,10 +66,6 @@ func runRenameInbox(t *testing.T, harness *Harness) {
 	if len(before.UIDs) != len(raws) {
 		t.Fatalf("INBOX lists %v, want the %d seeded messages", before.UIDs, len(raws))
 	}
-	beforeID := ""
-	if supportsCapability(instance, session, "OBJECTID") {
-		beforeID = mailboxObjectID(t, session, "INBOX")
-	}
 
 	// An occupied destination refuses the whole operation.
 	if err := session.Rename(ctx, "INBOX", taken, nil); err == nil {
@@ -158,9 +154,10 @@ func runRenameInbox(t *testing.T, harness *Harness) {
 	if err := after.Mailbox.Unselect(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if beforeID != "" {
-		if id := mailboxObjectID(t, session, archive); id == beforeID {
-			t.Errorf("the new mailbox took INBOX's MAILBOXID %s", id)
+	if supportsCapability(instance, session, "OBJECTID") {
+		inboxID := mailboxObjectID(t, session, "INBOX")
+		if id := mailboxObjectID(t, session, archive); id == inboxID {
+			t.Errorf("INBOX and its archive share MAILBOXID %s", id)
 		}
 	}
 

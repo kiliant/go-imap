@@ -12,6 +12,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
+	"github.com/kiliant/go-imap/imapserver/backendtest"
 	"github.com/kiliant/go-imap/imapserver/memory"
 )
 
@@ -147,4 +148,118 @@ func (s *independentDiagnosticSession) Select(ctx context.Context, n string, u *
 func (s *independentDiagnosticSelected) Unselect(ctx context.Context, o *imapserver.UnselectOptions) error {
 	_ = s.SelectedMailbox.Unselect(ctx, o)
 	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeUnavailable, Text: "cleanup", Err: independentCleanupCause}
+}
+
+type independentZeroRevisionBackend struct{ *memory.Backend }
+type independentZeroRevisionSession struct{ imapserver.Session }
+
+func (b *independentZeroRevisionBackend) Authenticate(ctx context.Context, c *imapserver.ConnInfo, cr *imapserver.Credentials, o *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	s, e := b.Backend.Authenticate(ctx, c, cr, o)
+	if e != nil {
+		return nil, e
+	}
+	return &independentZeroRevisionSession{s}, nil
+}
+func (s *independentZeroRevisionSession) Select(ctx context.Context, n string, u *imapserver.Updater, o *imapserver.SelectOptions) (*imapserver.SelectResult, error) {
+	var original imapserver.MailboxRevision
+	ready := make(chan struct{})
+	defer close(ready)
+	out := &imapserver.Updater{PushFunc: func(b *imapserver.UpdateBatch) error {
+		<-ready
+		copy := *b
+		if copy.Before == original {
+			copy.Before = ""
+		}
+		if copy.After == original {
+			copy.After = ""
+		}
+		return u.Push(&copy)
+	}}
+	r, e := s.Session.Select(ctx, n, out, o)
+	if e == nil {
+		original = r.Snapshot.Revision
+		r.Snapshot.Revision = ""
+	}
+	return r, e
+}
+func TestReviewFinalEmptyRevisionWire(t *testing.T) {
+	w := r4Open(t, &independentZeroRevisionBackend{r4Memory()}, nil)
+	r4Append(w, "INBOX", "", "one")
+	if l := r4Tagged(w.cmd("S", "SELECT INBOX")); !strings.HasPrefix(l, "S OK") {
+		t.Fatal(l)
+	}
+	r4Append(w, "INBOX", "", "two")
+	if l := r4Tagged(w.cmd("F", "FETCH 1:* (UID)")); !strings.HasPrefix(l, "F OK") {
+		t.Fatal(l)
+	}
+}
+func TestReviewFinalEmptyRevisionSuite(t *testing.T) {
+	backendtest.Run(t, &backendtest.Harness{New: func(context.Context, *backendtest.InstanceOptions) (*backendtest.Instance, error) {
+		return &backendtest.Instance{Backend: &independentZeroRevisionBackend{r4Memory()}, Credentials: imapserver.Credentials{Mechanism: "PLAIN", Username: "alice", Password: "secret"}}, nil
+	}})
+}
+
+func TestReviewFinalServeConnCancellationDuringGreeting(t *testing.T) {
+	srv := imapserver.New(nil, &imapserver.Options{Limits: imapserver.Limits{WriteTimeout: 2 * time.Second}})
+	peer, client := net.Pipe()
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.ServeConn(ctx, peer, nil) }()
+	// No client reads: the initial greeting is blocked in a transport write.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(150 * time.Millisecond):
+		t.Error("ServeConn ignored canceled context while writing greeting")
+		client.Close()
+		<-done
+	}
+}
+
+type independentNoUpdateModSeqBackend struct{ *memory.Backend }
+type independentNoUpdateModSeqSession struct{ imapserver.Session }
+
+func (b *independentNoUpdateModSeqBackend) Authenticate(ctx context.Context, c *imapserver.ConnInfo, cr *imapserver.Credentials, o *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	s, e := b.Backend.Authenticate(ctx, c, cr, o)
+	if e != nil {
+		return nil, e
+	}
+	return &independentNoUpdateModSeqSession{s}, nil
+}
+func (s *independentNoUpdateModSeqSession) Select(ctx context.Context, n string, u *imapserver.Updater, o *imapserver.SelectOptions) (*imapserver.SelectResult, error) {
+	out := &imapserver.Updater{PushFunc: func(b *imapserver.UpdateBatch) error {
+		copy := *b
+		copy.Changes = make([]imapserver.Update, 0, len(b.Changes))
+		for _, ch := range b.Changes {
+			if f, ok := ch.(*imapserver.UpdateFlags); ok {
+				v := *f
+				v.ModSeq = 0
+				copy.Changes = append(copy.Changes, &v)
+			} else {
+				copy.Changes = append(copy.Changes, ch)
+			}
+		}
+		return u.Push(&copy)
+	}}
+	return s.Session.Select(ctx, n, out, o)
+}
+func TestReviewFinalUpdateFlagsWithoutModSeq(t *testing.T) {
+	store := r4Memory()
+	observer := r4Open(t, &independentNoUpdateModSeqBackend{store}, nil)
+	other := r4Open(t, store, nil)
+	r4Append(other, "INBOX", "", "one")
+	observer.cmd("E", "ENABLE CONDSTORE")
+	observer.cmd("S", "SELECT INBOX")
+	other.cmd("S", "SELECT INBOX")
+	other.cmd("F", `STORE 1 +FLAGS (\Flagged)`)
+	lines := observer.cmd("N", "NOOP")
+	r4Log(t, "unsolicited FLAGS with unavailable modseq", lines)
+	for _, l := range lines {
+		if strings.Contains(l, "FETCH") && !strings.Contains(l, "MODSEQ") {
+			t.Errorf("active CONDSTORE FETCH lacks MODSEQ: %s", l)
+		}
+	}
 }

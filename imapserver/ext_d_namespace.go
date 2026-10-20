@@ -16,8 +16,8 @@ import (
 // It is a Session interface rather than server configuration because namespaces
 // are usually a property of the authenticated user: which shared and other-user
 // namespaces exist differs per account. A backend that does not implement it
-// gets the framework's configured default, which is the single personal
-// namespace almost every server presents.
+// does not advertise NAMESPACE; the framework supplies no default namespace
+// or hierarchy delimiter.
 type NamespaceSession interface {
 	Namespace(ctx context.Context, options *NamespaceOptions) (*imap.NamespaceData, error)
 }

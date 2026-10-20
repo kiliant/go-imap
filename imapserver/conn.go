@@ -1072,6 +1072,10 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if !suppressFlags {
 		pending = append(pending, selected.releaseFlags()...)
 	}
+	pending, err := c.completeUpdateFlags(pending)
+	if err != nil {
+		return err
+	}
 	wireUpdates := coalesceWireUpdates(pending)
 	for _, update := range wireUpdates {
 		if update.kind == updateMessageExpunge {
@@ -1125,7 +1129,7 @@ func (c *conn) writeDeferredModSeqFence() {
 func (c *conn) hasUnreportedChanges() bool {
 	s := c.state.selected
 	return s != nil && (s.withholdsRemovals() || s.queue.hasRemovals() ||
-		len(s.pendingFlags) != 0 || c.notifySelected.suppressesFlags() && s.queue.hasFlags())
+		len(s.pendingFlags) != 0 || s.queue.hasFlags())
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {
@@ -1186,6 +1190,85 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		c.encoder.SP().RawValue([]byte(update.uids.String())).CRLF()
 	}
 	return c.encoder.Err()
+}
+
+// UpdateFlags permits an unavailable MODSEQ. Once CONDSTORE is active the
+// wire requires it. Fetch FLAGS and MODSEQ together, once for the whole drain,
+// and replace every pending flag report for these UIDs with that snapshot.
+// Otherwise a later report in this drain could overwrite the fetched state
+// with older flags at a lower MODSEQ.
+func (c *conn) completeUpdateFlags(updates []deliveredUpdate) ([]deliveredUpdate, error) {
+	if !condStoreMailboxEnabled(c) {
+		return updates, nil
+	}
+	type currentFlags struct {
+		flags    []imap.Flag
+		modSeq   uint64
+		hasFlags bool
+	}
+	current := make(map[imap.UID]*currentFlags)
+	var missing []imap.UID
+	for _, update := range updates {
+		if update.kind == updateMessageFlags && update.modSeq == 0 && current[update.uid] == nil {
+			current[update.uid] = &currentFlags{}
+			missing = append(missing, update.uid)
+		}
+	}
+	if len(missing) == 0 {
+		return updates, nil
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	defer cancel()
+	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
+		uid, ok := extractFetchUID(data)
+		flags := current[uid]
+		if !ok || flags == nil {
+			return fmt.Errorf("imapserver: flag-update FETCH returned an unexpected UID")
+		}
+		for _, values := range data.Items {
+			for _, value := range values {
+				switch value := value.(type) {
+				case imap.FetchDataFlags:
+					flags.flags = slices.Clone([]imap.Flag(value))
+					flags.hasFlags = true
+				case imap.FetchDataModSeq:
+					flags.modSeq = uint64(value)
+				}
+			}
+		}
+		return nil
+	})
+	err := c.state.selected.mailbox.Fetch(ctx, writer, imap.UIDSetNum(missing...), &FetchOptions{
+		Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags, imap.FetchItemModSeq},
+	})
+	writer.core.close()
+	if err == nil {
+		for _, flags := range current {
+			if flags.hasFlags != (flags.modSeq != 0) {
+				err = fmt.Errorf("imapserver: flag-update FETCH omitted FLAGS or MODSEQ")
+				break
+			}
+		}
+	}
+	if err != nil {
+		c.reportBackendError("FETCH", err)
+		return nil, err
+	}
+	kept := updates[:0]
+	for _, update := range updates {
+		if update.kind == updateMessageFlags {
+			if flags := current[update.uid]; flags != nil {
+				// FETCH skips a concurrently removed UID. Its removal update
+				// supplies the announcement instead of stale FLAGS.
+				if !flags.hasFlags {
+					continue
+				}
+				update.flags, update.modSeq = flags.flags, flags.modSeq
+			}
+		}
+		kept = append(kept, update)
+	}
+	return kept, nil
 }
 
 func (c *conn) failFatal(err error) {

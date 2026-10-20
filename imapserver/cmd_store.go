@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -289,16 +290,27 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 			if hasFetchItem(response, imap.FetchItemModSeq) {
 				continue
 			}
-			const maxModSeqBytes = 32
-			if r.bytes > maxCommandFetchBytes-maxModSeqBytes {
-				return false, commandLimitError("STORE response byte limit exceeded")
+			before, err := fetchResponseWireSize(response)
+			if err != nil {
+				return false, err
 			}
-			r.bytes += maxModSeqBytes
 			for key, values := range data.Items {
 				if strings.EqualFold(string(key), string(imap.FetchItemModSeq)) {
+					deleteFetchItem(response, imap.FetchItemModSeq)
+					response.Items[key] = slices.Clone(values)
+				} else if strings.EqualFold(string(key), string(imap.FetchItemFlags)) && hasFetchItem(response, imap.FetchItemFlags) {
+					deleteFetchItem(response, imap.FetchItemFlags)
 					response.Items[key] = slices.Clone(values)
 				}
 			}
+			after, err := fetchResponseWireSize(response)
+			if err != nil {
+				return false, err
+			}
+			if after-before > maxCommandFetchBytes-r.bytes {
+				return false, commandLimitError("STORE response byte limit exceeded")
+			}
+			r.bytes += after - before
 		}
 		return true, nil
 	}
@@ -324,10 +336,15 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 		if merged, err := merge(uid, data); merged || err != nil {
 			return err
 		}
-		return r.add(c, data, includeUID)
+		// This UID had no FLAGS response to enrich. The fallback exists
+		// only to supply MODSEQ, including for a successful .SILENT store.
+		mapped := *data
+		mapped.Items = maps.Clone(data.Items)
+		deleteFetchItem(&mapped, imap.FetchItemFlags)
+		return r.add(c, &mapped, includeUID)
 	})
 	err := c.state.selected.mailbox.Fetch(ctx, writer, imap.UIDSetNum(missing...), &FetchOptions{
-		Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemModSeq},
+		Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags, imap.FetchItemModSeq},
 	})
 	writer.core.close()
 	if err != nil {

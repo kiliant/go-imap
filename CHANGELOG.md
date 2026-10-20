@@ -518,6 +518,20 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- When `UpdateFlags.ModSeq` is zero, the framework fetches current FLAGS and
+  MODSEQ together for CONDSTORE clients, skipping UIDs already removed. STORE's
+  fallback also refreshes FLAGS and MODSEQ from one fetch. Queued flag changes
+  keep the checkpoint fenced. The exported optional-zero contract remains
+  valid; no new backend obligation. (#54, final review)
+- Cancelling a Serve/ServeConn context interrupts transport reads and writes,
+  including an initial greeting blocked on an unread connection. The parent
+  context closes the transport without waiting for the write timeout, while
+  internal cancellation retains its terminal-response path. (#54, final review)
+- `backendtest` accepts an empty initial `MailboxRevision`, which the
+  framework already supports; revisions are opaque comparable values with
+  no reserved zero value. Clarify that contract and correct `NamespaceSession`
+  documentation: an absent interface withholds NAMESPACE, with no framework
+  default. No exported signature change. (#54, final review)
 - Concurrent `Server.Close` callers all wake when a connection finishes,
   using a broadcast under the active-connection lock. A single-consumer signal
   could leave another caller waiting until its context expired even after all

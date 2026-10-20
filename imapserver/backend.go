@@ -771,7 +771,8 @@ type SelectSnapshot struct {
 }
 
 // MailboxRevision is an opaque, comparable backend revision. Backends should
-// use their natural transaction identifier when possible.
+// use their natural transaction identifier when possible. The empty value is
+// valid; revisions need only be comparable and form the Before/After chain.
 type MailboxRevision string
 
 // ChangeToken identifies the currently executing mutating command. Zero means
@@ -834,6 +835,8 @@ type UpdateFlags struct {
 	// Flags is the message's complete new flag set.
 	Flags []imap.Flag
 	// ModSeq is the new modification sequence, or zero when unavailable.
+	// After CONDSTORE is enabled, the framework fetches current FLAGS and
+	// MODSEQ together when this value is zero.
 	ModSeq uint64
 	_      struct{}
 }

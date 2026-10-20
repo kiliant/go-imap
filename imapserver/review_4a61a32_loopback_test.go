@@ -345,6 +345,9 @@ func r4StripModSeq(w *imapserver.FetchWriter) *imapserver.FetchWriter {
 		copied.Items = make(map[imap.FetchDataKey][]imap.FetchData, len(d.Items))
 		for k, v := range d.Items {
 			if !strings.EqualFold(string(k), "MODSEQ") {
+				if strings.EqualFold(string(k), "FLAGS") {
+					k = "flags" // A valid backend need not canonicalize map keys.
+				}
 				copied.Items[k] = v
 			}
 		}
@@ -380,6 +383,11 @@ func TestReview4StoreModSeqFromFlagsOnlyBackend(t *testing.T) {
 		r4Log(t, tc.name, lines)
 		if !r4Has(lines, `^\* \d+ FETCH .*MODSEQ`) {
 			t.Errorf("%s STORE: the client never received the new MODSEQ", tc.name)
+		}
+		for _, line := range lines {
+			if strings.Contains(line, "FETCH") && strings.Count(strings.ToUpper(line), "FLAGS (") > 1 {
+				t.Errorf("%s STORE returned duplicate FLAGS: %s", tc.name, line)
+			}
 		}
 	}
 	r4Log(t, "actual clocks", w.cmd("V", "UID FETCH 1:2 (MODSEQ FLAGS)"))

@@ -585,9 +585,6 @@ func validateSnapshot(t *testing.T, snapshot imapserver.SelectSnapshot) {
 	if snapshot.Status.NumRecent > snapshot.Status.NumMessages {
 		t.Fatalf("NumRecent %d > NumMessages %d", snapshot.Status.NumRecent, snapshot.Status.NumMessages)
 	}
-	if snapshot.Revision == "" {
-		t.Fatal("empty snapshot revision")
-	}
 }
 
 func batchAddsUID(batch *imapserver.UpdateBatch, uid imap.UID) bool {

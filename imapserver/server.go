@@ -313,7 +313,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, options *Serv
 			}
 			return err
 		}
-		go func() { _ = s.serveRegisteredConn(c) }()
+		go func() { _ = s.serveRegisteredConn(ctx, c) }()
 	}
 }
 
@@ -341,10 +341,15 @@ func (s *Server) ServeConn(ctx context.Context, netConn net.Conn, options *Serve
 		_ = netConn.Close()
 		return err
 	}
-	return s.serveRegisteredConn(c)
+	return s.serveRegisteredConn(ctx, c)
 }
 
-func (s *Server) serveRegisteredConn(c *conn) error {
+func (s *Server) serveRegisteredConn(ctx context.Context, c *conn) error {
+	// Parent cancellation must interrupt transport I/O, including a greeting
+	// blocked before the reader starts. Internal cancellation still lets the
+	// event loop attempt terminal responses such as the overflow BYE.
+	stop := context.AfterFunc(ctx, c.closeTransport)
+	defer stop()
 	defer s.unregister(c)
 	defer c.close()
 	err := c.serve()
