@@ -542,7 +542,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   connection usable in its new state. Replacing SELECT continues after a
   release error. A refused UNAUTHENTICATE preserves the selection. Document
   once-only release, fresh bounded cleanup contexts and error handling on
-  `SelectedMailbox.Unselect` and `Session.Close`. (#54, N5)
+  `SelectedMailbox.Unselect` and `Session.Close`. Cleanup diagnostics include
+  protocol errors and cancellation, which ordinary command error reporting
+  treats as expected refusals. (#54, N5)
 - `backendtest`'s RENAME INBOX case accepts arbitrary FETCH order, a recreated
   INBOX with new UIDVALIDITY and MAILBOXID, and checks clocks and resync only
   within one incarnation. Clarify unique, unordered `SearchResult.UIDs`.

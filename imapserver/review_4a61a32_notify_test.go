@@ -21,6 +21,9 @@ import (
 )
 
 func (s *r4UnselectSession) Unauthenticate(ctx context.Context, o *imapserver.UnauthenticateOptions) error {
+	if s.owner.refuseUnauth {
+		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "refused"}
+	}
 	return s.Session.(imapserver.UnauthenticateSession).Unauthenticate(ctx, o)
 }
 
@@ -335,5 +338,59 @@ func TestReview4SilentStorePreservesWithheldFlags(t *testing.T) {
 				t.Errorf("snapshot lost the latest flags: %v", got)
 			}
 		})
+	}
+}
+
+func TestReview4CleanupFailuresAreReported(t *testing.T) {
+	for _, failure := range []error{errors.New("private diagnostic"), context.Canceled, &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "private refusal"}} {
+		for _, command := range []string{"CLOSE", "UNSELECT", "UNAUTHENTICATE"} {
+			t.Run(command+"/"+failure.Error(), func(t *testing.T) {
+				diagnostics := make(chan error, 4)
+				b := &r4UnselectBackend{Backend: r4Memory(), releaseErr: failure}
+				w := r4Open(t, b, &imapserver.Options{AllowInsecureAuth: true, OnError: func(_ context.Context, event *imapserver.ServerEvent) {
+					diagnostics <- event.Err
+				}})
+				r4Append(w, "INBOX", `\Deleted`, "x")
+				w.cmd("S", "SELECT INBOX")
+				b.fail.Store(true)
+				result := w.cmd("U", command)
+				if !strings.HasPrefix(r4Tagged(result), "U OK") || strings.Contains(strings.Join(result, " "), "private") {
+					t.Fatalf("completed release = %v", result)
+				}
+				if got := w.cmd("F", "FETCH 1 (UID)"); !strings.HasPrefix(r4Tagged(got), "F BAD") {
+					t.Fatalf("selection survived release: %v", got)
+				}
+				if got := w.cmd("Q", "NOOP"); !strings.HasPrefix(r4Tagged(got), "Q OK") {
+					t.Fatalf("connection did not survive release: %v", got)
+				}
+				select {
+				case got := <-diagnostics:
+					if !errors.Is(got, failure) {
+						t.Errorf("diagnostic = %v, want %v", got, failure)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("cleanup failure did not reach OnError")
+				}
+				if got := b.unselects.Load(); got != 1 {
+					t.Errorf("Unselect calls = %d", got)
+				}
+			})
+		}
+	}
+}
+
+func TestReview4UnauthenticateRefusalPreservesSelection(t *testing.T) {
+	b := &r4UnselectBackend{Backend: r4Memory(), refuseUnauth: true}
+	w := r4Open(t, b, nil)
+	r4Append(w, "INBOX", "", "x")
+	w.cmd("S", "SELECT INBOX")
+	if got := w.cmd("U", "UNAUTHENTICATE"); !strings.HasPrefix(r4Tagged(got), "U NO [CANNOT]") {
+		t.Fatalf("refusal = %v", got)
+	}
+	if got := w.cmd("F", "FETCH 1 (UID)"); !r4Has(got, `^\* 1 FETCH`) || !strings.HasPrefix(r4Tagged(got), "F OK") {
+		t.Fatalf("refusal released selection: %v", got)
+	}
+	if got := b.unselects.Load(); got != 0 {
+		t.Errorf("refusal called Unselect %d times", got)
 	}
 }

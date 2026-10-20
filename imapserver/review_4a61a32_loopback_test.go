@@ -592,8 +592,10 @@ func TestReview4GhostView(t *testing.T) {
 
 type r4UnselectBackend struct {
 	*memory.Backend
-	fail      atomic.Bool
-	unselects atomic.Int32
+	fail         atomic.Bool
+	unselects    atomic.Int32
+	releaseErr   error
+	refuseUnauth bool
 }
 type r4UnselectSession struct {
 	imapserver.Session
@@ -622,6 +624,9 @@ func (s *r4UnselectSelected) Unselect(ctx context.Context, o *imapserver.Unselec
 	s.owner.unselects.Add(1)
 	err := s.SelectedMailbox.Unselect(ctx, o)
 	if s.owner.fail.Load() {
+		if s.owner.releaseErr != nil {
+			return s.owner.releaseErr
+		}
 		return errors.New("private unselect diagnostic")
 	}
 	return err

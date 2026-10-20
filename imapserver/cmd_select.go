@@ -148,7 +148,7 @@ func releaseInstalledSelection(ctx context.Context, c *conn, selected *selectedS
 		defer cancel()
 	}
 	if err := selected.mailbox.Unselect(releaseCtx, nil); err != nil {
-		c.reportBackendError("UNSELECT", err)
+		c.reportCleanupError("UNSELECT", err)
 	}
 }
 

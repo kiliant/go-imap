@@ -853,14 +853,14 @@ func (c *conn) cleanupBackend() {
 		selected.close()
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
 		if err := selected.mailbox.Unselect(ctx, nil); err != nil {
-			c.reportBackendError("UNSELECT", err)
+			c.reportCleanupError("UNSELECT", err)
 		}
 		cancel()
 	}
 	if session := c.state.session; session != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
 		if err := session.Close(ctx, nil); err != nil {
-			c.reportBackendError("LOGOUT", err)
+			c.reportCleanupError("LOGOUT", err)
 		}
 		cancel()
 		c.state.session = nil

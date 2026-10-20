@@ -153,7 +153,7 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	closeErr := c.state.session.Close(ctx, nil)
 	c.state.unauthenticate()
 	if closeErr != nil {
-		c.reportBackendError("CLOSE", closeErr)
+		c.reportCleanupError("UNAUTHENTICATE", closeErr)
 	}
 	return c.writeTagged(command.tag, "OK", command.name+" completed")
 }
