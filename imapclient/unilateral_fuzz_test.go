@@ -2,7 +2,6 @@ package imapclient
 
 import (
 	"context"
-	"net"
 	"testing"
 	"time"
 
@@ -35,7 +34,7 @@ func FuzzUnilateralStream(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, stream string) {
-		clientConn, serverConn := net.Pipe()
+		clientConn, serverConn := fuzzStreamPipe()
 		defer serverConn.Close()
 		go func() {
 			_, _ = serverConn.Write([]byte("* OK ready\r\n" + stream))
