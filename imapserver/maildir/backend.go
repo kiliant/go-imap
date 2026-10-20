@@ -417,7 +417,7 @@ func (b *Backend) SupportsCapability(ctx context.Context, name string, options *
 		return false
 	}
 	switch name {
-	case "UIDPLUS", "MOVE", "CONDSTORE", "QRESYNC", "CHILDREN", "SPECIAL-USE", "CREATE-SPECIAL-USE", "STATUS=SIZE", "BINARY-FETCH":
+	case "UIDPLUS", "MOVE", "CONDSTORE", "QRESYNC", "CHILDREN", "SPECIAL-USE", "CREATE-SPECIAL-USE", "STATUS=SIZE", "BINARY-FETCH", "STATUS-DELETED":
 		return true
 	}
 	return false

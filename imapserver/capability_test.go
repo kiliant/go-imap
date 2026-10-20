@@ -219,7 +219,8 @@ func frameworkRequestStruct(name string) bool {
 		return true
 	}
 	switch name {
-	case "NotifyConfig", // -> NotifySession.Notify
+	case "AppendMessage", // -> MultiAppendSession.MultiAppend
+		"NotifyConfig",  // -> NotifySession.Notify
 		"NotifyWatch",   // -> NotifyConfig.Watches
 		"QResyncSelect", // -> QResyncMailbox.Resync
 		"StoreFlags":    // -> SelectedMailbox.Store, CondStoreMailbox.StoreCondStore
@@ -230,6 +231,11 @@ func frameworkRequestStruct(name string) bool {
 
 func TestExtensionOptionFieldsHaveFeatureBinding(t *testing.T) {
 	baseline := map[string]bool{
+		"AppendMessage.Literal":         true,
+		"AppendMessage.Flags":           true,
+		"AppendMessage.InternalDate":    true,
+		"AppendMessage.Size":            true,
+		"AppendMessage.HasSize":         true,
 		"MutationOptions.Origin":        true,
 		"StatusOptions.Items":           true,
 		"AppendOptions.MutationOptions": true,
@@ -660,6 +666,28 @@ func TestEverySearchKeyAndFetchItemIsClassified(t *testing.T) {
 				"Add it to fetchItemCapability.", name)
 		}
 	}
+	for _, name := range implementorsOf(pkg.Files, "statusItem") {
+		if !classificationMentions("imap." + name) {
+			t.Errorf("imap.%s is a StatusItem missing from statusItemCapability", name)
+		}
+	}
+	for _, file := range pkg.Files {
+		for _, declaration := range file.Decls {
+			decl, ok := declaration.(*ast.GenDecl)
+			if !ok || decl.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range decl.Specs {
+				value := spec.(*ast.ValueSpec)
+				for _, name := range value.Names {
+					if strings.HasPrefix(name.Name, "StatusItem") && !classificationMentions("imap."+name.Name) {
+						t.Errorf("imap.%s has no STATUS gate", name.Name)
+					}
+				}
+			}
+		}
+	}
+
 }
 
 // classifiedCriterion and classifiedFetchItem report whether the named type

@@ -252,20 +252,14 @@ func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.M
 	if err != nil {
 		return nil, err
 	}
-	maxSize, hasMaxSize := uint32(0), false
 	depth := ""
 	if options != nil {
-		maxSize, hasMaxSize, depth = options.MaxSize, options.HasMaxSize, options.Depth
+		depth = options.Depth
 	}
 	var reported []imap.MetadataEntry
 	for _, requested := range entries {
 		for stored, value := range store {
 			if !metadataMatches(stored, requested, depth) {
-				continue
-			}
-			// RFC 5464 section 4.2.2: a value beyond MAXSIZE is omitted, not
-			// truncated, because a truncated annotation is not the annotation.
-			if hasMaxSize && uint32(len(value)) > maxSize {
 				continue
 			}
 			held := value

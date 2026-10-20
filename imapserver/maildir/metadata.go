@@ -112,7 +112,7 @@ func (s *session) GetMetadata(ctx context.Context, name string, entries []imap.M
 				tail := strings.TrimPrefix(string(key), string(requested)+"/")
 				match = depth == "infinity" || depth == "1" && !strings.Contains(tail, "/")
 			}
-			if !match || options != nil && options.HasMaxSize && uint64(len(value)) > uint64(options.MaxSize) {
+			if !match {
 				continue
 			}
 			copy := string(value)

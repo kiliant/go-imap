@@ -71,6 +71,7 @@ type ACLSetOptions struct {
 const featureACL featureID = "acl"
 
 func init() {
+	registerCapabilities(capabilityDescriptor{Name: "RIGHTS=texk", States: stateMaskAuthenticated | stateMaskSelected, Depends: []string{"ACL"}})
 	registerFeatures(featureDescriptor{
 		ID:     featureACL,
 		Active: func(_ *sessionState, advertised map[string]bool) bool { return advertised["ACL"] },

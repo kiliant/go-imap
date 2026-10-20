@@ -69,6 +69,14 @@
 // lost+found directory and unpublished atomic-write temporary files remain.
 // Recognized atomic-write temporaries are removed under the root lock.
 //
+// A v1 minor release may migrate the storage format forward, preserving
+// mailbox/message identities and unknown fields at supported record boundaries
+// and recovering prepared older journals. Every bump is called out in the
+// changelog. Older readers refuse unsupported versions rather than risk stale
+// or corrupt data. Downgrade compatibility is not promised: rollback requires
+// restoring a complete backup made before migration with the backend closed.
+// These documented migrations are compatible under the v1 stability promise.
+//
 // Account state is version 4. It holds mailbox identities, UIDNEXT, message
 // mappings, flags/keywords, modification sequences, metadata, subscriptions and
 // a bounded expunge history. MaxTombstones defaults to 10000 per mailbox.

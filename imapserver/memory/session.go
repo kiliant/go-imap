@@ -412,6 +412,14 @@ func statusDataLocked(m *mailbox, options *imapserver.StatusOptions) *imap.Statu
 			data.Values[keyword] = uint64(appendLimit)
 		case imap.StatusItemHighestModSeq:
 			data.Values[keyword] = m.highestModSeq
+		case imap.StatusItemDeletedStorage:
+			var size uint64
+			for _, msg := range m.messages {
+				if imap.ContainsFlag(msg.flags, imap.FlagDeleted) {
+					size += uint64(len(msg.raw))
+				}
+			}
+			data.Values[keyword] = (size + 1023) / 1024
 		case imap.StatusItemDeleted:
 			var deleted uint64
 			for _, msg := range m.messages {

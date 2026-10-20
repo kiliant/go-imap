@@ -348,7 +348,8 @@ func TestLoopbackSearchFilters(t *testing.T) {
 }
 
 // TestSearchQueryNormalisationGuarantee enforces the promise [SearchQuery.Criteria]
-// makes to backends: no imap.SearchFilter reaches them, on any command that
+// makes to backends: no unresolved FILTER or saved-result reference reaches
+// them, on any command that
 // accepts a search key.
 //
 // This is the test docs/API-STABILITY.md section 10 requires before a new
@@ -375,12 +376,26 @@ func TestSearchQueryNormalisationGuarantee(t *testing.T) {
 	writeRawCommand(t, clientSide, "N1 STORE 1 +FLAGS (\\Flagged)\r\n")
 	collectUntilTag(t, reader, "N1 ")
 
+	// Save exactly the flagged message. Every command below must consume only
+	// the UID substitution, including under each supported container key.
+	writeRawCommand(t, clientSide, "NSAVE SEARCH RETURN (SAVE) FLAGGED\r\n")
+	if _, tagged := collectUntilTag(t, reader, "NSAVE "); !strings.HasPrefix(tagged, "NSAVE OK") {
+		t.Fatal(tagged)
+	}
+
 	for _, testCase := range []struct {
 		name     string
 		command  string
 		response string
 		want     string
 	}{
+		{"SEARCH-saved", "SEARCH $", "* SEARCH", "* SEARCH 1"},
+		{"SEARCH-saved-not", "SEARCH NOT $", "* SEARCH", "* SEARCH 2"},
+		{"SEARCH-saved-or", "SEARCH OR $ FLAGGED", "* SEARCH", "* SEARCH 1"},
+		{"SEARCH-saved-fuzzy", "SEARCH FUZZY $", "* SEARCH", "* SEARCH 1"},
+		{"SORT-saved", "SORT (REVERSE DATE) UTF-8 $", "* SORT", "* SORT 1"},
+		{"THREAD-saved", "THREAD ORDEREDSUBJECT UTF-8 $", "* THREAD", "* THREAD (1)"},
+		{"MULTISEARCH-saved", "ESEARCH $", "* ESEARCH", "ALL 1"},
 		{"SEARCH", "SEARCH FILTER \"flagged\"", "* SEARCH", "* SEARCH 1"},
 		{"SORT", "SORT (REVERSE DATE) UTF-8 FILTER \"flagged\"", "* SORT", "* SORT 1"},
 		{"THREAD", "THREAD ORDEREDSUBJECT UTF-8 FILTER \"flagged\"", "* THREAD", "* THREAD (1)"},

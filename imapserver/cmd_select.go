@@ -22,20 +22,37 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := applySelectParams(c, args, options); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	if err := abandonCurrentSelection(ctx, c); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
+	hadSelection := c.state.selected != nil
+	unselectErr := abandonCurrentSelection(ctx, c)
+	if hadSelection {
+		writeUntaggedOK(c, imap.CodeClosed, "", "previous mailbox closed")
+		if err := c.encoder.Flush(); err != nil {
+			return err
+		}
+	}
+	if unselectErr != nil {
+		return writeBackendError(c, command.tag, command.name, unselectErr)
 	}
 	selected, snapshot, err := selectAtomic(ctx, c, mailbox, options)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if advertisedCapabilities(c)["OBJECTID"] {
+		id, err := mailboxIDResponse(ctx, c, mailbox)
+		if err != nil {
+			if abandonErr := abandonCurrentSelection(ctx, c); abandonErr != nil {
+				return writeBackendError(c, command.tag, command.name, abandonErr)
+			}
+			return writeBackendError(c, command.tag, command.name, err)
+		}
+		writeUntaggedOK(c, imap.CodeMailboxID, id, "mailbox identity")
 	}
 	if err := writeSelectSnapshot(c, snapshot); err != nil {
 		return err
 	}
 	if err := writeSelectedMailboxList(ctx, c, mailbox); err != nil {
 		// RFC 9051 section 6.3.2: a SELECT that fails leaves no mailbox
-		// selected. This is the first failure point after the selection is
-		// installed, so answering NO without undoing it would leave the client
+		// selected. Answering NO without undoing the installed selection leaves the client
 		// believing nothing is selected while the server disagrees.
 		if abandonErr := abandonCurrentSelection(ctx, c); abandonErr != nil {
 			return writeBackendError(c, command.tag, command.name, abandonErr)

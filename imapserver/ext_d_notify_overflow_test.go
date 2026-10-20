@@ -167,3 +167,36 @@ func TestNotifyOverflowClosesRegistrationOnBackendFailure(t *testing.T) {
 		t.Fatalf("overflow was not reported: %q", output.String())
 	}
 }
+
+func TestNotifyStatusItemsUseNegotiatedGates(t *testing.T) {
+	for _, rev2 := range []bool{false, true} {
+		state := newSessionState(true)
+		state.authenticate(&stubSession{})
+		if rev2 {
+			state.revision = revisionIMAP4rev2
+		}
+		var wire bytes.Buffer
+		data := &imap.StatusData{Mailbox: "Other", Values: map[imap.StatusItemKeyword]any{
+			imap.StatusItemMessages: uint64(1), imap.StatusItemHighestModSeq: uint64(2),
+			imap.StatusItemDeleted: uint64(3), imap.StatusItemSize: uint64(4), "FOO": uint64(5),
+		}}
+		queue := newSessionUpdateQueue(2)
+		if err := queue.push(&SessionUpdate{Mailbox: "Other", Status: data}); err != nil {
+			t.Fatal(err)
+		}
+		c := &conn{ctx: t.Context(), state: state, server: New(nil, nil), notifyQueue: queue, encoder: imapwire.NewEncoder(&wire, &imapwire.EncoderOptions{ServerResponse: true})}
+		if err := c.drainNotify(); err != nil {
+			t.Fatal(err)
+		}
+		got := wire.String()
+		if !strings.Contains(got, "MESSAGES 1") || strings.Contains(got, "HIGHESTMODSEQ") || strings.Contains(got, "FOO") {
+			t.Fatalf("NOTIFY STATUS = %s", got)
+		}
+		if strings.Contains(got, "DELETED 3") != rev2 || strings.Contains(got, "SIZE 4") != rev2 {
+			t.Fatalf("rev2=%t, NOTIFY STATUS = %s", rev2, got)
+		}
+		if len(data.Values) != 5 {
+			t.Fatal("backend's STATUS map was modified")
+		}
+	}
+}

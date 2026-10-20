@@ -46,11 +46,16 @@ import "time"
 //   - No [SearchFilter] reaches a backend on any command. It is substituted for
 //     the criteria it names first, at every nesting depth, and an undefined name
 //     fails the command rather than matching nothing.
+//
 //   - No [SearchSeqNum] reaches a backend either. It is resolved to UIDs against
 //     the selected mailbox, which covers SEARCH, SORT and THREAD. RFC 7377's
 //     MULTISEARCH can name mailboxes other than the selection, where a sequence
 //     number indexes into nothing; there the command is refused instead, so a
 //     backend never has to decide what an unresolvable one means.
+//
+//   - No [SearchSavedResult] reaches a backend. The framework substitutes the
+//     selected mailbox's saved UID set (empty if nothing is saved), including
+//     under NOT, OR and FUZZY. MULTISEARCH with an IN clause refuses this key.
 //
 // See docs/API-STABILITY.md section 10 for why these guarantees are what allow
 // the root package to grow new SearchCriteria implementations at all.

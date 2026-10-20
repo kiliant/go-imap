@@ -153,8 +153,10 @@ type Options struct {
 	// RequireTLS is false.
 	AllowInsecureAuth bool
 	// Greeting is the human-readable text after the initial OK response.
+	// Empty selects "go-imap ready".
 	Greeting string
 	// ServerID is the field map returned by ID. New copies the map.
+	// Nil or empty returns ID NIL.
 	ServerID map[string]string
 	// Limits controls per-connection and server-wide resource bounds.
 	Limits Limits

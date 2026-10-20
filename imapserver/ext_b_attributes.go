@@ -1,24 +1,22 @@
 package imapserver
 
+import (
+	"context"
+	"fmt"
+
+	"github.com/kiliant/go-imap"
+)
+
 // OBJECTID (RFC 8474), SAVEDATE (RFC 8514), STATUS=SIZE (RFC 8438),
 // APPENDLIMIT (RFC 7889) and PREVIEW (RFC 8970).
 //
-// These five need no framework machinery at all, and that is the point worth
-// recording rather than the code. Each adds a FETCH data item or a STATUS item,
-// and both of those are open types in package imap: imap.FetchItem and
-// imap.StatusItem are interfaces, not closed enumerations, so a new item is a
-// value the backend produces and the codec already knows how to write.
-//
-// So the whole server-side cost of these RFCs is a capability descriptor saying
-// "this backend can produce that item". There is no options field, no optional
-// interface, and no change to any existing signature — which is what API rule 1
-// was buying when it insisted these sets stay open-ended. A closed enum here
-// would have meant five breaking changes.
-//
-// The framework deliberately does not validate that a backend returned the items
-// it claims to support. A backend that advertises SAVEDATE and returns nothing
-// for it is wrong, but the framework cannot tell that from a message that
-// genuinely has no save date, which RFC 8514 section 3 explicitly permits.
+// Backends witness support for extension items carried by the open FetchItem
+// and StatusItem types. The framework gates requests on those witnesses.
+// OBJECTID additionally emits MAILBOXID on CREATE and SELECT/EXAMINE by asking
+// the existing Session.Status contract for the immutable mailbox identifier.
+// A SELECT whose ID lookup fails is abandoned before new selection responses.
+// The framework does not generally validate optional FETCH data: some RFCs
+// permit absent values, such as a message with no SAVEDATE.
 
 func init() {
 	registerCapabilities(
@@ -58,4 +56,26 @@ func init() {
 			RequiresBackend: backendSupportsCapability("PREVIEW"),
 		},
 	)
+}
+
+// mailboxIDResponse queries the existing OBJECTID promise without adding a new
+// backend interface. Object identifiers are 1..255 ASCII letters/digits/-/_.
+func mailboxIDResponse(ctx context.Context, c *conn, mailbox string) (string, error) {
+	data, err := c.state.session.Status(ctx, mailbox, &StatusOptions{Items: []imap.StatusItem{imap.StatusItemMailboxID}})
+	if err != nil {
+		return "", err
+	}
+	var id string
+	if data != nil {
+		id, _ = data.Values[imap.StatusItemMailboxID].(string)
+	}
+	if len(id) == 0 || len(id) > 255 {
+		return "", fmt.Errorf("imapserver: OBJECTID backend returned an invalid MAILBOXID")
+	}
+	for _, ch := range []byte(id) {
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+			return "", fmt.Errorf("imapserver: OBJECTID backend returned an invalid MAILBOXID")
+		}
+	}
+	return "(" + id + ")", nil
 }

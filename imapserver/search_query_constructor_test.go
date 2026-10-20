@@ -38,6 +38,7 @@ func TestNewSearchQueryRejectsUnresolvedAndUnknownKeys(t *testing.T) {
 		func(c imap.SearchCriteria) imap.SearchCriteria { return imap.SearchFuzzy{Criteria: c} },
 	}
 	for _, invalid := range []imap.SearchCriteria{
+		imap.SearchSavedResult{},
 		imap.SearchSeqNum{Set: imap.SeqSetNum(1)}, imap.SearchFilter("filter"),
 		imap.SearchKeyword("FUTURE"), imap.SearchString{Key: "FUTURE"},
 		imap.SearchNot{}, imap.SearchOr{Left: imap.SearchAll}, imap.SearchFuzzy{},

@@ -131,24 +131,39 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
-#### Added
-
-- `imapserver.Options.OnError`, guarded `ServerEvent` and open string
-  `ServerEventKind` expose backend failures, connection limits/timeouts,
-  accept/TLS errors and recovered connection panics. Callbacks run serially
-  outside connection loops with a bounded queue and reported drop counts.
-  A callback may initiate shutdown; shutdown does not wait for callbacks.
-  Backend causes remain private on the wire. Additive exported API. (#139)
-
-
 #### Changed
+
+- **BREAKING:** IMAP4REV2 now requires the backend-only `STATUS-DELETED`
+  witness. Memory and Maildir supply it and answer STATUS DELETED. Backends
+  without it no longer advertise or enable rev2. (#176)
+- **BREAKING:** QUOTASET now requires at least one declared, unfiltered
+  `QUOTA=RES-*` resource. Registered resources use `CapabilitySupport` witnesses;
+  bare RFC 2087 QUOTA remains available without them. Memory declares STORAGE
+  and MESSAGE and answers DELETED-STORAGE; backendtest checks the resource
+  and STATUS obligations. (#177)
+- **BREAKING:** remove the never-supplied `GetMetadataOptions.MaxSize` and
+  `HasMaxSize` fields and dead backend filtering. The framework owns MAXSIZE
+  and computes LONGENTRIES from unfiltered values at the requested depth. (#178)
+- **BREAKING behaviour:** unknown or unadvertised STATUS items receive BAD
+  before backend calls, including LIST-STATUS. NOTIFY responses use the same
+  negotiated item set. (#179)
+- Permit documented, forward-only Maildir format migrations in v1 minors,
+  preserving identities and unknown fields. Every bump must be called out;
+  downgrades require restoring a pre-migration backup. Align the format 3/4
+  entries with this owner-approved policy. (#180)
+- Extend the request-field binding gate to `AppendMessage`. Correct APPEND
+  staging, QRESYNC validation, memory authentication/support and server option
+  defaults documentation; name `NewSearchQuery`'s options parameter. (#181, #182)
+
 
 - Maildir format 4 persists compact transaction changes between bounded full
   checkpoints, and indexes delivery directories with change timestamps.
   Mutations copy affected mailbox pointer slices instead of cloning the whole
   account through JSON. A durable transaction head detects lost change files;
   versions 1–3 and prepared journals migrate with identities and unknown fields
-  preserved. Older readers refuse format 4. Public API and defaults unchanged.
+  preserved. Older readers refuse format 4; rollback requires a pre-migration
+  backup. This follows the documented minor-release migration policy (#180).
+  Public API and defaults unchanged.
   Measured scale comparisons are in `docs/MAILDIR-SCALE.md`. (#117)
 
 - **BREAKING:** memory URLAUTH generation rejects missing/invalid access
@@ -209,7 +224,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 - **BREAKING:** replace `imapserver.MetadataOptions` with guarded
   `GetMetadataOptions` and `SetMetadataOptions`, and update `MetadataSession`
-  signatures and both backends. GETMETADATA retains the depth and size fields;
+  signatures and both backends. GETMETADATA retains its depth field; MAXSIZE is framework-owned;
   SETMETADATA has independent empty options. Document shared-command and future
   field naming contracts on `ACLOptions`, `QuotaOptions`, `LanguageOptions`
   and `ComparatorOptions`. (#131)
@@ -261,9 +276,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   boolean; nil options restore normal selection. Document the callback shape
   for future controls and verify restoration in the conformance suite. (#129)
 
-- **BREAKING, Maildir storage policy:** account state/journals migrate to
+- **Maildir storage policy:** account state/journals migrate to
   version 3, preserving identities and unknown fields; older readers refuse
-  its bounded-history semantics. `maildir.Options.MaxTombstones` defaults to
+  its bounded-history semantics. Rollback requires a pre-migration backup;
+  this follows the documented minor-release migration policy (#180).
+  `maildir.Options.MaxTombstones` defaults to
   10000 per mailbox with a durable QRESYNC checkpoint and conservative older
   requests. `MaxMetadataValueBytes` defaults to 65536 and `MaxMetadataEntries`
   to 1024 per mailbox/server scope, with atomic METADATA MAXSIZE/TOOMANY
@@ -319,6 +336,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   guarantee before the v1 stability window. No exported signatures change. (#74)
 
 #### Added
+
+- `imapserver.Options.OnError`, guarded `ServerEvent` and open string
+  `ServerEventKind` expose backend failures, connection limits/timeouts,
+  accept/TLS errors and recovered connection panics. Callbacks run serially
+  outside connection loops with a bounded queue and reported drop counts.
+  A callback may initiate shutdown; shutdown does not wait for callbacks.
+  Backend causes remain private on the wire. Additive exported API. (#139)
 
 - `imapserver.UpdateRecent{NumRecent}` reports a selection-specific absolute
   RECENT count through the existing extensible update vocabulary. Memory and
@@ -399,6 +423,22 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Resolve SEARCHRES `$` to the selection's saved UIDs at every depth before
+  SEARCH, SORT, THREAD and selected-source ESEARCH reach a backend; unset and
+  empty saved results match nothing. ESEARCH with IN refuses `$`, including
+  nested occurrences. Direct query construction rejects unresolved references.
+  Add conformance and loopback regressions. (#183)
+- Send untagged CLOSED before replacing a selection, including failed
+  reselects, while CLOSE and UNSELECT keep their ordinary responses. (#184)
+- With OBJECTID, include MAILBOXID on successful CREATE and SELECT/EXAMINE
+  through the existing STATUS contract. A failed SELECT identity lookup leaves
+  no selection; a failed post-CREATE lookup returns NO [SERVERBUG] stating
+  explicitly that creation succeeded. No exported API additions. (#185)
+- Advertise RIGHTS=texk alongside ACL and withdraw it when ACL is filtered.
+  Use protocol names in search/FETCH refusals and neutral size-limit wording
+  for APPEND and other content. (#186, #187)
+
+
 - Resolve UID SEARCH wildcards against the selected maximum, normalize
   reversed PARTIAL windows, and report the first CONDSTORE activation clock.
   Flag MODSEQ searches may use the supported single message-wide clock.
@@ -432,7 +472,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - **imapserver:** GETMETADATA MAXSIZE filters values in the framework and
   reports the largest omitted size with the required METADATA LONGENTRIES
   response code. MAXSIZE 0 retains empty values; DEPTH and server/mailbox
-  scopes remain intact. Correct the MetadataOptions.MaxSize documentation.
+  scopes remain intact. Document that MAXSIZE is applied by the framework.
   No exported signatures change. (#54)
 
 - **imapserver:** wait for the reader to settle its pending-input flag before
