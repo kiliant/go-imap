@@ -113,7 +113,7 @@ func TestReviewFinalCleanupProtocolDiagnostic(t *testing.T) {
 	var got atomic.Int32
 	b := &independentDiagnosticBackend{r4Memory()}
 	w := r4Open(t, b, &imapserver.Options{AllowInsecureAuth: true, OnError: func(_ context.Context, e *imapserver.ServerEvent) {
-		if errors.Is(e.Err, independentCleanupCause) {
+		if errors.Is(e.Err, errIndependentCleanup) {
 			got.Add(1)
 		}
 	}})
@@ -125,7 +125,7 @@ func TestReviewFinalCleanupProtocolDiagnostic(t *testing.T) {
 	}
 }
 
-var independentCleanupCause = errors.New("cleanup failed")
+var errIndependentCleanup = errors.New("cleanup failed")
 
 type independentDiagnosticBackend struct{ *memory.Backend }
 type independentDiagnosticSession struct{ imapserver.Session }
@@ -147,7 +147,7 @@ func (s *independentDiagnosticSession) Select(ctx context.Context, n string, u *
 }
 func (s *independentDiagnosticSelected) Unselect(ctx context.Context, o *imapserver.UnselectOptions) error {
 	_ = s.SelectedMailbox.Unselect(ctx, o)
-	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeUnavailable, Text: "cleanup", Err: independentCleanupCause}
+	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeUnavailable, Text: "cleanup", Err: errIndependentCleanup}
 }
 
 type independentZeroRevisionBackend struct{ *memory.Backend }
