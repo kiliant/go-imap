@@ -138,10 +138,7 @@ func (s *session) SetMetadata(ctx context.Context, name string, entries []imap.M
 			return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeMetadata, CodeArgs: fmt.Sprintf("MAXSIZE %d", s.account.backend.maxMetadataValueBytes), Text: "metadata value exceeds storage limit"}
 		}
 	}
-	next, err := cloneState(s.account.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(s.account.state, mailboxKey(name))
 	store, err := metadataStore(next, name)
 	if err != nil {
 		return err

@@ -63,7 +63,7 @@
 // lost+found directory and unpublished atomic-write temporary files remain.
 // Recognized atomic-write temporaries are removed under the root lock.
 //
-// Account state is version 3. It holds mailbox identities, UIDNEXT, message
+// Account state is version 4. It holds mailbox identities, UIDNEXT, message
 // mappings, flags/keywords, modification sequences, metadata, subscriptions and
 // a bounded expunge history. MaxTombstones defaults to 10000 per mailbox.
 // Pruning persists the highest forgotten expunge mod-sequence. A QRESYNC
@@ -71,17 +71,18 @@
 // requested scope, as a conservative superset; live UIDs are never reported
 // vanished. Known sequence/UID match samples restrict that set. At or above
 // the checkpoint, retained history remains exact, including across restarts.
-// Version 2 migrates to 3 without changing mailbox identities. Version 1 also
-// supplies missing revision/modification-sequence fields as 1. Prepared older
-// journals are recovered before migration. Older releases refuse version 3
-// rather than ignore its history checkpoint. METADATA
+// Versions 1, 2 and 3 migrate to 4 without changing mailbox identities; version
+// 1 supplies missing revision/modification-sequence fields as 1. Prepared older
+// journals are recovered before migration. Older releases refuse version 4
+// rather than serve a stale checkpoint. METADATA
 // values that are valid UTF-8 are JSON strings; any other value, which RFC 5464
 // permits, is an object {"base64": ...}, so binary octets survive. Unknown fields
 // at root/account/mailbox/message/tombstone boundaries survive rewrites. Newer
 // versions are refused without rewriting those files. Identity/root registry
-// formats are version 1. State, journal, identity and root-registry files are
-// limited to 256 MiB on both reads and writes. A mutation whose serialized
-// journal exceeds that budget returns NO [LIMIT] before preparing a transaction,
+// formats are version 1. State, journal, change, head, identity and root-registry
+// files are limited to 256 MiB on reads and writes. Checkpoint plus pending
+// changes conservatively bound reconstructed state to the same budget. A
+// mutation exceeding either budget returns NO [LIMIT] before preparing a transaction,
 // leaving the previous state usable. MaxMetadataValueBytes defaults to 65536
 // octets and MaxMetadataEntries to 1024 per mailbox/server scope. A SETMETADATA
 // exceeding either returns METADATA MAXSIZE or TOOMANY atomically, without a
@@ -91,11 +92,20 @@
 //
 // Mutations first fsync staged message data, then atomically publish and fsync
 // .imap-journal.json. Recovery rolls this prepared transaction forward using
-// idempotent filesystem actions, atomically publishes/fsyncs account state,
-// then removes/fsyncs the journal. A successful mutation returns only after
+// idempotent filesystem actions, atomically publishes/fsyncs a numbered
+// .imap-change-<sequence>.json containing changed message records and mailbox
+// headers, updates/fsyncs .imap-head.json, then removes/fsyncs the journal.
+// The durable head detects missing change files, including a lost final change,
+// and fails that account closed. A successful mutation returns only after
 // that sequence. Once preparation is durable, cancellation or an I/O error may
 // still leave the operation committed. A later commit error disables that
 // account until reopen/recovery; no subsequent reader observes partial state.
+// Before another mutation after 64 changes or 8 MiB of change data, and on
+// Open, the backend consolidates changes into .imap-state.json, fsyncs it,
+// then retires covered changes. A crash leaves the old checkpoint plus its
+// changes, or the new checkpoint with harmless covered changes. A generation
+// tied to the account's INBOX identity separates missing-state reconstruction
+// from its retired change history. Back up the complete account directory.
 // If both names of a journalled cur-to-cur message rename have vanished,
 // recovery records that UID as expunged with a newer modification sequence,
 // retaining UIDVALIDITY and UIDNEXT. Missing staged APPEND/COPY bytes and
@@ -120,6 +130,12 @@
 // Polling and SELECT share the state lock: every delivery is in the atomic
 // snapshot or a subsequent revision-chained update, never missed between them. Poll
 // errors remain observable through PollFailures and optional OnPollFailure.
+// Unchanged cur/ and new/ directory identities, mtimes and change times allow
+// cached polls to skip cur/ directory reads and account-wide message stats.
+// Every poll still reads new/ so coalesced filesystem timestamps cannot hide
+// deliveries, and audits up to 16 stored files per mailbox in rotation. Unsupported edits
+// to existing cur/ contents may therefore be diagnosed on a later poll;
+// deliveries and unlinks invalidate the directory cache immediately.
 // Each current diagnostic identifies its account and, when known, mailbox.
 // Successful polls clear that account's current failure. Callbacks run serially
 // outside locks with a cancellation context, may retain their copied diagnostic,
@@ -129,20 +145,17 @@
 //
 // # Scale and measurement
 //
-// This backend targets small accounts: around 1000 live messages per account
-// is the initial latency envelope for the default 100 ms poll interval.
-// This is guidance, not a capacity guarantee. Polling still stats every stored
-// file, and a mutation still clones and writes the whole account state.
-// On a local Apple M1 filesystem, three one-operation samples at 20000 messages
-// measured roughly 1 s per idle poll and 0.6 s per STORE or single-message MOVE.
-// At that size, use a poll interval of several seconds and expect mutations to
-// queue behind each other. Measure the intended filesystem and workload before
-// choosing this backend for larger or mutation-heavy accounts. Message bytes
-// stream during FETCH, but that does not remove metadata-write costs.
+// The default 100 ms poll interval and small-account guidance remain unchanged.
+// Cached idle polls inspect directory stamps and at most 16 files per mailbox;
+// ordinary mutations copy the affected mailboxes' pointer slices and persist
+// changed records, rather than cloning or rewriting every message. Changed
+// directory scans and periodic checkpoints still require linear work, and
+// mutations remain serialized per account. Measure the intended filesystem and
+// workload before choosing this backend for larger or mutation-heavy accounts.
 //
 // BenchmarkMaildirScale provides 1000/20000-message idle-poll, STORE and MOVE
-// fixtures; run go test -run '^$' -bench BenchmarkMaildirScale -benchtime=1x
-// -count=3 in this package. Idle polls avoid a full-state clone, and MOVE keeps
-// unaffected messages in linear time. Incremental persistence and a file index
-// remain future optimisations rather than part of the v1 contract.
+// fixtures; run go test -run '^$' -bench BenchmarkMaildirScale -benchmem
+// -benchtime=3x -count=3 in this package. docs/MAILDIR-SCALE.md records the #117
+// baseline, comparison and remaining costs. Measurements are observations,
+// not latency or capacity guarantees.
 package maildir

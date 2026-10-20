@@ -171,10 +171,7 @@ func (s *session) Create(ctx context.Context, name string, options *imapserver.C
 			}
 		}
 	}
-	next, err := cloneState(s.account.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(s.account.state)
 	m, err := s.account.newMailbox()
 	if err != nil {
 		return err
@@ -195,10 +192,7 @@ func (s *session) Delete(ctx context.Context, name string, _ *imapserver.DeleteO
 	if s.account.state.Mailboxes[name] == nil {
 		return missingMailbox()
 	}
-	next, err := cloneState(s.account.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(s.account.state)
 	delete(next.Mailboxes, name)
 	var actions []fileAction
 	for _, sub := range []string{"cur", "new", "tmp"} {
@@ -224,10 +218,7 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 	if strings.HasPrefix(newName, oldName+"/") {
 		return noError(imap.CodeCannot, "cannot rename beneath itself")
 	}
-	next, err := cloneState(s.account.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(s.account.state, oldName)
 	var actions []fileAction
 	if oldName == "INBOX" {
 		// Move messages into a new identity, leaving the selected INBOX and
@@ -312,10 +303,7 @@ func (s *session) subscribe(ctx context.Context, name string, value bool) error 
 		return err
 	}
 	defer s.account.leave()
-	next, err := cloneState(s.account.state)
-	if err != nil {
-		return err
-	}
+	next := mutationState(s.account.state)
 	if value {
 		next.Subscriptions[mailboxKey(name)] = true
 	} else {
@@ -588,10 +576,7 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	if s.account.state.Mailboxes[name] == nil {
 		return nil, noError(imap.CodeTryCreate, "destination mailbox does not exist")
 	}
-	next, err := cloneState(s.account.state)
-	if err != nil {
-		return nil, err
-	}
+	next := mutationState(s.account.state, name)
 	m := next.Mailboxes[name]
 	uid, err := allocateUID(m)
 	if err != nil {

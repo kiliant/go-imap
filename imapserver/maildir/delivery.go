@@ -241,17 +241,14 @@ func (a *account) reconcileContext(ctx context.Context) (retErr error) {
 	if changed, err := a.reconciliationNeeded(ctx); err != nil || !changed {
 		return err
 	}
-	next, err := cloneState(a.state)
-	if err != nil {
-		return err
-	}
 	var actions []fileAction
 	changes := make(map[uint32][]imapserver.Update)
-	names := make([]string, 0, len(next.Mailboxes))
-	for name := range next.Mailboxes {
+	names := make([]string, 0, len(a.state.Mailboxes))
+	for name := range a.state.Mailboxes {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	next := mutationState(a.state, names...)
 	for _, name := range names {
 		currentMailbox = name
 		if err := ctx.Err(); err != nil {

@@ -100,16 +100,19 @@ type Backend struct {
 }
 
 type account struct {
-	backend  *Backend
-	root     *os.Root
-	password string
-	username string
-	gate     chan struct{}
-	state    *accountState
-	identity identityState
-	existing bool
-	watchers map[uint32]map[*selected]*imapserver.Updater
-	failure  error
+	backend                      *Backend
+	root                         *os.Root
+	password                     string
+	username                     string
+	gate                         chan struct{}
+	state                        *accountState
+	identity                     identityState
+	checkpointBytes, changeBytes int64
+	changeCount                  int
+	scanCache                    map[string]directorySnapshot
+	existing                     bool
+	watchers                     map[uint32]map[*selected]*imapserver.Updater
+	failure                      error
 	// deliveryError records skipped new/ entries under the account gate.
 	deliveryError error
 }

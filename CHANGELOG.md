@@ -128,6 +128,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- Maildir format 4 persists compact transaction changes between bounded full
+  checkpoints, and indexes delivery directories with change timestamps.
+  Mutations copy affected mailbox pointer slices instead of cloning the whole
+  account through JSON. A durable transaction head detects lost change files;
+  versions 1–3 and prepared journals migrate with identities and unknown fields
+  preserved. Older readers refuse format 4. Public API and defaults unchanged.
+  Measured scale comparisons are in `docs/MAILDIR-SCALE.md`. (#117)
+
 - Interop acceptance recognises current imaptest group and per-command
   summaries as well as the legacy summary. Nonzero failures fail the test even
   without an Error-prefixed complaint; the synchronising-literal tool exception
