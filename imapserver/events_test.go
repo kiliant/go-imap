@@ -161,7 +161,10 @@ func TestServerEventConnectionFailures(t *testing.T) {
 				t.Fatalf("panic diagnostic=%+v", event)
 			}
 			select {
-			case <-done:
+			case err := <-done:
+				if scenario == "panic" && (err == nil || !strings.HasPrefix(err.Error(), "imapserver: recovered panic:")) {
+					t.Fatalf("ServeConn hid recovered panic: %v", err)
+				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("ServeConn did not stop")
 			}

@@ -117,10 +117,15 @@ func (c *conn) protect(run func() error) (err error) {
 	defer func() {
 		if value := recover(); value != nil {
 			err = fmt.Errorf("imapserver: recovered panic: %v", value)
+			// Preserve the panic even if closing the transport makes the other
+			// goroutine return an unrelated I/O error first. ServeConn callers
+			// and whole-server fuzzing must still see the internal failure.
+			c.fatalMu.Lock()
+			c.fatal = err
+			c.fatalMu.Unlock()
 			command, _ := c.eventCommand.Load().(string)
-			if c.terminalReported.CompareAndSwap(false, true) {
-				c.server.reportEvent(c.ctx, &ServerEvent{Kind: ServerEventPanic, Conn: connectionInfo(c), Command: command, Err: err, Stack: debug.Stack()})
-			}
+			c.terminalReported.Store(true)
+			c.server.reportEvent(c.ctx, &ServerEvent{Kind: ServerEventPanic, Conn: connectionInfo(c), Command: command, Err: err, Stack: debug.Stack()})
 			c.cancel(err)
 			c.closeTransport()
 		}

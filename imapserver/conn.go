@@ -191,6 +191,9 @@ func (c *conn) serve() error {
 	c.cancel(err)
 	c.closeTransport()
 	readerErr := <-readerDone
+	if fatal := c.fatalError(); fatal != nil {
+		return fatal
+	}
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, context.Canceled) {
 		return err
 	}
