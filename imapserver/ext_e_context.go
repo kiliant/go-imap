@@ -114,9 +114,6 @@ func validateSortReturnOptions(c *conn, options []string) error {
 			return fmt.Errorf("unsupported SORT return option %q", option)
 		}
 	}
-	if slices.Contains(options, searchReturnPartial) && slices.Contains(options, sortReturnAll) {
-		return fmt.Errorf("SORT RETURN cannot combine PARTIAL and ALL")
-	}
 	return nil
 }
 

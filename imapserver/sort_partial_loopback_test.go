@@ -33,6 +33,10 @@ func TestSortReturnPartial(t *testing.T) {
 		{"SORT RETURN (COUNT PARTIAL 1:2) (ARRIVAL) US-ASCII ALL", `* ESEARCH (TAG "P") COUNT 5 PARTIAL (1:2 1:2)`},
 		{"SORT RETURN (ALL) (ARRIVAL) US-ASCII ALL", `* ESEARCH (TAG "P") ALL 1:5`},
 		{"SORT RETURN (ALL) (REVERSE ARRIVAL) US-ASCII ALL", `* ESEARCH (TAG "P") ALL 5,4,3,2,1`},
+		// RFC 5267 forbids a client to send these; like SEARCH (#206), the
+		// server accepts them, reporting both items and the last range.
+		{"SORT RETURN (PARTIAL 1:2 ALL) (ARRIVAL) US-ASCII ALL", `* ESEARCH (TAG "P") ALL 1:5 PARTIAL (1:2 1:2)`},
+		{"SORT RETURN (PARTIAL 1:2 PARTIAL 3:4) (ARRIVAL) US-ASCII ALL", `* ESEARCH (TAG "P") PARTIAL (3:4 3:4)`},
 	} {
 		got := w.cmd("P", tc.command)
 		sweepWant(t, got, "OK")
@@ -46,8 +50,6 @@ func TestSortReturnPartial(t *testing.T) {
 		"SORT RETURN (PARTIAL *:1) (ARRIVAL) US-ASCII ALL",
 		"SORT RETURN (PARTIAL 0:1) (ARRIVAL) US-ASCII ALL",
 		"SORT RETURN (PARTIAL -1:2) (ARRIVAL) US-ASCII ALL",
-		"SORT RETURN (PARTIAL 1:2 ALL) (ARRIVAL) US-ASCII ALL",
-		"SORT RETURN (PARTIAL 1:2 PARTIAL 3:4) (ARRIVAL) US-ASCII ALL",
 		"SORT RETURN (PARTIAL) (ARRIVAL) US-ASCII ALL",
 	} {
 		got := w.cmd("B", command)

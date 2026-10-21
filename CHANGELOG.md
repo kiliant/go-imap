@@ -383,8 +383,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - SORT and UID SORT accept the PARTIAL return option under CONTEXT=SORT
   (RFC 5267 section 4.4, as RFC 9394 extends it). The window is taken from
   the sorted order and reported as `PARTIAL (<range> <set>)`, or `NIL` when
-  it holds nothing; negative ranges count from the end. PARTIAL with ALL, a
-  second PARTIAL, or a malformed range is refused with BAD. ESORT results
+  it holds nothing; negative ranges count from the end. A malformed range is
+  refused with BAD. As for SEARCH (#206), PARTIAL together with ALL reports
+  both, and a repeated PARTIAL uses the last range. ESORT results
   write ascending runs as ranges, `1:5` rather than `1,2,3,4,5`, and spell
   out every other order (RFC 5267 section 3.2). Framework-owned; no exported
   API or backend contract change. (#205)

@@ -215,11 +215,8 @@ func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
 			}
 			option = strings.ToUpper(option)
 			if option == searchReturnPartial {
-				// The one option with an argument. A second PARTIAL is
-				// refused: a command carries at most one (section 4.4).
-				if args.partial != nil {
-					return fmt.Errorf("SORT RETURN carries more than one PARTIAL")
-				}
+				// The one option with an argument. As in SEARCH, a repeated
+				// PARTIAL is accepted and the last range applies (#206).
 				var raw string
 				if !decoder.ExpectSP() || !decoder.ExpectAtom(&raw) {
 					return decoder.Err()
