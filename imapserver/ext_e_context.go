@@ -87,7 +87,7 @@ func sortReturnSet(options []string) map[string]bool {
 		requested[option] = true
 	}
 	if !requested[sortReturnMin] && !requested[sortReturnMax] &&
-		!requested[sortReturnAll] && !requested[sortReturnCount] {
+		!requested[sortReturnAll] && !requested[sortReturnCount] && !requested[searchReturnPartial] {
 		requested[sortReturnAll] = true
 	}
 	return requested
@@ -104,13 +104,18 @@ func validateSortReturnOptions(c *conn, options []string) error {
 			if err := requireCapability(c, "ESORT"); err != nil {
 				return err
 			}
-		case searchReturnUpd, searchReturnCtx:
+		case searchReturnUpd, searchReturnCtx, searchReturnPartial:
+			// PARTIAL is RFC 5267 section 4.4's, which CONTEXT=SORT brings to
+			// SORT; RFC 9394 extends the same option for SEARCH.
 			if err := requireCapability(c, "CONTEXT=SORT"); err != nil {
 				return err
 			}
 		default:
 			return fmt.Errorf("unsupported SORT return option %q", option)
 		}
+	}
+	if slices.Contains(options, searchReturnPartial) && slices.Contains(options, sortReturnAll) {
+		return fmt.Errorf("SORT RETURN cannot combine PARTIAL and ALL")
 	}
 	return nil
 }

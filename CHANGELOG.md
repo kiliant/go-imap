@@ -380,6 +380,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- SORT and UID SORT accept the PARTIAL return option under CONTEXT=SORT
+  (RFC 5267 section 4.4, as RFC 9394 extends it). The window is taken from
+  the sorted order and reported as `PARTIAL (<range> <set>)`, or `NIL` when
+  it holds nothing; negative ranges count from the end. PARTIAL with ALL, a
+  second PARTIAL, or a malformed range is refused with BAD. ESORT results
+  write ascending runs as ranges, `1:5` rather than `1,2,3,4,5`, and spell
+  out every other order (RFC 5267 section 3.2). Framework-owned; no exported
+  API or backend contract change. (#205)
+
 - `imapserver.MultiSearchMailboxResult.ModSeqs` optionally pairs each matching
   UID with its modification sequence, so ESEARCH can report MODSEQ for MIN,
   MAX, PARTIAL or the whole result (RFC 7162 section 3.1.5, RFC 4731 section

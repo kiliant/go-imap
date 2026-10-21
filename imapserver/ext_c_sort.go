@@ -188,9 +188,12 @@ type sortArgs struct {
 	keys []imap.SortKeySpec
 	// returnOptions carries ESORT's RETURN clause. See ext_e_context.go.
 	returnOptions []string
-	extended      bool
-	charset       string
-	criteria      imap.SearchCriteria
+	// partial is the PARTIAL window, RFC 5267 section 4.4 as extended by RFC
+	// 9394. It windows the sorted result.
+	partial  *searchPartialRange
+	extended bool
+	charset  string
+	criteria imap.SearchCriteria
 }
 
 func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
@@ -210,7 +213,24 @@ func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
 			if !decoder.ExpectAtom(&option) {
 				return decoder.Err()
 			}
-			args.returnOptions = append(args.returnOptions, strings.ToUpper(option))
+			option = strings.ToUpper(option)
+			if option == searchReturnPartial {
+				// The one option with an argument. A second PARTIAL is
+				// refused: a command carries at most one (section 4.4).
+				if args.partial != nil {
+					return fmt.Errorf("SORT RETURN carries more than one PARTIAL")
+				}
+				var raw string
+				if !decoder.ExpectSP() || !decoder.ExpectAtom(&raw) {
+					return decoder.Err()
+				}
+				window, err := parsePartialRange(raw)
+				if err != nil {
+					return err
+				}
+				args.partial = window
+			}
+			args.returnOptions = append(args.returnOptions, option)
 			return nil
 		}); err != nil {
 			return nil, 0, err
@@ -479,28 +499,48 @@ func writeSortResponse(c *conn, command *queuedCommand, args *sortArgs, numbers 
 			c.encoder.SP().Atom(sortReturnMax).SP().Number(numbers[len(numbers)-1])
 		}
 		if requested[sortReturnAll] {
-			// ALL keeps the sorted order, so it is written as a plain list
-			// rather than collapsed into ranges: collapsing would re-sort it.
+			// ALL keeps the sorted order; only ascending runs become ranges.
 			c.encoder.SP().Atom(sortReturnAll).SP().Atom(numberListString(numbers))
 		}
 	}
 	if requested[sortReturnCount] {
 		c.encoder.SP().Atom(sortReturnCount).SP().Number(uint32(len(numbers)))
 	}
+	if args.partial != nil {
+		// The window is taken from the sorted order and reported with the
+		// requested range, or NIL when it holds nothing (RFC 9394 section 3.1).
+		c.encoder.SP().Atom(searchReturnPartial).SP().Special('(').Atom(formatPartialRange(args.partial)).SP()
+		if window := partialWindow(args.partial, numbers); len(window) > 0 {
+			c.encoder.Atom(numberListString(window))
+		} else {
+			c.encoder.NIL()
+		}
+		c.encoder.Special(')')
+	}
 	c.encoder.CRLF()
 	return c.encoder.Flush()
 }
 
-// numberListString renders numbers in the order given, without collapsing runs
-// into ranges. A sorted result's order is data, and range notation would lose
-// it.
+// numberListString renders a sorted result as a sequence-set that keeps its
+// order. RFC 5267 section 3.2 expands every range in increasing order, so an
+// ascending run of consecutive numbers may be written "3:5", while any other
+// order must be spelled out: "5,3:4,2" is 5, 3, 4, 2.
 func numberListString(numbers []uint32) string {
 	var builder strings.Builder
-	for i, number := range numbers {
+	for i := 0; i < len(numbers); {
+		end := i
+		for end+1 < len(numbers) && numbers[end+1] == numbers[end]+1 {
+			end++
+		}
 		if i > 0 {
 			builder.WriteByte(',')
 		}
-		builder.WriteString(strconv.FormatUint(uint64(number), 10))
+		builder.WriteString(strconv.FormatUint(uint64(numbers[i]), 10))
+		if end > i {
+			builder.WriteByte(':')
+			builder.WriteString(strconv.FormatUint(uint64(numbers[end]), 10))
+		}
+		i = end + 1
 	}
 	return builder.String()
 }
