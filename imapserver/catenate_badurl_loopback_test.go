@@ -89,3 +89,24 @@ func TestCatenateUnrepresentableURLRefusal(t *testing.T) {
 		}
 	}
 }
+
+// RFC 3501 section 6.3.11 requires TRYCREATE when the destination does not
+// exist. A refused CATENATE URL is found while staging, before the backend
+// sees the destination, so it must not displace that code. imaptest's catenate
+// script checks exactly this.
+func TestCatenateRefusalToMissingDestinationIsTryCreate(t *testing.T) {
+	b := r4Memory()
+	review6fFill(t, b, 1)
+	w := r4Open(t, b, nil)
+	sweepWant(t, w.cmd("S", "SELECT INBOX"), "OK")
+	for _, tc := range []struct{ command, want string }{
+		{`APPEND Missing CATENATE (URL "/INBOX;UIDVALIDITY=12345/;UID=1")`, "A NO [TRYCREATE] "},
+		{`REPLACE 1 Missing CATENATE (URL "/INBOX;UIDVALIDITY=12345/;UID=1")`, "A NO [TRYCREATE] "},
+		{`APPEND INBOX CATENATE (URL "/INBOX;UIDVALIDITY=12345/;UID=1")`, "A NO [BADURL "},
+	} {
+		if got := r4Tagged(w.cmd("A", tc.command)); !strings.HasPrefix(got, tc.want) {
+			t.Errorf("%s = %q, want %s...", tc.command, got, tc.want)
+		}
+	}
+	sweepWant(t, w.cmd("N", "NOOP"), "OK")
+}

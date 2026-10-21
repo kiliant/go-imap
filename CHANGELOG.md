@@ -487,6 +487,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   an invalid server response. Compatible wire correction; no exported API or
   backend contract change. (#205)
 
+- APPEND and REPLACE answer NO [TRYCREATE] when the destination does not
+  exist, even if staging refused the command first, for example over a
+  CATENATE URL. RFC 3501 section 6.3.11 requires TRYCREATE for a missing
+  destination; the framework now asks `Session.Status` with no items whether
+  the destination exists before reporting such a refusal. Any answer other
+  than NONEXISTENT or TRYCREATE keeps the original response. No exported API
+  change and no new backend obligation. (#205)
+
 - memory: CATENATE URLs that inherit the account (relative, message-only and
   absolute without userinfo) resolve for logins containing `@` or `:`, such as
   e-mail addresses. The resolver wrote the login into the URL's userinfo

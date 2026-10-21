@@ -111,7 +111,7 @@ func handleReplace(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeAppendDecodeError(c, command.tag, err, "invalid REPLACE payload")
 	}
 	if staged.failure != nil {
-		return writeBackendError(c, command.tag, command.name, staged.failure)
+		return writeBackendError(c, command.tag, command.name, appendDestinationRefusal(ctx, c, args.mailbox, staged.failure))
 	}
 	if err := ctx.Err(); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
