@@ -24,9 +24,9 @@ import (
 const imaptestImage = "go-imap-imaptest:local"
 
 // imaptestArgs is the connection half of every invocation below.
-func imaptestArgs(host, port string) string {
+func imaptestArgs(host, port, user string) string {
 	return fmt.Sprintf("host=%s port=%s user=%s pass=%s",
-		host, port, interopUser, interopPassword)
+		host, port, user, interopPassword)
 }
 
 // mboxFixture is the message source imaptest's stress mode appends from. It
@@ -61,18 +61,17 @@ func mboxFixture(count int) string {
 // are easy to omit without any client noticing until one does. This is the
 // closest thing to an executable conformance suite the IMAP ecosystem has.
 //
-// It currently does not run against us, and the reason is a limitation of the
-// tool rather than a finding about the server — see the triaged exception in
-// docs/INTEROP.md. imaptest's script runner refuses to start unless the server
-// advertises LITERAL+, aborting with "FIXME: Add support for sync literals":
-// it cannot drive a synchronising literal at all. imapserver advertises
-// LITERAL- (RFC 7888), which caps unsolicited non-synchronising literals at
-// 4096 octets, so the runner bails before sending a command.
+// The image carries two corrections, both in testdata/imaptest and docs/INTEROP.md
+// (#205). imaptest's script runner sent a literal only to a LITERAL+ server
+// and aborted on this one, which advertises LITERAL- (RFC 7888); a patch
+// teaches it LITERAL-. And a few script expectations contradict normative RFC
+// text; rfc-expectations.pl corrects exactly those. The scripts log in as
+// scriptedUser, because imaptest writes its login into URLAUTH URLs unescaped.
 //
-// The skip is loud and specific on purpose. The task spec allows documented,
-// triaged exceptions and forbids silent skips, and an earlier version of this
-// test reported PASS on that very abort, because a tool refusing to start looks
-// identical to a tool finding nothing wrong.
+// A sync-literal abort is no longer a triaged skip: requireImaptestRan fails
+// on it, because it now means the patch or LITERAL- regressed. An earlier
+// version of this test reported PASS on that very abort, because a tool
+// refusing to start looks identical to a tool finding nothing wrong.
 func TestImaptestScriptedConformance(t *testing.T) {
 	for _, backend := range clientBackends {
 		t.Run(backend.name, func(t *testing.T) { testImaptestScriptedConformance(t, backend.factory) })
@@ -95,7 +94,7 @@ if [ -z "$tests" ]; then echo "NOTESTS"; exit 0; fi
 echo "TESTDIR=$tests"
 imaptest %s test="$tests" || true
 echo "=== done ==="
-`, imaptestArgs(runtime.hostAlias, port))
+`, imaptestArgs(runtime.hostAlias, port, scriptedUser))
 
 	out, err := runInImage(t, runtime, imaptestImage, script, 15*time.Minute)
 	t.Logf("imaptest scripted output:\n%s", out)
@@ -104,11 +103,6 @@ echo "=== done ==="
 	}
 	if strings.Contains(out, "NOTESTS") {
 		t.Skip("this imaptest build installed no scripted test corpus")
-	}
-	if strings.Contains(out, "Add support for sync literals") {
-		t.Skip("TRIAGED: imaptest's script runner requires LITERAL+ and cannot " +
-			"drive a synchronising literal; imapserver advertises LITERAL-. " +
-			"A tool limitation, not a server finding — see docs/INTEROP.md")
 	}
 	requireImaptestRan(t, out)
 	assertNoImaptestFailures(t, out)
@@ -119,9 +113,8 @@ echo "=== done ==="
 
 // TestImaptestStress runs imaptest's randomised command mix for a bounded time.
 //
-// This is the half the scripted corpus cannot reach, and — given the scripted
-// runner skips above — currently the whole of what imaptest contributes:
-// concurrent clients issuing overlapping commands against one mailbox, which is
+// This is the half the scripted corpus cannot reach: concurrent clients
+// issuing overlapping commands against one mailbox, which is
 // where selection teardown, update delivery and expunge sequencing race. The
 // bar is the fuzz targets' — no crash, no hang, no protocol complaint — rather
 // than a pass count.
@@ -148,7 +141,7 @@ cat > /tmp/mbox <<'MBOXEOF'
 MBOXEOF
 imaptest %s mbox=/tmp/mbox clients=4 secs=20 || true
 echo "=== done ==="
-`, mboxFixture(8), imaptestArgs(runtime.hostAlias, recorded.port()))
+`, mboxFixture(8), imaptestArgs(runtime.hostAlias, recorded.port(), interopUser))
 
 	out, err := runInImage(t, runtime, imaptestImage, script, 10*time.Minute)
 	t.Logf("imaptest stress output:\n%s", out)

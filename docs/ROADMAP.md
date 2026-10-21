@@ -206,8 +206,9 @@ in FETCH and by keeping the memory backend's applicable-keyword registry
 persistent after the last message reference is removed. The triage entry is
 gone, a raw loopback regression pins the wire ordering, and the unfiltered
 `TestImaptestStress` workload passes. All numbered tasks and every M6 exit
-criterion are complete; the scripted-corpus skip remains the documented
-imaptest `LITERAL+` runner limitation, not a server finding. See `INTEROP.md`.
+criterion are complete. The scripted-corpus skip, then documented as an
+imaptest `LITERAL+` runner limitation, was removed by #205: the corpus now runs
+against both backends. See `INTEROP.md`.
 
 ## Post-M6 — reliability and event delivery
 

@@ -340,14 +340,46 @@ both creation/persistence and FETCH ordering. The matching imaptest triage entry
 was removed, and repeated `TestImaptestStress` runs pass with no ignored server
 findings.
 
-The scripted corpus is a third, different case: it never ran at all. imaptest's
-script runner aborts with `FIXME: Add support for sync literals` unless the
-server advertises `LITERAL+`, and this server advertises `LITERAL-` (RFC 7888),
-capping unsolicited non-synchronising literals at 4096 octets. That is a
-limitation of the tool, not a finding about the server, and the test skips
-loudly rather than silently — an earlier version reported PASS on that abort,
-because a tool refusing to start is indistinguishable from a tool finding
-nothing wrong unless you check.
+The scripted corpus is a third case. imaptest's script runner sends a literal
+in a script command only to a server advertising `LITERAL+`, and otherwise
+aborts the whole run with `FIXME: Add support for sync literals`. Only the
+CATENATE and MULTIAPPEND scripts contain such literals. Maildir advertises
+neither and always ran; memory aborted before reporting anything, so the
+backend with the widest capability surface had no scripted coverage at all.
+The image now applies `testdata/imaptest/literal-minus.patch`, which teaches
+imaptest RFC 7888 `LITERAL-`: a literal of up to 4096 octets is sent
+non-synchronising, and a larger one still aborts. An abort is therefore a
+failure, not a skip (#205). An earlier version of the test reported PASS on
+that abort, because a tool refusing to start is indistinguishable from a tool
+finding nothing wrong unless you check.
+
+Two further adjustments are deliberately narrow:
+
+- The scripts log in as `scripted`. imaptest writes its login into URLAUTH
+  URLs unescaped, so with `interop@example.test` they name user `interop` at
+  host `example.test`: RFC 5092 enc-user cannot carry `@`. Those scripts then
+  tested imaptest's URLs rather than the server. Stress and every other
+  workload keep the `@` login, and memory's CATENATE resolver has a
+  regression test with one, because that login is how #205 found its
+  userinfo escaping bug.
+- `testdata/imaptest/rfc-expectations.pl` corrects expectations that
+  contradict normative RFC text, and fails the image build if one no longer
+  matches:
+  - `notify`: RFC 5465 section 5 requires BAD when MessageNew or
+    MessageExpunge is registered without the other, and when FlagChange is
+    registered without both. The script expected OK. RFC 5465's own examples,
+    including the errata that corrected their parentheses, use a single
+    MessageNew and so contradict section 5; this server follows the normative
+    text. The STATUS content the script checked is kept, with valid
+    registrations.
+  - `fetch-binary-mime-base64`: RFC 9051 section 7.5.2 requires a textual
+    section sent by BINARY to use CRLF line termination. Part 5
+    (`text/x-myown`) decodes to text with a lone CR and a lone LF; the server
+    sends 32 octets with both as CRLF, where the script expected 30.
+
+A correction belongs in that script only when the RFC requires what the server
+does. With these, memory passes all 71 groups (457 base and 311 extension
+commands), and Maildir all 71 (158 extension commands).
 
 #### Where these run
 

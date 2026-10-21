@@ -56,6 +56,11 @@ import (
 const (
 	interopUser     = "interop@example.test"
 	interopPassword = "interop-pw"
+	// scriptedUser is the login of imaptest's scripted corpus. imaptest writes
+	// its login into URLAUTH URLs unescaped, and RFC 5092 enc-user cannot carry
+	// "@", so with interopUser those scripts would test imaptest's malformed
+	// URLs rather than this server. Every other workload keeps interopUser.
+	scriptedUser = "scripted"
 )
 
 // Profile is this server, run in the test process.
@@ -220,7 +225,7 @@ var MaildirProfile = definition.Profile{
 type backendFactory func(context.Context) (imapserver.Backend, func(context.Context) error, error)
 
 func memoryBackend(context.Context) (imapserver.Backend, func(context.Context) error, error) {
-	backend := memory.New(&memory.Options{Users: map[string]string{interopUser: interopPassword}})
+	backend := memory.New(&memory.Options{Users: map[string]string{interopUser: interopPassword, scriptedUser: interopPassword}})
 	return backend, func(context.Context) error { return nil }, nil
 }
 
@@ -229,7 +234,10 @@ func maildirBackend(ctx context.Context) (imapserver.Backend, func(context.Conte
 	if err != nil {
 		return nil, nil, err
 	}
-	backend, err := maildir.Open(ctx, root, &maildir.Options{Accounts: []maildir.AccountOptions{{Username: interopUser, Password: interopPassword}}})
+	backend, err := maildir.Open(ctx, root, &maildir.Options{Accounts: []maildir.AccountOptions{
+		{Username: interopUser, Password: interopPassword},
+		{Username: scriptedUser, Password: interopPassword},
+	}})
 	if err != nil {
 		_ = os.RemoveAll(root)
 		return nil, nil, err
