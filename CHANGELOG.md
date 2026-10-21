@@ -87,6 +87,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Guard shared command lookahead when a transport read fails after a complete
+  keyword. Authenticated server connections now return the read error instead
+  of recovering an internal bounds panic. No exported API or backend contract
+  change; publish the root correction before the server module. (#54)
+
 - The shared server-direction SEARCH parser accepts `UID $`, including nested
   criteria, as the saved SEARCHRES result. This also repairs SORT, THREAD and
   ESEARCH criteria and IMAP4rev2's incorporated syntax. Compatible correction;

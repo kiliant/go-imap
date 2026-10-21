@@ -140,8 +140,20 @@ run_one() {
   # -run '^$' excludes the ordinary unit tests: they are covered by the test
   # job, and under fuzzing load the timing-sensitive ones fail for reasons that
   # have nothing to do with the target.
+  local status=0
   go test "${tagargs[@]}" -count=1 -run '^$' "-fuzz=^${name}$" \
-    -fuzztime="$FUZZTIME" "$pkg" >>"$log" 2>&1
+    -fuzztime="$FUZZTIME" "$pkg" >>"$log" 2>&1 || status=$?
+  # Smoke CI uploads OUT, not the source tree. Preserve the failing target's
+  # corpus there as well, so its reproducer survives the runner disappearing.
+  if [ "$status" -ne 0 ]; then
+    local pkgdir corpus
+    pkgdir=$(go list "${tagargs[@]}" -f '{{.Dir}}' "$pkg") || return 1
+    if [ -d "$pkgdir/testdata/fuzz/$name" ]; then
+      corpus="$OUT/corpus/$(echo "${pkg}_${name}" | tr '/:.' '___')"
+      mkdir -p "$corpus" && cp -R "$pkgdir/testdata/fuzz/$name/." "$corpus/" || return 1
+    fi
+  fi
+  return "$status"
 }
 
 pids=()

@@ -3,6 +3,7 @@ package imapserver_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -121,7 +122,7 @@ func driveServer(t *testing.T, prologue, input []byte) {
 		// recovered internal panic remains a fuzz finding. Never accept it as
 		// an ordinary malformed-input disconnect.
 		if err != nil && strings.HasPrefix(err.Error(), "imapserver: recovered panic:") {
-			t.Fatalf("ServeConn recovered an internal panic: %v", err)
+			t.Fatalf("ServeConn recovered an internal panic: %v; input=%q", err, input)
 		}
 	case <-time.After(fuzzHangTimeout):
 		t.Fatalf("ServeConn did not return within %s of the peer closing", fuzzHangTimeout)
@@ -195,6 +196,38 @@ func readTagged(t *testing.T, reader *bufio.Reader, tag string) string {
 	}
 }
 
+// failedInputConn preserves normal connection lifecycle methods while making
+// the input's termination deterministic, independent of net.Pipe scheduling.
+type failedInputConn struct {
+	net.Conn
+	input io.Reader
+}
+
+func (c *failedInputConn) Read(p []byte) (int, error) {
+	n, err := c.input.Read(p)
+	if err == io.EOF {
+		err = io.ErrClosedPipe
+	}
+	return n, err
+}
+
+func (c *failedInputConn) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestAppendCatenateReadFailure(t *testing.T) {
+	backend := memory.New(&memory.Options{Users: map[string]string{"alice": "secret"}})
+	server := imapserver.New(backend, &imapserver.Options{AllowInsecureAuth: true})
+	ctx, cancel := context.WithTimeout(context.Background(), fuzzPipeTimeout)
+	defer cancel()
+	defer server.Close(ctx, nil)
+	peer, transport := net.Pipe()
+	defer peer.Close()
+	conn := &failedInputConn{Conn: transport, input: strings.NewReader("a LOGIN alice secret\r\nb APPEND INBOX CATENATE")}
+	err := server.ServeConn(ctx, conn, nil)
+	if !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("ServeConn = %v; want the transport read error", err)
+	}
+}
+
 // FuzzServeConnPreAuth drives bytes at a connection that has authenticated
 // nothing — the state a remote attacker starts in.
 func FuzzServeConnPreAuth(f *testing.F) {
@@ -228,6 +261,7 @@ func FuzzServeConnPreAuth(f *testing.F) {
 // credential it would have to guess.
 func FuzzServeConnAuthenticated(f *testing.F) {
 	for _, seed := range []string{
+		"b APPEND INBOX CATENATE",
 		"b SELECT INBOX\r\nc UID REPLACE 1 INBOX d EXPUNGE\r\n",
 		"b SELECT INBOX\r\nc REPLACE 1 INBOX CATENATE (TEXT {3+}\r\nabc)\r\n",
 		"b APPEND INBOX ~{3+}\r\na\x00b\r\n",
