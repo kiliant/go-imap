@@ -23,6 +23,21 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Root module — `github.com/kiliant/go-imap`
+
+#### Fixed
+
+- **imapmessage:** base64 bodies decode as RFC 2045 section 6.8 requires:
+  characters outside the alphabet are ignored and `=` ends the data. Spaces or
+  tabs inside base64 no longer make BINARY fail with UNKNOWN-CTE or SEARCH fall
+  back to the encoded octets. BINARY accepts multipart and message sections
+  and returns their stored octets (RFC 3516). An address without a domain,
+  such as `From: d`, stays in the ENVELOPE with host `MISSING_DOMAIN` rather
+  than being dropped. Adds the re-encoding of NUL-bearing parts behind
+  `imapserver/message`. Only `imapserver` uses this package; a standalone
+  server build receives these fixes with the next root release. No exported
+  API change. (#205)
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed

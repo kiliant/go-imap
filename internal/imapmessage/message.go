@@ -557,12 +557,26 @@ func parseMailboxAddresses(raw string) []imap.Address {
 				route, address = address[:colon], address[colon+1:]
 			}
 		}
-		if at := strings.LastIndexByte(address, '@'); at > 0 && at+1 < len(address) {
-			out = append(out, imap.Address{Name: cleanHeaderValue(imap.DecodeHeader(name)), SourceRoute: cleanHeaderValue(route), Mailbox: cleanHeaderValue(address[:at]), Host: cleanHeaderValue(address[at+1:])})
+		mailbox, host := address, ""
+		if at := strings.LastIndexByte(address, '@'); at >= 0 {
+			mailbox, host = address[:at], address[at+1:]
 		}
+		if mailbox == "" {
+			continue
+		}
+		if host == "" {
+			host = missingDomain
+		}
+		out = append(out, imap.Address{Name: cleanHeaderValue(imap.DecodeHeader(name)), SourceRoute: cleanHeaderValue(route), Mailbox: cleanHeaderValue(mailbox), Host: cleanHeaderValue(host)})
 	}
 	return out
 }
+
+// missingDomain stands in for the host of an address written without one, such
+// as "From: d". The address is kept rather than dropped from the envelope, and
+// a NIL host is not an option: in an ENVELOPE address it marks group syntax
+// (RFC 3501 section 7.4.2). Dovecot uses the same placeholder.
+const missingDomain = "MISSING_DOMAIN"
 
 func stripAddressComments(raw string) string {
 	var out strings.Builder

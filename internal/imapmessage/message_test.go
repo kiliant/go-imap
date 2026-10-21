@@ -455,3 +455,27 @@ func ExampleMessage_OpenBodySection() {
 	fmt.Printf("%d %s\n", size, b)
 	// Output: 4 body
 }
+
+// An address without a domain stays in the envelope with a placeholder host;
+// dropping it lost the sender, and a NIL host would read as group syntax.
+func TestEnvelopeKeepsDomainlessAddress(t *testing.T) {
+	for _, tc := range []struct {
+		from string
+		want []imap.Address
+	}{
+		{"d", []imap.Address{{Mailbox: "d", Host: "MISSING_DOMAIN"}}},
+		{"d@", []imap.Address{{Mailbox: "d", Host: "MISSING_DOMAIN"}}},
+		{"Name <d>", []imap.Address{{Name: "Name", Mailbox: "d", Host: "MISSING_DOMAIN"}}},
+		{"b@c.d", []imap.Address{{Mailbox: "b", Host: "c.d"}}},
+		{"@c.d", nil},
+	} {
+		raw := "From: " + tc.from + "\r\n\r\nbody\r\n"
+		m, err := Analyze(strings.NewReader(raw), int64(len(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := m.Envelope.From; fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Errorf("From: %s = %+v, want %+v", tc.from, got, tc.want)
+		}
+	}
+}

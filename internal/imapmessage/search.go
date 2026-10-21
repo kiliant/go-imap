@@ -3,7 +3,6 @@ package imapmessage
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -421,7 +420,7 @@ func (m *Message) decodedBodyReader(p *part) (io.Reader, error) {
 	var reader io.Reader = io.NewSectionReader(m.r, p.headers.bodyStart, p.end-p.headers.bodyStart)
 	switch strings.ToLower(strings.TrimSpace(p.encoding)) {
 	case "base64":
-		reader = base64.NewDecoder(base64.StdEncoding, reader)
+		reader = newBase64Reader(reader)
 	case "quoted-printable":
 		reader = quotedprintable.NewReader(reader)
 	case "", "7bit", "8bit", "binary":
