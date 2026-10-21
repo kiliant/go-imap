@@ -7,7 +7,7 @@ stable v1.0 are compatible goals rather than competing ones.
 import "github.com/kiliant/go-imap/imapclient"
 ```
 
-> **Status: root v1.2.1 and imapserver v0.3.0 released.** The exported API of
+> **Status: root v1.3.0 and imapserver v0.3.0 released.** The exported API of
 > `package imap` and
 > `package imapclient` is frozen under the compatibility policy in
 > `docs/API-STABILITY.md`; the separately versioned server framework remains
