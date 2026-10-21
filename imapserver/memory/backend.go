@@ -50,9 +50,13 @@ type Backend struct {
 }
 
 type account struct {
-	mu              sync.Mutex
-	password        string
-	mailboxes       map[string]*mailbox
+	mu        sync.Mutex
+	password  string
+	mailboxes map[string]*mailbox
+	// subscriptions maps mailbox keys to subscribed names. They belong to the
+	// name, not the mailbox: DELETE and RENAME leave them in place (RFC 3501
+	// section 6.3.6, RFC 9051 sections 6.3.6 and 6.3.7).
+	subscriptions   map[string]string
 	nextUIDValidity uint32
 	selectFailure   map[string]bool
 	// Group D per-account state. An unset limit is unlimited; a configured
@@ -79,8 +83,7 @@ type mailbox struct {
 	// remain applicable after their last message reference disappears; treating
 	// FLAGS as a projection of current messages makes concurrent STORE commands
 	// withdraw and re-add the same keyword around FETCH responses.
-	flags      []imap.Flag
-	subscribed bool
+	flags []imap.Flag
 	// specialUse holds the RFC 6154 use attributes assigned at CREATE time.
 	// See ext_a.go.
 	specialUse []imap.MailboxAttr
@@ -120,6 +123,7 @@ func newAccount(password string) *account {
 	a := &account{
 		password:        password,
 		mailboxes:       make(map[string]*mailbox),
+		subscriptions:   make(map[string]string),
 		nextUIDValidity: 1,
 		selectFailure:   make(map[string]bool),
 	}

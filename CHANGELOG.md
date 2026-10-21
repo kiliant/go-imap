@@ -91,6 +91,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `backend-error` event carrying the client's URL; no event is reported now.
   Other refused URLs keep NO [BADURL <url>]. APPEND and REPLACE commit nothing
   either way. No exported API change. (#204)
+- **BREAKING behaviour (memory):** Subscriptions belong to mailbox names, not
+  mailboxes. DELETE keeps a subscription (RFC 3501 section 6.3.9), and
+  LIST (SUBSCRIBED) returns it as `\NonExistent` (RFC 5258 section 3).
+  UNSUBSCRIBE removes it even after the mailbox is gone, and re-creating the
+  name finds it subscribed. RENAME no longer moves the subscription to the new
+  name; it stays on the old one (RFC 9051 section 6.3.6). LIST also returns a
+  hierarchy level that is not a mailbox as `\NonExistent \HasChildren` when a
+  pattern such as `a/%` matches it and its descendants lie beyond the
+  pattern (RFC 5258 section 3.5). No exported API change. (#205)
 
 - **BREAKING behaviour:** NOTIFY validates registrations before calling the
   backend or closing the current one. Unpaired MessageNew/MessageExpunge,
