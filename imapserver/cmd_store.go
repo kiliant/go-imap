@@ -158,7 +158,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		}
 	}
 	accounting := updateAccounting{origin: origin, effect: effectStore, silent: args.silent}
-	if !discardOutput {
+	if !discardOutput && !responses.streaming {
 		// Only what the response reported is accounted for. A changed
 		// message the backend did not report keeps its unsolicited update.
 		accounting.covered = responses.reported(args.silent, condStoreMailboxEnabled(c))
@@ -178,9 +178,19 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 			return err
 		}
 	}
-	for _, response := range responses.items {
-		if err := writeFetchLikeResponse(c, response.data); err != nil {
+	if responses.streaming {
+		// The mutation succeeded. A buffer budget must not turn its completion
+		// into NO or discard a conditional STORE's MODIFIED result.
+		if err := streamStoreResponses(ctx, c, uids, condStore, args.silent, includeUID); err != nil {
+			c.reportBackendError(command.name, err)
+			_ = c.writeBye("unable to report STORE results")
 			return err
+		}
+	} else {
+		for _, response := range responses.items {
+			if err := writeFetchLikeResponse(c, response.data); err != nil {
+				return err
+			}
 		}
 	}
 	if len(responses.items) != 0 {
@@ -208,8 +218,9 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 // storeResponses collects STORE's untagged FETCH responses until the backend
 // has returned, because what may be written depends on its result.
 type storeResponses struct {
-	items []storeResponse
-	bytes int64
+	items     []storeResponse
+	bytes     int64
+	streaming bool
 }
 
 const storeResponseOverhead int64 = 1024
@@ -221,9 +232,13 @@ type storeResponse struct {
 }
 
 func (r *storeResponses) add(c *conn, data *imap.FetchMessageData, includeUID bool) error {
+	if r.streaming {
+		return nil
+	}
 	remaining := c.server.options.Limits.MaxStoreResponseBytes - r.bytes
 	if remaining < storeResponseOverhead {
-		return commandLimitError("STORE response byte limit exceeded")
+		r.streamInstead()
+		return nil
 	}
 	uid, _ := extractFetchUID(data)
 	mapped, err := mapFetchResponse(c.state.selected, data, includeUID)
@@ -242,11 +257,49 @@ func (r *storeResponses) add(c *conn, data *imap.FetchMessageData, includeUID bo
 	}
 	if wireBytes > remaining-storeResponseOverhead {
 		cleanup()
-		return commandLimitError("STORE response byte limit exceeded")
+		r.streamInstead()
+		return nil
 	}
 	r.bytes += wireBytes + storeResponseOverhead
 	r.items = append(r.items, storeResponse{uid: uid, data: mapped, cleanup: cleanup})
 	return nil
+}
+
+func (r *storeResponses) streamInstead() {
+	r.cleanup()
+	r.bytes = 0
+	r.streaming = true
+}
+
+// Refetch the requested state with the existing FETCH contract after the
+// STORE result is known. Memory stays independent of the number of responses;
+// .SILENT projection and MODIFIED retain their ordinary meanings.
+func streamStoreResponses(ctx context.Context, c *conn, uids imap.UIDSet, result *CondStoreResult, silent, includeUID bool) error {
+	items := []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags}
+	if condStoreMailboxEnabled(c) {
+		items = append(items, imap.FetchItemModSeq)
+	}
+	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
+		mapped, err := mapFetchResponse(c.state.selected, data, includeUID)
+		if err != nil {
+			return err
+		}
+		uid, _ := extractFetchUID(data)
+		if silent && (result == nil || !result.Modified.Contains(uid)) {
+			deleteFetchItem(mapped, imap.FetchItemFlags)
+		}
+		mapped = stripModSeqUnlessEnabled(c, mapped)
+		if condStoreMailboxEnabled(c) && !hasFetchItem(mapped, imap.FetchItemModSeq) {
+			return fmt.Errorf("imapserver: STORE result FETCH omitted MODSEQ")
+		}
+		if err := writeFetchLikeResponse(c, mapped); err != nil {
+			return err
+		}
+		return c.encoder.Flush()
+	})
+	err := c.state.selected.mailbox.Fetch(ctx, writer, uids, &FetchOptions{Items: items})
+	writer.core.close()
+	return err
 }
 
 func (r *storeResponses) cleanup() {
@@ -280,6 +333,9 @@ func (r *storeResponses) silenceStored(modified imap.UIDSet) {
 // response lacks it. Stored means requested and not named in MODIFIED;
 // a rejected message also needs MODSEQ if the backend wrote its FLAGS.
 func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, requested, modified imap.UIDSet, includeUID bool) error {
+	if r.streaming {
+		return nil
+	}
 	have := make(map[imap.UID]bool, len(r.items))
 	byUID := make(map[imap.UID][]int, len(r.items))
 	for i, response := range r.items {
@@ -288,6 +344,9 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 	// A backend may split a message's output across responses. Fill each
 	// response, and index by UID so a FLAGS-only mailbox stays linear in size.
 	merge := func(uid imap.UID, data *imap.FetchMessageData) (bool, error) {
+		if r.streaming {
+			return true, nil
+		}
 		if !hasFetchItem(data, imap.FetchItemModSeq) || len(byUID[uid]) == 0 {
 			return false, nil
 		}
@@ -314,7 +373,8 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 				return false, err
 			}
 			if after-before > c.server.options.Limits.MaxStoreResponseBytes-r.bytes {
-				return false, commandLimitError("STORE response byte limit exceeded")
+				r.streamInstead()
+				return true, nil
 			}
 			r.bytes += after - before
 		}
@@ -325,6 +385,9 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 			have[response.uid] = true
 			if _, err := merge(response.uid, response.data); err != nil {
 				return err
+			}
+			if r.streaming {
+				return nil
 			}
 		}
 	}
@@ -355,6 +418,9 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 	writer.core.close()
 	if err != nil {
 		return err
+	}
+	if r.streaming {
+		return nil
 	}
 	kept := r.items[:0]
 	for _, response := range r.items {

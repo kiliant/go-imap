@@ -1113,17 +1113,19 @@ including commits followed by errors. STATUS/SELECT visibility is fenced behind
 publication, including external commits. This is a **BREAKING pre-v1 backend
 duty**, previously relied on by the framework but absent from its written
 contract. A backend using a late change feed must add a publication fence.
-`backendtest.Run` checks the call boundary for APPEND, STORE, EXPUNGE and MOVE
+`backendtest.Run` checks the call boundary for APPEND, COPY, STORE, EXPUNGE and MOVE
 against both the mutating selection and a bystander. Both reference backends
 already serialize publication with commit visibility. `WriteExpunge` reports a
 UID; the ordered update batch supplies its later wire response.
 
-`Limits.MaxQueuedUpdateBytes` now explicitly bounds accumulated backlog and
-admits one oversized atomic batch into an empty queue, including retained
-removals. This is a pre-v1 change to the bound's meaning; count limits still
-apply. `Limits.MaxStoreResponseBytes` is an additive guarded field, defaulting
-to 32 MiB, charging encoded bytes plus 1 KiB per retained STORE response. A
-limit refusal does not roll back an already committed mutation.
+`Limits.MaxQueuedUpdateBytes` bounds undrained backlog and permits the budget
+plus one atomic commit. `MaxQueuedUpdates` bounds undrained batches. Applied,
+protocol-deferred removals are compact UIDs bounded by the selected client view
+(`MaxSelectedMessages`), separately from backlog. These are pre-v1 changes to
+the bounds' meanings. `Limits.MaxStoreResponseBytes` is an additive guarded
+field, defaulting to 32 MiB, charging encoded bytes plus 1 KiB per retained STORE
+response. Exhaustion switches to a streaming FLAGS/MODSEQ refetch after mutation
+completion, preserving OK and MODIFIED. A failed post-commit stream sends BYE.
 
 FETCH item keys are case-insensitive in both framework and conformance suite;
 no canonical-spelling duty is imposed. RENAME INBOX requires strict removal-clock
@@ -1132,3 +1134,21 @@ UNAUTHENTICATE errors send BYE and close, as RFC 8437 requires; success removes
 COMPRESS after the OK's CRLF and gives Session.Close a fresh cleanup deadline.
 URLAUTH returns nil/nil for an unresolved URL; errors fail URLFETCH through its
 ordinary error mapping after completing the untagged response framing.
+
+The publication fence is also stated directly on `Session.Status` and
+`Session.Select`. Conformance exercises concurrent STATUS/SELECT reads while
+publication is held open, including writes without a framework origin. Truly
+external delivery and durable-commit error paths still need backend-specific
+tests; the generic suite does not manufacture storage events or failures.
+
+SORT keys join the explicit capability classification: unknown keys and repeated
+REVERSE are BAD, DISPLAYFROM/DISPLAYTO require SORT=DISPLAY, and RELEVANCY requires
+SEARCH=FUZZY and a FUZZY criterion after filter expansion. This tightening is
+marked BREAKING behaviour before the window. FILTERS and URL-PARTIAL withdrawals
+are enforced before backend calls. Duplicate case variants cannot bypass
+FetchWriter's existing exactly-one-UID rule.
+
+The compatible root client correction ends COMPRESS at successful UNAUTHENTICATE
+completion, preserving TLS and prefetched plaintext. The shared internal boundary
+reader accepts sync flush, final block, and sync flush followed by a final block.
+Ship the root correction before the server's compression teardown correction.

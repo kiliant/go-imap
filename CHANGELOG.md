@@ -87,6 +87,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- `imapclient.Client.Unauthenticate` ends an active COMPRESS layer at the
+  successful completion, preserves TLS and prefetched plaintext, and prevents
+  concurrent writes across the framing change. Shared internal boundary handling
+  accepts sync flush, a final block, or both. REPLACE emulation compares UID keys
+  without regard to case and rejects ambiguous UID values. Compatible corrections;
+  no exported API change. Ship in the root release preceding the server's
+  UNAUTHENTICATE teardown correction. (#54, RT-3/RT-4)
+
 - Root `imap.StatusItemDeletedStorage` documents octets, matching RFC 9208
   and the server contract, rather than kibibytes. Documentation only. (#54)
 
@@ -156,16 +164,25 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   call returns or STATUS/SELECT exposes the commit, including external commits
   and commits followed by errors. Late-feed backends must add a publication
   fence. Both reference backends already satisfy this duty; `backendtest.Run`
-  now checks APPEND, STORE, EXPUNGE and MOVE at the call boundary. Correct
+  now checks APPEND, COPY, STORE, EXPUNGE and MOVE at the call boundary and tests
+  the STATUS/SELECT visibility fence. Correct
   `ExpungeWriter.WriteExpunge`: wire removals come from the ordered batches
   after the backend call. No interface or signature change. (#54, B-1)
-- **BREAKING (pre-v1 bound semantics):** `Limits.MaxQueuedUpdateBytes` admits
-  one oversized atomic batch into an empty queue, including withheld removals.
-  The limit bounds accumulated backlog; the batch count limit remains active.
-  This prevents one large STORE from disconnecting every mailbox session.
+- **BREAKING (pre-v1 bound semantics):** `Limits.MaxQueuedUpdateBytes` permits
+  the undrained byte budget plus one atomic commit. `MaxQueuedUpdates` bounds
+  undrained batches. Applied, protocol-deferred removals are compact UID records
+  bounded by MaxSelectedMessages, separately from backlog. A withheld removal
+  therefore does not cause a later STORE or ordinary change to disconnect clients.
   Add `Limits.MaxStoreResponseBytes`, default 32 MiB, charging wire bytes plus
-  1 KiB per retained response. Exceeding it returns NO [LIMIT] without rolling
-  back already committed changes. (#54, B-2/D-5)
+  1 KiB per retained response. Exhaustion switches to a fresh streaming refetch
+  after mutation completion, preserving OK and conditional MODIFIED results.
+  A failed committed-state stream sends BYE. (#54, B-2/D-5, review N-1/N-2)
+- **BREAKING behaviour:** SORT classifies keys before backend access. Unknown
+  keys and repeated REVERSE receive BAD; DISPLAYFROM/DISPLAYTO require
+  SORT=DISPLAY; RELEVANCY requires SEARCH=FUZZY and a FUZZY criterion. Correct
+  the SortMailbox contract. Enforce URL-PARTIAL withdrawal and report withdrawn
+  FILTERS as a gate refusal. Existing interfaces and signatures stay unchanged.
+  (#54, review N-4)
 
 - **BREAKING behaviour:** NOTIFY validates registrations before calling the
   backend or closing the current one. Unpaired MessageNew/MessageExpunge,
@@ -542,6 +559,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   fallback also refreshes FLAGS and MODSEQ from one fetch. Queued flag changes
   keep the checkpoint fenced. The exported optional-zero contract remains
   valid; no new backend obligation. (#54, final review)
+- SEARCH clock fallback, UIDONLY projection and keyword announcement compare
+  all FETCH item spellings case-insensitively. Enforce FetchWriter's existing
+  exactly-one-nonzero-UID rule across spellings, preventing random sequence
+  mappings from conflicting UID keys. Read timeouts send BYE. UNAUTHENTICATE
+  accepts an optional final DEFLATE block after sync flush. No exported API
+  change. (#54, review N-3 and teardown/timeout follow-ups)
 - LOGIN and AUTHENTICATE preserve commands buffered behind authentication,
   including SASL continuation and UNAUTHENTICATE/re-authentication pipelines.
   UNAUTHENTICATE errors send BYE instead of the forbidden NO; success removes

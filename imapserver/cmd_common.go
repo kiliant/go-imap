@@ -251,20 +251,8 @@ func seqSetContains(set imap.SeqSet, seq, maximum imap.SeqNum) bool {
 }
 
 func extractFetchUID(data *imap.FetchMessageData) (imap.UID, bool) {
-	if data == nil {
-		return 0, false
-	}
-	for key, values := range data.Items {
-		if !strings.EqualFold(string(key), "UID") {
-			continue
-		}
-		for _, value := range values {
-			if uid, ok := value.(imap.FetchDataUID); ok && uid != 0 {
-				return imap.UID(uid), true
-			}
-		}
-	}
-	return 0, false
+	uid, ok := imapcodec.FetchValue[imap.FetchDataUID](data, "UID")
+	return imap.UID(uid), ok && uid != 0
 }
 
 func mapFetchResponse(selected *selectedState, data *imap.FetchMessageData, includeUID bool) (*imap.FetchMessageData, error) {

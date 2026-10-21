@@ -888,17 +888,21 @@ starts from a fresh `Status`.
 
 ### Overflow: never drop, and BYE is best-effort
 
-The byte budget bounds accumulated backlog. An empty queue admits one atomic
-batch even if that batch exceeds `MaxQueuedUpdateBytes`; splitting one commit
-would violate the update contract. While oversized, it cannot admit another
-batch. Withheld removals use the same rule and budget. Retention of that single
-batch scales with the backend commit, while `MaxSelectedMessages` independently
-bounds the selected UID map. The count limit remains in force.
+The byte budget bounds undrained backlog. A queue at or below
+`MaxQueuedUpdateBytes` admits one more atomic batch: retained bytes are bounded
+by the budget plus one backend commit. Splitting a commit would violate the
+update contract. `MaxQueuedUpdates` bounds the undrained batch count. Applied
+removals that cannot yet be announced are compact UID records, bounded by the
+client's `MaxSelectedMessages` view, and consume neither backlog budget. A normal
+protocol deferral must not prevent a later STORE from completing.
 
 STORE's response collection has a separate `Limits.MaxStoreResponseBytes`
 budget (default 32 MiB). It charges encoded response bytes plus 1 KiB per
-response for descriptors and fallback indexes. Exceeding it returns NO [LIMIT];
-already committed changes still take effect and remain in the update stream.
+response for descriptors and fallback indexes. Exhaustion discards the buffered
+responses and switches to a fresh streaming FLAGS/MODSEQ FETCH after the backend
+returns. STORE still completes with OK, including its conditional MODIFIED set;
+the bound never changes an already successful mutation into a NO. A failure while
+streaming the committed state sends BYE so the client can resynchronise.
 
 If the client stops reading, the queue fills. Dropping an EXPUNGE is not
 available: it desynchronises the client's sequence numbers permanently and

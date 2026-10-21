@@ -261,7 +261,7 @@ func TestReviewE74StoreResponseLimit(t *testing.T) {
 	r4Append(w, "INBOX", "", "one")
 	r4Append(w, "INBOX", "", "two")
 	w.cmd("S", "SELECT INBOX")
-	if got := w.cmd("F", `STORE 1:* +FLAGS (\Seen)`); !strings.HasPrefix(r4Tagged(got), "F NO [LIMIT]") {
+	if got := w.cmd("F", `STORE 1:* +FLAGS (\Seen)`); !strings.HasPrefix(r4Tagged(got), "F OK") || len(got) != 3 {
 		t.Fatalf("STORE buffer limit = %q", got)
 	}
 	if got := w.cmd("N", "NOOP"); !strings.HasPrefix(r4Tagged(got), "N OK") {

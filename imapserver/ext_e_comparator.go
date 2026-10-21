@@ -177,7 +177,7 @@ func applySearchFilters(ctx context.Context, c *conn, criteria imap.SearchCriter
 		return criteria, nil
 	}
 	if err := requireCapability(c, "FILTERS"); err != nil {
-		return nil, err
+		return nil, &imap.Error{Type: imap.ErrorTypeBad, Text: err.Error()}
 	}
 	return resolveSearchFilters(ctx, c, criteria, 0)
 }

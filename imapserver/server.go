@@ -54,21 +54,21 @@ type Limits struct {
 	// Non-positive values mean unlimited (the default). A positive limit
 	// closes the connection with BYE before executing the next command.
 	MaxCommands int
-	// MaxQueuedUpdates bounds pending backend update batches, including
-	// retained removal announcements the protocol does not yet permit.
+	// MaxQueuedUpdates bounds backend update batches awaiting application.
+	// Applied removals awaiting a legal response are compact UID records bounded
+	// by MaxSelectedMessages and do not consume this backlog budget.
 	// The default is 256.
 	MaxQueuedUpdates int
-	// MaxQueuedUpdateBytes bounds retained update payload bytes in aggregate,
-	// including withheld removals. An empty queue always admits one atomic
-	// batch, even if it exceeds this budget; no second batch is admitted until
-	// enough bytes are released. The default is 1 MiB. Retention of a single
-	// batch scales with its commit; this limit bounds accumulated backlog.
+	// MaxQueuedUpdateBytes bounds undrained update payload bytes. A queue at or
+	// below the budget admits one more atomic batch, so retention is bounded by
+	// the budget plus one commit. Applied, protocol-deferred removals are bounded
+	// separately by MaxSelectedMessages. The default is 1 MiB.
 	MaxQueuedUpdateBytes int64
 	// MaxStoreResponseBytes bounds buffered STORE responses, including
 	// CONDSTORE fallback results. Each response is charged its encoded size
 	// plus 1 KiB for retained descriptors and indexes. The default is 32 MiB.
-	// Exceeding it answers NO [LIMIT]; already committed mutations still take
-	// effect and remain in the update stream.
+	// On exhaustion, results are refetched and streamed after the mutation
+	// returns; successful STORE and its MODIFIED result still complete with OK.
 	MaxStoreResponseBytes int64
 	// MaxSelectedMessages bounds the per-selection UID-to-sequence map.
 	// The default is 2,000,000 messages.

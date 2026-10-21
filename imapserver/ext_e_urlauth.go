@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
@@ -184,6 +185,11 @@ func handleGenURLAuth(ctx context.Context, c *conn, command *queuedCommand) erro
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	for _, pair := range args.pairs {
+		if err := requireURLCapabilities(c, pair.url); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
+	}
 	urls := make([]string, 0, len(args.pairs))
 	for _, pair := range args.pairs {
 		authorized, backendErr := session.GenerateURLAuth(ctx, pair.url, pair.mechanism, nil)
@@ -211,6 +217,11 @@ func handleURLFetch(ctx context.Context, c *conn, command *queuedCommand) error 
 	session, err := urlAuthSession(c, command)
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
+	}
+	for _, url := range urls {
+		if err := requireURLCapabilities(c, url); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
 	}
 	remaining := c.server.options.Limits.MaxLiteralBytes
 	var failure error
@@ -310,6 +321,13 @@ func urlAuthSession(c *conn, _ *queuedCommand) (URLAuthSession, error) {
 }
 
 var errURLAuthUnavailable = &urlAuthError{"URLAUTH is not available"}
+
+func requireURLCapabilities(c *conn, url string) error {
+	if strings.Contains(strings.ToUpper(url), ";PARTIAL=") {
+		return requireCapability(c, "URL-PARTIAL")
+	}
+	return nil
+}
 
 type urlAuthError struct{ text string }
 

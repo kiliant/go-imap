@@ -110,6 +110,9 @@ type Session interface {
 	// Status answers STATUS for any mailbox, including the selected mailbox.
 	// Only the items options requests need be populated; the framework writes
 	// what it asked for and nothing else.
+	// Status must not expose a commit until its UpdateBatch has been pushed to
+	// every updater attached before that commit, including external writes.
+	// A change-feed backend must fence this read against publication.
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
 	// Create makes a mailbox. Creating one that exists is an error, and
 	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
@@ -150,6 +153,8 @@ type Session interface {
 	Append(ctx context.Context, mailbox string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error)
 	// Select captures Snapshot and attaches updater to that exact state atomically.
 	// If it attaches updater and then fails, it must detach before returning.
+	// A snapshot must not expose a commit before publication to the previously
+	// attached updaters, including external commits; see UpdateBatch.
 	Select(ctx context.Context, mailbox string, updater *Updater, options *SelectOptions) (*SelectResult, error)
 	// Close releases everything the session holds. The framework calls it once,
 	// when the connection ends, including after an error and after

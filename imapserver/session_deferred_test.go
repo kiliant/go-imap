@@ -27,8 +27,8 @@ func TestDeferredRemovalsValidateBackendAndPreserveClientView(t *testing.T) {
 				len(updates) != 2 || updates[0].exists != 4 || updates[1].seqNum != 3 {
 				t.Fatalf("views/updates diverged: client %v, backend %v, updates %+v", s.uids, s.backendUIDs, updates)
 			}
-			if queue.heldItems != 1 || queue.bytes == 0 {
-				t.Fatal("withheld removal escaped queue budget")
+			if len(s.withheld) != 1 || queue.bytes != 0 {
+				t.Fatal("withheld UID must be retained outside the undrained batch budget")
 			}
 			for _, invalid := range []Update{&UpdateExpunge{UID: 1}, &UpdateFlags{UID: 1}} {
 				if _, err := s.applyBatchDeferringRemovals(&UpdateBatch{Before: "r2", After: "r3", Changes: []Update{invalid}}, updateAccounting{}, true); !errors.Is(err, ErrRevisionMismatch) {
@@ -36,14 +36,14 @@ func TestDeferredRemovalsValidateBackendAndPreserveClientView(t *testing.T) {
 				}
 			}
 			updates, err = s.deliverWithheldRemovals()
-			if err != nil || len(updates) != 1 || !reflect.DeepEqual(s.uids, []imap.UID{2, 3, 4}) || queue.bytes != 0 || queue.heldItems != 0 || s.backendUIDs != nil {
+			if err != nil || len(updates) != 1 || !reflect.DeepEqual(s.uids, []imap.UID{2, 3, 4}) || queue.bytes != 0 || len(s.withheld) != 0 || s.backendUIDs != nil {
 				t.Fatalf("delivery did not reconcile views/budget: %v, %+v, %v", err, updates, s.uids)
 			}
 		})
 	}
 }
 
-func TestWithheldRemovalAndQueuedBatchesShareLimits(t *testing.T) {
+func TestWithheldRemovalDoesNotConsumeBatchBacklog(t *testing.T) {
 	overflowed := false
 	q := newUpdateQueue(2, 512, func() { overflowed = true })
 	s := &selectedState{uids: []imap.UID{1, 2}, revision: "r1", queue: q}
@@ -53,7 +53,10 @@ func TestWithheldRemovalAndQueuedBatchesShareLimits(t *testing.T) {
 	if err := q.push(&UpdateBatch{Before: "r2", After: "r3", Changes: []Update{&UpdateFlags{UID: 2}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.push(&UpdateBatch{Before: "r3", After: "r4", Changes: []Update{&UpdateFlags{UID: 2}}}); !errors.Is(err, ErrUpdateOverflow) || !overflowed {
-		t.Fatalf("held removal was not counted: %v", err)
+	if err := q.push(&UpdateBatch{Before: "r3", After: "r4", Changes: []Update{&UpdateFlags{UID: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.push(&UpdateBatch{Before: "r4", After: "r5"}); !errors.Is(err, ErrUpdateOverflow) || !overflowed {
+		t.Fatalf("undrained batch count was not bounded: %v", err)
 	}
 }

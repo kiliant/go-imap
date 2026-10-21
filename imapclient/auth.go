@@ -509,15 +509,31 @@ func (c *Client) authenticationSucceeded() {
 func (c *Client) tlsActive() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, ok := c.conn.(*tls.Conn)
-	return ok
+	return c.tlsConnLocked() != nil
+}
+
+// Compression and its post-UNAUTHENTICATE input buffer sit above TLS.
+func (c *Client) tlsConnLocked() *tls.Conn {
+	transport := c.conn
+	for {
+		switch layer := transport.(type) {
+		case *tls.Conn:
+			return layer
+		case *deflateConn:
+			transport = layer.Conn
+		case *uncompressedConn:
+			transport = layer.Conn
+		default:
+			return nil
+		}
+	}
 }
 
 func (c *Client) tlsChannelBinding() ([]byte, error) {
 	c.mu.Lock()
-	tlsConn, ok := c.conn.(*tls.Conn)
+	tlsConn := c.tlsConnLocked()
 	c.mu.Unlock()
-	if !ok {
+	if tlsConn == nil {
 		return nil, authProtocolError("SCRAM-PLUS requires a TLS connection")
 	}
 	state := tlsConn.ConnectionState()

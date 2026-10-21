@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapdeflate"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -139,6 +140,42 @@ func (c *Client) clearPause() {
 	c.mu.Unlock()
 }
 
+type uncompressedConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *uncompressedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+// Called on the reader goroutine at UNAUTHENTICATE's tagged OK, under writeMu.
+// Other commands cannot cross the framing transition while resetInProgress.
+func (c *Client) disableDeflateLocked() error {
+	c.mu.Lock()
+	dc, compressed := c.conn.(*deflateConn)
+	c.mu.Unlock()
+	if !compressed {
+		return nil
+	}
+	dc.read.Lock()
+	err := dc.r.Finish()
+	dc.read.Unlock()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
+	transport := &uncompressedConn{Conn: dc.Conn, reader: dc.r.PlainReader()}
+	wopts, eopts := c.opts.wireOptions(), c.opts.encoderOptions()
+	c.conn = transport
+	c.dec = imapwire.NewDecoder(transport, &wopts)
+	c.enc = imapwire.NewEncoder(transport, &eopts)
+	_ = dc.r.Close()
+	return nil
+}
+
 // enableDeflateLocked replaces the transport with a DEFLATE wrapper.
 // The caller must hold writeMu; this also takes mu.
 func (c *Client) enableDeflateLocked() error {
@@ -173,20 +210,25 @@ func (c *Client) enableDeflateLocked() error {
 // for a block that has not been emitted.
 type deflateConn struct {
 	net.Conn
-	r     io.ReadCloser
+	r     *imapdeflate.Reader
 	w     *flate.Writer
 	write sync.Mutex
 	read  sync.Mutex
 }
 
 func newDeflateConn(conn net.Conn) (*deflateConn, error) {
+	input := io.Reader(conn)
+	if plain, ok := conn.(*uncompressedConn); ok {
+		conn = plain.Conn
+		input = imapdeflate.ResumeReader(plain.reader)
+	}
 	w, err := flate.NewWriter(conn, flate.DefaultCompression)
 	if err != nil {
 		return nil, err
 	}
 	return &deflateConn{
 		Conn: conn,
-		r:    flate.NewReader(conn),
+		r:    imapdeflate.NewReader(input),
 		w:    w,
 	}, nil
 }

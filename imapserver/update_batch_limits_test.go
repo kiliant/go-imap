@@ -105,8 +105,11 @@ func TestCompactUpdateBatchStillBoundsBacklogPayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := newUpdater(queue).Push(&UpdateBatch{Before: "r1", After: "r2", Changes: changes})
-			if !errors.Is(err, ErrUpdateOverflow) || !overflowed || len(queue.items) != 1 {
-				t.Fatalf("oversized retained payload accepted: %v, overflow=%t", err, overflowed)
+			if err != nil || overflowed || len(queue.items) != 2 {
+				t.Fatalf("budget plus one atomic batch: %v, overflow=%t", err, overflowed)
+			}
+			if err := newUpdater(queue).Push(&UpdateBatch{Before: "r2", After: "r3"}); !errors.Is(err, ErrUpdateOverflow) || !overflowed {
+				t.Fatalf("unbounded backlog: %v, overflow=%t", err, overflowed)
 			}
 		})
 	}

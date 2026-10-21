@@ -23,6 +23,11 @@
 // cases must not infer that consent merely from a backend's concrete type or
 // impose new requirements on every existing Harness. Controls remain test-only
 // fixtures; implementing a control does not grant production capabilities.
+// Publication checks cover APPEND, COPY, STORE, EXPUNGE and MOVE call boundaries
+// and concurrent STATUS/SELECT visibility during a zero-origin write. Backend
+// authors must supplement these with storage-specific external-delivery and
+// durable-commit error tests; Run cannot inject such events into an arbitrary
+// store. Publication and visibility remain required for those paths too.
 // Every caller-supplied control callback must take a context first and a
 // pointer to its own options struct last. Nil options select documented
 // defaults, so future controls can grow without changing callback signatures.
@@ -131,6 +136,8 @@ func Run(t *testing.T, harness *Harness) {
 	runStatusWitnesses(t, harness)
 	runMultiAppend(t, harness)
 	t.Run("synchronous-publication", func(t *testing.T) { runSynchronousPublication(t, harness) })
+	t.Run("copy-publication", func(t *testing.T) { runCopyPublication(t, harness) })
+	t.Run("publication-visibility", func(t *testing.T) { runPublicationVisibility(t, harness) })
 
 	t.Run("snapshot-consistency", func(t *testing.T) {
 		instance, session := newSession(t, harness)

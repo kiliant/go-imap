@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 )
 
 func searchHasModSeq(criteria imap.SearchCriteria) bool {
@@ -74,11 +75,8 @@ func searchResponseModSeq(ctx context.Context, c *conn, args *searchArgs, result
 	seen := make(map[imap.UID]bool, len(wanted))
 	var highest uint64
 	writer := &FetchWriter{WriteFunc: func(_ context.Context, data *imap.FetchMessageData) error {
-		if data == nil || len(data.Items["UID"]) != 1 || len(data.Items["MODSEQ"]) != 1 {
-			return fmt.Errorf("imapserver: SEARCH clock FETCH requires UID and MODSEQ")
-		}
-		uid, uidOK := data.Items["UID"][0].(imap.FetchDataUID)
-		clock, clockOK := data.Items["MODSEQ"][0].(imap.FetchDataModSeq)
+		uid, uidOK := imapcodec.FetchValue[imap.FetchDataUID](data, "UID")
+		clock, clockOK := imapcodec.FetchValue[imap.FetchDataModSeq](data, "MODSEQ")
 		if !uidOK || !clockOK || !wanted[imap.UID(uid)] || seen[imap.UID(uid)] || clock == 0 || uint64(clock) > math.MaxInt64 {
 			return fmt.Errorf("imapserver: invalid SEARCH clock FETCH result")
 		}

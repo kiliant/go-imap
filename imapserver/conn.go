@@ -1,7 +1,6 @@
 package imapserver
 
 import (
-	"bufio"
 	"compress/flate"
 	"context"
 	"crypto/tls"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapcodec"
+	"github.com/kiliant/go-imap/internal/imapdeflate"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -40,78 +40,27 @@ type readerResult struct {
 type compressedConn struct {
 	net.Conn
 
-	readOnce sync.Once
-	reader   io.ReadCloser
-	input    *compressionInput
-	writeMu  sync.Mutex
-	writer   *flate.Writer
+	reader  *imapdeflate.Reader
+	writeMu sync.Mutex
+	writer  *flate.Writer
 }
 
 func newCompressedConn(conn net.Conn) (*compressedConn, error) {
+	input := io.Reader(conn)
+	if plain, ok := conn.(*bufferedConn); ok {
+		conn = plain.Conn
+		input = imapdeflate.ResumeReader(plain.reader)
+	}
 	writer, err := flate.NewWriter(conn, flate.DefaultCompression)
 	if err != nil {
 		return nil, err
 	}
-	return &compressedConn{Conn: conn, input: &compressionInput{Reader: bufio.NewReader(conn)}, writer: writer}, nil
+	return &compressedConn{Conn: conn, writer: writer, reader: imapdeflate.NewReader(input)}, nil
 }
 
-// flate can return the last command bytes at a full dictionary boundary,
-// before consuming the following sync-flush marker. Once UNAUTHENTICATE has
-// been parsed, let it consume that trailer without reading the next transport
-// layer. Outside this transition the byte reader behaves like bufio.Reader.
-type compressionInput struct {
-	*bufio.Reader
-	tail    uint32
-	ending  bool
-	stopped bool
-}
-
-func (r *compressionInput) ReadByte() (byte, error) {
-	if r.ending && r.tail == 0x0000ffff {
-		r.stopped = true
-		return 0, io.EOF
-	}
-	b, err := r.Reader.ReadByte()
-	if err == nil {
-		r.tail = r.tail<<8 | uint32(b)
-	}
-	return b, err
-}
-
-func (r *compressionInput) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	if r.ending {
-		b, err := r.ReadByte()
-		if err != nil {
-			return 0, err
-		}
-		p[0] = b
-		return 1, nil
-	}
-	n, err := r.Reader.Read(p)
-	for _, b := range p[:n] {
-		r.tail = r.tail<<8 | uint32(b)
-	}
-	return n, err
-}
-
-func (c *compressedConn) finishRead() error {
-	c.input.ending = true
-	var extra [1]byte
-	n, err := c.reader.Read(extra[:])
-	if n != 0 {
-		return fmt.Errorf("imapserver: compressed input follows UNAUTHENTICATE")
-	}
-	if err == io.EOF || c.input.stopped && errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil
-	}
-	return err
-}
+func (c *compressedConn) finishRead() error { return c.reader.Finish() }
 
 func (c *compressedConn) Read(p []byte) (int, error) {
-	c.readOnce.Do(func() { c.reader = flate.NewReader(c.input) })
 	return c.reader.Read(p)
 }
 
@@ -315,6 +264,15 @@ func (c *conn) readCommands() error {
 				c.cancel(io.EOF)
 				return io.EOF
 			}
+			var timeout net.Error
+			if errors.As(err, &timeout) && timeout.Timeout() {
+				command := &queuedCommand{stopErr: err, done: make(chan struct{})}
+				if queueErr := c.queueCommand(command); queueErr != nil {
+					return queueErr
+				}
+				c.waitCommandDone(command)
+				return err
+			}
 			fatal := decoder.Fatal()
 			if !fatal {
 				_ = decoder.DiscardLine()
@@ -354,6 +312,16 @@ func (c *conn) readCommands() error {
 		} else {
 			command.args, command.bytes, command.parseErr = descriptor.parse(decoder)
 			if command.parseErr != nil {
+				var timeout net.Error
+				if errors.As(command.parseErr, &timeout) && timeout.Timeout() {
+					err := command.parseErr
+					command.stopErr, command.parseErr, command.args = err, nil, nil
+					if queueErr := c.queueCommand(command); queueErr != nil {
+						return queueErr
+					}
+					c.waitCommandDone(command)
+					return err
+				}
 				fatal := decoder.Fatal()
 				if !fatal {
 					_ = decoder.DiscardLine()
@@ -727,8 +695,13 @@ func (c *conn) execute(command *queuedCommand) error {
 	c.commandInProgress = true
 	defer func() { c.commandInProgress = false }()
 	if command.stopErr != nil {
+		text := "command limit exceeded"
+		var timeout net.Error
+		if errors.As(command.stopErr, &timeout) && timeout.Timeout() {
+			text = "connection read timeout"
+		}
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
-			Status: "BYE", Text: imapwire.RespText{Text: "command limit exceeded"},
+			Status: "BYE", Text: imapwire.RespText{Text: text},
 		}).CRLF()
 		if err := c.encoder.Flush(); err != nil {
 			return err
@@ -940,7 +913,7 @@ func (c *conn) disableCompression() {
 	if compressed.reader != nil {
 		_ = compressed.reader.Close()
 	}
-	transport := &bufferedConn{Conn: compressed.Conn, reader: compressed.input.Reader}
+	transport := &bufferedConn{Conn: compressed.Conn, reader: compressed.reader.PlainReader()}
 	c.transportMu.Lock()
 	c.transport = transport
 	c.transportMu.Unlock()

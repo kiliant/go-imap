@@ -398,16 +398,14 @@ func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
 }
 
 type updateQueue struct {
-	mu        sync.Mutex
-	items     []*UpdateBatch
-	bytes     int64
-	heldItems int
-	heldBytes int64
-	maxItems  int
-	maxBytes  int64
-	signal    chan struct{}
-	overflow  func()
-	closed    bool
+	mu       sync.Mutex
+	items    []*UpdateBatch
+	bytes    int64
+	maxItems int
+	maxBytes int64
+	signal   chan struct{}
+	overflow func()
+	closed   bool
 }
 
 func newUpdateQueue(maxItems int, maxBytes int64, overflow func()) *updateQueue {
@@ -426,8 +424,8 @@ func (q *updateQueue) push(batch *UpdateBatch) error {
 		q.mu.Unlock()
 		return ErrUpdaterClosed
 	}
-	if size < 0 || (q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems) ||
-		(q.maxBytes >= 0 && size > q.maxBytes-q.bytes && len(q.items)+q.heldItems != 0) {
+	if size < 0 || (q.maxItems >= 0 && len(q.items) >= q.maxItems) ||
+		(q.maxBytes >= 0 && q.bytes > q.maxBytes) {
 		overflow := q.overflow
 		q.closed = true
 		q.mu.Unlock()
@@ -452,7 +450,7 @@ func (q *updateQueue) popAll() []*UpdateBatch {
 	q.mu.Lock()
 	items := q.items
 	q.items = nil
-	q.bytes = q.heldBytes
+	q.bytes = 0
 	q.mu.Unlock()
 	return items
 }
@@ -604,40 +602,6 @@ func (q *updateQueue) close() {
 	q.closed = true
 	q.items = nil
 	q.bytes = 0
-	q.heldBytes, q.heldItems = 0, 0
-	q.mu.Unlock()
-}
-
-// Withheld removals share the ordinary queue budget. Already delivered flag
-// and addition updates consume no retained budget, regardless of command count.
-func (q *updateQueue) holdRemovals(batch *UpdateBatch) error {
-	size := updateBatchSize(batch)
-	q.mu.Lock()
-	if q.closed {
-		q.mu.Unlock()
-		return ErrUpdaterClosed
-	}
-	if size < 0 || q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems ||
-		q.maxBytes >= 0 && size > q.maxBytes-q.bytes && len(q.items)+q.heldItems != 0 {
-		q.closed = true
-		overflow := q.overflow
-		q.mu.Unlock()
-		if overflow != nil {
-			overflow()
-		}
-		return ErrUpdateOverflow
-	}
-	q.heldItems++
-	q.heldBytes += size
-	q.bytes += size
-	q.mu.Unlock()
-	return nil
-}
-
-func (q *updateQueue) releaseRemovals() {
-	q.mu.Lock()
-	q.bytes -= q.heldBytes
-	q.heldBytes, q.heldItems = 0, 0
 	q.mu.Unlock()
 }
 
@@ -721,7 +685,7 @@ type selectedState struct {
 	// uids is the client's view. While removals are withheld, backendUIDs
 	// follows the fully applied revision without renumbering that view.
 	backendUIDs []imap.UID
-	withheld    []*UpdateBatch
+	withheld    []imap.UID
 	// suppressed, pendingAdds and pendingRecent are what NOTIFY told the
 	// framework not to announce: removed messages that stay in the client's
 	// view, added ones kept out of it, and the RECENT count that goes with
@@ -1002,7 +966,6 @@ func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAcco
 		return nil, fmt.Errorf("%w: got %q, want %q", ErrRevisionMismatch, batch.Before, s.revision)
 	}
 	var delivered []deliveredUpdate
-	withheld := &UpdateBatch{Before: batch.Before, After: batch.After}
 	suppress := batch.Origin != 0 && batch.Origin == accounting.origin
 	for _, change := range batch.Changes {
 		switch change := change.(type) {
@@ -1122,7 +1085,7 @@ func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAcco
 					if delivery.suppressMessages {
 						s.suppressed = append(s.suppressed, &UpdateExpunge{UID: uid})
 					} else {
-						withheld.Changes = append(withheld.Changes, &UpdateExpunge{UID: uid})
+						s.withheld = append(s.withheld, uid)
 					}
 					continue
 				}
@@ -1141,12 +1104,6 @@ func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAcco
 			return nil, fmt.Errorf("imapserver: unsupported update type %T", change)
 		}
 	}
-	if len(withheld.Changes) != 0 {
-		if err := s.queue.holdRemovals(withheld); err != nil {
-			return nil, err
-		}
-		s.withheld = append(s.withheld, withheld)
-	}
 	s.revision = batch.After
 	s.reconcileViews()
 	return delivered, nil
@@ -1156,55 +1113,25 @@ func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAcco
 // section 7.4.1, in the order they happened.
 func (s *selectedState) deliverWithheldRemovals() ([]deliveredUpdate, error) {
 	var updates []deliveredUpdate
-	for _, batch := range s.withheld {
-		for _, change := range batch.Changes {
-			switch change := change.(type) {
-			case *UpdateExpunge:
-				seq, ok := s.removeUID(change.UID)
-				if !ok {
-					return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, change.UID)
-				}
-				updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: change.UID})
-			case *queuedExpunges:
-				for _, uid := range change.uids {
-					seq, ok := s.removeUID(uid)
-					if !ok {
-						return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, uid)
-					}
-					updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
-				}
-			case *UpdateVanished:
-				s.removeUIDSet(change.UIDs)
-				updates = append(updates, deliveredUpdate{kind: updateMessageVanished, uids: change.UIDs, earlier: change.Earlier})
-			}
+	for _, uid := range s.withheld {
+		seq, ok := s.removeUID(uid)
+		if !ok {
+			return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, uid)
 		}
+		updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
 	}
 	s.withheld = nil
-	s.queue.releaseRemovals()
 	s.reconcileViews()
 	return updates, nil
 }
 
-// suppressWithheld turns removals deferred for timing into removals the
-// client has asked not to hear about. They leave the queue's budget: like the
-// rest of the suppressed state they are bounded by the selection's size.
+// suppressWithheld moves protocol-deferred removals to NOTIFY suppression.
+// Both are bounded by the client UID view, independently of queued batches.
 func (s *selectedState) suppressWithheld() {
-	for _, batch := range s.withheld {
-		for _, change := range batch.Changes {
-			switch change := change.(type) {
-			case *UpdateExpunge:
-				s.suppressed = append(s.suppressed, change)
-			case *queuedExpunges:
-				for _, uid := range change.uids {
-					s.suppressed = append(s.suppressed, &UpdateExpunge{UID: uid})
-				}
-			case *UpdateVanished:
-				s.suppressed = append(s.suppressed, change)
-			}
-		}
+	for _, uid := range s.withheld {
+		s.suppressed = append(s.suppressed, &UpdateExpunge{UID: uid})
 	}
 	s.withheld = nil
-	s.queue.releaseRemovals()
 }
 
 // releaseSuppressed announces what NOTIFY suppressed: additions always, and
