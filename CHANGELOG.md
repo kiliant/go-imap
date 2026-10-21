@@ -23,148 +23,6 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
-### Root module — `github.com/kiliant/go-imap`
-
-#### Added
-
-- `imap.Address.SourceRoute` preserves the obsolete RFC 822 source-route
-  field in ENVELOPE decoding and encoding. Additive; no existing signature
-  changes. Stored routed addresses and addresses with comments in the local
-  part also remain searchable by their normalized mailbox. (#165)
-
-- `imap.UIDBatchesData`, `UIDBatch`, `UIDBatchIndexRange`, response codes
-  `CodeTooFew` and `CodeTooMany`, and `imapclient.Client.UIDBatches` with
-  client-owned `UIDBatchesData` and guarded `UIDBatchesOptions`: RFC 10022
-  client support. Requests validate batch size and range limits before I/O;
-  exactly one correlated response is required, including an empty result.
-  Pipelined replies are collected by tag. Supports UIDONLY, leaves SEARCHRES
-  unchanged, and has no fallback. Additive; intended for the root minor
-  following T30's release. (#51)
-
-- `imapclient.UnilateralDataHandler.Metadata`, shared `imap.MetadataChange`
-  and its `imapclient.MetadataChange` alias deliver names-only METADATA
-  notifications, including server metadata when the mailbox is empty.
-  Callbacks receive changed entry names, separately from GETMETADATA's NIL,
-  empty and present values, and may retain the data. Notifications interleaved
-  with GETMETADATA or LIST-METADATA stay separate from command results. A nil
-  handler still consumes and validates them. Additive. (#44)
-- `imapclient.UnilateralDataHandler.ContextUpdate`, the shared types
-  `imap.ContextUpdate`, `imap.ContextUpdateItem` and
-  `imap.ContextUpdateChange`, the alias `imapclient.ContextUpdate`, the return
-  keys `imap.ESearchReturnKeyAddTo` and `imap.ESearchReturnKeyRemoveFrom` with
-  their `imapclient` mirrors, and `imapclient.ESearchData.ContextTag`: CONTEXT
-  updates (RFC 5267 section 4.3) are delivered. The unsolicited ESEARCH
-  responses carrying ADDTO and REMOVEFROM were discarded, or claimed by
-  another pending extended SEARCH or SORT, which then failed. They are now routed by the original command's tag
-  before any command sees them. Each update keeps every return item in wire
-  order, including repeated and unknown keys. Items carry their raw value,
-  and ADDTO and REMOVEFROM also carry typed position/set pairs in UID or
-  sequence-number mode. `ContextTag` names the context for
-  `Client.CancelUpdate`, also from the blocking `SortExtended`. CancelUpdate
-  now documents when a registration ends. Additive. (#44)
-
-- `imapclient.CodeNoCompatibleAuthMechanism` identifies automatic SASL
-  selection exhaustion as a local `*imap.Error` with `ErrorTypeProtocol`,
-  before writing to the connection. `imapcli` now uses this discriminator
-  for its LOGIN fallback instead of copying the library's password-mechanism
-  list. Server refusals, privacy and channel-binding failures retain their
-  separate errors and do not trigger fallback. Additive. (#21)
-
-#### Changed
-
-- `imapclient.Client.SortExtended` and `SortExtendedUID` accept RETURN
-  (UPDATE) when the server advertises CONTEXT=SORT and refuse it with
-  `ErrCapabilityNotAdvertised` otherwise. Before, they always refused it,
-  because updates were not delivered. `SearchExtended` and `MultiSearch` now
-  refuse RETURN (UPDATE) without CONTEXT=SEARCH instead of sending it. Without
-  ESEARCH, `SearchExtended` used to emulate the search and drop UPDATE
-  silently. A MULTISEARCH with UPDATE requires a selected mailbox (RFC 7377
-  section 2.2). RETURN (UPDATE) is never emulated and is always sent in the
-  extended form. Every other return option keeps the documented fallback when
-  ESEARCH or ESORT is absent, even where CONTEXT=SEARCH or CONTEXT=SORT is
-  advertised, because RFC 5267 does not make those imply MIN, MAX, ALL or
-  COUNT. No signature change. (#44)
-
-#### Fixed
-
-- Guard shared command lookahead when a transport read fails after a complete
-  keyword. Authenticated server connections now return the read error instead
-  of recovering an internal bounds panic. No exported API or backend contract
-  change; publish the root correction before the server module. (#54)
-
-- The shared server-direction SEARCH parser accepts `UID $`, including nested
-  criteria, as the saved SEARCHRES result. This also repairs SORT, THREAD and
-  ESEARCH criteria and IMAP4rev2's incorporated syntax. Compatible correction;
-  no exported API change. Ship this root fix before the server release. (#54, H-2)
-
-- `imapclient.Client.Unauthenticate` ends an active COMPRESS layer at the
-  successful completion, preserves TLS and prefetched plaintext, and prevents
-  concurrent writes across the framing change. Shared internal boundary handling
-  accepts sync flush, a final block, or both. REPLACE emulation compares UID keys
-  without regard to case and rejects ambiguous UID values. Compatible corrections;
-  no exported API change. Ship in the root release preceding the server's
-  UNAUTHENTICATE teardown correction. (#54, RT-3/RT-4)
-
-- Root `imap.StatusItemDeletedStorage` documents octets, matching RFC 9208
-  and the server contract, rather than kibibytes. Documentation only. (#54)
-
-- `imapclient.Client.Notify` writes `NOTIFY SET STATUS (group) (group)`:
-  STATUS follows SET, and each watch group has its own parentheses (RFC 5465
-  section 8). Previously STATUS and multiple groups were rejected by compliant
-  servers. No exported signature change. (#197)
-
-- **imapcodec:** the server-direction UIDFETCH response is written as RFC 9586
-  section 7's `* <uid> UIDFETCH (...)`, not `* UIDFETCH <uid> (...)`. Only
-  `imapserver` writes it; a standalone server build receives the fix with the
-  next root release. No exported API change. (#54)
-
-- `imapclient.MultiSearchMailboxes` encodes multiple mailbox names as a
-  parenthesized list, as required by RFC 5465 and RFC 7377. Correct the
-  `MultiSearchInboxes` documentation to describe delivery destinations and
-  the personal-namespace fallback. No signature change. (#54, third review)
-
-- **imapcodec:** accept atom, quoted and literal astring arguments for SEARCH
-  string keys and HEADER values, allowing commands such as `SEARCH FROM alice`.
-  No exported API change. (#127)
-
-- **imapclient tests:** Stream fuzz targets confirm reader completion before
-  reporting an expired deadline, avoiding false shutdown failures when both
-  channels are ready after scheduling delays. Readers still running when a
-  timeout is observed fail; the nightly timeout input is retained in the corpus.
-  (#106)
-
-- **imapclient:** publish immutable streaming FETCH portions, preserving later fields and bounded memory; adapt backup to combine portions and discard duplicate bodies without leaking temporary files (#64).
-- **imapclient:** accept RFC 7162 legacy SEARCH and SORT MODSEQ suffixes without changing number results or exported APIs (#67).
-
-- `imapclient.Client.SearchPartial` and `SearchPartialUID` now register
-  RETURN (UPDATE) contexts, expose their tag in `ESearchData.ContextTag`, and
-  deliver their updates through `UnilateralDataHandler.ContextUpdate`.
-  UPDATE requires CONTEXT=SEARCH and is refused locally without it. Previously
-  these methods sent UPDATE but discarded every update. No signature change.
-  (#48)
-
-- Preserve sequence-set wildcards in generic response values, including
-  ESEARCH ALL and CONTEXT ADDTO/REMOVEFROM. Discard recoverably malformed
-  ESEARCH responses that no command or live context owns, including unknown
-  correlator labels, instead of closing the connection. Pending searches and
-  live contexts still reject malformed replies; fatal decoder errors still
-  close the connection. Fixes a regression since decode-once routing.
-  No exported API change. (#49)
-
-- Decode MULTISEARCH MAILBOX correlators using the negotiated mailbox
-  encoding and normalise INBOX, consistently with LIST and STATUS. Both
-  `imap.MultiSearchResult.Mailbox` and `imap.ContextUpdate.Mailbox` now contain
-  decoded mailbox names rather than modified UTF-7 wire spellings.
-  No signature change. (#50)
-- Decode STATUS, LIST and ESEARCH/METADATA response data once before command
-  collection. STATUS results stay with their requested mailbox, including
-  reversed pipelined replies; unrelated STATUS events reach the existing
-  callback. Legacy LSUB no longer consumes unsolicited LIST events. Names-only
-  METADATA notifications no longer fail GETMETADATA or LIST-METADATA, and
-  another mailbox's metadata values do not leak into GETMETADATA results.
-  No exported API change in the response decoding itself.
-  (#44)
-
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed
@@ -943,6 +801,150 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - **imapserver:** reject invalid METADATA entry names with BAD before calling the backend (#78).
 - **imapserver:** evaluate MODSEQ in memory SORT, THREAD and MULTISEARCH, and append the highest matching MODSEQ to nonempty legacy SORT results (#79).
 
+## [1.3.0] - 2026-10-21
+
+### Root module — `github.com/kiliant/go-imap`
+
+#### Added
+
+- `imap.Address.SourceRoute` preserves the obsolete RFC 822 source-route
+  field in ENVELOPE decoding and encoding. Additive; no existing signature
+  changes. Stored routed addresses and addresses with comments in the local
+  part also remain searchable by their normalized mailbox. (#165)
+
+- `imap.UIDBatchesData`, `UIDBatch`, `UIDBatchIndexRange`, response codes
+  `CodeTooFew` and `CodeTooMany`, and `imapclient.Client.UIDBatches` with
+  client-owned `UIDBatchesData` and guarded `UIDBatchesOptions`: RFC 10022
+  client support. Requests validate batch size and range limits before I/O;
+  exactly one correlated response is required, including an empty result.
+  Pipelined replies are collected by tag. Supports UIDONLY, leaves SEARCHRES
+  unchanged, and has no fallback. Additive. The server direction ships in
+  the next `imapserver` minor. (#51)
+
+- `imapclient.UnilateralDataHandler.Metadata`, shared `imap.MetadataChange`
+  and its `imapclient.MetadataChange` alias deliver names-only METADATA
+  notifications, including server metadata when the mailbox is empty.
+  Callbacks receive changed entry names, separately from GETMETADATA's NIL,
+  empty and present values, and may retain the data. Notifications interleaved
+  with GETMETADATA or LIST-METADATA stay separate from command results. A nil
+  handler still consumes and validates them. Additive. (#44)
+- `imapclient.UnilateralDataHandler.ContextUpdate`, the shared types
+  `imap.ContextUpdate`, `imap.ContextUpdateItem` and
+  `imap.ContextUpdateChange`, the alias `imapclient.ContextUpdate`, the return
+  keys `imap.ESearchReturnKeyAddTo` and `imap.ESearchReturnKeyRemoveFrom` with
+  their `imapclient` mirrors, and `imapclient.ESearchData.ContextTag`: CONTEXT
+  updates (RFC 5267 section 4.3) are delivered. The unsolicited ESEARCH
+  responses carrying ADDTO and REMOVEFROM were discarded, or claimed by
+  another pending extended SEARCH or SORT, which then failed. They are now routed by the original command's tag
+  before any command sees them. Each update keeps every return item in wire
+  order, including repeated and unknown keys. Items carry their raw value,
+  and ADDTO and REMOVEFROM also carry typed position/set pairs in UID or
+  sequence-number mode. `ContextTag` names the context for
+  `Client.CancelUpdate`, also from the blocking `SortExtended`. CancelUpdate
+  now documents when a registration ends. Additive. (#44)
+
+- `imapclient.CodeNoCompatibleAuthMechanism` identifies automatic SASL
+  selection exhaustion as a local `*imap.Error` with `ErrorTypeProtocol`,
+  before writing to the connection. `imapcli` now uses this discriminator
+  for its LOGIN fallback instead of copying the library's password-mechanism
+  list. Server refusals, privacy and channel-binding failures retain their
+  separate errors and do not trigger fallback. Additive. (#21)
+
+#### Changed
+
+- `imapclient.Client.SortExtended` and `SortExtendedUID` accept RETURN
+  (UPDATE) when the server advertises CONTEXT=SORT and refuse it with
+  `ErrCapabilityNotAdvertised` otherwise. Before, they always refused it,
+  because updates were not delivered. `SearchExtended` and `MultiSearch` now
+  refuse RETURN (UPDATE) without CONTEXT=SEARCH instead of sending it. Without
+  ESEARCH, `SearchExtended` used to emulate the search and drop UPDATE
+  silently. A MULTISEARCH with UPDATE requires a selected mailbox (RFC 7377
+  section 2.2). RETURN (UPDATE) is never emulated and is always sent in the
+  extended form. Every other return option keeps the documented fallback when
+  ESEARCH or ESORT is absent, even where CONTEXT=SEARCH or CONTEXT=SORT is
+  advertised, because RFC 5267 does not make those imply MIN, MAX, ALL or
+  COUNT. No signature change. (#44)
+
+#### Fixed
+
+- Guard shared command lookahead when a transport read fails after a complete
+  keyword. Authenticated server connections now return the read error instead
+  of recovering an internal bounds panic. No exported API or backend contract
+  change; publish the root correction before the server module. (#54)
+
+- The shared server-direction SEARCH parser accepts `UID $`, including nested
+  criteria, as the saved SEARCHRES result. This also repairs SORT, THREAD and
+  ESEARCH criteria and IMAP4rev2's incorporated syntax. Compatible correction;
+  no exported API change. Ship this root fix before the server release. (#54, H-2)
+
+- `imapclient.Client.Unauthenticate` ends an active COMPRESS layer at the
+  successful completion, preserves TLS and prefetched plaintext, and prevents
+  concurrent writes across the framing change. Shared internal boundary handling
+  accepts sync flush, a final block, or both. REPLACE emulation compares UID keys
+  without regard to case and rejects ambiguous UID values. Compatible corrections;
+  no exported API change. Ship in the root release preceding the server's
+  UNAUTHENTICATE teardown correction. (#54, RT-3/RT-4)
+
+- Root `imap.StatusItemDeletedStorage` documents octets, matching RFC 9208
+  and the server contract, rather than kibibytes. Documentation only. (#54)
+
+- `imapclient.Client.Notify` writes `NOTIFY SET STATUS (group) (group)`:
+  STATUS follows SET, and each watch group has its own parentheses (RFC 5465
+  section 8). Previously STATUS and multiple groups were rejected by compliant
+  servers. No exported signature change. (#197)
+
+- **imapcodec:** the server-direction UIDFETCH response is written as RFC 9586
+  section 7's `* <uid> UIDFETCH (...)`, not `* UIDFETCH <uid> (...)`. Only
+  `imapserver` writes it; a standalone server build receives the fix with the
+  next root release. No exported API change. (#54)
+
+- `imapclient.MultiSearchMailboxes` encodes multiple mailbox names as a
+  parenthesized list, as required by RFC 5465 and RFC 7377. Correct the
+  `MultiSearchInboxes` documentation to describe delivery destinations and
+  the personal-namespace fallback. No signature change. (#54, third review)
+
+- **imapcodec:** accept atom, quoted and literal astring arguments for SEARCH
+  string keys and HEADER values, allowing commands such as `SEARCH FROM alice`.
+  No exported API change. (#127)
+
+- **imapclient tests:** Stream fuzz targets confirm reader completion before
+  reporting an expired deadline, avoiding false shutdown failures when both
+  channels are ready after scheduling delays. Readers still running when a
+  timeout is observed fail; the nightly timeout input is retained in the corpus.
+  (#106)
+
+- **imapclient:** publish immutable streaming FETCH portions, preserving later fields and bounded memory; adapt backup to combine portions and discard duplicate bodies without leaking temporary files (#64).
+- **imapclient:** accept RFC 7162 legacy SEARCH and SORT MODSEQ suffixes without changing number results or exported APIs (#67).
+
+- `imapclient.Client.SearchPartial` and `SearchPartialUID` now register
+  RETURN (UPDATE) contexts, expose their tag in `ESearchData.ContextTag`, and
+  deliver their updates through `UnilateralDataHandler.ContextUpdate`.
+  UPDATE requires CONTEXT=SEARCH and is refused locally without it. Previously
+  these methods sent UPDATE but discarded every update. No signature change.
+  (#48)
+
+- Preserve sequence-set wildcards in generic response values, including
+  ESEARCH ALL and CONTEXT ADDTO/REMOVEFROM. Discard recoverably malformed
+  ESEARCH responses that no command or live context owns, including unknown
+  correlator labels, instead of closing the connection. Pending searches and
+  live contexts still reject malformed replies; fatal decoder errors still
+  close the connection. Fixes a regression since decode-once routing.
+  No exported API change. (#49)
+
+- Decode MULTISEARCH MAILBOX correlators using the negotiated mailbox
+  encoding and normalise INBOX, consistently with LIST and STATUS. Both
+  `imap.MultiSearchResult.Mailbox` and `imap.ContextUpdate.Mailbox` now contain
+  decoded mailbox names rather than modified UTF-7 wire spellings.
+  No signature change. (#50)
+- Decode STATUS, LIST and ESEARCH/METADATA response data once before command
+  collection. STATUS results stay with their requested mailbox, including
+  reversed pipelined replies; unrelated STATUS events reach the existing
+  callback. Legacy LSUB no longer consumes unsolicited LIST events. Names-only
+  METADATA notifications no longer fail GETMETADATA or LIST-METADATA, and
+  another mailbox's metadata values do not leak into GETMETADATA results.
+  No exported API change in the response decoding itself.
+  (#44)
+
 ## [1.2.1] - 2026-10-15
 
 ### Root module — `github.com/kiliant/go-imap`
@@ -1676,7 +1678,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/kiliant/go-imap/releases/tag/v1.3.0
 [1.2.1]: https://github.com/kiliant/go-imap/releases/tag/v1.2.1
 [imapserver/v0.3.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.3.0
 [1.2.0]: https://github.com/kiliant/go-imap/releases/tag/v1.2.0
