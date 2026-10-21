@@ -241,7 +241,6 @@ func TestReview6fSortAndParameterGates(t *testing.T) {
 		{"", "SORT (FOO) UTF-8 ALL"}, {"", "SORT (REVERSE REVERSE SUBJECT) UTF-8 ALL"}, {"", "SORT (RELEVANCY) UTF-8 ALL"},
 		{"SEARCH=FUZZY", "SORT (RELEVANCY) UTF-8 FUZZY ALL"},
 		{"URL-PARTIAL", `GENURLAUTH "imap://alice@localhost/INBOX/;UID=1/;PARTIAL=0.1;URLAUTH=user+alice" INTERNAL`},
-		{"URL-PARTIAL", `URLFETCH "imap://alice@localhost/INBOX/;UID=1/;PARTIAL=0.1;URLAUTH=user+alice"`},
 		{"FILTERS", `SEARCH FILTER x`}, {"FILTERS", `SORT (SUBJECT) UTF-8 FILTER x`}, {"FILTERS", `ESEARCH IN (mailboxes INBOX) FILTER x`},
 	} {
 		t.Run(test.command, func(t *testing.T) {
@@ -297,7 +296,7 @@ func TestReview6fClientCompressionReset(t *testing.T) {
 }
 
 func TestReview6fReadTimeoutSendsBye(t *testing.T) {
-	for _, partial := range []string{"", "P FETCH 1 ("} {
+	for _, partial := range []string{"", "P FETCH 1 (", "P UNKNOWN "} {
 		t.Run(partial, func(t *testing.T) {
 			w := r4Open(t, r4Memory(), &imapserver.Options{AllowInsecureAuth: true, Limits: imapserver.Limits{ReadTimeout: 150 * time.Millisecond, PreAuthTimeout: 2 * time.Second}})
 			w.cmd("S", "SELECT INBOX")

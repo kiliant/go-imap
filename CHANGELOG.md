@@ -183,6 +183,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   the SortMailbox contract. Enforce URL-PARTIAL withdrawal and report withdrawn
   FILTERS as a gate refusal. Existing interfaces and signatures stay unchanged.
   (#54, review N-4)
+- **BREAKING behaviour:** URL-PARTIAL withdrawal also refuses CATENATE range
+  URLs with NO [BADURL] before backend resolution. The command drains later
+  parts without resolving them or committing. URLFETCH returns NIL for each
+  unavailable range URL and continues serving other URLs. (#54, Z-3)
 
 - **BREAKING behaviour:** NOTIFY validates registrations before calling the
   backend or closing the current one. Unpaired MessageNew/MessageExpunge,
@@ -562,13 +566,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - SEARCH clock fallback, UIDONLY projection and keyword announcement compare
   all FETCH item spellings case-insensitively. Enforce FetchWriter's existing
   exactly-one-nonzero-UID rule across spellings, preventing random sequence
-  mappings from conflicting UID keys. Read timeouts send BYE. UNAUTHENTICATE
-  accepts an optional final DEFLATE block after sync flush. No exported API
-  change. (#54, review N-3 and teardown/timeout follow-ups)
+  mappings from conflicting UID keys. Authenticated read timeouts send BYE.
+  UNAUTHENTICATE accepts an optional final DEFLATE block after sync flush.
+  No exported API change. (#54, review N-3 and teardown/timeout follow-ups)
 - Coalesce repeated UID requests before backend FETCH and in both reference
   backends' results. Legal repeated items no longer produce NO [SERVERBUG] under
   the strict single-UID validation; conflicting backend UID values still fail.
   (#54, interop follow-up)
+- Retain backend ConnInfo.TLS and SCRAM-PLUS channel binding through the
+  buffered transport installed by UNAUTHENTICATE after COMPRESS. Cover
+  implicit TLS and STARTTLS, TLS 1.2/1.3, default mechanism selection and both
+  SCRAM-PLUS variants across repeated resets. Handler-owned APPEND literal
+  and IDLE reads, and incomplete unknown commands, also send BYE on transport
+  read timeout before closing. No exported API change. (#54, Z-1/Z-4)
 - LOGIN and AUTHENTICATE preserve commands buffered behind authentication,
   including SASL continuation and UNAUTHENTICATE/re-authentication pipelines.
   UNAUTHENTICATE errors send BYE instead of the forbidden NO; success removes

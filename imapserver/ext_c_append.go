@@ -78,6 +78,8 @@ type CatenateSession interface {
 	// ResolveCatenateURL returns the bytes an IMAP URL names, which must refer
 	// to a message the authenticated user can read. A nil reader means the URL
 	// did not resolve, which fails the APPEND.
+	// The framework refuses URLs with ;PARTIAL= before this call unless
+	// URL-PARTIAL is advertised, including after CapabilityFilter.
 	ResolveCatenateURL(ctx context.Context, url string, options *CatenateOptions) (io.ReadCloser, error)
 }
 

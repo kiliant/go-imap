@@ -306,6 +306,14 @@ func (c *conn) readCommands() error {
 		command := &queuedCommand{tag: tag, name: name, descriptor: descriptor, done: make(chan struct{})}
 		if descriptor == nil {
 			if err := discardUnknownCommand(decoder); err != nil {
+				if readTimedOut(err) {
+					command.stopErr = err
+					if queueErr := c.queueCommand(command); queueErr != nil {
+						return queueErr
+					}
+					c.waitCommandDone(command)
+					return err
+				}
 				c.cancel(err)
 				return err
 			}
@@ -411,7 +419,7 @@ func (c *conn) waitBarrier(decoder *imapwire.Decoder, command *queuedCommand) er
 			}
 			request.reply <- readerResult{value: value, err: err}
 			if decoder.Fatal() {
-				if command.name == "APPEND" && appendLiteralTooBig(err) {
+				if readTimedOut(err) || command.name == "APPEND" && appendLiteralTooBig(err) {
 					c.waitCommandDone(command)
 				}
 				c.cancel(err)
@@ -431,6 +439,20 @@ func (c *conn) waitCommandDone(command *queuedCommand) {
 	case <-command.done:
 	case <-c.ctx.Done():
 	}
+}
+
+func readTimedOut(err error) bool {
+	var timeout net.Error
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
+// Called by the event loop after a handler-owned transport read fails. The
+// reader barrier waits for command.done before cancelling a fatal decoder.
+func (c *conn) writeReadTimeout(err error) error {
+	if writeErr := c.writeBye("connection read timeout"); writeErr != nil {
+		return writeErr
+	}
+	return err
 }
 
 func (c *conn) readClientData(ctx context.Context, read func(*imapwire.Decoder) (any, error)) (any, error) {
@@ -528,6 +550,9 @@ func (c *conn) idleUntilDone(ctx context.Context) error {
 		select {
 		case result := <-request.reply:
 			if result.err != nil {
+				if readTimedOut(result.err) {
+					return c.writeReadTimeout(result.err)
+				}
 				return result.err
 			}
 			line, ok := result.value.(string)

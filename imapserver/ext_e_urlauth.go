@@ -218,17 +218,14 @@ func handleURLFetch(ctx context.Context, c *conn, command *queuedCommand) error 
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
-	for _, url := range urls {
-		if err := requireURLCapabilities(c, url); err != nil {
-			return c.writeBad(command.tag, err.Error())
-		}
-	}
 	remaining := c.server.options.Limits.MaxLiteralBytes
 	var failure error
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("URLFETCH")
 	for _, url := range urls {
 		c.encoder.SP().String(url).SP()
-		if failure != nil {
+		// A URL whose range feature is unavailable is invalid individually,
+		// just like a failed authorization (RFC 4467, URLFETCH response).
+		if failure != nil || requireURLCapabilities(c, url) != nil {
 			c.encoder.NIL()
 			continue
 		}

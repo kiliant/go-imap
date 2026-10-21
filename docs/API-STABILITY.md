@@ -1148,6 +1148,12 @@ marked BREAKING behaviour before the window. FILTERS and URL-PARTIAL withdrawals
 are enforced before backend calls. Duplicate case variants cannot bypass
 FetchWriter's existing exactly-one-UID rule.
 
+The URL-PARTIAL gate includes CATENATE: range URLs receive NO [BADURL] before
+resolution when the token is absent or filtered out. Later parts are drained
+without further resolution or a commit. This tightening is marked BREAKING
+behaviour before the release window. URLFETCH treats an unavailable range as
+an individually invalid URL (NIL), preserving other URLs and tagged OK.
+
 The compatible root client correction ends COMPRESS at successful UNAUTHENTICATE
 completion, preserving TLS and prefetched plaintext. The shared internal boundary
 reader accepts sync flush, final block, and sync flush followed by a final block.

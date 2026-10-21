@@ -155,6 +155,9 @@ func appendLiteralTooBig(err error) bool {
 }
 
 func writeAppendDecodeError(c *conn, tag string, err error, text string) error {
+	if readTimedOut(err) {
+		return c.writeReadTimeout(err)
+	}
 	if appendLiteralTooBig(err) {
 		return writeBackendError(c, tag, "APPEND", resolvedContentTooBig())
 	}
@@ -237,6 +240,10 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 			}
 			if session == nil {
 				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "CATENATE is not available"}
+				continue
+			}
+			if err := requireURLCapabilities(c, part.url); err != nil {
+				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: err.Error()}
 				continue
 			}
 			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)

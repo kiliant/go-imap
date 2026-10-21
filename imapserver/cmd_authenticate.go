@@ -210,6 +210,8 @@ func connectionTLSState(transport any) (tls.ConnectionState, bool) {
 		return state, true
 	case *compressedConn:
 		return connectionTLSState(transport.Conn)
+	case *bufferedConn:
+		return connectionTLSState(transport.Conn)
 	default:
 		return tls.ConnectionState{}, false
 	}
