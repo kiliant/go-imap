@@ -87,6 +87,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- The shared server-direction SEARCH parser accepts `UID $`, including nested
+  criteria, as the saved SEARCHRES result. This also repairs SORT, THREAD and
+  ESEARCH criteria and IMAP4rev2's incorporated syntax. Compatible correction;
+  no exported API change. Ship this root fix before the server release. (#54, H-2)
+
 - `imapclient.Client.Unauthenticate` ends an active COMPRESS layer at the
   successful completion, preserves TLS and prefetched plaintext, and prevents
   concurrent writes across the framing change. Shared internal boundary handling
@@ -587,6 +592,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- UID FETCH with CHANGEDSINCE and VANISHED retains wildcard ranges when the
+  mailbox is empty, so `1:*` reports the retained removal history. Repeated,
+  reversed and mixed ranges and PARTIAL retain the existing history semantics.
+  Compatible correction; no exported API or backend contract change. (#54, H-1)
+- Document the existing acceptance of repeated SEARCH ALL return options and
+  PARTIAL with ALL (#206), and memory's same-account CATENATE URL host/port
+  aliases (#207). Preserve those behaviours. State the struct-comparability
+  compatibility rule and clarify which resource budgets are implemented by
+  Limits and which remain application/backend policy or design goals.
+  Documentation only; no exported API, default or input-acceptance change. (#54, O-2/O-3)
 
 - UID FETCH with CHANGEDSINCE and VANISHED reports historical removals through
   `QResyncMailbox.Resync` as VANISHED (EARLIER) before FETCH responses, including

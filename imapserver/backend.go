@@ -20,6 +20,14 @@
 // docs/RELEASING.md for the two-module scheme and docs/API-STABILITY.md §10 for
 // the rules this package is held to in the meantime.
 //
+// # SEARCH return options
+//
+// Repeated ALL return options are accepted and treated as one ALL. PARTIAL
+// together with ALL is also accepted: ALL reports the complete result and
+// PARTIAL reports the requested window. These accepted forms remain supported
+// for compatibility; clients should follow the return-option constraints of
+// their negotiated extensions.
+//
 // # Writing a backend
 //
 // Start with [github.com/kiliant/go-imap/imapserver/backendtest], not with the

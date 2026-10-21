@@ -328,16 +328,16 @@ func requestedResyncUIDs(selected *selectedState, raw string) (imap.UIDSet, erro
 	if err != nil {
 		return nil, err
 	}
-	var maximum imap.UID
+	// In an empty mailbox '*' denotes UIDNEXT, which has never been
+	// assigned. Widening that endpoint to the UID maximum therefore selects
+	// the same expunged messages, while a lone '*' still matches none.
+	maximum := ^imap.UID(0)
 	if len(selected.uids) != 0 {
 		maximum = selected.uids[len(selected.uids)-1]
 	}
 	var requested imap.UIDSet
 	for _, r := range set {
 		if r.Start == 0 || r.Stop == 0 {
-			if maximum == 0 {
-				continue
-			}
 			if r.Start == 0 {
 				r.Start = maximum
 			}

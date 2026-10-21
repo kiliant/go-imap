@@ -24,6 +24,8 @@ func TestCatenateURLContent(t *testing.T) {
 		{fmt.Sprintf("/INBOX;UIDVALIDITY=%d/;UID=1/;SECTION=TEXT", validity), "alice body"},
 		{"imap://alice@localhost/INBOX/;UID=1/;SECTION=TEXT/;PARTIAL=2.4", "ice "},
 		{"imap://localhost/INBOX/;UID=1/;SECTION=HEADER", "Subject: alice\r\n\r\n"},
+		{"imap://alice@elsewhere.example:1143/INBOX/;UID=1/;SECTION=TEXT", "alice body"},
+		{"imap://elsewhere.example:993/INBOX/;UID=1/;SECTION=TEXT", "alice body"},
 		{"/INBOX/;UID=1/;SECTION=HEADER.FIELDS%20(SUBJECT)", "Subject: alice\r\n\r\n"},
 		{"/INBOX/;UID=1/;SECTION=TEXT/;PARTIAL=6", "body"},
 		{"/INBOX/;UID=1/;SECTION=TEXT/;PARTIAL=99.4", ""},
@@ -49,6 +51,7 @@ func TestCatenateURLContent(t *testing.T) {
 		"/INBOX/;UID=1/;PARTIAL=0.4294967296", "/INBOX/;UID=1/;PARTIAL=0.4/junk",
 		"/INBOX/;UID=1/;SECTION=TEXT<0.4>", "imap://bob@localhost/INBOX/;UID=1",
 		"imap://alice:secret@localhost/INBOX/;UID=1", "https://alice@localhost/INBOX/;UID=1",
+		"imap://bob@elsewhere.example:1143/INBOX/;UID=1",
 		"/INBOX/;UID=1;URLAUTH=anonymous", "/INBOX/;UID=1?x", "/INBOX/;UID=1#x",
 	} {
 		if r, err := s.ResolveCatenateURL(t.Context(), raw, nil); r != nil {

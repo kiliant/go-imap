@@ -8,6 +8,7 @@ import (
 
 // Relative URLs inherit this authenticated session, and message-only URLs
 // inherit its selected mailbox. Absolute URLs may name only the same account.
+// Their host and port are logical aliases, as documented by package memory.
 func parseCatenateURL(raw, username, selected string) (*urlAuthURL, bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Opaque != "" {

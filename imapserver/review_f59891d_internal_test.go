@@ -30,7 +30,12 @@ func TestReviewGRequestedResyncUIDs(t *testing.T) {
 		raw  string
 		want imap.UIDSet
 	}{
-		{"2:5", imap.UIDSetRange(2, 5)}, {"*", nil}, {"1:*", nil}, {"2,4:*", imap.UIDSetNum(2)}, {"$", nil},
+		{"2:5", imap.UIDSetRange(2, 5)},
+		{"*", imap.UIDSetNum(^imap.UID(0))},
+		{"1:*", imap.UIDSetRange(1, ^imap.UID(0))},
+		{"*:2", imap.UIDSetRange(2, ^imap.UID(0))},
+		{"2,4:*", append(imap.UIDSetNum(2), imap.UIDSetRange(4, ^imap.UID(0))...)},
+		{"$", nil},
 	} {
 		got, err := requestedResyncUIDs(&selectedState{}, tc.raw)
 		if err != nil || !got.Equal(tc.want) {

@@ -1073,6 +1073,17 @@ vulnerability class:
 
 ## 8. Resource limits
 
+**Implementation status (T33).** This section records the resource-budget design.
+The framework's implemented bounds and defaults are specified by
+`imapserver.Limits`. The table below also includes outstanding design goals and
+application/backend budgets: the framework has no dedicated authentication-attempt,
+per-account connection/concurrency, or LIST/SEARCH result-cardinality limits.
+Applications requiring those policies must enforce them at their connection,
+authentication or storage boundaries. They must not assume that every table row
+is supplied by `Server`. Additional framework controls can be introduced through
+the extensible options types; this clarification changes no implemented limit or
+default and does not claim that the outstanding design goals are implemented.
+
 The threat model inverts. T13 asked whether a hostile *server* could make the
 client panic, hang or allocate without bound. The server faces the same parser
 from **unauthenticated remote clients**, at connection rates a client never sees.

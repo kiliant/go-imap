@@ -272,6 +272,12 @@ asks for: it makes an unkeyed literal fail to compile. Adding one is itself a
 breaking change — it invalidates any unkeyed literal already written — so it can
 only be done before v1.0. After the tag, the doc comment is all we have.
 
+Comparability is also part of the compatibility promise. An exported struct
+that is comparable today must remain usable as a map key and with `==`.
+Do not add a slice, map or function field directly to it. A pointer to a richer
+policy or result value can carry those fields while preserving comparability.
+The struct-literal guard does not protect this property; apidiff checks it.
+
 **Rule.** Every exported struct in `package imap` carries the `_ struct{}`
 guard. Exceptions are listed here, each with a reason.
 
@@ -1219,3 +1225,27 @@ UNSEEN response code because its value is a sequence number. STORE's UIDONLY
 check now precedes read-only refusal, preserving BAD [UIDREQUIRED] on EXAMINE;
 UID STORE still receives NO [READ-ONLY]. The latter correction rejects no new
 input. These changes close G-1–G-3 before the stability window.
+
+### T33 H follow-up corrections and compatibility decisions — 2026-10-21 (#54)
+
+The compatible H-1 correction retains UID FETCH VANISHED wildcard ranges on an
+empty selection. UIDNEXT has not been assigned; using the UID maximum as that
+endpoint selects the same historical removals, while a lone `*` matches none.
+The existing Resync contract already accepts these static UID ranges. The root
+codec's H-2 correction maps `UID $` to the existing saved-result criterion at
+any search depth. The SEARCHRES gate and UID normalization remain unchanged.
+Neither correction changes exported declarations or backend obligations; the
+root codec correction must ship before the server release.
+
+Preserve and document the accepted SEARCH return-option combinations in #206:
+repeated ALL is treated once; PARTIAL together with ALL reports both the full
+result and its requested window. Preserve memory's CATENATE authority aliases
+in #207: absolute hostnames and ports identify the same authenticated account,
+and an omitted user inherits it. Other-user and URLAUTH-only URLs remain refused.
+No stricter parsing or authority rejection is introduced. A future opt-in policy
+may restrict these forms while retaining existing default acceptance.
+
+The comparability rule in section 7 applies to server types too. SERVER-DESIGN
+section 8 now distinguishes implemented Limits from application/backend budgets
+and outstanding design goals; it does not make every listed budget an implicit
+Server guarantee. These documentation corrections alter no limit or default.

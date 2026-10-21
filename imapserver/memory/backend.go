@@ -11,6 +11,11 @@
 // empty INBOX, its identity, metadata, subscription and inferiors in place.
 // A destination beneath INBOX is refused with NO [CANNOT]. COPY, MOVE and
 // RENAME INBOX preserve INTERNALDATE and assign a new SAVEDATE on arrival.
+//
+// CATENATE resolves URLs within the authenticated account. In absolute IMAP
+// URLs, hostnames and ports are logical aliases for this backend; they do not
+// cause a connection to another server. An omitted user inherits the current
+// account. URLs naming another user or requiring URLAUTH are refused.
 package memory
 
 import (

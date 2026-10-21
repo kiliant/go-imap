@@ -277,7 +277,18 @@ func readSearchKey(dec *imapwire.Decoder) (imap.SearchCriteria, error) {
 		return imap.SearchSize{Key: imap.SearchSizeKey(upper), Size: size}, nil
 	case "UID":
 		var raw string
-		if !dec.ExpectSP() || !dec.ExpectSequenceSet(&raw) {
+		if !dec.ExpectSP() {
+			return nil, dec.Err()
+		}
+		// RFC 5182 section 2.2: UID $ and the bare $ search key are
+		// equivalent references to the saved result, even in a UID command.
+		if dec.PeekAtomEqual("$") {
+			if !dec.ExpectAtom(&raw) {
+				return nil, dec.Err()
+			}
+			return imap.SearchSavedResult{}, nil
+		}
+		if !dec.ExpectSequenceSet(&raw) {
 			return nil, dec.Err()
 		}
 		set, err := imap.ParseUIDSet(raw)
