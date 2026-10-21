@@ -526,15 +526,14 @@ break the client; full command support is best-effort.
     scripted tests only. Not covered: `SearchPartial` does not register UPDATE
     (#48), and `*` in an update set fails in the generic value capture (#49).
 
-[^srvcontext]: `RETURN (UPDATE)` registers a search result and `CANCELUPDATE`
-    drops it; removals are reported as `REMOVEFROM` on further untagged ESEARCH
-    responses. The registration is framework state — it already sees every
-    change to the selected mailbox — so no backend learns that CONTEXT exists.
-    **Removals only.** Recognising a message that newly *matches* a stored search
-    would mean re-running the criteria from the update path, which is the
-    backend re-entrancy the design forbids; RFC 5267 §4.3 permits REMOVEFROM
-    without ADDTO, and a guessed ADDTO would put a message in the client's
-    result set that never matched.
+[^srvcontext]: `RETURN (UPDATE)` registers the complete SEARCH or SORT result,
+    including when PARTIAL limits the initial response. After queued mailbox
+    changes, the event loop refreshes it through the existing SEARCH or SORT
+    operation, after mutations return. ADDTO and REMOVEFROM preserve the query's
+    order and UID/sequence-number mode; sorted results use explicit positions.
+    CANCELUPDATE and selection teardown end the registration. Reusing an active
+    UPDATE tag gets BAD; refresh failure sends untagged NO [NOUPDATE "tag"] and
+    drops the context. No additional backend interface is required.
 
 [^esort]: Until T27 this row overstated: the client detected the capability
     but could not send `SORT RETURN (...)` at all. `Client.SortExtended` and

@@ -27,6 +27,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- **imapmessage:** preserve non-CTE header bytes when re-encoding NUL parts,
+  including fields and continuations beyond semantic header-retention limits.
+  Decode the rewritten CTE even when it appears beyond those limits. Shared
+  text matching now supports RFC 5051 Unicode preparation and exact octets,
+  with bounded streaming substring matching. No exported root API change. (#54)
+
 - **imapmessage:** base64 bodies decode as RFC 2045 section 6.8 requires:
   characters outside the alphabet are ignored and `=` ends the data. Spaces or
   tabs inside base64 no longer make BINARY fail with UNKNOWN-CTE or SEARCH fall
@@ -41,6 +47,18 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed
+
+- **BREAKING behaviour (pre-v1):** SEARCH, SORT and MULTISEARCH reject reuse
+  of an active UPDATE tag with BAD before backend access, preserving the
+  existing context. CANCELUPDATE or selection teardown permits reuse.
+  Previously SEARCH silently replaced it. No exported signature change. (#54)
+- **BREAKING behaviour (memory):** SEARCH, SORT, THREAD and MULTISEARCH use
+  the active session comparator. The default is i;unicode-casemap with RFC 5051
+  titlecasing and decomposition; i;octet preserves case and octets. Textual
+  SORT and ORDEREDSUBJECT previously used ASCII folding and SEARCH ignored the
+  selected comparator. Add `message.MatchOptions.Comparator` on the guarded
+  options struct; empty selects Unicode and unsupported names return
+  NO [BADCOMPARATOR]. No backend interface or obligation is added. (#54)
 
 - **BREAKING (pre-v1 contract):** `QResyncMailbox.Resync` may now be called
   repeatedly within a selection for UID FETCH with CHANGEDSINCE and VANISHED,
@@ -110,8 +128,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   multipart and encapsulated message sections and returns their stored octets,
   as RFC 3516 allows; it refused them before. Base64 that contains characters
   outside the alphabet is decoded with those characters ignored (RFC 2045
-  section 6.8) instead of failing with CodeUnknownCTE, which now means only an
-  unknown transfer encoding. (#205)
+  section 6.8) instead of failing with CodeUnknownCTE. Unknown transfer
+  encodings and quoted-printable decoding failures retain that code. (#205)
 - **BREAKING behaviour (memory):** A BINARY APPEND whose parts contain NUL is
   stored with those parts re-encoded as base64, which RFC 3516 section 4.4
   permits because nothing is lost. FETCH BODY of such a message closed the
@@ -511,6 +529,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- SORT RETURN (UPDATE) registers its complete ordered result, including with
+  PARTIAL. Later changes produce position-aware REMOVEFROM and ADDTO around
+  the corresponding EXPUNGE/EXISTS notifications, preserving UID or sequence
+  numbering. Cancellation and selection teardown stop updates. Refresh
+  failures use untagged NO [NOUPDATE "tag"] and end the context; SEARCH uses
+  that framing too. No exported interface or backend obligation is added. (#54)
+- `message.Message.EncodeNULParts` preserves non-CTE header lines and their
+  continuations beyond header-retention limits, removes duplicate CTE fields,
+  and leaves the rewritten encoding visible to message analysis. BINARY
+  round trips retain all payload octets. No exported signature change. (#54)
 
 - THREAD responses follow the RFC 5256 section 5 grammar. A single reply
   continues its parent's number run, `(1 2)` rather than `(1 (2))`, and

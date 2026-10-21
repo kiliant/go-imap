@@ -141,25 +141,49 @@ func (m *Message) EncodeNULParts(w io.Writer) (bool, error) {
 			return true, err
 		}
 		cursor := h.start
-		for _, field := range h.fields {
-			if strings.EqualFold(field.Name, "Content-Transfer-Encoding") {
-				if err := copyRange(cursor, field.Start); err != nil {
-					return true, err
-				}
-				cursor = field.End
-			}
-		}
 		headerEnd := h.end
 		if h.blankStart >= 0 {
 			headerEnd = h.blankStart
 		}
-		if err := copyRange(cursor, headerEnd); err != nil {
+		// Scan physical fields rather than the bounded semantic inventory:
+		// every original CTE, including duplicates beyond its limits, must go,
+		// and no continuation of another field may be removed with it.
+		skipping := false
+		copiedEnd := h.start
+		copyHeaders := func(start, end int64) error {
+			if end > start {
+				copiedEnd = end
+			}
+			return copyRange(start, end)
+		}
+		err := scanLines(m.r, h.start, headerEnd, maxHeaderLineKeep, func(start, end int64, prefix []byte, _ bool) error {
+			line := string(prefix)
+			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+				if skipping {
+					cursor = end
+				}
+				return nil
+			}
+			name, _, found := strings.Cut(line, ":")
+			skipping = found && strings.EqualFold(strings.TrimSpace(name), "Content-Transfer-Encoding")
+			if skipping {
+				if err := copyHeaders(cursor, start); err != nil {
+					return err
+				}
+				cursor = end
+			}
+			return nil
+		})
+		if err != nil {
+			return true, err
+		}
+		if err := copyHeaders(cursor, headerEnd); err != nil {
 			return true, err
 		}
 		field := "Content-Transfer-Encoding: base64\r\n"
-		if headerEnd > h.start {
+		if copiedEnd > h.start {
 			var last [1]byte
-			if _, err := m.r.ReadAt(last[:], headerEnd-1); err != nil {
+			if _, err := m.r.ReadAt(last[:], copiedEnd-1); err != nil {
 				return true, err
 			}
 			if last[0] != '\n' {

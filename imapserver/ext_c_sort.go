@@ -327,6 +327,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := validateSortReturnOptions(c, args.returnOptions); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	if err := validateContextTag(c, command.tag, args.returnOptions); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	if err := validateUTF8AcceptCharset(c, args.charset, true); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
@@ -386,6 +389,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	if err := writeSortResponse(c, command, args, numbers, modSeq); err != nil {
 		return err
+	}
+	if tag, update := searchContextTag(command, args.returnOptions); update {
+		registerSortContext(c, tag, matchedUIDs, commandUsesUIDs(command), query, args)
 	}
 	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
 		return err

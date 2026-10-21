@@ -77,9 +77,16 @@ type headerBlock struct {
 	fields                []headerField
 	start, end, bodyStart int64
 	blankStart            int64
+	// MIME decoding must still see the first CTE after semantic header
+	// retention reaches its bounds. Retain its value separately, bounded by
+	// maxHeaderLineKeep, including continuations of that physical field only.
+	transferEncoding *headerField
 }
 
 func (h headerBlock) value(name string) string {
+	if strings.EqualFold(name, "Content-Transfer-Encoding") && h.transferEncoding != nil {
+		return h.transferEncoding.Value
+	}
 	for _, field := range h.fields {
 		if strings.EqualFold(field.Name, name) {
 			return field.Value
@@ -263,6 +270,8 @@ func stripBoundaryCRLF(r io.ReaderAt, boundaryStart, floor int64) int64 {
 func parseHeaders(r io.ReaderAt, start, end int64) (headerBlock, error) {
 	h := headerBlock{start: start, end: start, bodyStart: start, blankStart: -1}
 	var kept int
+	lastRetained := -1
+	var currentEncoding *headerField
 	err := scanLines(r, start, end, maxHeaderLineKeep, func(lineStart, lineEnd int64, prefix []byte, endedLF bool) error {
 		if h.blankStart >= 0 {
 			return nil
@@ -275,9 +284,17 @@ func parseHeaders(r io.ReaderAt, start, end int64) (headerBlock, error) {
 			h.bodyStart = lineEnd
 			return errStopScan
 		}
-		if (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) && len(h.fields) > 0 {
-			last := &h.fields[len(h.fields)-1]
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
 			addition := " " + cleanHeaderValue(strings.TrimSpace(line))
+			if currentEncoding != nil {
+				remaining := maxHeaderLineKeep - len(currentEncoding.Value)
+				currentEncoding.Value += addition[:min(len(addition), max(0, remaining))]
+				currentEncoding.End = lineEnd
+			}
+			if lastRetained < 0 {
+				return nil
+			}
+			last := &h.fields[lastRetained]
 			if remaining := maxHeaderBytes - kept; len(addition) > remaining {
 				addition = addition[:max(0, remaining)]
 			}
@@ -286,8 +303,10 @@ func parseHeaders(r io.ReaderAt, start, end int64) (headerBlock, error) {
 			last.End = lineEnd
 			return nil
 		}
+		lastRetained = -1
+		currentEncoding = nil
 		colon := strings.IndexByte(line, ':')
-		if colon <= 0 || len(h.fields) >= maxHeaderFields || kept >= maxHeaderBytes {
+		if colon <= 0 {
 			return nil
 		}
 		name := strings.TrimSpace(line[:colon])
@@ -295,11 +314,19 @@ func parseHeaders(r io.ReaderAt, start, end int64) (headerBlock, error) {
 			return nil
 		}
 		value := cleanHeaderValue(strings.TrimSpace(line[colon+1:]))
+		if h.transferEncoding == nil && strings.EqualFold(name, "Content-Transfer-Encoding") {
+			h.transferEncoding = &headerField{Name: name, Value: value, Start: lineStart, End: lineEnd}
+			currentEncoding = h.transferEncoding
+		}
+		if len(h.fields) >= maxHeaderFields || kept >= maxHeaderBytes {
+			return nil
+		}
 		if len(name)+len(value) > maxHeaderBytes-kept {
 			value = value[:max(0, maxHeaderBytes-kept-len(name))]
 		}
 		kept += len(name) + len(value)
 		h.fields = append(h.fields, headerField{Name: name, Value: value, Start: lineStart, End: lineEnd})
+		lastRetained = len(h.fields) - 1
 		return nil
 	})
 	if err == errStopScan {

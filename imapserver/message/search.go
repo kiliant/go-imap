@@ -52,6 +52,11 @@ type MatchOptions struct {
 	// and ISO-8859-1/ISO8859-1/LATIN1/LATIN-1, case-insensitively. Unknown names
 	// return ErrUnsupportedCharset even when the criteria contain no strings.
 	Charset string
+	// Comparator selects i;unicode-casemap (the default) or i;octet for text
+	// substring comparisons. Unsupported names return NO [BADCOMPARATOR].
+	// Unicode preparation uses RFC 5051 titlecasing and decomposition; unknown
+	// stored charsets or invalid UTF-8 use the original octets.
+	Comparator string
 	// Now is the reference instant for OLDER/YOUNGER. Zero uses time.Now.
 	Now time.Time
 	_   struct{}
@@ -77,7 +82,7 @@ func Match(ctx context.Context, message *Message, metadata Metadata, criterion i
 	}
 	opts := imapmessage.MatchOptions{}
 	if options != nil {
-		opts.Charset, opts.Now = options.Charset, options.Now
+		opts.Charset, opts.Comparator, opts.Now = options.Charset, options.Comparator, options.Now
 	}
 	switch strings.ToLower(strings.TrimSpace(opts.Charset)) {
 	case "", "us-ascii", "ascii", "utf-8", "utf8", "iso-8859-1", "iso8859-1", "latin1", "latin-1":

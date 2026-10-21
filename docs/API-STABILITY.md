@@ -1270,9 +1270,9 @@ is required to.
 multipart and encapsulated message sections and returns their stored octets.
 RFC 3516 allows these sections; RFC 9051 lets an IMAP4rev2 client request only
 leaf parts, and serving them anyway is the lenient choice. Base64 decoding
-ignores characters outside the alphabet (RFC 2045 section 6.8), so
-CodeUnknownCTE now means only an unknown transfer encoding, not malformed
-data.
+ignores characters outside the alphabet (RFC 2045 section 6.8), so malformed
+base64 no longer returns CodeUnknownCTE. Unknown transfer encodings and
+quoted-printable decoding failures still return that code.
 
 **Backend-observable call:** when APPEND or REPLACE is refused while staging,
 for example over a CATENATE URL, the framework calls `Session.Status` with no
@@ -1290,7 +1290,8 @@ RFC 5267 section 3.2 permits.
 **Memory behaviour (reference backend):** Subscriptions belong to names and
 survive DELETE and RENAME. LIST returns missing hierarchy levels as
 `\NonExistent \HasChildren`. SORT and THREAD keys follow RFC 5256 and RFC
-5957, including the i;ascii-casemap collation. CATENATE escapes the login
+5957, using the session's active comparator (i;unicode-casemap by default).
+CATENATE escapes the login
 inherited into URL userinfo. A BINARY APPEND is stored with NUL-bearing parts
 re-encoded.
 
@@ -1300,3 +1301,18 @@ placeholder Dovecot uses, because a NIL host would mean group syntax.
 
 **Left open:** a BODY section that a backend already stores with NUL still
 closes the connection (#210).
+
+`message.MatchOptions.Comparator` is an additive field on a guarded options
+struct. Empty selects i;unicode-casemap; i;octet selects exact octets. Unknown
+names return NO [BADCOMPARATOR]. Memory passes its active comparator to SEARCH,
+SORT/THREAD criteria and MULTISEARCH; textual sort keys and ORDEREDSUBJECT use
+the same RFC 5051 preparation. Invalid UTF-8 and unknown stored charsets retain
+binary comparison. No backend interface or obligation is added.
+
+SORT UPDATE now registers its complete ordered result, including outside a
+PARTIAL window. Refreshes use the existing SortMailbox operation, and explicit
+positions preserve the requested order across removals and additions. Context
+failure sends untagged NO [NOUPDATE "tag"]. Reusing an active UPDATE tag is
+refused before backend access across SEARCH, SORT and MULTISEARCH; this is a
+BREAKING pre-v1 behavior correction. Cancellation or selection teardown frees
+the tag.

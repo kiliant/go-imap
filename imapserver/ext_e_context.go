@@ -50,6 +50,11 @@ type searchContext struct {
 	uidMode bool
 	query   *SearchQuery
 	charset string
+	// A sorted context also retains its requested order. Its update positions
+	// are explicit; the zero position is reserved for mailbox-order SEARCH.
+	sorted  bool
+	keys    []imap.SortKeySpec
+	ordered []imap.UID
 	// mailbox and uidValidity are set for a MULTISEARCH registration, whose
 	// updates carry the MAILBOX and UIDVALIDITY correlators (RFC 7377 2.1).
 	mailbox     string
@@ -119,13 +124,33 @@ func validateSortReturnOptions(c *conn, options []string) error {
 
 // registerSearchContext records a result the client asked to keep hearing about.
 //
-// A second UPDATE under the same tag replaces the first, which is what lets a
-// client refresh its registration without a CANCELUPDATE round trip.
+// Active context tags have already been checked before executing the command.
 func registerSearchContext(c *conn, tag string, uids []imap.UID, uidMode bool, args *searchArgs) {
 	if c.state.selected == nil {
 		return
 	}
 	putSearchContext(c, &searchContext{tag: tag, uidMode: uidMode, query: newSearchQuery(args.criteria, c.state.selected.uids, c.state.selected.savedSearch), charset: args.charset}, uids)
+}
+
+func registerSortContext(c *conn, tag string, uids []imap.UID, uidMode bool, query *SearchQuery, args *sortArgs) {
+	putSearchContext(c, &searchContext{
+		tag: tag, uidMode: uidMode, query: query, charset: args.charset,
+		sorted: true, keys: slices.Clone(args.keys), ordered: slices.Clone(uids),
+	}, uids)
+}
+
+// UPDATE tags stay in use until cancellation or selection teardown. Refusing
+// reuse before backend access also leaves the original registration intact.
+func validateContextTag(c *conn, tag string, options []string) error {
+	if c.state.selected == nil || !slices.Contains(options, searchReturnUpd) {
+		return nil
+	}
+	for _, held := range c.state.selected.contexts {
+		if held.tag == tag {
+			return fmt.Errorf("UPDATE tag is already in use")
+		}
+	}
+	return nil
 }
 
 // putSearchContext installs held for uids, replacing a registration with the
@@ -205,9 +230,21 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 	var deltas []searchContextDelta
 	var live []*searchContext
 	for _, held := range selected.contexts {
+		if held.sorted {
+			delta, changed, err := refreshSortContext(c, held, beforeSequences)
+			if err != nil {
+				writeNoUpdate(c, held.tag, "sort context could not be refreshed")
+				continue
+			}
+			live = append(live, held)
+			if changed {
+				deltas = append(deltas, delta)
+			}
+			continue
+		}
 		result, err := selected.mailbox.Search(c.ctx, held.query, &SearchOptions{Charset: held.charset})
 		if err != nil || result == nil || len(result.UIDs) > maxCommandSearchResults {
-			writeUntaggedOK(c, imap.CodeNoUpdate, held.tag, "search context could not be refreshed")
+			writeNoUpdate(c, held.tag, "search context could not be refreshed")
 			continue
 		}
 		current := make(map[imap.UID]struct{}, len(result.UIDs))
@@ -269,6 +306,74 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 	return deltas
 }
 
+// A full replacement is a valid ordered delta: remove the old list from
+// position one, then insert the new list there. The two halves straddle the
+// mailbox notifications, preserving pre-EXPUNGE and post-EXISTS numbering.
+func refreshSortContext(c *conn, held *searchContext, before map[imap.UID]imap.SeqNum) (searchContextDelta, bool, error) {
+	selected := c.state.selected
+	for uid := range held.uids {
+		if _, visible := selected.sequence(uid); visible && selected.backendUIDs != nil {
+			if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
+				// A command still withholds this removal. Keep its context view
+				// until the same drain can deliver the corresponding EXPUNGE.
+				return searchContextDelta{}, false, nil
+			}
+		}
+	}
+	sorter, ok := selected.mailbox.(SortMailbox)
+	if !ok {
+		return searchContextDelta{}, false, fmt.Errorf("SORT is no longer available")
+	}
+	uids, err := sorter.Sort(c.ctx, held.query, held.keys, &SortOptions{Charset: held.charset})
+	if err != nil || len(uids) > maxCommandSearchResults {
+		if err == nil {
+			err = fmt.Errorf("SORT result limit exceeded")
+		}
+		return searchContextDelta{}, false, err
+	}
+	current := make(map[imap.UID]struct{}, len(uids))
+	ordered := make([]imap.UID, 0, len(uids))
+	for _, uid := range uids {
+		if _, visible := selected.sequence(uid); !visible {
+			continue
+		}
+		if _, duplicate := current[uid]; duplicate {
+			continue
+		}
+		current[uid] = struct{}{}
+		ordered = append(ordered, uid)
+	}
+	if slices.Equal(held.ordered, ordered) {
+		return searchContextDelta{}, false, nil
+	}
+	delta := searchContextDelta{context: held}
+	for _, uid := range held.ordered {
+		number := uint32(uid)
+		if !held.uidMode {
+			number = uint32(before[uid])
+		}
+		delta.gone = append(delta.gone, number)
+	}
+	for _, uid := range ordered {
+		number := uint32(uid)
+		if !held.uidMode {
+			seq, _ := selected.sequence(uid)
+			number = uint32(seq)
+		}
+		delta.added = append(delta.added, number)
+	}
+	held.uids, held.ordered = current, ordered
+	return delta, true, nil
+}
+
+// NOUPDATE's argument is a quoted tag. Write that typed production directly:
+// a valid tag can contain ']', which generic response-code arguments prohibit.
+func writeNoUpdate(c *conn, tag, text string) {
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("NO").SP().
+		Special('[').Atom(string(imap.CodeNoUpdate)).SP().Quoted(tag).Special(']').SP().
+		RespText(imapwire.RespText{Text: text}).CRLF()
+}
+
 // REMOVEFROM precedes EXPUNGE renumbering; ADDTO follows the corresponding
 // EXISTS. Separate responses are legal and keep both number spaces coherent.
 func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, removals bool) error {
@@ -289,7 +394,11 @@ func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, removals boo
 		if delta.context.uidMode {
 			c.encoder.SP().Atom("UID")
 		}
-		c.encoder.SP().Atom(key).SP().Special('(').Number(0).SP().Atom(numberSetString(numbers)).Special(')').CRLF()
+		position, set := uint32(0), numberSetString(numbers)
+		if delta.context.sorted {
+			position, set = 1, numberListString(numbers)
+		}
+		c.encoder.SP().Atom(key).SP().Special('(').Number(position).SP().Atom(set).Special(')').CRLF()
 	}
 	return c.encoder.Flush()
 }

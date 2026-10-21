@@ -10,6 +10,7 @@ import (
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
 	servermessage "github.com/kiliant/go-imap/imapserver/message"
+	"github.com/kiliant/go-imap/internal/unicodenorm"
 )
 
 // Group C support: SORT and THREAD (RFC 5256).
@@ -36,7 +37,7 @@ func (s *selected) Sort(ctx context.Context, query *imapserver.SearchQuery, keys
 	for i := len(keys) - 1; i >= 0; i-- {
 		key := keys[i]
 		slices.SortStableFunc(matched, func(a, b *message) int {
-			cmp := compareBySortKey(a, b, key.Key)
+			cmp := compareBySortKey(a, b, key.Key, s.session.comparator)
 			if key.Reverse {
 				return -cmp
 			}
@@ -50,7 +51,7 @@ func (s *selected) Sort(ctx context.Context, query *imapserver.SearchQuery, keys
 	return uids, nil
 }
 
-func compareBySortKey(a, b *message, key imap.SortKey) int {
+func compareBySortKey(a, b *message, key imap.SortKey, comparator string) int {
 	switch key {
 	case imap.SortKeyArrival:
 		return a.internalDate.Compare(b.internalDate)
@@ -59,11 +60,11 @@ func compareBySortKey(a, b *message, key imap.SortKey) int {
 	case imap.SortKeyDate:
 		return sentDate(a).Compare(sentDate(b))
 	case imap.SortKeySubject:
-		return strings.Compare(baseSubject(a), baseSubject(b))
+		return strings.Compare(collationKey(baseSubject(a), comparator), collationKey(baseSubject(b), comparator))
 	case imap.SortKeyFrom, imap.SortKeyDisplayFrom:
-		return strings.Compare(addressKey(a, key, true), addressKey(b, key, true))
+		return strings.Compare(collationKey(addressKey(a, key, true), comparator), collationKey(addressKey(b, key, true), comparator))
 	case imap.SortKeyTo, imap.SortKeyCc, imap.SortKeyDisplayTo:
-		return strings.Compare(addressKey(a, key, false), addressKey(b, key, false))
+		return strings.Compare(collationKey(addressKey(a, key, false), comparator), collationKey(addressKey(b, key, false), comparator))
 	default:
 		// An unknown key must not reorder anything. A stable sort with a
 		// constant comparison leaves the sequence untouched, which is safer
@@ -82,27 +83,22 @@ func sentDate(msg *message) time.Time {
 }
 
 // baseSubject is the RFC 5256 section 2.1 base subject of a message's decoded
-// envelope subject, folded for comparison. Threading and subject ordering both
-// key on it.
+// envelope subject. The session's comparator is applied after extraction.
 func baseSubject(msg *message) string {
 	subject := ""
 	if envelope := msg.analysis.Envelope(); envelope != nil {
 		subject = envelope.Subject
 	}
-	return asciiCasemap(subjectBase(subject))
+	return subjectBase(subject)
 }
 
-// asciiCasemap folds a sort key under i;ascii-casemap, SORT's default
-// collation (RFC 5256 section 3): ASCII letters map to upper case and every
-// other octet is compared unchanged (RFC 4790 section 9.2). Folding to lower
-// case instead would order "[" and "_" after the letters rather than before.
-func asciiCasemap(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' {
-			return r - 'a' + 'A'
-		}
-		return r
-	}, s)
+// The empty session value selects i;unicode-casemap, the SORT/THREAD default
+// required by RFC 5256 and RFC 5255. i;octet preserves case and every octet.
+func collationKey(s, comparator string) string {
+	if comparator == "i;octet" {
+		return s
+	}
+	return unicodenorm.Casemap(s)
 }
 
 // subjectBase follows RFC 5256 section 2.1 step by step; the section requires
@@ -213,15 +209,15 @@ func addressKey(msg *message, key imap.SortKey, from bool) string {
 	}
 	address := addresses[0]
 	if key != imap.SortKeyDisplayFrom && key != imap.SortKeyDisplayTo {
-		return asciiCasemap(address.Mailbox)
+		return address.Mailbox
 	}
 	switch {
 	case address.Name != "":
-		return asciiCasemap(address.Name)
+		return address.Name
 	case address.Mailbox != "" && address.Host != "":
-		return asciiCasemap(address.Mailbox + "@" + address.Host)
+		return address.Mailbox + "@" + address.Host
 	default:
-		return asciiCasemap(address.Mailbox)
+		return address.Mailbox
 	}
 }
 
@@ -257,7 +253,7 @@ func (s *selected) Thread(ctx context.Context, query *imapserver.SearchQuery, al
 	order := make([]string, 0, len(matched))
 	threads := make(map[string][]*message)
 	for _, msg := range matched {
-		subject := baseSubject(msg)
+		subject := collationKey(baseSubject(msg), s.session.comparator)
 		if _, seen := threads[subject]; !seen {
 			order = append(order, subject)
 		}
@@ -299,7 +295,7 @@ func (s *selected) matching(ctx context.Context, query *imapserver.SearchQuery, 
 		// The same evaluator input as Search, so SORT and THREAD select
 		// exactly what SEARCH would.
 		metadata := searchMetadata(i, msg, s.recentFlags(msg.uid, msg.flags), needsEmailID)
-		ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
+		ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset, Comparator: s.session.comparator})
 		if err != nil {
 			return nil, err
 		}
@@ -392,7 +388,7 @@ func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria 
 		var modSeqs []uint64
 		for i, msg := range m.messages {
 			metadata := searchMetadata(i, msg, cloneFlags(msg.flags), needsEmailID)
-			ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
+			ok, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset, Comparator: s.comparator})
 			if err != nil {
 				return nil, err
 			}

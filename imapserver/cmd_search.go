@@ -84,6 +84,9 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := validateSearchReturnOptions(c, args); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	if err := validateContextTag(c, command.tag, args.returnOptions); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	if err := validateUTF8AcceptCharset(c, args.charset, false); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
