@@ -96,7 +96,10 @@ type SessionUpdate struct {
 	// for identity changes, and HIGHESTMODSEQ for CONDSTORE/QRESYNC sessions
 	// (RFC 5465 section 5). A backend without the negotiated state may always
 	// include HIGHESTMODSEQ: the framework removes items the session has not
-	// negotiated, including HIGHESTMODSEQ until CONDSTORE is enabled.
+	// negotiated, including HIGHESTMODSEQ until CONDSTORE is enabled. The
+	// STATUS responses pushed during a NOTIFY SET STATUS keep HIGHESTMODSEQ
+	// whenever FlagChange or AnnotationChange is registered and the server
+	// advertises CONDSTORE or QRESYNC, as RFC 5465 section 3 requires.
 	Status *imap.StatusData
 	_      struct{}
 }
@@ -661,7 +664,7 @@ func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	// RFC 5465 section 3: STATUS responses requested by the STATUS indicator
 	// precede the tagged OK. The backend pushed them during Notify.
-	if err := c.drainNotify(); err != nil {
+	if err := c.drainNotifyStatus(initialStatusModSeq(c, config)); err != nil {
 		return err
 	}
 	// A successful SET is an implicit NOOP: it returns every change to the
@@ -704,6 +707,36 @@ func (c *conn) notifySignal() <-chan struct{} {
 // is what lets the framework deliver them without the client holding a
 // sequence-number view of a mailbox it never selected.
 func (c *conn) drainNotify() error {
+	return c.drainNotifyStatus(false)
+}
+
+// initialStatusModSeq reports whether the STATUS responses a NOTIFY SET STATUS
+// writes before its tagged OK carry HIGHESTMODSEQ although CONDSTORE is not
+// enabled. RFC 5465 section 3 requires it there when FlagChange or
+// AnnotationChange is registered and the server supports CONDSTORE or QRESYNC;
+// later event STATUS responses carry it only once the client has enabled
+// CONDSTORE (section 5.2).
+func initialStatusModSeq(c *conn, config *NotifyConfig) bool {
+	if config == nil || !config.StatusOnSet {
+		return false
+	}
+	advertised := advertisedCapabilities(c)
+	if !advertised["CONDSTORE"] && !advertised["QRESYNC"] {
+		return false
+	}
+	for _, watch := range config.Watches {
+		for _, event := range watch.Events {
+			if event == imap.NotifyEventFlagChange || event == notifyEventAnnotationChange {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// drainNotifyStatus is drainNotify, with HIGHESTMODSEQ written regardless of
+// CONDSTORE enabling when modSeq is set.
+func (c *conn) drainNotifyStatus(modSeq bool) error {
 	if c.notifyQueue == nil {
 		return nil
 	}
@@ -736,9 +769,13 @@ func (c *conn) drainNotify() error {
 		}
 		var items []imap.StatusItem
 		for item := range update.Status.Values {
-			// RFC 5465 section 5 includes HIGHESTMODSEQ once the client has
-			// enabled CONDSTORE or QRESYNC, not merely when it is advertised.
-			if item == imap.StatusItemHighestModSeq && !condStoreEnabled(c) {
+			// RFC 5465 section 5 includes HIGHESTMODSEQ in event STATUS
+			// responses once the client has enabled CONDSTORE or QRESYNC, not
+			// merely when it is advertised.
+			if item == imap.StatusItemHighestModSeq {
+				if modSeq || condStoreEnabled(c) {
+					items = append(items, item)
+				}
 				continue
 			}
 			if gate, ok := statusItemCapability(item); ok && gate(&c.state, advertised) {

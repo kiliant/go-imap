@@ -519,6 +519,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   an invalid server response. Compatible wire correction; no exported API or
   backend contract change. (#205)
 
+- The STATUS responses a NOTIFY SET STATUS writes before its tagged OK carry
+  HIGHESTMODSEQ when FlagChange or AnnotationChange is registered and the server
+  advertises CONDSTORE or QRESYNC, whether or not CONDSTORE is enabled, as RFC
+  5465 section 3 requires. Event STATUS responses keep the section 5.2 rule
+  and include it only once CONDSTORE is enabled. No exported API change. (#205)
+
 - APPEND and REPLACE answer NO [TRYCREATE] when the destination does not
   exist, even if staging refused the command first, for example over a
   CATENATE URL. RFC 3501 section 6.3.11 requires TRYCREATE for a missing
