@@ -81,36 +81,119 @@ func sentDate(msg *message) time.Time {
 	return msg.internalDate
 }
 
-// baseSubject is the RFC 5256 section 2.1 base subject: the subject with
-// leading "Re:"/"Fwd:" prefixes and trailing "(fwd)" removed, folded for
-// comparison. Threading and subject ordering both key on it.
+// baseSubject is the RFC 5256 section 2.1 base subject of a message's decoded
+// envelope subject, folded for comparison. Threading and subject ordering both
+// key on it.
 func baseSubject(msg *message) string {
 	subject := ""
 	if envelope := msg.analysis.Envelope(); envelope != nil {
 		subject = envelope.Subject
 	}
-	subject = strings.ToLower(strings.Join(strings.Fields(subject), " "))
-	for {
-		trimmed := strings.TrimSpace(subject)
-		trimmed = strings.TrimSuffix(trimmed, "(fwd)")
-		trimmed = strings.TrimSpace(trimmed)
-		switch {
-		case strings.HasPrefix(trimmed, "re:"):
-			trimmed = strings.TrimPrefix(trimmed, "re:")
-		case strings.HasPrefix(trimmed, "fw:"):
-			trimmed = strings.TrimPrefix(trimmed, "fw:")
-		case strings.HasPrefix(trimmed, "fwd:"):
-			trimmed = strings.TrimPrefix(trimmed, "fwd:")
-		default:
-			return trimmed
+	return asciiCasemap(subjectBase(subject))
+}
+
+// asciiCasemap folds a sort key under i;ascii-casemap, SORT's default
+// collation (RFC 5256 section 3): ASCII letters map to upper case and every
+// other octet is compared unchanged (RFC 4790 section 9.2). Folding to lower
+// case instead would order "[" and "_" after the letters rather than before.
+func asciiCasemap(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' {
+			return r - 'a' + 'A'
 		}
-		subject = trimmed
+		return r
+	}, s)
+}
+
+// subjectBase follows RFC 5256 section 2.1 step by step; the section requires
+// exactly this procedure, because its grammar alone is ambiguous. Step (1)'s
+// RFC 2047 decoding has already happened in the envelope.
+func subjectBase(subject string) string {
+	// (1) Tabs, continuations and runs of spaces become a single space.
+	s := strings.Join(strings.FieldsFunc(subject, func(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }), " ")
+	for {
+		// (2) Remove subj-trailer = "(fwd)" / WSP, repeatedly.
+		for {
+			trimmed := strings.TrimRight(s, " ")
+			if len(trimmed) >= 5 && strings.EqualFold(trimmed[len(trimmed)-5:], "(fwd)") {
+				trimmed = trimmed[:len(trimmed)-5]
+			}
+			if trimmed == s {
+				break
+			}
+			s = trimmed
+		}
+		// (3)–(5) Remove subj-leaders and removable subj-blobs until neither
+		// matches.
+		for {
+			if rest, ok := cutSubjectLeader(s); ok {
+				s = rest
+				continue
+			}
+			if rest, ok := cutSubjectBlob(s); ok && strings.TrimLeft(rest, " ") != "" {
+				s = rest
+				continue
+			}
+			break
+		}
+		// (6) Unwrap "[fwd:" subject "]" and repeat from (2).
+		if len(s) >= 6 && strings.EqualFold(s[:5], "[fwd:") && s[len(s)-1] == ']' {
+			s = s[5 : len(s)-1]
+			continue
+		}
+		return s
 	}
 }
 
-// addressKey is the mailbox or display name the address-shaped sort keys
-// compare. RFC 5256 section 3 sorts on the first address of the header, and
-// RFC 5957's DISPLAY keys sort on its display name instead.
+// cutSubjectLeader removes one subj-leader = (*subj-blob subj-refwd) / WSP,
+// where subj-refwd = ("re" / ("fw" ["d"])) *WSP [subj-blob] ":".
+func cutSubjectLeader(s string) (string, bool) {
+	if strings.HasPrefix(s, " ") {
+		return s[1:], true
+	}
+	rest := s
+	for {
+		next, ok := cutSubjectBlob(rest)
+		if !ok {
+			break
+		}
+		rest = next
+	}
+	switch {
+	case len(rest) >= 3 && strings.EqualFold(rest[:3], "fwd"):
+		rest = rest[3:]
+	case len(rest) >= 2 && (strings.EqualFold(rest[:2], "re") || strings.EqualFold(rest[:2], "fw")):
+		rest = rest[2:]
+	default:
+		return s, false
+	}
+	rest = strings.TrimLeft(rest, " ")
+	if next, ok := cutSubjectBlob(rest); ok {
+		rest = next
+	}
+	if !strings.HasPrefix(rest, ":") {
+		return s, false
+	}
+	return rest[1:], true
+}
+
+// cutSubjectBlob removes one subj-blob = "[" *BLOBCHAR "]" *WSP, where
+// BLOBCHAR is any octet except "[" and "]".
+func cutSubjectBlob(s string) (string, bool) {
+	if !strings.HasPrefix(s, "[") {
+		return s, false
+	}
+	end := strings.IndexAny(s[1:], "[]")
+	if end < 0 || s[1+end] != ']' {
+		return s, false
+	}
+	return strings.TrimLeft(s[end+2:], " "), true
+}
+
+// addressKey is the value the address-shaped sort keys compare, taken from the
+// first address of the header. RFC 5256 section 3 sorts FROM, TO and CC on its
+// addr-mailbox alone. RFC 5957 section 3 sorts the DISPLAY keys on its decoded
+// addr-name, falling back to addr-mailbox@addr-host, then to addr-mailbox.
 func addressKey(msg *message, key imap.SortKey, from bool) string {
 	envelope := msg.analysis.Envelope()
 	if envelope == nil {
@@ -129,11 +212,17 @@ func addressKey(msg *message, key imap.SortKey, from bool) string {
 		return ""
 	}
 	address := addresses[0]
-	display := key == imap.SortKeyDisplayFrom || key == imap.SortKeyDisplayTo
-	if display && address.Name != "" {
-		return strings.ToLower(address.Name)
+	if key != imap.SortKeyDisplayFrom && key != imap.SortKeyDisplayTo {
+		return asciiCasemap(address.Mailbox)
 	}
-	return strings.ToLower(address.Mailbox + "@" + address.Host)
+	switch {
+	case address.Name != "":
+		return asciiCasemap(address.Name)
+	case address.Mailbox != "" && address.Host != "":
+		return asciiCasemap(address.Mailbox + "@" + address.Host)
+	default:
+		return asciiCasemap(address.Mailbox)
+	}
 }
 
 // Thread implements [imapserver.ThreadMailbox].

@@ -475,6 +475,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   unescaped, gave the authority a second `@` and refused every such URL with
   NO [BADURL]. No exported API change. (#205)
 
+- memory: SORT and THREAD ORDEREDSUBJECT follow RFC 5256 and RFC 5957
+  exactly. The base subject is computed by the full section 2.1 procedure,
+  including `[blob]` prefixes, `Re[2]:`-style leaders and `[fwd: ...]`
+  wrappers. FROM, TO and CC compare the first address's mailbox alone, and
+  DISPLAYFROM and DISPLAYTO fall back to mailbox@host, then mailbox. String
+  keys are compared under i;ascii-casemap, which folds to upper case, so
+  punctuation such as `[` and `_` now sorts before letters. No exported API
+  change. (#205)
+
 - Narrow memory's CATENATE account-inheritance documentation to absolute URLs
   without userinfo. Mechanism-only userinfo remains refused: NO [BADURL], or
   a plain NO when the URL cannot be echoed (#204).
