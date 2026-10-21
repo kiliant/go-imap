@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,6 +51,19 @@ func TestReview6fAmbiguousFetchUIDRejected(t *testing.T) {
 				t.Fatal("accepted multiple UID values")
 			}
 		}
+	}
+}
+
+func TestReview6fRepeatedFetchUIDRequests(t *testing.T) {
+	items := []imap.FetchItem{imap.FetchItemFlags, imap.FetchItemKeyword("uid"), imap.FetchItemUID, &imap.FetchItemBodySection{Peek: true}}
+	before := append([]imap.FetchItem(nil), items...)
+	got, requested := withFetchUID(items)
+	want := []imap.FetchItem{imap.FetchItemFlags, imap.FetchItemUID, items[3]}
+	if !requested || !reflect.DeepEqual(got, want) {
+		t.Fatalf("UID requests = %#v, requested = %v", got, requested)
+	}
+	if !reflect.DeepEqual(items, before) {
+		t.Fatal("mutated the client's item list")
 	}
 }
 

@@ -471,7 +471,7 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 			key := imap.FetchDataKey(strings.ToUpper(string(item)))
 			switch item {
 			case imap.FetchItemUID:
-				data.Items[key] = append(data.Items[key], imap.FetchDataUID(msg.uid))
+				data.Items[key] = []imap.FetchData{imap.FetchDataUID(msg.uid)}
 			case imap.FetchItemFlags:
 				data.Items[key] = append(data.Items[key], imap.FetchDataFlags(cloneFlags(msg.flags)))
 			case imap.FetchItemModSeq:

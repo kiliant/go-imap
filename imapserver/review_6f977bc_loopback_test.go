@@ -29,6 +29,52 @@ func review6fFill(t *testing.T, b imapserver.Backend, n int) {
 	}
 }
 
+func TestReview6fRepeatedFetchUID(t *testing.T) {
+	for _, kind := range []string{"memory", "maildir"} {
+		t.Run(kind, func(t *testing.T) {
+			b := r4Backend(t, kind)
+			review6fFill(t, b, 1)
+			s, err := b.Authenticate(t.Context(), &imapserver.ConnInfo{}, &imapserver.Credentials{Mechanism: "PLAIN", Username: "alice", Password: "secret"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close(context.Background(), nil)
+			selected, err := s.Select(t.Context(), "INBOX", &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer selected.Mailbox.Unselect(context.Background(), nil)
+			writer := &imapserver.FetchWriter{WriteFunc: func(_ context.Context, data *imap.FetchMessageData) error {
+				values := data.Items["UID"]
+				if len(values) != 1 || values[0] != imap.FetchDataUID(selected.Snapshot.UIDs[0]) {
+					t.Errorf("repeated backend UID request: %#v", values)
+				}
+				return nil
+			}}
+			if err := selected.Mailbox.Fetch(t.Context(), writer, imap.UIDSetNum(selected.Snapshot.UIDs[0]), &imapserver.FetchOptions{Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemUID}}); err != nil {
+				t.Fatal(err)
+			}
+			w := r4Open(t, b, &imapserver.Options{AllowInsecureAuth: true})
+			w.cmd("S", "SELECT INBOX")
+			for i, command := range []string{
+				"FETCH 1 (UID UID FLAGS)",
+				"FETCH 1 (uid uId FLAGS)",
+				"UID FETCH 1 (UID UID BODY.PEEK[])",
+				"FETCH 1 (UID UID MODSEQ)",
+			} {
+				tag := fmt.Sprintf("F%d", i)
+				got := w.cmd(tag, command)
+				if !strings.HasPrefix(r4Tagged(got), tag+" OK") {
+					t.Errorf("%s: %q", command, got)
+				}
+				if !r4Has(got, `\* 1 FETCH \(.*UID 1[ )]`) {
+					t.Errorf("missing message UID for %s: %q", command, got)
+				}
+			}
+		})
+	}
+}
+
 func TestReview6fHeldRemovalAndLargeStore(t *testing.T) {
 	for _, kind := range []string{"memory", "maildir"} {
 		for _, form := range []string{"STORE", "UID STORE"} {

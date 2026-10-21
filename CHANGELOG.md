@@ -565,6 +565,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   mappings from conflicting UID keys. Read timeouts send BYE. UNAUTHENTICATE
   accepts an optional final DEFLATE block after sync flush. No exported API
   change. (#54, review N-3 and teardown/timeout follow-ups)
+- Coalesce repeated UID requests before backend FETCH and in both reference
+  backends' results. Legal repeated items no longer produce NO [SERVERBUG] under
+  the strict single-UID validation; conflicting backend UID values still fail.
+  (#54, interop follow-up)
 - LOGIN and AUTHENTICATE preserve commands buffered behind authentication,
   including SASL continuation and UNAUTHENTICATE/re-authentication pipelines.
   UNAUTHENTICATE errors send BYE instead of the forbidden NO; success removes

@@ -277,12 +277,24 @@ func mapFetchResponse(selected *selectedState, data *imap.FetchMessageData, incl
 }
 
 func withFetchUID(items []imap.FetchItem) ([]imap.FetchItem, bool) {
+	// UID identifies the result rather than a repeatable section. Clients may
+	// request it more than once; forward one canonical request to the backend.
+	result := make([]imap.FetchItem, 0, len(items)+1)
+	requested := false
 	for _, item := range items {
 		if keyword, ok := item.(imap.FetchItemKeyword); ok && strings.EqualFold(string(keyword), string(imap.FetchItemUID)) {
-			return slices.Clone(items), true
+			if requested {
+				continue
+			}
+			requested = true
+			item = imap.FetchItemUID
 		}
+		result = append(result, item)
 	}
-	return append(slices.Clone(items), imap.FetchItemUID), false
+	if !requested {
+		result = append(result, imap.FetchItemUID)
+	}
+	return result, requested
 }
 
 func fetchLiteralReader(value imap.FetchData) io.Reader {
