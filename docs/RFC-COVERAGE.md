@@ -224,7 +224,7 @@ CONDSTORE `MODIFIED` on tagged OK.
 | COMPRESS=DEFLATE | 4978 | verified [^t26c] | done [^srvcompress] |
 | UTF8=ACCEPT | 9755 | verified [^t26c] | done [^srvcompress] |
 | UTF8=ALL | 5738, 9755 | done | — [^srvutf8] |
-| UTF8=APPEND | 5738, 9755 | done | done |
+| UTF8=APPEND | 5738, 9755 | done | obsolete; not advertised [^srvutf8] |
 | UTF8=ONLY | 9755 | done | — [^srvutf8] |
 | UTF8=USER | 5738, 9755 | done | — [^srvutf8] |
 | SORT | 5256 | verified [^t26c] | done |
@@ -254,8 +254,9 @@ CONDSTORE `MODIFIED` on tagged OK.
     normalising text lines to CRLF and slicing decoded partial ranges. Unknown
     or malformed CTEs fail with UNKNOWN-CTE. IMAP4REV2 requires the backend-only
     BINARY-FETCH witness, independently of full BINARY advertisement. (#126)
-    Binary APPEND (a literal8 payload) is blocked with CATENATE and MULTIAPPEND
-    below.
+    Whole-message literal8 APPEND, MULTIAPPEND and REPLACE are accepted only
+    with full BINARY advertised. CATENATE TEXT uses ordinary literals, as
+    specified by RFC 4469.
 
 [^srvmultiappend]: Parsing continues between literals: the parser reads to the
     first literal's announcement, the handler consumes it, then asks the reader
@@ -271,7 +272,10 @@ CONDSTORE `MODIFIED` on tagged OK.
     input returns NO [TOOBIG] without committing, and remaining literals drain
     without resolving further URLs.
 
-[^srvutf8]: **The only capabilities left unimplemented, and both by decision.**
+[^srvutf8]: UTF8=APPEND is obsolete and is not advertised. RFC 9755's
+    UTF8=ACCEPT replaces the obsolete APPEND syntax. Unenabled rev1 clients'
+    8-bit APPEND-family headers are rejected by the framework before mutation;
+    ENABLE UTF8=ACCEPT or IMAP4rev2 permits them.
     RFC 9755 deprecates UTF8=ALL and UTF8=USER outright — implementing a
     deprecated capability would be a mistake, not an omission. UTF8=ONLY asserts
     the server *refuses* ASCII-only clients, which is a deployment policy this
@@ -296,7 +300,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvpartial]: Framework-owned windowing of an ESEARCH result, including RFC
     9394's negative ranges. It saves wire bytes and client memory, not backend
     work — the backend still evaluates the whole search, and RFC 9394 defines no
-    interface that would let it stop early.
+    interface that would let it stop early. UID FETCH also supports PARTIAL,
+    windowing existing UIDs before CHANGEDSINCE regardless of modifier order.
 
 [^srvfuzzy]: The FUZZY modifier reaches the backend through the open search
     criteria tree with no framework translation, so the capability is purely a

@@ -94,7 +94,7 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
 	if err := requireUIDCommand(c, command); err != nil {
-		return c.writeBad(command.tag, err.Error())
+		return writeBackendError(c, command.tag, command.name, err)
 	}
 	uidMode := commandUsesUIDs(command)
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)

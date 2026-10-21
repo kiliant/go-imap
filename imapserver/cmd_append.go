@@ -47,62 +47,13 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil {
 		return c.writeBad(command.tag, "invalid APPEND arguments")
 	}
-	spool, err := os.CreateTemp("", "go-imap-append-*")
-	if spool != nil {
-		defer func() { _ = spool.Close(); _ = os.Remove(spool.Name()) }()
+	staged, err := c.stageAppend(ctx, args.first, false, nil)
+	defer staged.close()
+	if err != nil {
+		return writeAppendDecodeError(c, command.tag, err, "invalid APPEND payload")
 	}
+	messages, failure := staged.messages, staged.failure
 	origin := nextCommandOrigin()
-	message := args.first
-	var messages []AppendMessage
-	failure := err
-	var offset int64
-	count := 0
-	for {
-		count++
-		if failure == nil {
-			failure = validateAppendShape(c, count, len(message.catenate) != 0)
-		}
-		// After a refusal, later messages are only drained: API-STABILITY
-		// promises no further URL resolution, and the budget is the command's.
-		payload, collectErr := c.collectAppendPayload(ctx, &message, c.server.options.Limits.MaxLiteralBytes-offset, failure != nil)
-		if collectErr != nil {
-			var protocolErr *imap.Error
-			if !errors.As(collectErr, &protocolErr) {
-				return writeAppendDecodeError(c, command.tag, collectErr, "invalid APPEND payload")
-			}
-			if failure == nil {
-				failure = collectErr
-			}
-		} else {
-			if failure == nil {
-				size, copyErr := io.Copy(spool, io.LimitReader(payload.reader, probingLimit(c.server.options.Limits.MaxLiteralBytes-offset)))
-				if copyErr != nil {
-					failure = copyErr
-				} else if size > c.server.options.Limits.MaxLiteralBytes-offset {
-					failure = resolvedContentTooBig()
-				} else if size == 0 {
-					failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "empty APPEND message"}
-				} else {
-					staged := AppendMessage{Literal: io.NewSectionReader(spool, offset, size), Flags: message.flags, InternalDate: message.internalDate}
-					if message.literal != nil {
-						staged.Size, staged.HasSize = message.literal.Size(), true
-					}
-					messages = append(messages, staged)
-					offset += size
-				}
-			}
-			payload.drain()
-			payload.close()
-		}
-		next, err := readAppendContinuation(ctx, c, false)
-		if err != nil {
-			return writeAppendDecodeError(c, command.tag, err, "invalid APPEND continuation")
-		}
-		if next.step == appendStepDone {
-			break
-		}
-		message = next.message
-	}
 	if failure != nil {
 		return writeBackendError(c, command.tag, "APPEND", failure)
 	}
@@ -143,6 +94,135 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 	return c.writeTagged(command.tag, "OK", "APPEND completed")
 }
 
+// stagedAppend owns the temporary file backing every message until the backend
+// call finishes. No mutation runs until the whole command has been consumed.
+type stagedAppend struct {
+	file     *os.File
+	messages []AppendMessage
+	failure  error
+}
+
+func (s *stagedAppend) close() {
+	if s.file != nil {
+		_ = s.file.Close()
+		_ = os.Remove(s.file.Name())
+	}
+}
+
+func (c *conn) stageAppend(ctx context.Context, first appendMessage, single bool, refusal error) (*stagedAppend, error) {
+	spool, err := os.CreateTemp("", "go-imap-append-*")
+	staged := &stagedAppend{file: spool}
+	message := first
+	var messages []AppendMessage
+	failure := refusal
+	if failure == nil {
+		failure = err
+	}
+	var offset int64
+	count := 0
+	for {
+		count++
+		if failure == nil && single && count > 1 {
+			failure = &imap.Error{Type: imap.ErrorTypeBad, Text: "REPLACE requires exactly one message"}
+		}
+		if failure == nil {
+			failure = validateAppendShape(c, count, len(message.catenate) != 0)
+		}
+		// After a refusal, later messages are only drained: API-STABILITY
+		// promises no further URL resolution, and the budget is the command's.
+		payload, collectErr := c.collectAppendPayload(ctx, &message, c.server.options.Limits.MaxLiteralBytes-offset, failure != nil)
+		if collectErr != nil {
+			var protocolErr *imap.Error
+			var wireErr *imapwire.Error
+			// A literal policy error may wrap an imap.Error, but it ended
+			// continuation parsing: the reader has already recovered the line.
+			// Only fully consumed payload refusals can continue draining here.
+			if errors.As(collectErr, &wireErr) || !errors.As(collectErr, &protocolErr) {
+				return staged, collectErr
+			}
+			if failure == nil {
+				failure = collectErr
+			}
+		} else {
+			if failure == nil {
+				size, copyErr := io.Copy(spool, io.LimitReader(payload.reader, probingLimit(c.server.options.Limits.MaxLiteralBytes-offset)))
+				if copyErr != nil {
+					if readTimedOut(copyErr) {
+						return staged, copyErr
+					}
+					failure = copyErr
+				} else if size > c.server.options.Limits.MaxLiteralBytes-offset {
+					failure = resolvedContentTooBig()
+				} else if size == 0 {
+					failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "empty APPEND message"}
+				} else {
+					staged := AppendMessage{Literal: io.NewSectionReader(spool, offset, size), Flags: message.flags, InternalDate: message.internalDate}
+					if message.literal != nil {
+						staged.Size, staged.HasSize = message.literal.Size(), true
+					}
+					if !c.state.enabledCapability("UTF8=ACCEPT") && c.state.revision != revisionIMAP4rev2 {
+						failure = validateAppendHeaders(io.NewSectionReader(spool, offset, size))
+					}
+					messages = append(messages, staged)
+					offset += size
+				}
+			}
+			if err := payload.drain(); err != nil {
+				payload.close()
+				return staged, err
+			}
+			payload.close()
+		}
+		next, err := readAppendContinuation(ctx, c, false)
+		if err != nil {
+			return staged, err
+		}
+		if next.step == appendStepDone {
+			break
+		}
+		message = next.message
+	}
+	staged.messages, staged.failure = messages, failure
+	return staged, nil
+}
+
+// validateAppendHeaders scans only the header section with bounded memory. A
+// body may contain 8-bit bytes without negotiating UTF8=ACCEPT.
+func validateAppendHeaders(reader io.Reader) error {
+	var buffer [4096]byte
+	blank := true
+	for {
+		n, err := reader.Read(buffer[:])
+		for _, b := range buffer[:n] {
+			if b >= 0x80 {
+				return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "8-bit message headers require ENABLE UTF8=ACCEPT or IMAP4rev2"}
+			}
+			if b == '\n' {
+				if blank {
+					return nil
+				}
+				blank = true
+			} else if b != '\r' {
+				blank = false
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func appendFamilyCommand(command *queuedCommand) bool {
+	if command.name == "APPEND" || command.name == "REPLACE" {
+		return true
+	}
+	args, ok := command.args.(*uidCommandArgs)
+	return ok && args != nil && args.descriptor != nil && args.descriptor.name == "REPLACE"
+}
+
 // appendLiteralTooBig identifies a literal size policy failure without turning
 // syntax, line-length or nesting errors into upload-size refusals.
 func appendLiteralTooBig(err error) bool {
@@ -157,6 +237,10 @@ func appendLiteralTooBig(err error) bool {
 func writeAppendDecodeError(c *conn, tag string, err error, text string) error {
 	if readTimedOut(err) {
 		return c.writeReadTimeout(err)
+	}
+	var protocolErr *imap.Error
+	if errors.As(err, &protocolErr) && protocolErr.Type == imap.ErrorTypeBad {
+		return writeBackendError(c, tag, "APPEND", err)
 	}
 	if appendLiteralTooBig(err) {
 		return writeBackendError(c, tag, "APPEND", resolvedContentTooBig())
@@ -182,6 +266,12 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 		// rather than the process a nil dereference.
 		if message.literal == nil {
 			return nil, fmt.Errorf("APPEND message carries no payload")
+		}
+		if message.literal.Binary() && !advertisedCapabilities(c)["BINARY"] {
+			if err := message.literal.Discard(); err != nil {
+				return nil, err
+			}
+			return nil, &imap.Error{Type: imap.ErrorTypeBad, Text: "literal8 APPEND requires BINARY"}
 		}
 		literal := &appendLiteral{reader: message.literal, remaining: message.literal.Size()}
 		return &appendPayload{reader: literal, literal: message.literal, pending: literal}, nil
@@ -216,6 +306,9 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 	for {
 		for _, part := range parts {
 			if part.literal != nil {
+				if failure == nil && part.literal.Binary() {
+					failure = &imap.Error{Type: imap.ErrorTypeBad, Text: "CATENATE TEXT requires an ordinary literal"}
+				}
 				if failure == nil && part.literal.Size() > budget-total {
 					failure = resolvedContentTooBig()
 				}

@@ -228,6 +228,11 @@ func FuzzServeConnPreAuth(f *testing.F) {
 // credential it would have to guess.
 func FuzzServeConnAuthenticated(f *testing.F) {
 	for _, seed := range []string{
+		"b SELECT INBOX\r\nc UID REPLACE 1 INBOX d EXPUNGE\r\n",
+		"b SELECT INBOX\r\nc REPLACE 1 INBOX CATENATE (TEXT {3+}\r\nabc)\r\n",
+		"b APPEND INBOX ~{3+}\r\na\x00b\r\n",
+		"b SELECT INBOX\r\nc UID FETCH 1:* (FLAGS) (PARTIAL -1:-2)\r\n",
+		"b LIST \"\"  c NOOP\r\n",
 		"b SELECT INBOX\r\n",
 		"b LIST \"\" *\r\n",
 		"b STATUS INBOX (MESSAGES UIDNEXT UIDVALIDITY)\r\n",

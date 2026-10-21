@@ -15,6 +15,9 @@ func handleSelect(ctx context.Context, c *conn, command *queuedCommand) error {
 	if !ok || args == nil || args.mailbox == "" {
 		return c.writeBad(command.tag, "invalid SELECT arguments")
 	}
+	if uidOnlyEnabled(c) && args.qresync != nil && !args.qresync.SeqMatchSeqNums.IsEmpty() {
+		return writeBackendError(c, command.tag, command.name, uidRequiredError("QRESYNC sequence match data is not allowed once UIDONLY is enabled"))
+	}
 	mailbox := args.mailbox
 	readOnly := command.name == "EXAMINE"
 	// SELECT parameters from CONDSTORE and QRESYNC. See ext_b_condstore.go.

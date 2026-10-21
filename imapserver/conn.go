@@ -118,6 +118,8 @@ type conn struct {
 	// commandInProgress is the other half of RFC 3501 §7.4.1, and is event-loop
 	// owned for the same reason. See expungeDeliveryDeferred.
 	commandInProgress bool
+	// saveSearchOnNO scopes RFC 5182 failure handling to the current handler.
+	saveSearchOnNO bool
 	// updateEffects remembers command-side responses whose matching update
 	// batch could not yet be applied because an earlier unsolicited removal
 	// remains deferred. It is event-loop owned. When that batch is eventually
@@ -318,7 +320,11 @@ func (c *conn) readCommands() error {
 				return err
 			}
 		} else {
-			command.args, command.bytes, command.parseErr = descriptor.parse(decoder)
+			if name == "UID" {
+				command.args, command.bytes, command.parseErr = parseUIDCommandDescriptor(decoder, func(d *commandDescriptor) { currentDescriptor = d })
+			} else {
+				command.args, command.bytes, command.parseErr = descriptor.parse(decoder)
+			}
 			if command.parseErr != nil {
 				var timeout net.Error
 				if errors.As(command.parseErr, &timeout) && timeout.Timeout() {
@@ -338,7 +344,7 @@ func (c *conn) readCommands() error {
 					if err := c.queueCommand(command); err != nil {
 						return err
 					}
-					if name == "APPEND" && appendLiteralTooBig(command.parseErr) {
+					if appendFamilyCommand(command) && appendLiteralTooBig(command.parseErr) {
 						// Flush the tagged policy refusal before closing an unread,
 						// oversized non-synchronising payload.
 						c.waitCommandDone(command)
@@ -419,7 +425,7 @@ func (c *conn) waitBarrier(decoder *imapwire.Decoder, command *queuedCommand) er
 			}
 			request.reply <- readerResult{value: value, err: err}
 			if decoder.Fatal() {
-				if readTimedOut(err) || command.name == "APPEND" && appendLiteralTooBig(err) {
+				if readTimedOut(err) || appendFamilyCommand(command) && appendLiteralTooBig(err) {
 					c.waitCommandDone(command)
 				}
 				c.cancel(err)
@@ -734,7 +740,7 @@ func (c *conn) execute(command *queuedCommand) error {
 		return command.stopErr
 	}
 	if command.parseErr != nil {
-		if command.name == "APPEND" {
+		if appendFamilyCommand(command) {
 			return writeAppendDecodeError(c, command.tag, command.parseErr, "invalid command syntax")
 		}
 		return c.writeBad(command.tag, "invalid command syntax")
@@ -784,14 +790,14 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 	if request.descriptor == nil || !c.state.allows(request.descriptor.states) {
 		err = fmt.Errorf("literal is not accepted for this command")
 	} else if max := c.server.options.Limits.MaxLiteralBytes; max >= 0 && request.info.Size > max {
-		if request.descriptor.name == "APPEND" {
+		if request.descriptor.name == "APPEND" || request.descriptor.name == "REPLACE" {
 			err = resolvedContentTooBig()
 		} else {
 			err = fmt.Errorf("literal exceeds the connection limit")
 		}
 	} else if request.info.NonSynchronising && request.info.Size > maxLiteralMinusSize &&
 		!slices.Contains(deriveCapabilitiesContext(c.ctx, &c.state, c.server), "LITERAL+") {
-		err = fmt.Errorf("non-synchronising literal exceeds the LITERAL- limit")
+		err = &imap.Error{Type: imap.ErrorTypeBad, Code: imap.CodeTooBig, Text: "non-synchronising literal exceeds the LITERAL- limit"}
 	} else if !request.info.NonSynchronising {
 		c.encoder.BeginResponse(imapwire.ResponseContinuation, "").ContinuationText("ready for literal").CRLF()
 		err = c.encoder.Flush()
@@ -814,6 +820,7 @@ func (c *conn) writeGreeting() error {
 
 func (c *conn) writeTagged(tag, status, text string) error {
 	c.writeDeferredModSeqFence()
+	c.finishSearchSave(status)
 	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{Status: status, Text: imapwire.RespText{Text: text}}).CRLF()
 	return c.encoder.Flush()

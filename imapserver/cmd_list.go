@@ -50,7 +50,7 @@ func parseList(decoder *imapwire.Decoder) (any, int64, error) {
 		if err := decoder.ExpectList(func() error {
 			var pattern string
 			if !decoder.ListMailbox(&pattern) {
-				return decoder.Err()
+				return decodeFailure(decoder, "LIST pattern")
 			}
 			args.patterns = append(args.patterns, pattern)
 			return nil
@@ -60,7 +60,7 @@ func parseList(decoder *imapwire.Decoder) (any, int64, error) {
 	} else {
 		var pattern string
 		if !decoder.ListMailbox(&pattern) {
-			return nil, 0, decoder.Err()
+			return nil, 0, decodeFailure(decoder, "LIST pattern")
 		}
 		args.patterns = append(args.patterns, pattern)
 	}
@@ -81,7 +81,7 @@ func parseLsub(decoder *imapwire.Decoder) (any, int64, error) {
 	args := &listArgs{legacy: true, selection: []string{"SUBSCRIBED"}}
 	var pattern string
 	if !decoder.ExpectMailbox(&args.reference) || !decoder.ExpectSP() || !decoder.ListMailbox(&pattern) || !decoder.ExpectCRLF() {
-		return nil, 0, decoder.Err()
+		return nil, 0, decodeFailure(decoder, "LSUB pattern")
 	}
 	args.patterns = []string{pattern}
 	decodeListPatterns(decoder, args)

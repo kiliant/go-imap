@@ -305,3 +305,10 @@ func advertisedCapabilities(c *conn) map[string]bool {
 	}
 	return advertised
 }
+
+// RFC 5182 section 2.1: NO empties a SAVE result, while BAD preserves it.
+func (c *conn) finishSearchSave(status string) {
+	if status == "NO" && c.saveSearchOnNO && c.state.selected != nil {
+		c.state.selected.savedSearch = nil
+	}
+}

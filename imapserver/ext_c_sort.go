@@ -292,6 +292,12 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid SORT arguments")
 	}
+	if err := requireUIDSearchCriteria(c, args.criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	if err := requireCapability(c, "SORT"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
@@ -377,6 +383,12 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*threadArgs)
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid THREAD arguments")
+	}
+	if err := requireUIDSearchCriteria(c, args.criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
 	}
 	// Gate on the algorithm the client actually asked for. The old bare-THREAD
 	// gate let a request for an unimplemented algorithm through to the backend,

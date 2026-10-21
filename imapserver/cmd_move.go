@@ -11,6 +11,9 @@ func handleMove(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil {
 		return c.writeBad(command.tag, "invalid MOVE arguments")
 	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	if c.state.selected.readOnly {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}

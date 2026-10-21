@@ -74,6 +74,10 @@ func registerCommand(name string, states stateMask, barrier bool, parse func(*im
 }
 
 func parseUIDCommand(decoder *imapwire.Decoder) (any, int64, error) {
+	return parseUIDCommandDescriptor(decoder, nil)
+}
+
+func parseUIDCommandDescriptor(decoder *imapwire.Decoder, selected func(*commandDescriptor)) (any, int64, error) {
 	if !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
@@ -85,6 +89,9 @@ func parseUIDCommand(decoder *imapwire.Decoder) (any, int64, error) {
 	descriptor := uidCommandDescriptors[name]
 	if descriptor == nil {
 		return nil, 0, fmt.Errorf("unsupported UID subcommand %q", name)
+	}
+	if selected != nil {
+		selected(descriptor)
 	}
 	args, size, err := descriptor.parse(decoder)
 	return &uidCommandArgs{descriptor: descriptor, args: args}, size + int64(len(name)+1), err
@@ -123,6 +130,7 @@ func writeTaggedCondition(c *conn, tag, status string, code imap.ResponseCode, a
 		codeText, args = string(imap.CodeServerBug), ""
 	}
 	c.writeDeferredModSeqFence()
+	c.finishSearchSave(status)
 	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{
 		Status: status,

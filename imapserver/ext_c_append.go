@@ -179,12 +179,6 @@ func parseAppendPayloadStart(decoder *imapwire.Decoder, message *appendMessage) 
 	if !ok {
 		return decodeFailure(decoder, "APPEND literal")
 	}
-	if literal.Binary() {
-		if err := literal.Discard(); err != nil {
-			return err
-		}
-		return fmt.Errorf("literal8 APPEND requires BINARY")
-	}
 	message.literal = literal
 	return nil
 }
@@ -297,11 +291,13 @@ type appendPayload struct {
 	cleanup func()
 }
 
-func (p *appendPayload) drain() {
+func (p *appendPayload) drain() error {
 	if p.literal != nil && p.pending != nil && p.pending.remaining != 0 {
-		_ = p.literal.Discard()
+		err := p.literal.Discard()
 		p.pending.remaining = 0
+		return err
 	}
+	return nil
 }
 
 func (p *appendPayload) close() {

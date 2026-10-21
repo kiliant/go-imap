@@ -49,7 +49,18 @@ func requireUIDCommand(c *conn, command *queuedCommand) error {
 	if !uidOnlyEnabled(c) || commandUsesUIDs(command) {
 		return nil
 	}
-	return fmt.Errorf("%s requires the UID form once UIDONLY is enabled", command.name)
+	return uidRequiredError(command.name + " requires the UID form once UIDONLY is enabled")
+}
+
+func requireUIDSearchCriteria(c *conn, criteria imap.SearchCriteria) error {
+	if uidOnlyEnabled(c) && searchMentionsSeqNum(criteria) {
+		return uidRequiredError("message sequence numbers are not allowed once UIDONLY is enabled")
+	}
+	return nil
+}
+
+func uidRequiredError(text string) error {
+	return &imap.Error{Type: imap.ErrorTypeBad, Code: imap.CodeUIDRequired, Text: text}
 }
 
 // writeFetchLikeResponse writes one FETCH response in the shape the session's

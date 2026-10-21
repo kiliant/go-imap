@@ -389,7 +389,6 @@ type MoveMailbox interface {
 //	UNAUTHENTICATE | gate | UnauthenticateSession | AS | Release authenticated state and reset the session.
 //	URL-PARTIAL | gate | CapabilitySupport + URLAuthSession | AS | Resolve URL byte ranges; requires URLAUTH.
 //	URLAUTH | gate | URLAuthSession | AS | Generate/reset authorization tokens and return owned URLFETCH bodies.
-//	UTF8=APPEND | gate | CapabilitySupport | AS | Accept messages with UTF-8 headers; requires UTF8=ACCEPT.
 //	WITHIN | gate | CapabilitySupport | AS | Evaluate OLDER/YOUNGER criteria against internal dates.
 //
 // Backend implementations must make SupportsCapability safe for concurrent use.

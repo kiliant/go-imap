@@ -301,6 +301,11 @@ func fetchItemCapability(item imap.FetchItem) (keyGate, bool) {
 // requireCriteriaCapabilities refuses a search whose criteria tree names a key
 // this session has not been offered, at any nesting depth.
 func requireCriteriaCapabilities(c *conn, criteria imap.SearchCriteria) error {
+	if uidOnlyEnabled(c) {
+		if _, sequence := criteria.(imap.SearchSeqNum); sequence {
+			return uidRequiredError("message sequence numbers are not allowed once UIDONLY is enabled")
+		}
+	}
 	if criteria == nil {
 		return nil
 	}

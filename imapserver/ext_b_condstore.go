@@ -148,18 +148,42 @@ func parseFetchModifiers(decoder *imapwire.Decoder, args *fetchArgs) error {
 	if !decoder.ExpectSP() {
 		return decoder.Err()
 	}
-	values := make(map[string]uint64)
-	if err := parseModSeqModifiers(decoder, map[string]bool{
-		"CHANGEDSINCE": true,
-		"VANISHED":     false,
-	}, values); err != nil {
+	seen := make(map[string]bool)
+	if err := decoder.ExpectList(func() error {
+		var name string
+		if !decoder.ExpectAtom(&name) {
+			return decoder.Err()
+		}
+		name = strings.ToUpper(name)
+		if seen[name] {
+			return fmt.Errorf("duplicate FETCH modifier %s", name)
+		}
+		seen[name] = true
+		switch name {
+		case "CHANGEDSINCE":
+			var value int64
+			if !decoder.ExpectSP() || !decoder.ExpectNumber64(&value) {
+				return decoder.Err()
+			}
+			if value <= 0 {
+				return fmt.Errorf("FETCH CHANGEDSINCE must be non-zero")
+			}
+			args.changedSince = uint64(value)
+		case "VANISHED":
+			args.vanished = true
+		case "PARTIAL":
+			partial := &searchArgs{}
+			if err := parseSearchPartialRange(decoder, partial); err != nil {
+				return err
+			}
+			args.partial = partial.partial
+		default:
+			return fmt.Errorf("unknown FETCH modifier %s", name)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
-	args.changedSince = values["CHANGEDSINCE"]
-	if value, present := values["CHANGEDSINCE"]; present && value == 0 {
-		return fmt.Errorf("FETCH CHANGEDSINCE must be non-zero")
-	}
-	_, args.vanished = values["VANISHED"]
 	// RFC 7162 section 3.2.6: VANISHED is only meaningful alongside
 	// CHANGEDSINCE, since it reports what was removed since that point.
 	if args.vanished && args.changedSince == 0 {

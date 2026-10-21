@@ -215,6 +215,11 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid ESEARCH arguments")
 	}
+	if err := requireUIDSearchCriteria(c, args.criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	c.saveSearchOnNO = slices.Contains(args.result.returnOptions, searchReturnSave)
+	defer func() { c.saveSearchOnNO = false }()
 	if err := requireCapability(c, "MULTISEARCH"); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
@@ -250,6 +255,9 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	criteria, err := applySearchFilters(ctx, c, args.criteria)
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if uidOnlyEnabled(c) && searchMentionsSeqNum(criteria) {
+		return writeBackendError(c, command.tag, command.name, uidRequiredError("message sequence numbers are not allowed once UIDONLY is enabled"))
 	}
 	// A sequence number indexes into one mailbox's message list, and MultiSearch
 	// hands the backend raw criteria with no selection attached. Where the source

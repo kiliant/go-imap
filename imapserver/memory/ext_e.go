@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -226,37 +225,6 @@ func urlAuthToken(key []byte, url string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(url))
 	return hex.EncodeToString(mac.Sum(nil))
-}
-
-// urlMailbox and urlUID pull the mailbox and UID out of an IMAP URL of the form
-// "imap://user@host/MAILBOX/;UID=n". This is a deliberately small parser: a
-// reference backend needs enough to demonstrate the token mechanism, and a
-// complete RFC 5092 parser belongs in a URL package rather than here. URLAUTH
-// uses the separate validating parser in urlauth_url.go.
-func urlMailbox(url string) string {
-	rest, found := strings.CutPrefix(url, "imap://")
-	if !found {
-		return ""
-	}
-	_, path, found := strings.Cut(rest, "/")
-	if !found {
-		return ""
-	}
-	mailbox, _, _ := strings.Cut(path, "/;")
-	return mailbox
-}
-
-func urlUID(url string) imap.UID {
-	_, rest, found := strings.Cut(url, "/;UID=")
-	if !found {
-		return 0
-	}
-	value, _, _ := strings.Cut(rest, "/")
-	var uid uint32
-	if _, err := fmt.Sscanf(value, "%d", &uid); err != nil {
-		return 0
-	}
-	return imap.UID(uid)
 }
 
 // comparators are the collations this backend can apply. Only the RFC 5255

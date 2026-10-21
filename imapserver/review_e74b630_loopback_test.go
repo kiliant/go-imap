@@ -178,9 +178,6 @@ func TestReviewE74FilteredExtensionCommands(t *testing.T) {
 			if test.command == "FETCH 1 (MODSEQ)" {
 				gate = "MODSEQ"
 			}
-			if test.capability == "BINARY" {
-				gate = "invalid command syntax"
-			}
 			if strings.HasPrefix(r4Tagged(got), "X OK") || !strings.Contains(r4Tagged(got), gate) {
 				t.Fatalf("withdrawn %s was not refused by its gate: %q", test.capability, got)
 			}

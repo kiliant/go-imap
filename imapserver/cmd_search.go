@@ -73,6 +73,14 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid SEARCH arguments")
 	}
+	if err := requireUIDSearchCriteria(c, args.criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	c.saveSearchOnNO = slices.Contains(args.returnOptions, searchReturnSave)
+	defer func() { c.saveSearchOnNO = false }()
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	if err := validateSearchReturnOptions(c, args); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}

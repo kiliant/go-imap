@@ -25,6 +25,7 @@ import (
 // invariant the framework relies on. Those invariants are what this file pins.
 
 func runExtensions(t *testing.T, harness *Harness) {
+	runBinaryAppend(t, harness)
 	t.Run("capability-witness-is-stable", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)
@@ -650,6 +651,32 @@ func runExtensions(t *testing.T, harness *Harness) {
 		// releases its handle and errors on a second Close is correct against the
 		// documented interface, and an earlier draft of this subtest would have
 		// failed it.
+	})
+
+	t.Run("catenate-relative-section", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		requireAllowedCapabilities(t, instance, session, "CATENATE")
+		catenate, ok := session.(imapserver.CatenateSession)
+		if !ok {
+			t.Skip("backend does not implement CatenateSession")
+		}
+		mailbox := populate(t, session, "catenate-section")
+		result := selectMailbox(t, session, mailbox, discardUpdater())
+		defer result.Mailbox.Unselect(context.Background(), nil)
+		uid := result.Snapshot.UIDs[0]
+		// This relative URL names a message the fixture can already read;
+		// RFC 4469's existing CATENATE promise covers its BODY[TEXT] bytes.
+		raw := fmt.Sprintf("/%s;UIDVALIDITY=%d/;UID=%d/;SECTION=TEXT", url.PathEscape(mailbox), result.Snapshot.Status.UIDValidity, uid)
+		reader, err := catenate.ResolveCatenateURL(t.Context(), raw, nil)
+		if err != nil || reader == nil {
+			t.Fatalf("relative section URL: %v", err)
+		}
+		defer reader.Close()
+		content, err := io.ReadAll(reader)
+		if err != nil || string(content) != "body one\r\n" {
+			t.Fatalf("relative section content = %q, %v", content, err)
+		}
 	})
 
 	t.Run("catenate-url-resolves-or-is-refused", func(t *testing.T) {

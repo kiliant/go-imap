@@ -1158,3 +1158,33 @@ The compatible root client correction ends COMPRESS at successful UNAUTHENTICATE
 completion, preserving TLS and prefetched plaintext. The shared internal boundary
 reader accepts sync flush, final block, and sync flush followed by a final block.
 Ship the root correction before the server's compression teardown correction.
+
+### T33 fixed sweep corrections — 2026-10-21 (#54)
+
+Before the stability window, three **BREAKING behaviour** changes close S-02,
+S-03 and S-06: UIDONLY prohibits all sequence-number command forms, sequence-set
+search criteria at any depth and SELECT QRESYNC sequence-match data, returning
+BAD [UIDREQUIRED]; the framework rejects 8-bit headers in staged APPEND-family
+messages until UTF8=ACCEPT or IMAP4rev2 is enabled; and the obsolete UTF8=APPEND
+token and memory witness are removed. RFC 9755 does not extend IMAP4rev2, which
+already incorporates UTF-8 headers, so ENABLE IMAP4rev2 also permits them.
+CATENATE TEXT's grammar is an ordinary literal (RFC 4469); refusing the previously
+accepted literal8 TEXT syntax is also recorded as BREAKING behaviour. The BINARY
+witness permits whole-message literal8 APPEND, MULTIAPPEND and REPLACE.
+
+Compatible corrections share APPEND staging with REPLACE, prevent mutation
+before its command terminator, send BYE on its read timeouts, and repair
+REPLACE/LIST/LSUB framing. UID FETCH PARTIAL windows resolved, existing UIDs
+before CHANGEDSINCE (RFC 9394 section 3.4). Oversized LITERAL- APPEND-family
+literals return BAD [TOOBIG]. NO on a supported SAVE search empties the saved
+result; BAD preserves it. SORT's unsupported RETURN (SAVE) still receives BAD.
+
+Memory's CATENATE URL resolver now honors relative URLs, sections, UIDVALIDITY
+and byte ranges under the existing CatenateSession contract (#199). The
+backendtest relative-section and BINARY APPEND checks enforce existing witness
+obligations, adding no backend duty. BINARY mailboxes that cannot store binary
+content may return NO [UNKNOWN-CTE], as RFC 3516 allows. No exported API changes.
+
+A refused CATENATE URL normally produces NO [BADURL]. If the URL contains bytes
+that cannot be represented safely in a response code, the existing response
+encoder uses SERVERBUG instead; correcting that diagnostic is follow-up S-15.

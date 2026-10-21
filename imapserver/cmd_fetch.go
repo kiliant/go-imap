@@ -17,6 +17,7 @@ type fetchArgs struct {
 	// VANISHED modifier. See ext_b_condstore.go.
 	changedSince uint64
 	vanished     bool
+	partial      *searchPartialRange
 }
 
 func parseFetch(decoder *imapwire.Decoder) (any, int64, error) {
@@ -99,7 +100,7 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 		return c.writeBad(command.tag, "invalid FETCH arguments")
 	}
 	if err := requireUIDCommand(c, command); err != nil {
-		return c.writeBad(command.tag, err.Error())
+		return writeBackendError(c, command.tag, command.name, err)
 	}
 	// The client's items, before the framework adds its own: withFetchUID and
 	// applyCondStoreFetchItems below append UID and MODSEQ on the framework's
@@ -111,6 +112,25 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)
 	if err != nil {
 		return c.writeBad(command.tag, "invalid FETCH message set")
+	}
+	if args.partial != nil {
+		if !uidMode {
+			return c.writeBad(command.tag, "PARTIAL requires UID FETCH")
+		}
+		if err := requireCapability(c, "PARTIAL"); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
+		// RFC 9394 section 3.4: window the UID set before CHANGEDSINCE.
+		var numbers []uint32
+		for _, uid := range c.state.selected.uids {
+			if uids.Contains(uid) {
+				numbers = append(numbers, uint32(uid))
+			}
+		}
+		uids = nil
+		for _, uid := range partialWindow(args.partial, numbers) {
+			uids.AddNum(imap.UID(uid))
+		}
 	}
 	usesModSeq := args.changedSince != 0
 	for _, item := range args.items {

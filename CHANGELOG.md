@@ -159,6 +159,21 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING behaviour (pre-v1):** once UIDONLY is enabled, SEARCH, SORT,
+  THREAD, COPY, MOVE and REPLACE join FETCH and STORE in requiring their UID
+  forms. Sequence-set criteria at every search nesting depth and QRESYNC
+  sequence-match data are refused with BAD [UIDREQUIRED]. UID SEARCH `$`
+  continues to refer to saved UIDs. No exported API change. (#54, S-02)
+- **BREAKING behaviour (pre-v1):** APPEND, MULTIAPPEND, CATENATE and REPLACE
+  reject 8-bit message headers with NO until UTF8=ACCEPT or IMAP4rev2 is
+  enabled. The framework scans staged headers before calling the backend;
+  8-bit body content remains accepted. No exported API change. (#54, S-03)
+- **BREAKING behaviour (pre-v1):** the obsolete UTF8=APPEND capability and
+  memory witness are removed. Clients use UTF8=ACCEPT (RFC 9755) instead of
+  RFC 5738's obsolete `UTF8 (literal8)` syntax. CATENATE TEXT now requires an
+  ordinary literal as specified by RFC 4469; literal8 is accepted as the
+  whole APPEND/REPLACE payload with BINARY. No exported API change. (#54, S-06)
+
 - **BREAKING (pre-v1 contract):** `UpdateBatch` and `Updater.Push` now require
   publishing every committed batch to all attached updaters before a mutating
   call returns or STATUS/SELECT exposes the commit, including external commits
@@ -557,6 +572,22 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- REPLACE shares APPEND's staged payload parser, supports CATENATE and BINARY
+  literal8, and commits only after the complete command terminator. Malformed
+  REPLACE, LIST and LSUB lines cannot escape their parser; REPLACE read timeouts
+  send BYE before closing. BINARY also accepts synchronising and non-synchronising
+  literal8 APPEND and MULTIAPPEND. No exported API change. (#54, S-01, S-04, S-05, S-10)
+- UID FETCH accepts RFC 9394's PARTIAL modifier, including negative and reversed
+  ranges. The framework windows existing UIDs before applying CHANGEDSINCE,
+  independent of modifier order. An oversized LITERAL- APPEND-family literal
+  returns BAD [TOOBIG]. A failed SAVE search returning NO clears `$`; BAD
+  preserves it. No exported API change. (#54, S-07–S-09)
+- Memory resolves CATENATE relative and absolute URLs with account ownership,
+  UIDVALIDITY, BODY sections and byte ranges validated, using streaming readers
+  that retain cancellation. `backendtest.Run` checks relative section content
+  and BINARY APPEND under their existing advertised obligations; no new backend
+  duty or exported API change. (#199, #54)
 
 - When `UpdateFlags.ModSeq` is zero, the framework fetches current FLAGS and
   MODSEQ together for CONDSTORE clients, skipping UIDs already removed. STORE's
