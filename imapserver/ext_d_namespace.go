@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -29,6 +30,7 @@ type NamespaceOptions struct{ _ struct{} }
 // UnauthenticateSession is the optional UNAUTHENTICATE support of RFC 8437:
 // returning an authenticated connection to the not-authenticated state so it
 // can be reused for another user, without the cost of a new TLS handshake.
+// An error ends the connection with BYE; RFC 8437 forbids a tagged NO.
 type UnauthenticateSession interface {
 	Unauthenticate(ctx context.Context, options *UnauthenticateOptions) error
 }
@@ -133,10 +135,14 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	if !ok {
 		return c.writeBad(command.tag, "UNAUTHENTICATE is not available")
 	}
-	// A refusal leaves the session and selection usable. After success,
-	// cleanup errors are diagnostics: the state transition has completed.
+	// A failure ends the connection so a pipelined authentication cannot run
+	// under the previous identity (RFC 8437 section 3).
 	if err := session.Unauthenticate(ctx, nil); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
+		c.reportBackendError(command.name, err)
+		if writeErr := c.writeBye("UNAUTHENTICATE failed"); writeErr != nil {
+			return writeErr
+		}
+		return err
 	}
 	abandonCurrentSelection(ctx, c)
 	// The session is discarded whether or not Close succeeded, and the state
@@ -150,10 +156,25 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	// selected policy, to whoever authenticates next.
 	c.closeNotify()
 	c.notifySelected = selectedNotifyPolicy{}
-	closeErr := c.state.session.Close(ctx, nil)
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.server.options.Limits.CommandTimeout)
+	closeErr := c.state.session.Close(releaseCtx, nil)
+	cancel()
 	c.state.unauthenticate()
+	c.utf8Accept.Store(false)
 	if closeErr != nil {
 		c.reportCleanupError("UNAUTHENTICATE", closeErr)
 	}
-	return c.writeTagged(command.tag, "OK", command.name+" completed")
+	if compressed, ok := c.currentTransport().(*compressedConn); ok {
+		_ = compressed.SetReadDeadline(time.Now().Add(c.server.options.Limits.CommandTimeout))
+		if err := compressed.finishRead(); err != nil {
+			_ = c.writeBye("unable to end compression")
+			return err
+		}
+	}
+	// The OK's CRLF is the last output under COMPRESS (RFC 8437 section 4.1).
+	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
+		return err
+	}
+	c.disableCompression()
+	return nil
 }

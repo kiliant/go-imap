@@ -379,18 +379,16 @@ func TestReview4CleanupFailuresAreReported(t *testing.T) {
 	}
 }
 
-func TestReview4UnauthenticateRefusalPreservesSelection(t *testing.T) {
+func TestReview4UnauthenticateRefusalEndsConnection(t *testing.T) {
 	b := &r4UnselectBackend{Backend: r4Memory(), refuseUnauth: true}
 	w := r4Open(t, b, nil)
 	r4Append(w, "INBOX", "", "x")
 	w.cmd("S", "SELECT INBOX")
-	if got := w.cmd("U", "UNAUTHENTICATE"); !strings.HasPrefix(r4Tagged(got), "U NO [CANNOT]") {
-		t.Fatalf("refusal = %v", got)
+	w.write("U UNAUTHENTICATE\r\nA LOGIN alice secret\r\n")
+	if line, err := w.line(); err != nil || !strings.HasPrefix(line, "* BYE ") {
+		t.Fatalf("refusal = %q, %v; RFC 8437 forbids NO", line, err)
 	}
-	if got := w.cmd("F", "FETCH 1 (UID)"); !r4Has(got, `^\* 1 FETCH`) || !strings.HasPrefix(r4Tagged(got), "F OK") {
-		t.Fatalf("refusal released selection: %v", got)
-	}
-	if got := b.unselects.Load(); got != 0 {
-		t.Errorf("refusal called Unselect %d times", got)
+	if line, err := w.line(); err == nil {
+		t.Fatalf("connection remained open after refused UNAUTHENTICATE: %q", line)
 	}
 }

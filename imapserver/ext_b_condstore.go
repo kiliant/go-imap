@@ -156,6 +156,9 @@ func parseFetchModifiers(decoder *imapwire.Decoder, args *fetchArgs) error {
 		return err
 	}
 	args.changedSince = values["CHANGEDSINCE"]
+	if value, present := values["CHANGEDSINCE"]; present && value == 0 {
+		return fmt.Errorf("FETCH CHANGEDSINCE must be non-zero")
+	}
 	_, args.vanished = values["VANISHED"]
 	// RFC 7162 section 3.2.6: VANISHED is only meaningful alongside
 	// CHANGEDSINCE, since it reports what was removed since that point.

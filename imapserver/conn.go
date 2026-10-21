@@ -1,6 +1,7 @@
 package imapserver
 
 import (
+	"bufio"
 	"compress/flate"
 	"context"
 	"crypto/tls"
@@ -41,6 +42,7 @@ type compressedConn struct {
 
 	readOnce sync.Once
 	reader   io.ReadCloser
+	input    *compressionInput
 	writeMu  sync.Mutex
 	writer   *flate.Writer
 }
@@ -50,11 +52,66 @@ func newCompressedConn(conn net.Conn) (*compressedConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &compressedConn{Conn: conn, writer: writer}, nil
+	return &compressedConn{Conn: conn, input: &compressionInput{Reader: bufio.NewReader(conn)}, writer: writer}, nil
+}
+
+// flate can return the last command bytes at a full dictionary boundary,
+// before consuming the following sync-flush marker. Once UNAUTHENTICATE has
+// been parsed, let it consume that trailer without reading the next transport
+// layer. Outside this transition the byte reader behaves like bufio.Reader.
+type compressionInput struct {
+	*bufio.Reader
+	tail    uint32
+	ending  bool
+	stopped bool
+}
+
+func (r *compressionInput) ReadByte() (byte, error) {
+	if r.ending && r.tail == 0x0000ffff {
+		r.stopped = true
+		return 0, io.EOF
+	}
+	b, err := r.Reader.ReadByte()
+	if err == nil {
+		r.tail = r.tail<<8 | uint32(b)
+	}
+	return b, err
+}
+
+func (r *compressionInput) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.ending {
+		b, err := r.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		p[0] = b
+		return 1, nil
+	}
+	n, err := r.Reader.Read(p)
+	for _, b := range p[:n] {
+		r.tail = r.tail<<8 | uint32(b)
+	}
+	return n, err
+}
+
+func (c *compressedConn) finishRead() error {
+	c.input.ending = true
+	var extra [1]byte
+	n, err := c.reader.Read(extra[:])
+	if n != 0 {
+		return fmt.Errorf("imapserver: compressed input follows UNAUTHENTICATE")
+	}
+	if err == io.EOF || c.input.stopped && errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil
+	}
+	return err
 }
 
 func (c *compressedConn) Read(p []byte) (int, error) {
-	c.readOnce.Do(func() { c.reader = flate.NewReader(c.Conn) })
+	c.readOnce.Do(func() { c.reader = flate.NewReader(c.input) })
 	return c.reader.Read(p)
 }
 
@@ -89,10 +146,11 @@ type conn struct {
 	// inputPending reports that the reader has bytes it has not yet turned into
 	// a command — that the client is pipelining. Written by the reader
 	// goroutine, read by the event loop, which is why it is atomic.
-	inputPending atomic.Bool
-	utf8Accept   atomic.Bool
-	resetDecoder atomic.Bool
-	ready        chan struct{}
+	inputPending  atomic.Bool
+	utf8Accept    atomic.Bool
+	authenticated atomic.Bool // reader-facing mirror; sessionState is event-loop owned
+	resetDecoder  atomic.Bool
+	ready         chan struct{}
 
 	// notifyQueue and notifyUpdater are the session-scoped NOTIFY channel,
 	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
@@ -163,19 +221,23 @@ func (c *conn) newEncoder(writer io.Writer) *imapwire.Encoder {
 }
 
 func (c *conn) newDecoder(reader io.Reader) *imapwire.Decoder {
-	readTimeout := c.server.options.Limits.ReadTimeout
-	if c.state.state == stateNotAuthenticated && c.server.options.Limits.PreAuthTimeout > 0 &&
-		(readTimeout <= 0 || c.server.options.Limits.PreAuthTimeout < readTimeout) {
-		readTimeout = c.server.options.Limits.PreAuthTimeout
-	}
 	decoder := imapwire.NewDecoder(reader, &imapwire.Options{
 		MaxLiteralSize:         c.server.options.Limits.MaxLiteralBytes,
 		MaxBufferedLiteralSize: c.server.options.Limits.MaxLiteralBytes,
 		MaxLineLength:          c.server.options.Limits.MaxCommandLineBytes,
-		ReadTimeout:            readTimeout,
+		ReadTimeout:            c.decoderReadTimeout(),
 	})
 	decoder.SetUTF8Accept(c.utf8Accept.Load())
 	return decoder
+}
+
+func (c *conn) decoderReadTimeout() time.Duration {
+	readTimeout := c.server.options.Limits.ReadTimeout
+	if !c.authenticated.Load() && c.server.options.Limits.PreAuthTimeout > 0 &&
+		(readTimeout <= 0 || c.server.options.Limits.PreAuthTimeout < readTimeout) {
+		readTimeout = c.server.options.Limits.PreAuthTimeout
+	}
+	return readTimeout
 }
 
 func (c *conn) serve() error {
@@ -356,6 +418,7 @@ func (c *conn) readCommands() error {
 				decoder = newCommandDecoder()
 			} else {
 				decoder.SetUTF8Accept(c.utf8Accept.Load())
+				decoder.SetReadTimeout(c.decoderReadTimeout())
 			}
 		}
 	}
@@ -604,14 +667,14 @@ func (c *conn) eventLoop() (retErr error) {
 			c.releaseCommandBytes(command.bytes)
 			wasPreAuth := c.state.state == stateNotAuthenticated
 			err := c.execute(command)
+			c.authenticated.Store(c.state.state != stateNotAuthenticated)
 			if wasPreAuth && c.state.state != stateNotAuthenticated {
 				if c.preAuthTimer != nil {
 					c.preAuthTimer.Stop()
 				}
-				// Authentication changes both the allowed commands and the
-				// connection's read deadline. AUTHENTICATE/LOGIN are barriers,
-				// so rebuild the decoder before admitting another command.
-				c.resetDecoder.Store(true)
+			}
+			if !wasPreAuth && c.state.state == stateNotAuthenticated && c.preAuthTimer != nil {
+				c.preAuthTimer.Reset(c.server.options.Limits.PreAuthTimeout)
 			}
 			close(command.done)
 			if err != nil {
@@ -693,7 +756,12 @@ func (c *conn) execute(command *queuedCommand) error {
 	// them. Their UID forms and UID COPY also drain before it, where removals
 	// are permitted. See drainBeforeCompletion.
 	c.executingSeqSensitive = sequenceSensitiveCommands[command.name]
-	err := c.drainUpdates(updateAccounting{})
+	var err error
+	// CLOSE forbids removal responses, including changes already queued by
+	// other sessions. Its selection and pending updates will be discarded.
+	if command.name != "CLOSE" {
+		err = c.drainUpdates(updateAccounting{})
+	}
 	c.executingSeqSensitive = false
 	if err != nil {
 		return err
@@ -821,6 +889,13 @@ func (c *conn) upgradeTLS(ctx context.Context) error {
 	return nil
 }
 
+func (c *conn) writeBye(text string) error {
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
+		Status: "BYE", Text: imapwire.RespText{Text: text},
+	}).CRLF()
+	return c.encoder.Flush()
+}
+
 func (c *conn) preAuthContext(parent context.Context) (context.Context, context.CancelFunc) {
 	if timeout := c.server.options.Limits.PreAuthTimeout; timeout > 0 {
 		return context.WithTimeout(parent, timeout)
@@ -846,6 +921,32 @@ func (c *conn) currentTransport() net.Conn {
 	c.transportMu.Lock()
 	defer c.transportMu.Unlock()
 	return c.transport
+}
+
+// bufferedConn preserves plaintext read ahead by the compression layer when
+// UNAUTHENTICATE returns to the underlying transport. It retains TLS, if any.
+type bufferedConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func (c *conn) disableCompression() {
+	compressed, ok := c.currentTransport().(*compressedConn)
+	if !ok {
+		return
+	}
+	if compressed.reader != nil {
+		_ = compressed.reader.Close()
+	}
+	transport := &bufferedConn{Conn: compressed.Conn, reader: compressed.input.Reader}
+	c.transportMu.Lock()
+	c.transport = transport
+	c.transportMu.Unlock()
+	c.encoder = c.newEncoder(transport)
+	c.state.compressed = false
+	c.resetDecoder.Store(true)
 }
 
 func (c *conn) cleanupBackend() {
@@ -1252,6 +1353,9 @@ func (c *conn) completeUpdateFlags(updates []deliveredUpdate) ([]deliveredUpdate
 	}
 	if err != nil {
 		c.reportBackendError("FETCH", err)
+		// A missing CONDSTORE clock cannot be announced safely. End the
+		// session explicitly so the client knows it must resynchronise.
+		_ = c.writeBye("unable to complete mailbox updates")
 		return nil, err
 	}
 	kept := updates[:0]

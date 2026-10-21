@@ -137,7 +137,7 @@ func runRenameInbox(t *testing.T, harness *Harness) {
 	if sameIncarnation && after.Snapshot.Status.UIDNext < before.Status.UIDNext {
 		t.Errorf("INBOX UIDVALIDITY/UIDNEXT went from %d/%d to %d/%d", before.Status.UIDValidity, before.Status.UIDNext, after.Snapshot.Status.UIDValidity, after.Snapshot.Status.UIDNext)
 	}
-	if sameIncarnation && supportsCapability(instance, session, "CONDSTORE") && !before.Status.NoModSeq && after.Snapshot.Status.HighestModSeq <= before.Status.HighestModSeq {
+	if sameIncarnation && supportsCapability(instance, session, "QRESYNC") && !before.Status.NoModSeq && after.Snapshot.Status.HighestModSeq <= before.Status.HighestModSeq {
 		t.Errorf("INBOX HIGHESTMODSEQ did not advance past %d for the removals: %d", before.Status.HighestModSeq, after.Snapshot.Status.HighestModSeq)
 	}
 	if resync, ok := after.Mailbox.(imapserver.QResyncMailbox); ok && sameIncarnation && supportsCapability(instance, session, "QRESYNC") && !before.Status.NoModSeq {
@@ -252,7 +252,7 @@ func mailboxObjectID(t *testing.T, session imapserver.Session, mailbox string) s
 }
 
 func fetchedFlags(data *imap.FetchMessageData) []imap.Flag {
-	for _, value := range data.Items["FLAGS"] {
+	for _, value := range fetchValues(data, "FLAGS") {
 		if flags, ok := value.(imap.FetchDataFlags); ok {
 			return []imap.Flag(flags)
 		}

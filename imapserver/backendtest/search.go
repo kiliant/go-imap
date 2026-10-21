@@ -177,8 +177,15 @@ func runSearch(t *testing.T, harness *Harness) {
 		}
 		var recent, old, newMessages, saved []imap.UID
 		writer := &imapserver.FetchWriter{WriteFunc: func(_ context.Context, data *imap.FetchMessageData) error {
-			uid := imap.UID(data.Items["UID"][0].(imap.FetchDataUID))
-			flags := []imap.Flag(data.Items["FLAGS"][0].(imap.FetchDataFlags))
+			uidValue, ok := fetchValue[imap.FetchDataUID](data, "UID")
+			if !ok || uidValue == 0 {
+				return fmt.Errorf("FETCH omitted a valid UID")
+			}
+			flagValue, ok := fetchValue[imap.FetchDataFlags](data, "FLAGS")
+			if !ok {
+				return fmt.Errorf("FETCH omitted valid FLAGS for UID %d", uidValue)
+			}
+			uid, flags := imap.UID(uidValue), []imap.Flag(flagValue)
 			if imap.ContainsFlag(flags, imap.FlagRecent) {
 				recent = append(recent, uid)
 				if !imap.ContainsFlag(flags, imap.FlagSeen) {
@@ -187,8 +194,8 @@ func runSearch(t *testing.T, harness *Harness) {
 			} else {
 				old = append(old, uid)
 			}
-			if values := data.Items["SAVEDATE"]; len(values) != 0 {
-				if date := values[0].(*imap.FetchDataSaveDate).Date; date != nil {
+			if value, ok := fetchValue[*imap.FetchDataSaveDate](data, "SAVEDATE"); ok && value != nil {
+				if date := value.Date; date != nil {
 					saved = append(saved, uid)
 					// Restrict each comparison to this UID, since other messages
 					// may have been appended on the same calendar day.
@@ -203,8 +210,8 @@ func runSearch(t *testing.T, harness *Harness) {
 					}
 				}
 			}
-			if values := data.Items["EMAILID"]; len(values) != 0 {
-				id := string(values[0].(imap.FetchDataObjectID))
+			if value, ok := fetchValue[imap.FetchDataObjectID](data, "EMAILID"); ok {
+				id := string(value)
 				if id == "" {
 					t.Error("OBJECTID witnessed but FETCH EMAILID is empty")
 				} else {

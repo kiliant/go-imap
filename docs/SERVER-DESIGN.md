@@ -846,7 +846,7 @@ the command that produced it, not "drop everything originating in this session".
 Session-origin suppression is the shape that loses an `EXISTS` the client needed.
 
 **The token has to reach the backend before the transaction starts**, or the
-backend has no way to stamp asynchronously published batches with it. So it is an
+backend has no way to stamp its commit batches with it. So it is an
 input to every mutating call, carried by a shared embedded struct rather than
 repeated field-by-field:
 
@@ -859,6 +859,16 @@ type MutationOptions struct {
 
 `AppendOptions`, `StoreOptions`, `CopyOptions`, `MoveOptions` and
 `ExpungeOptions` embed it, and `UpdateBatch.Origin` echoes it back.
+
+**Publication is synchronous.** Every committed change is pushed to all attached
+updaters before the mutating call returns, including commits followed by an
+error. STATUS and SELECT must not expose a commit before publication, including
+commits from external writers. A change-feed backend must fence these reads and
+mutation completion against its feed. Push only enqueues; it never waits for the
+event loop or calls the backend, so it can run inside commit serialization.
+EXPUNGE's writer validates removed UIDs; the framework emits their responses
+after the call from the ordered update batches. This ordering is necessary for
+correct sequence numbers and QRESYNC checkpoints.
 
 Matching is exact, not merely non-zero:
 
@@ -877,6 +887,18 @@ dropped for the closing selection, not delivered to the next one — a new selec
 starts from a fresh `Status`.
 
 ### Overflow: never drop, and BYE is best-effort
+
+The byte budget bounds accumulated backlog. An empty queue admits one atomic
+batch even if that batch exceeds `MaxQueuedUpdateBytes`; splitting one commit
+would violate the update contract. While oversized, it cannot admit another
+batch. Withheld removals use the same rule and budget. Retention of that single
+batch scales with the backend commit, while `MaxSelectedMessages` independently
+bounds the selected UID map. The count limit remains in force.
+
+STORE's response collection has a separate `Limits.MaxStoreResponseBytes`
+budget (default 32 MiB). It charges encoded response bytes plus 1 KiB per
+response for descriptors and fallback indexes. Exceeding it returns NO [LIMIT];
+already committed changes still take effect and remain in the update stream.
 
 If the client stops reading, the queue fills. Dropping an EXPUNGE is not
 available: it desynchronises the client's sequence numbers permanently and

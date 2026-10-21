@@ -1104,3 +1104,31 @@ signature or existing backend interface changes.
 For `message.Metadata`, nil private and shared per-entry clock maps select
 RFC 7162's single-clock model for `/flags/` MODSEQ queries. Non-nil maps preserve
 entry-specific behavior, including zero for an absent entry.
+
+### T33 publication and resource contracts — 2026-10-21 (#54, #196)
+
+Before the release window, `UpdateBatch` and `Updater.Push` explicitly require
+synchronous publication to every attached updater before a mutation returns,
+including commits followed by errors. STATUS/SELECT visibility is fenced behind
+publication, including external commits. This is a **BREAKING pre-v1 backend
+duty**, previously relied on by the framework but absent from its written
+contract. A backend using a late change feed must add a publication fence.
+`backendtest.Run` checks the call boundary for APPEND, STORE, EXPUNGE and MOVE
+against both the mutating selection and a bystander. Both reference backends
+already serialize publication with commit visibility. `WriteExpunge` reports a
+UID; the ordered update batch supplies its later wire response.
+
+`Limits.MaxQueuedUpdateBytes` now explicitly bounds accumulated backlog and
+admits one oversized atomic batch into an empty queue, including retained
+removals. This is a pre-v1 change to the bound's meaning; count limits still
+apply. `Limits.MaxStoreResponseBytes` is an additive guarded field, defaulting
+to 32 MiB, charging encoded bytes plus 1 KiB per retained STORE response. A
+limit refusal does not roll back an already committed mutation.
+
+FETCH item keys are case-insensitive in both framework and conformance suite;
+no canonical-spelling duty is imposed. RENAME INBOX requires strict removal-clock
+advancement only with QRESYNC, retaining CONDSTORE's monotonic-clock contract.
+UNAUTHENTICATE errors send BYE and close, as RFC 8437 requires; success removes
+COMPRESS after the OK's CRLF and gives Session.Close a fresh cleanup deadline.
+URLAUTH returns nil/nil for an unresolved URL; errors fail URLFETCH through its
+ordinary error mapping after completing the untagged response framing.

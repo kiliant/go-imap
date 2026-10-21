@@ -130,6 +130,7 @@ func Run(t *testing.T, harness *Harness) {
 	runExtensions(t, harness)
 	runStatusWitnesses(t, harness)
 	runMultiAppend(t, harness)
+	t.Run("synchronous-publication", func(t *testing.T) { runSynchronousPublication(t, harness) })
 
 	t.Run("snapshot-consistency", func(t *testing.T) {
 		instance, session := newSession(t, harness)
@@ -163,6 +164,12 @@ func Run(t *testing.T, harness *Harness) {
 		}}
 		result := selectMailbox(t, selecting, mailbox, updater)
 		first := appendMessage(t, mutating, mailbox, "after select one")
+		mu.Lock()
+		firstPublished := len(batches) == 1
+		mu.Unlock()
+		if !firstPublished {
+			t.Fatal("Append returned before publishing its batch")
+		}
 		second := appendMessage(t, mutating, mailbox, "after select two")
 		got := waitForBatchCount(&mu, &batches, notifications, 2)
 		if len(got) != 2 {

@@ -212,6 +212,8 @@ type storeResponses struct {
 	bytes int64
 }
 
+const storeResponseOverhead int64 = 1024
+
 type storeResponse struct {
 	uid     imap.UID
 	data    *imap.FetchMessageData
@@ -219,13 +221,17 @@ type storeResponse struct {
 }
 
 func (r *storeResponses) add(c *conn, data *imap.FetchMessageData, includeUID bool) error {
+	remaining := c.server.options.Limits.MaxStoreResponseBytes - r.bytes
+	if remaining < storeResponseOverhead {
+		return commandLimitError("STORE response byte limit exceeded")
+	}
 	uid, _ := extractFetchUID(data)
 	mapped, err := mapFetchResponse(c.state.selected, data, includeUID)
 	if err != nil {
 		return err
 	}
 	mapped = stripModSeqUnlessEnabled(c, mapped)
-	_, cleanup, err := prepareFetchResponseLiterals(mapped, maxCommandFetchBytes)
+	_, cleanup, err := prepareFetchResponseLiterals(mapped, remaining-storeResponseOverhead)
 	if err != nil {
 		return err
 	}
@@ -234,11 +240,11 @@ func (r *storeResponses) add(c *conn, data *imap.FetchMessageData, includeUID bo
 		cleanup()
 		return err
 	}
-	if wireBytes > maxCommandFetchBytes-r.bytes {
+	if wireBytes > remaining-storeResponseOverhead {
 		cleanup()
 		return commandLimitError("STORE response byte limit exceeded")
 	}
-	r.bytes += wireBytes
+	r.bytes += wireBytes + storeResponseOverhead
 	r.items = append(r.items, storeResponse{uid: uid, data: mapped, cleanup: cleanup})
 	return nil
 }
@@ -307,7 +313,7 @@ func (r *storeResponses) fetchMissingModSeq(ctx context.Context, c *conn, reques
 			if err != nil {
 				return false, err
 			}
-			if after-before > maxCommandFetchBytes-r.bytes {
+			if after-before > c.server.options.Limits.MaxStoreResponseBytes-r.bytes {
 				return false, commandLimitError("STORE response byte limit exceeded")
 			}
 			r.bytes += after - before

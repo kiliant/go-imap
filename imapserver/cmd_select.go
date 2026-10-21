@@ -179,6 +179,8 @@ func selectAtomic(ctx context.Context, c *conn, mailbox string, options *SelectO
 		}
 		return nil, nil, err
 	}
+	// MailboxStatus.Mailbox is descriptive, not a required lookup key.
+	selected.name = mailbox
 	if !c.state.selectMailbox(selected) {
 		selected.close()
 		closeRejectedMailbox(selected.mailbox, c.server.options.Limits.CommandTimeout)

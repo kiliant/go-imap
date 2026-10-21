@@ -18,6 +18,9 @@ func handleMove(ctx context.Context, c *conn, command *queuedCommand) error {
 	if !ok || !supportsAtomicMove(ctx, &c.state, c.server.backend) {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeCannot, "", "atomic MOVE is unavailable")
 	}
+	if err := requireCapability(c, "MOVE"); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	origin := nextCommandOrigin()
 	// MOVE may emit EXPUNGE (§7.4.1 / RFC 6851). Catch the selected snapshot up
 	// before resolving the set and asking the backend, for the same reason

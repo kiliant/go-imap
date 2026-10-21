@@ -292,7 +292,8 @@ type FetchMessageData struct {
 	SeqNum SeqNum
 
 	// Items maps the item spelling sent by the server to all values sent for
-	// that item, in order. The map and its slices are owned by this value.
+	// that item, in order. Item keys are case-insensitive; consumers must compare
+	// them without regard to case. The map and its slices are owned by this value.
 	Items map[FetchDataKey][]FetchData
 
 	_ struct{}

@@ -94,13 +94,13 @@ func TestURLFetchClosesBodyReturnedWithError(t *testing.T) {
 	var wire bytes.Buffer
 	c := &conn{encoder: imapwire.NewEncoder(&wire, &imapwire.EncoderOptions{ServerResponse: true})}
 	remaining := int64(8)
-	if _, err := writeURLFetchContent(t.Context(), c, fixture, "url", &remaining); err != nil {
-		t.Fatal(err)
+	if framed, err := writeURLFetchContent(t.Context(), c, fixture, "url", &remaining); framed || !errors.Is(err, fixture.err) {
+		t.Fatalf("backend failure was swallowed: framed=%v err=%v", framed, err)
 	}
 	if err := c.encoder.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if wire.String() != "NIL" || body.reads != 0 || body.closes != 1 {
+	if wire.Len() != 0 || body.reads != 0 || body.closes != 1 {
 		t.Fatalf("errored result leaked: %q reads=%d closes=%d", wire.String(), body.reads, body.closes)
 	}
 }

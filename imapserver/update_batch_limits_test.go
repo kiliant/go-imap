@@ -81,7 +81,7 @@ func TestCompactUpdateBatchPreservesOrderAndAccounting(t *testing.T) {
 	}
 }
 
-func TestCompactUpdateBatchStillBoundsPayload(t *testing.T) {
+func TestCompactUpdateBatchStillBoundsBacklogPayload(t *testing.T) {
 	var nilAdd *UpdateAdd
 	var nilFlags *UpdateFlags
 	var nilMailboxFlags *UpdateMailboxFlags
@@ -100,9 +100,12 @@ func TestCompactUpdateBatchStillBoundsPayload(t *testing.T) {
 				}
 			}
 			overflowed := false
-			queue := newUpdateQueue(1, 256, func() { overflowed = true })
+			queue := newUpdateQueue(2, 256, func() { overflowed = true })
+			if err := newUpdater(queue).Push(&UpdateBatch{Before: "r0", After: "r1"}); err != nil {
+				t.Fatal(err)
+			}
 			err := newUpdater(queue).Push(&UpdateBatch{Before: "r1", After: "r2", Changes: changes})
-			if !errors.Is(err, ErrUpdateOverflow) || !overflowed || len(queue.items) != 0 {
+			if !errors.Is(err, ErrUpdateOverflow) || !overflowed || len(queue.items) != 1 {
 				t.Fatalf("oversized retained payload accepted: %v, overflow=%t", err, overflowed)
 			}
 		})

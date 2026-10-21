@@ -64,6 +64,9 @@
 // "<operation> failed" text. The underlying error text is not sent to clients.
 // Wrapped errors retain these mappings; an *imap.Error takes precedence over a
 // cancellation error in the same chain.
+// UNAUTHENTICATE is the exception: an error sends BYE and ends the connection,
+// as required by RFC 8437. A failed update-completion FETCH likewise sends BYE
+// because the selected view can no longer be reported safely.
 package imapserver
 
 import (
@@ -780,6 +783,14 @@ type MailboxRevision string
 type ChangeToken uint64
 
 // UpdateBatch is every observable change from one atomic backend commit.
+// Publication is synchronous: before a mutating call returns, the backend
+// must Push its committed changes, with the supplied MutationOptions.Origin,
+// to every attached updater. This also applies to commits followed by an error.
+// Status and Select must not expose a commit until its batch has been pushed
+// to every updater attached before that commit, including external changes.
+// A backend using an asynchronous change feed must fence these calls against
+// publication. Push never waits for the framework's event loop, so publication
+// can run under the same serialization as the commit and snapshot reads.
 // Changes are applied in slice order and batches are never merged.
 // Removal announcements may be delayed where the protocol forbids them;
 // later additions and flags still use the client's unrenumbered sequence view.
@@ -837,6 +848,8 @@ type UpdateFlags struct {
 	// ModSeq is the new modification sequence, or zero when unavailable.
 	// After CONDSTORE is enabled, the framework fetches current FLAGS and
 	// MODSEQ together when this value is zero.
+	// If that FETCH fails, the framework reports the error to Options.OnError
+	// and ends the connection with BYE so the client can resynchronise.
 	ModSeq uint64
 	_      struct{}
 }
@@ -1165,6 +1178,7 @@ func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 // framework ignores FetchMessageData.SeqNum and uses that UID to derive the
 // response sequence number from its atomic selection map. It removes the
 // internally requested UID again when the client did not request it.
+// Item keys are case-insensitive, including UID, FLAGS and extension items.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
 	// WriteFunc receives streamed results when the writer is constructed by an
@@ -1221,8 +1235,10 @@ type ExpungeWriter struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type WriteExpungeOptions struct{ _ struct{} }
 
-// WriteExpunge writes one removed UID. The framework converts it to the
-// sequence number current at this exact point in the response.
+// WriteExpunge reports one removed UID. The framework validates the UID here;
+// it emits removals from the synchronously published UpdateBatch after the
+// backend call returns, converting UIDs through the ordered revision chain.
+// It suppresses removal responses for CLOSE.
 //
 // options may be nil.
 func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID, options *WriteExpungeOptions) error {
@@ -1252,6 +1268,9 @@ type Updater struct {
 // Push publishes one atomic batch. It returns ErrUpdaterClosed after the
 // selection ends and ErrUpdateOverflow when bounded update accounting forces
 // the connection to terminate.
+// Publish before the mutating call returns or Status/Select exposes the commit;
+// see UpdateBatch. An error from one updater does not prevent publication to
+// the other attached updaters or roll back an already committed change.
 func (u *Updater) Push(batch *UpdateBatch) error {
 	if u == nil {
 		return ErrUpdaterClosed

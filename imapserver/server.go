@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	defaultMaxCommandLine       = 8 << 10
-	defaultMaxLiteral           = 32 << 20
-	defaultMaxQueuedCommands    = 16
-	defaultMaxQueuedCommandByte = 256 << 10
-	defaultMaxQueuedUpdates     = 256
-	defaultMaxQueuedUpdateBytes = 1 << 20
-	defaultMaxSelectedMessages  = 2_000_000
+	defaultMaxCommandLine        = 8 << 10
+	defaultMaxLiteral            = 32 << 20
+	defaultMaxQueuedCommands     = 16
+	defaultMaxQueuedCommandByte  = 256 << 10
+	defaultMaxQueuedUpdates      = 256
+	defaultMaxQueuedUpdateBytes  = 1 << 20
+	defaultMaxStoreResponseBytes = 32 << 20
+	defaultMaxSelectedMessages   = 2_000_000
 )
 
 var (
@@ -57,9 +58,18 @@ type Limits struct {
 	// retained removal announcements the protocol does not yet permit.
 	// The default is 256.
 	MaxQueuedUpdates int
-	// MaxQueuedUpdateBytes bounds their retained payload bytes in aggregate.
-	// The default is 1 MiB.
+	// MaxQueuedUpdateBytes bounds retained update payload bytes in aggregate,
+	// including withheld removals. An empty queue always admits one atomic
+	// batch, even if it exceeds this budget; no second batch is admitted until
+	// enough bytes are released. The default is 1 MiB. Retention of a single
+	// batch scales with its commit; this limit bounds accumulated backlog.
 	MaxQueuedUpdateBytes int64
+	// MaxStoreResponseBytes bounds buffered STORE responses, including
+	// CONDSTORE fallback results. Each response is charged its encoded size
+	// plus 1 KiB for retained descriptors and indexes. The default is 32 MiB.
+	// Exceeding it answers NO [LIMIT]; already committed mutations still take
+	// effect and remain in the update stream.
+	MaxStoreResponseBytes int64
 	// MaxSelectedMessages bounds the per-selection UID-to-sequence map.
 	// The default is 2,000,000 messages.
 	MaxSelectedMessages int
@@ -92,6 +102,9 @@ type Limits struct {
 }
 
 func (limits Limits) withDefaults() Limits {
+	if limits.MaxStoreResponseBytes <= 0 {
+		limits.MaxStoreResponseBytes = defaultMaxStoreResponseBytes
+	}
 	if limits.MaxCommandLineBytes <= 0 {
 		limits.MaxCommandLineBytes = defaultMaxCommandLine
 	}
@@ -301,6 +314,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, options *Serv
 			return err
 		}
 		if err := s.register(c); err != nil {
+			c.cancel(err)
 			if !errors.Is(err, net.ErrClosed) {
 				c.reportTerminal(terminalEventKind(err), err)
 			}
@@ -335,6 +349,7 @@ func (s *Server) ServeConn(ctx context.Context, netConn net.Conn, options *Serve
 		return err
 	}
 	if err := s.register(c); err != nil {
+		c.cancel(err)
 		if !errors.Is(err, net.ErrClosed) {
 			c.reportTerminal(terminalEventKind(err), err)
 		}

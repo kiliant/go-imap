@@ -60,11 +60,11 @@ const (
 	// identifier of the mailbox. OBJECTID, RFC 8474 section 4.
 	StatusItemMailboxID StatusItemKeyword = "MAILBOXID"
 	// StatusItemDeleted requests the number of messages with \Deleted.
-	// QUOTA, RFC 9208 section 3.3.
+	// QUOTA, RFC 9208 section 4.1.4.
 	StatusItemDeleted StatusItemKeyword = "DELETED"
-	// StatusItemDeletedStorage requests the storage, in kibibytes, that
+	// StatusItemDeletedStorage requests the storage, in octets, that
 	// expunging the \Deleted messages would reclaim. QUOTA, RFC 9208
-	// section 3.3.
+	// section 4.1.4.
 	StatusItemDeletedStorage StatusItemKeyword = "DELETED-STORAGE"
 )
 

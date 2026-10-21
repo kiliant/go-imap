@@ -427,7 +427,7 @@ func (q *updateQueue) push(batch *UpdateBatch) error {
 		return ErrUpdaterClosed
 	}
 	if size < 0 || (q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems) ||
-		(q.maxBytes >= 0 && size > q.maxBytes-q.bytes) {
+		(q.maxBytes >= 0 && size > q.maxBytes-q.bytes && len(q.items)+q.heldItems != 0) {
 		overflow := q.overflow
 		q.closed = true
 		q.mu.Unlock()
@@ -617,8 +617,8 @@ func (q *updateQueue) holdRemovals(batch *UpdateBatch) error {
 		q.mu.Unlock()
 		return ErrUpdaterClosed
 	}
-	if q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems ||
-		q.maxBytes >= 0 && size > q.maxBytes-q.bytes {
+	if size < 0 || q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems ||
+		q.maxBytes >= 0 && size > q.maxBytes-q.bytes && len(q.items)+q.heldItems != 0 {
 		q.closed = true
 		overflow := q.overflow
 		q.mu.Unlock()
@@ -780,6 +780,7 @@ func openSelectedState(ctx context.Context, state *sessionState, mailbox string,
 		}
 		return nil, err
 	}
+	selected.name = mailbox
 	if !state.selectMailbox(selected) {
 		selected.close()
 		closeRejectedMailbox(selected.mailbox, limits.CommandTimeout)

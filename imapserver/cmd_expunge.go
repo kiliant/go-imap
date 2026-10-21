@@ -96,8 +96,10 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	// deferred. ADDs stuck behind that removal are invisible to selected.uids
 	// until then; rejecting them from WriteExpunge was the SERVERBUG imaptest
 	// stress hit once between-commands delivery stopped clearing the queue.
-	if err := c.drainUpdatesAllowingRemovals(updateAccounting{}); err != nil {
-		return false, err
+	if !silent {
+		if err := c.drainUpdatesAllowingRemovals(updateAccounting{}); err != nil {
+			return false, err
+		}
 	}
 	origin := nextCommandOrigin()
 	// The writer no longer converts UIDs to sequence numbers — drainUpdatesThrough
@@ -120,18 +122,16 @@ func expungeSelected(ctx context.Context, c *conn, command *queuedCommand, silen
 	if err != nil {
 		return false, writeBackendError(c, command.tag, command.name, err)
 	}
-	effect := effectNone
 	if silent {
-		effect = effectExpunge
+		// CLOSE discards this selection, including foreign queued removals.
+		// RFC 3501 section 6.4.2 forbids EXPUNGE and VANISHED throughout it.
+		return true, nil
 	}
 	clock := removalCheckpoint(ctx, c)
 	// STATUS is captured before this drain, so changes reflected in its clock
 	// are delivered (or retained behind the checkpoint fence) before the OK.
-	if err := c.drainUpdatesAllowingRemovals(updateAccounting{origin: origin, effect: effect}); err != nil {
+	if err := c.drainUpdatesAllowingRemovals(updateAccounting{origin: origin}); err != nil {
 		return false, err
-	}
-	if silent {
-		return true, nil
 	}
 	return true, writeRemovalCompletion(c, command, clock)
 }

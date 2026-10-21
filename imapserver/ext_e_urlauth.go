@@ -26,6 +26,8 @@ type URLAuthSession interface {
 	// URLs. A non-nil result must supply Body, including for empty content.
 	// The framework closes Body exactly once, including on errors and refusal.
 	// Reads must respect ctx; known lengths stream directly to the client.
+	// Errors fail the command through the normal backend-error mapping; use a
+	// nil result and nil error for an invalid or unauthorized URL.
 	FetchURLAuth(ctx context.Context, url string, options *URLFetchOptions) (*URLFetchResult, error)
 	// ResetURLAuthKey invalidates the secrets behind a mailbox's URLs. An empty
 	// mailbox name revokes every mailbox key, per RFC 4467's RESETKEY command.
@@ -243,7 +245,10 @@ func writeURLFetchContent(ctx context.Context, c *conn, session URLAuthSession, 
 	if content != nil && content.Body != nil {
 		defer content.Body.Close()
 	}
-	if backendErr != nil || content == nil {
+	if backendErr != nil {
+		return false, backendErr
+	}
+	if content == nil {
 		c.encoder.NIL()
 		return false, nil
 	}

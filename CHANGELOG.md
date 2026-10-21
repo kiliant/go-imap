@@ -87,6 +87,9 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Root `imap.StatusItemDeletedStorage` documents octets, matching RFC 9208
+  and the server contract, rather than kibibytes. Documentation only. (#54)
+
 - `imapclient.Client.Notify` writes `NOTIFY SET STATUS (group) (group)`:
   STATUS follows SET, and each watch group has its own parentheses (RFC 5465
   section 8). Previously STATUS and multiple groups were rejected by compliant
@@ -147,6 +150,22 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed
+
+- **BREAKING (pre-v1 contract):** `UpdateBatch` and `Updater.Push` now require
+  publishing every committed batch to all attached updaters before a mutating
+  call returns or STATUS/SELECT exposes the commit, including external commits
+  and commits followed by errors. Late-feed backends must add a publication
+  fence. Both reference backends already satisfy this duty; `backendtest.Run`
+  now checks APPEND, STORE, EXPUNGE and MOVE at the call boundary. Correct
+  `ExpungeWriter.WriteExpunge`: wire removals come from the ordered batches
+  after the backend call. No interface or signature change. (#54, B-1)
+- **BREAKING (pre-v1 bound semantics):** `Limits.MaxQueuedUpdateBytes` admits
+  one oversized atomic batch into an empty queue, including withheld removals.
+  The limit bounds accumulated backlog; the batch count limit remains active.
+  This prevents one large STORE from disconnecting every mailbox session.
+  Add `Limits.MaxStoreResponseBytes`, default 32 MiB, charging wire bytes plus
+  1 KiB per retained response. Exceeding it returns NO [LIMIT] without rolling
+  back already committed changes. (#54, B-2/D-5)
 
 - **BREAKING behaviour:** NOTIFY validates registrations before calling the
   backend or closing the current one. Unpaired MessageNew/MessageExpunge,
@@ -523,6 +542,24 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   fallback also refreshes FLAGS and MODSEQ from one fetch. Queued flag changes
   keep the checkpoint fenced. The exported optional-zero contract remains
   valid; no new backend obligation. (#54, final review)
+- LOGIN and AUTHENTICATE preserve commands buffered behind authentication,
+  including SASL continuation and UNAUTHENTICATE/re-authentication pipelines.
+  UNAUTHENTICATE errors send BYE instead of the forbidden NO; success removes
+  COMPRESS after its OK and closes the session with a fresh bounded cleanup
+  context. Correct the earlier refusal-preserves-selection claim. (#54, B-3,
+  D-1/D-2/D-8)
+- Enforce `CapabilityFilter` for MOVE and UID MOVE. FETCH result keys are
+  explicitly case-insensitive in `imap.FetchMessageData` and `FetchWriter`;
+  backendtest accepts those keys and diagnoses missing/malformed values
+  without indexing or type-assertion panics. Its RENAME INBOX removal-clock
+  check requires QRESYNC rather than CONDSTORE alone. (#54, B-4/B-5/D-6)
+- A failed drain-time FLAGS/MODSEQ fallback sends BYE and reports its cause.
+  Rejected Serve/ServeConn connections cancel their child contexts. Selected
+  STATUS lookups use the requested mailbox name, independent of the snapshot's
+  optional descriptive name. CLOSE emits neither own nor foreign removals;
+  CHANGEDSINCE 0 receives BAD. URLFETCH backend errors complete response framing
+  and use the normal error mapping instead of silently becoming NIL. No new
+  exported signatures. (#54, D-3/D-4/D-7/D-9/D-10/D-11)
 - Cancelling a Serve/ServeConn context interrupts transport reads and writes,
   including an initial greeting blocked on an unread connection. The parent
   context closes the transport without waiting for the write timeout, while
@@ -553,7 +590,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - EXPUNGE, UID EXPUNGE and MOVE report HIGHESTMODSEQ after QRESYNC. The
   framework uses the existing selected-mailbox STATUS contract before its
   final update drain, then fences the checkpoint if changes remain withheld.
-  No new backend interface or obligation. (#54, N3)
+  The synchronous-publication duty is now explicit; see the pre-v1 contract
+  correction below. No new backend interface. (#54, N3)
 - STORE fills missing MODSEQ in a FLAGS-only backend response through FETCH
   after CONDSTORE is enabled, merging it into that response before accounting
   for the own update. The exported Store contract still permits FLAGS-only
@@ -561,7 +599,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - A completed CLOSE, UNSELECT or UNAUTHENTICATE answers OK after cleanup
   errors, reports those errors through `Options.OnError`, and leaves the
   connection usable in its new state. Replacing SELECT continues after a
-  release error. A refused UNAUTHENTICATE preserves the selection. Document
+  release error. A failed UNAUTHENTICATE ends the connection with BYE. Document
   once-only release, fresh bounded cleanup contexts and error handling on
   `SelectedMailbox.Unselect` and `Session.Close`. Cleanup diagnostics include
   protocol errors and cancellation, which ordinary command error reporting
