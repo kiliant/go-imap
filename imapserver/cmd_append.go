@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -336,7 +337,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 				continue
 			}
 			if err := requireURLCapabilities(c, part.url); err != nil {
-				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: err.Error()}
+				failure = catenateURLRefusal(part.url, err.Error())
 				continue
 			}
 			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)
@@ -344,7 +345,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 				if resolved != nil {
 					_ = resolved.Close()
 				}
-				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: "CATENATE URL did not resolve"}
+				failure = catenateURLRefusal(part.url, "CATENATE URL did not resolve")
 				continue
 			}
 			n, readErr := io.Copy(file, io.LimitReader(&literalContextReader{ctx: ctx, reader: resolved}, probingLimit(budget-total)))
@@ -372,6 +373,18 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 	payload.reader = io.NewSectionReader(file, 0, total)
 	success = true
 	return payload, nil
+}
+
+// catenateURLRefusal refuses one CATENATE URL. BADURL must echo the URL, and
+// url-resp-text cannot carry "]", CR, LF or NUL (RFC 4469 section 5). The code
+// is optional (section 3), so such a URL gets a plain NO. Left to the response
+// encoder, it would become SERVERBUG and report the client's URL to OnError as
+// a backend failure.
+func catenateURLRefusal(url, text string) error {
+	if strings.ContainsAny(url, "]\x00\r\n") {
+		return &imap.Error{Type: imap.ErrorTypeNo, Text: text}
+	}
+	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: url, Text: text}
 }
 
 func appendUIDArgs(appended []*imap.AppendData) (string, bool) {

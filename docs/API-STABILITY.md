@@ -1191,9 +1191,12 @@ backendtest relative-section and BINARY APPEND checks enforce existing witness
 obligations, adding no backend duty. BINARY mailboxes that cannot store binary
 content may return NO [UNKNOWN-CTE], as RFC 3516 allows. No exported API changes.
 
-A refused CATENATE URL normally produces NO [BADURL]. If the URL contains bytes
-that cannot be represented safely in a response code, the existing response
-encoder uses SERVERBUG instead; correcting that diagnostic is follow-up S-15.
+A refused CATENATE URL produces NO [BADURL <url>]. BADURL must echo the URL, and
+url-resp-text cannot carry "]", CR, LF or NUL (RFC 4469 section 5), so a URL
+containing one of them is refused with a plain NO. The response code is optional
+(section 3). The refusal is the client's, not the backend's, so it is not
+reported to OnError (#204, follow-up S-15). The response encoder's SERVERBUG
+substitution remains for backend errors whose code cannot be written.
 
 ### T33 QRESYNC and UIDONLY follow-up — 2026-10-21 (#54)
 

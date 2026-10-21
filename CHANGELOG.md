@@ -85,6 +85,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   URLs with NO [BADURL] before backend resolution. The command drains later
   parts without resolving them or committing. URLFETCH returns NIL for each
   unavailable range URL and continues serving other URLs. (#54, Z-3)
+- **BREAKING behaviour:** A refused CATENATE URL containing `]`, CR, LF or
+  NUL is answered with a plain NO, because BADURL cannot echo it (RFC 4469
+  section 5). It was NO [SERVERBUG], and `OnError` received a
+  `backend-error` event carrying the client's URL; no event is reported now.
+  Other refused URLs keep NO [BADURL <url>]. APPEND and REPLACE commit nothing
+  either way. No exported API change. (#204)
 
 - **BREAKING behaviour:** NOTIFY validates registrations before calling the
   backend or closing the current one. Unpaired MessageNew/MessageExpunge,
@@ -457,7 +463,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 #### Fixed
 
 - Narrow memory's CATENATE account-inheritance documentation to absolute URLs
-  without userinfo. Mechanism-only userinfo remains refused with NO [BADURL].
+  without userinfo. Mechanism-only userinfo remains refused: NO [BADURL], or
+  a plain NO when the URL cannot be echoed (#204).
   Resolver and APPEND regressions preserve that boundary. Documentation/test
   correction; no exported API or runtime behaviour change. (#54, H-3, #207)
 
