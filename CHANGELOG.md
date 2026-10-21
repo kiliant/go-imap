@@ -462,6 +462,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- THREAD responses follow the RFC 5256 section 5 grammar. A single reply
+  continues its parent's number run, `(1 2)` rather than `(1 (2))`, and
+  sibling and top-level thread-lists are adjacent, `(2 (7)(12))` and
+  `(1)(2)`, rather than separated by SP. `imapclient` rejected the old form as
+  an invalid server response. Compatible wire correction; no exported API or
+  backend contract change. (#205)
+
 - Narrow memory's CATENATE account-inheritance documentation to absolute URLs
   without userinfo. Mechanism-only userinfo remains refused: NO [BADURL], or
   a plain NO when the URL cannot be echoed (#204).

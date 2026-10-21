@@ -419,10 +419,19 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	// thread-data = "THREAD" [SP 1*thread-list]: the trees are adjacent.
+	uidMode := commandUsesUIDs(command)
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("THREAD")
+	separated := false
 	for i := range roots {
-		c.encoder.SP()
-		writeThreadNode(c, &roots[i], commandUsesUIDs(command))
+		if !threadNodeWritable(c, &roots[i], uidMode) {
+			continue
+		}
+		if !separated {
+			c.encoder.SP()
+			separated = true
+		}
+		writeThreadList(c, &roots[i], uidMode)
 	}
 	c.encoder.CRLF()
 	if err := c.encoder.Flush(); err != nil {
@@ -496,34 +505,89 @@ func numberListString(numbers []uint32) string {
 	return builder.String()
 }
 
-// writeThreadNode writes one thread tree.
+// writeThreadList writes one thread tree as an RFC 5256 section 5 thread-list:
 //
-// A node with Num zero is the anonymous container of RFC 5256's ((a)(b))
-// grouping: it has no message of its own, so it contributes only its children's
-// parentheses.
-func writeThreadNode(c *conn, node *imap.ThreadNode, uidMode bool) {
+//	thread-list    = "(" (thread-members / thread-nested) ")"
+//	thread-members = nz-number *(SP nz-number) [SP thread-nested]
+//	thread-nested  = 2*thread-list
+//
+// A single reply continues its parent's number run, so a chain is "(1 2 3)",
+// never "(1 (2 (3)))". Only two or more replies open nested lists, and those are
+// adjacent with no SP between them. A node with Num zero is the anonymous
+// container of the ((a)(b)) grouping; a message no longer in the selection is
+// written the same way, contributing only its replies.
+func writeThreadList(c *conn, node *imap.ThreadNode, uidMode bool) {
 	c.encoder.Special('(')
-	if node.Num != 0 {
-		number := node.Num
-		if !uidMode {
-			seqNum, present := c.state.selected.sequence(imap.UID(node.Num))
-			if !present {
-				number = 0
-			} else {
-				number = uint32(seqNum)
-			}
-		}
-		if number != 0 {
-			c.encoder.Number(number)
-		}
-	}
-	for i := range node.Children {
-		if node.Num != 0 || i > 0 {
-			c.encoder.SP()
-		}
-		writeThreadNode(c, &node.Children[i], uidMode)
-	}
+	writeThreadMembers(c, node, uidMode)
 	c.encoder.Special(')')
+}
+
+func writeThreadMembers(c *conn, node *imap.ThreadNode, uidMode bool) {
+	number, ok := threadNumber(c, node, uidMode)
+	if !ok {
+		writeThreadReplies(c, node.Children, uidMode)
+		return
+	}
+	c.encoder.Number(number)
+	for len(node.Children) == 1 {
+		next, ok := threadNumber(c, &node.Children[0], uidMode)
+		if !ok {
+			break
+		}
+		c.encoder.SP().Number(next)
+		node = &node.Children[0]
+	}
+	if threadRepliesWritable(c, node.Children, uidMode) {
+		c.encoder.SP()
+		writeThreadReplies(c, node.Children, uidMode)
+	}
+}
+
+// writeThreadReplies writes sibling replies. thread-nested needs at least two
+// lists, so a lone writable reply continues the run instead.
+func writeThreadReplies(c *conn, children []imap.ThreadNode, uidMode bool) {
+	var writable []*imap.ThreadNode
+	for i := range children {
+		if threadNodeWritable(c, &children[i], uidMode) {
+			writable = append(writable, &children[i])
+		}
+	}
+	if len(writable) == 1 {
+		writeThreadMembers(c, writable[0], uidMode)
+		return
+	}
+	for _, child := range writable {
+		writeThreadList(c, child, uidMode)
+	}
+}
+
+func threadNumber(c *conn, node *imap.ThreadNode, uidMode bool) (uint32, bool) {
+	if node.Num == 0 {
+		return 0, false
+	}
+	if uidMode {
+		return node.Num, true
+	}
+	seqNum, present := c.state.selected.sequence(imap.UID(node.Num))
+	return uint32(seqNum), present
+}
+
+// threadNodeWritable reports whether a tree contributes at least one number;
+// an empty list "()" is not a thread-list.
+func threadNodeWritable(c *conn, node *imap.ThreadNode, uidMode bool) bool {
+	if _, ok := threadNumber(c, node, uidMode); ok {
+		return true
+	}
+	return threadRepliesWritable(c, node.Children, uidMode)
+}
+
+func threadRepliesWritable(c *conn, children []imap.ThreadNode, uidMode bool) bool {
+	for i := range children {
+		if threadNodeWritable(c, &children[i], uidMode) {
+			return true
+		}
+	}
+	return false
 }
 
 func sortHasModSeqCriterion(criteria imap.SearchCriteria) bool {
