@@ -1240,8 +1240,9 @@ root codec correction must ship before the server release.
 Preserve and document the accepted SEARCH return-option combinations in #206:
 repeated ALL is treated once; PARTIAL together with ALL reports both the full
 result and its requested window. Preserve memory's CATENATE authority aliases
-in #207: absolute hostnames and ports identify the same authenticated account,
-and an omitted user inherits it. Other-user and URLAUTH-only URLs remain refused.
+in #207: absolute hostnames and ports identify the same authenticated account.
+Absolute URLs without userinfo inherit that account; mechanism-only userinfo is
+refused. Other-user and URLAUTH-only URLs remain refused.
 No stricter parsing or authority rejection is introduced. A future opt-in policy
 may restrict these forms while retaining existing default acceptance.
 

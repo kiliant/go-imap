@@ -593,6 +593,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Narrow memory's CATENATE account-inheritance documentation to absolute URLs
+  without userinfo. Mechanism-only userinfo remains refused with NO [BADURL].
+  Resolver and APPEND regressions preserve that boundary. Documentation/test
+  correction; no exported API or runtime behaviour change. (#54, H-3, #207)
+
 - UID FETCH with CHANGEDSINCE and VANISHED retains wildcard ranges when the
   mailbox is empty, so `1:*` reports the retained removal history. Repeated,
   reversed and mixed ranges and PARTIAL retain the existing history semantics.

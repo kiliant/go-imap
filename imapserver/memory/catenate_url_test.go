@@ -8,8 +8,49 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
 )
+
+func TestCatenateURLUserinfoInheritance(t *testing.T) {
+	alice, _ := urlAuthSessions(t)
+	for _, tc := range []struct {
+		userinfo string
+		resolve  bool
+	}{
+		{"", true},
+		{"alice@", true},
+		{"alice;AUTH=*@", true},
+		{";AUTH=*@", false},
+		{";AUTH=PLAIN@", false},
+		{"@", false},
+		{"bob;AUTH=*@", false},
+	} {
+		t.Run(tc.userinfo, func(t *testing.T) {
+			raw := "imap://" + tc.userinfo + "localhost/INBOX/;UID=1/;SECTION=TEXT"
+			r, err := alice.ResolveCatenateURL(t.Context(), raw, nil)
+			if !tc.resolve {
+				if r != nil {
+					r.Close()
+					t.Fatalf("userinfo without the current user resolved: %s", raw)
+				}
+				var imapErr *imap.Error
+				if !errors.As(err, &imapErr) || imapErr.Type != imap.ErrorTypeNo || imapErr.Code != imap.CodeBadURL {
+					t.Fatalf("refusal = %v; want NO [BADURL]", err)
+				}
+				return
+			}
+			if err != nil || r == nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			defer r.Close()
+			got, err := io.ReadAll(r)
+			if err != nil || string(got) != "alice body" {
+				t.Fatalf("content = %q, %v; want alice's message", got, err)
+			}
+		})
+	}
+}
 
 func TestCatenateURLContent(t *testing.T) {
 	s, _ := urlAuthSessions(t)

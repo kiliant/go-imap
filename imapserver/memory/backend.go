@@ -14,8 +14,9 @@
 //
 // CATENATE resolves URLs within the authenticated account. In absolute IMAP
 // URLs, hostnames and ports are logical aliases for this backend; they do not
-// cause a connection to another server. An omitted user inherits the current
-// account. URLs naming another user or requiring URLAUTH are refused.
+// cause a connection to another server. Absolute URLs without userinfo inherit
+// the current account; mechanism-only userinfo is refused. URLs naming another
+// user or requiring URLAUTH are refused.
 package memory
 
 import (

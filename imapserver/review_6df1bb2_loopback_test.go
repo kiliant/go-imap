@@ -167,3 +167,40 @@ func TestReviewHSearchReturnOptionCompatibility(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewH3CatenateUserinfoBoundary(t *testing.T) {
+	b := r4Memory()
+	review6fFill(t, b, 1)
+	w := r4Open(t, b, nil)
+	sweepWant(t, w.cmd("C", "CREATE Out"), "OK")
+	var appended int
+	for _, tc := range []struct {
+		userinfo string
+		resolve  bool
+	}{
+		{"", true},
+		{"alice@", true},
+		{"alice;AUTH=*@", true},
+		{";AUTH=*@", false},
+		{";AUTH=PLAIN@", false},
+		{"@", false},
+		{"bob;AUTH=*@", false},
+	} {
+		raw := "imap://" + tc.userinfo + "elsewhere.example:1143/INBOX/;UID=1"
+		got := w.cmd("A", fmt.Sprintf(`APPEND Out CATENATE (URL "%s")`, raw))
+		if tc.resolve {
+			sweepWant(t, got, "OK")
+			appended++
+		} else {
+			sweepWant(t, got, "NO [BADURL")
+		}
+		// A refused URL must neither commit a message nor consume a UID;
+		// subsequent commands must still be framed correctly.
+		got = w.cmd("S", "STATUS Out (MESSAGES UIDNEXT)")
+		sweepWant(t, got, "OK")
+		if !r4Has(got, fmt.Sprintf(`MESSAGES %d UIDNEXT %d`, appended, appended+1)) {
+			t.Fatalf("%s: %q", raw, got)
+		}
+		sweepWant(t, w.cmd("N", "NOOP"), "OK")
+	}
+}
