@@ -72,22 +72,51 @@ func TestBinaryNestedPartsAndRefusals(t *testing.T) {
 	if err != nil || string(got) != "a\x00b" || size != 3 {
 		t.Fatalf("nested binary = %q (%d), %v", got, size, err)
 	}
-	for _, item := range []*imap.FetchItemBinarySection{nil, {}, {Part: []int{1}}, {Part: []int{0}}, {Part: []int{2}}, {Part: []int{1, 1}, Partial: &imap.SectionPartial{Size: 0}}} {
+	// Containers are decoded by their own identity transfer encoding, so their
+	// stored octets come back unchanged (RFC 3516).
+	for _, tc := range []struct {
+		part []int
+		want string
+	}{
+		{nil, raw},
+		{[]int{1}, "Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\nYQBi"},
+	} {
+		r, size, err := m.OpenBinarySection(t.Context(), &imap.FetchItemBinarySection{Part: tc.part}, nil)
+		if err != nil {
+			t.Fatalf("BINARY%v: %v", tc.part, err)
+		}
+		if got, err := io.ReadAll(r); err != nil || string(got) != tc.want || size != int64(len(tc.want)) {
+			t.Fatalf("BINARY%v = %q (%d), %v", tc.part, got, size, err)
+		}
+	}
+	for _, item := range []*imap.FetchItemBinarySection{nil, {Part: []int{0}}, {Part: []int{2}}, {Part: []int{1, 1}, Partial: &imap.SectionPartial{Size: 0}}} {
 		if _, _, err := m.OpenBinarySection(t.Context(), item, nil); err == nil {
 			t.Fatalf("invalid BINARY section accepted: %+v", item)
 		}
 	}
-	for _, cte := range []string{"x-future", "base64"} {
-		raw := "Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: " + cte + "\r\n\r\n!invalid"
-		m, err := message.Analyze(t.Context(), strings.NewReader(raw), int64(len(raw)), nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _, err = m.OpenBinarySection(t.Context(), &imap.FetchItemBinarySection{Part: []int{1}}, nil)
-		var failure *imap.Error
-		if !errors.As(err, &failure) || failure.Code != imap.CodeUnknownCTE {
-			t.Fatalf("%s refusal = %v", cte, err)
-		}
+	unknown := "Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: x-future\r\n\r\n!invalid"
+	m, err = message.Analyze(t.Context(), strings.NewReader(unknown), int64(len(unknown)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = m.OpenBinarySection(t.Context(), &imap.FetchItemBinarySection{Part: []int{1}}, nil)
+	var failure *imap.Error
+	if !errors.As(err, &failure) || failure.Code != imap.CodeUnknownCTE {
+		t.Fatalf("unknown CTE refusal = %v", err)
+	}
+	// RFC 2045 section 6.8: a base64 decoder ignores characters outside the
+	// alphabet, so malformed base64 decodes rather than failing as unknown.
+	lenient := "Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\n!YW J\tj"
+	m, err = message.Analyze(t.Context(), strings.NewReader(lenient), int64(len(lenient)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, size, err = m.OpenBinarySection(t.Context(), &imap.FetchItemBinarySection{Part: []int{1}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := io.ReadAll(r); err != nil || string(got) != "abc" || size != 3 {
+		t.Fatalf("lenient base64 = %q (%d), %v", got, size, err)
 	}
 }
 
@@ -135,5 +164,59 @@ func TestBinaryEmptySectionPreservesHeaders(t *testing.T) {
 	want := header + "a\x00b"
 	if err != nil || string(got) != want || size != int64(len(want)) {
 		t.Fatalf("empty BINARY section = %q (%d), %v", got, size, err)
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestEncodeNULParts(t *testing.T) {
+	payload := "\x00-\xff\n\r\n"
+	raw := "Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: binary\r\n\r\n" + payload
+	m, err := message.Analyze(t.Context(), strings.NewReader(raw), int64(len(raw)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded strings.Builder
+	changed, err := m.EncodeNULParts(t.Context(), &encoded, nil)
+	if err != nil || !changed {
+		t.Fatalf("EncodeNULParts = %v, %v", changed, err)
+	}
+	stored, err := message.Analyze(t.Context(), strings.NewReader(encoded.String()), int64(encoded.Len()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if structure, ok := stored.BodyStructure().(*imap.BodyStructureSinglePart); !ok || !strings.EqualFold(structure.Encoding, "base64") {
+		t.Errorf("BODYSTRUCTURE = %#v, want base64", stored.BodyStructure())
+	}
+	r, _, err := stored.OpenBinarySection(t.Context(), &imap.FetchItemBinarySection{Part: []int{1}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := io.ReadAll(r); err != nil || string(got) != payload {
+		t.Errorf("BINARY after encoding = %q, %v", got, err)
+	}
+
+	plain := "Subject: x\r\n\r\nbody\r\n"
+	m, err = message.Analyze(t.Context(), strings.NewReader(plain), int64(len(plain)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var untouched strings.Builder
+	if changed, err := m.EncodeNULParts(t.Context(), &untouched, nil); err != nil || changed || untouched.Len() != 0 {
+		t.Errorf("plain message: changed %v, wrote %d, %v", changed, untouched.Len(), err)
+	}
+
+	m, _ = message.Analyze(t.Context(), strings.NewReader(raw), int64(len(raw)), nil)
+	diskFull := errors.New("disk full")
+	if _, err := m.EncodeNULParts(t.Context(), failingWriter{diskFull}, nil); err != diskFull {
+		t.Errorf("writer error = %v, want the caller's error unchanged", err)
+	}
+	if _, err := m.EncodeNULParts(t.Context(), nil, nil); err == nil {
+		t.Error("nil writer accepted")
+	}
+	if _, err := (*message.Message)(nil).EncodeNULParts(t.Context(), &untouched, nil); err == nil {
+		t.Error("nil message accepted")
 	}
 }

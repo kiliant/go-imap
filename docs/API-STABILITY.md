@@ -1253,3 +1253,50 @@ The comparability rule in section 7 applies to server types too. SERVER-DESIGN
 section 8 now distinguishes implemented Limits from application/backend budgets
 and outstanding design goals; it does not make every listed budget an implicit
 Server guarantee. These documentation corrections alter no limit or default.
+
+### T33 pre-window conformance corrections — 2026-10-21 (#204, #205)
+
+imaptest's scripted corpus now runs against memory (#205), and the corrections
+it prompted land before the stability window opens.
+
+**Additive:** `message.Message.EncodeNULParts` and `message.EncodeOptions`.
+The method follows the package's shape: a context, a caller-owned writer and
+a guarded options struct for future policy. It is a method on a concrete
+type, not an interface. It re-encodes NUL-bearing parts as base64 for backends
+that accept BINARY APPEND (RFC 3516 section 4.4). Memory uses it; no backend
+is required to.
+
+**BREAKING pre-v1 contract:** `message.Message.OpenBinarySection` accepts
+multipart and encapsulated message sections and returns their stored octets.
+RFC 3516 allows these sections; RFC 9051 lets an IMAP4rev2 client request only
+leaf parts, and serving them anyway is the lenient choice. Base64 decoding
+ignores characters outside the alphabet (RFC 2045 section 6.8), so
+CodeUnknownCTE now means only an unknown transfer encoding, not malformed
+data.
+
+**Backend-observable call:** when APPEND or REPLACE is refused while staging,
+for example over a CATENATE URL, the framework calls `Session.Status` with no
+items for the destination. A NONEXISTENT or TRYCREATE answer turns the
+refusal into NO [TRYCREATE], as RFC 3501 section 6.3.11 requires; any other
+answer keeps the original response. Status already answers for any mailbox,
+and with no items requested it need populate nothing, so this adds no backend
+obligation.
+
+**Framework wire corrections:** THREAD responses follow the RFC 5256 section
+5 grammar. SORT accepts the PARTIAL return option under CONTEXT=SORT, as
+SEARCH accepts it (#206). ESORT sets write ascending runs as ranges, which
+RFC 5267 section 3.2 permits.
+
+**Memory behaviour (reference backend):** Subscriptions belong to names and
+survive DELETE and RENAME. LIST returns missing hierarchy levels as
+`\NonExistent \HasChildren`. SORT and THREAD keys follow RFC 5256 and RFC
+5957, including the i;ascii-casemap collation. CATENATE escapes the login
+inherited into URL userinfo. A BINARY APPEND is stored with NUL-bearing parts
+re-encoded.
+
+**Root, for the next root release:** `internal/imapmessage` keeps
+domainless addresses in the ENVELOPE with host `MISSING_DOMAIN`, the
+placeholder Dovecot uses, because a NIL host would mean group syntax.
+
+**Left open:** a BODY section that a backend already stores with NUL still
+closes the connection (#210).

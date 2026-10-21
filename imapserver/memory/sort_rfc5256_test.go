@@ -130,16 +130,22 @@ func TestSortAddressRFC5256(t *testing.T) {
 	}
 }
 
-// RFC 5957 section 3: the decoded display name, else mailbox@host.
+// RFC 5957 section 3: the decoded display name, else mailbox@host. These are
+// imaptest's sort-display-from messages; "From: d" has no domain, and the
+// envelope keeps it as d@MISSING_DOMAIN rather than dropping the sender.
 func TestSortDisplayRFC5957(t *testing.T) {
 	m := sortTestMailbox(t, []string{
 		"From: foo bar <a@b.c>",
 		"From: b@c.d",
+		"From: d",
 		"From: =?iso-8859-1?q?foo_aar?= <e@f.g>",
 		"From: =?iso-8859-1?q?foo_car?= <f@g.h>",
 	})
-	if got := sortedUIDs(t, m, imap.SortKeySpec{Key: imap.SortKeyDisplayFrom}); got != "2 3 1 4" {
-		t.Errorf("SORT (DISPLAYFROM) = %s, want 2 3 1 4", got)
+	if got := sortedUIDs(t, m, imap.SortKeySpec{Key: imap.SortKeyDisplayFrom}); got != "2 3 4 1 5" {
+		t.Errorf("SORT (DISPLAYFROM) = %s, want 2 3 4 1 5", got)
+	}
+	if got := sortedUIDs(t, m, imap.SortKeySpec{Key: imap.SortKeyDisplayFrom, Reverse: true}); got != "5 1 4 3 2" {
+		t.Errorf("SORT (REVERSE DISPLAYFROM) = %s, want 5 1 4 3 2", got)
 	}
 }
 

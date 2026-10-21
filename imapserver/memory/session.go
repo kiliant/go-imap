@@ -355,12 +355,31 @@ func (a *account) subscribedLocked(name string) bool {
 	return ok
 }
 
+// storableMessage re-encodes NUL-bearing parts of an appended message as
+// base64, as RFC 3516 section 4.4 permits, so that BODY can transmit what
+// BINARY APPEND stored. Messages without such parts are stored unchanged.
+func storableMessage(ctx context.Context, raw []byte) ([]byte, error) {
+	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var encoded bytes.Buffer
+	changed, err := analysis.EncodeNULParts(ctx, &encoded, nil)
+	if err != nil || !changed {
+		return raw, err
+	}
+	return encoded.Bytes(), nil
+}
+
 func (s *session) Append(ctx context.Context, name string, literal io.Reader, options *imapserver.AppendOptions) (*imap.AppendData, error) {
 	if literal == nil {
 		return nil, noError(imap.CodeCannot, "nil message literal")
 	}
 	raw, err := io.ReadAll(&contextReader{ctx: ctx, reader: literal})
 	if err != nil {
+		return nil, err
+	}
+	if raw, err = storableMessage(ctx, raw); err != nil {
 		return nil, err
 	}
 	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)

@@ -106,6 +106,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   `backend-error` event carrying the client's URL; no event is reported now.
   Other refused URLs keep NO [BADURL <url>]. APPEND and REPLACE commit nothing
   either way. No exported API change. (#204)
+- **BREAKING (pre-v1 contract):** `message.Message.OpenBinarySection` accepts
+  multipart and encapsulated message sections and returns their stored octets,
+  as RFC 3516 allows; it refused them before. Base64 that contains characters
+  outside the alphabet is decoded with those characters ignored (RFC 2045
+  section 6.8) instead of failing with CodeUnknownCTE, which now means only an
+  unknown transfer encoding. (#205)
+- **BREAKING behaviour (memory):** A BINARY APPEND whose parts contain NUL is
+  stored with those parts re-encoded as base64, which RFC 3516 section 4.4
+  permits because nothing is lost. FETCH BODY of such a message closed the
+  connection, since no IMAP string can carry NUL; BODY and BODYSTRUCTURE now
+  describe base64 and BINARY returns the original octets. (#205)
 - **BREAKING behaviour (memory):** Subscriptions belong to mailbox names, not
   mailboxes. DELETE keeps a subscription (RFC 3501 section 6.3.9), and
   LIST (SUBSCRIBED) returns it as `\NonExistent` (RFC 5258 section 3).
@@ -394,6 +405,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   guarantee before the v1 stability window. No exported signatures change. (#74)
 
 #### Added
+
+- `message.Message.EncodeNULParts` and `message.EncodeOptions` write a stored
+  message with every NUL-bearing part re-encoded as base64, for backends that
+  accept BINARY APPEND (RFC 3516 section 4.4). Other bytes are copied unchanged,
+  and a message that needs no change is not written. Additive. (#205)
 
 - SORT and UID SORT accept the PARTIAL return option under CONTEXT=SORT
   (RFC 5267 section 4.4, as RFC 9394 extends it). The window is taken from

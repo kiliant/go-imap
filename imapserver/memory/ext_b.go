@@ -247,6 +247,9 @@ func (s *selected) Replace(ctx context.Context, uid imap.UID, name string, liter
 	if err != nil {
 		return nil, err
 	}
+	if raw, err = storableMessage(ctx, raw); err != nil {
+		return nil, err
+	}
 	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)
 	if err != nil {
 		return nil, err

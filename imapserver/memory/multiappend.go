@@ -28,6 +28,9 @@ func (s *session) MultiAppend(ctx context.Context, name string, messages []imaps
 		if len(raw) == 0 || input.HasSize && (input.Size < 0 || int64(len(raw)) != input.Size) {
 			return nil, noError(imap.CodeCannot, "empty or truncated message literal")
 		}
+		if raw, err = storableMessage(ctx, raw); err != nil {
+			return nil, err
+		}
 		analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)
 		if err != nil {
 			return nil, err
