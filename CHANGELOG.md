@@ -469,6 +469,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   an invalid server response. Compatible wire correction; no exported API or
   backend contract change. (#205)
 
+- memory: CATENATE URLs that inherit the account (relative, message-only and
+  absolute without userinfo) resolve for logins containing `@` or `:`, such as
+  e-mail addresses. The resolver wrote the login into the URL's userinfo
+  unescaped, gave the authority a second `@` and refused every such URL with
+  NO [BADURL]. No exported API change. (#205)
+
 - Narrow memory's CATENATE account-inheritance documentation to absolute URLs
   without userinfo. Mechanism-only userinfo remains refused: NO [BADURL], or
   a plain NO when the URL cannot be echoed (#204).
