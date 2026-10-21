@@ -218,7 +218,7 @@ func writeSelectSnapshot(c *conn, snapshot *SelectSnapshot) error {
 	writeUntaggedOK(c, imap.CodePermanentFlags, encodedFlags, "permanent flags")
 	writeUntaggedOK(c, imap.CodeUIDValidity, fmt.Sprint(snapshot.Status.UIDValidity), "UID validity")
 	writeUntaggedOK(c, imap.CodeUIDNext, fmt.Sprint(snapshot.Status.UIDNext), "predicted next UID")
-	if snapshot.Status.Unseen != 0 && c.state.revision == revisionIMAP4rev1 {
+	if snapshot.Status.Unseen != 0 && c.state.revision == revisionIMAP4rev1 && !uidOnlyEnabled(c) {
 		writeUntaggedOK(c, imap.CodeUnseen, fmt.Sprint(snapshot.Status.Unseen), "first unseen message")
 	}
 	if snapshot.Status.NoModSeq {

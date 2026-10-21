@@ -26,6 +26,7 @@ import (
 
 func runExtensions(t *testing.T, harness *Harness) {
 	runBinaryAppend(t, harness)
+	runQResyncHistory(t, harness)
 	t.Run("capability-witness-is-stable", func(t *testing.T) {
 		instance, session := newSession(t, harness)
 		defer closeSession(t, instance, session)

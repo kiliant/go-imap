@@ -90,11 +90,11 @@ func handleStore(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil {
 		return c.writeBad(command.tag, "invalid STORE arguments")
 	}
-	if c.state.selected.readOnly {
-		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
-	}
 	if err := requireUIDCommand(c, command); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if c.state.selected.readOnly {
+		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
 	}
 	uidMode := commandUsesUIDs(command)
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, uidMode)

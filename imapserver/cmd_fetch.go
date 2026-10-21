@@ -102,6 +102,17 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireUIDCommand(c, command); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	if args.vanished {
+		if !commandUsesUIDs(command) {
+			return c.writeBad(command.tag, "VANISHED requires UID FETCH")
+		}
+		if err := requireCapability(c, "QRESYNC"); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
+		if !c.state.enabledCapability("QRESYNC") {
+			return c.writeBad(command.tag, "VANISHED requires ENABLE QRESYNC first")
+		}
+	}
 	// The client's items, before the framework adds its own: withFetchUID and
 	// applyCondStoreFetchItems below append UID and MODSEQ on the framework's
 	// authority, and gating after them would refuse the framework's own work.
@@ -140,6 +151,11 @@ func handleFetch(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	if err := validateSelectedCondStoreUse(ctx, c, usesModSeq, "FETCH MODSEQ/CHANGEDSINCE"); err != nil {
 		return writeCondStoreUseError(c, command.tag, command.name, err)
+	}
+	if args.vanished {
+		if err := writeFetchVanished(ctx, c, args); err != nil {
+			return writeBackendError(c, command.tag, command.name, err)
+		}
 	}
 	items, requestedUID := withFetchUID(args.items)
 	items = applyCondStoreFetchItems(c, items)

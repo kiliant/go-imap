@@ -159,6 +159,21 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING (pre-v1 contract):** `QResyncMailbox.Resync` may now be called
+  repeatedly within a selection for UID FETCH with CHANGEDSINCE and VANISHED,
+  in addition to QRESYNC SELECT/EXAMINE. `QResyncSelect` carries the selection's
+  UIDVALIDITY, CHANGEDSINCE clock and full requested UID set; sequence-match
+  data is absent. Only Vanished is used for UID FETCH, before ordinary FETCH
+  results. Backendtest checks repeatable history under the QRESYNC witness.
+  No exported signature or interface change. (#54, G-3)
+- **BREAKING behaviour (pre-v1):** VANISHED is refused with BAD unless used
+  on UID FETCH after ENABLE QRESYNC with QRESYNC still advertised. Previously
+  the parsed modifier was ignored, including in these invalid forms.
+  No exported API change. (#54, G-3)
+- **BREAKING behaviour (pre-v1):** UIDONLY SELECT and EXAMINE omit the rev1
+  UNSEEN response code, which carries a message sequence number. Ordinary
+  rev1 sessions retain it. No exported API change. (#54, G-1)
+
 - **BREAKING behaviour (pre-v1):** once UIDONLY is enabled, SEARCH, SORT,
   THREAD, COPY, MOVE and REPLACE join FETCH and STORE in requiring their UID
   forms. Sequence-set criteria at every search nesting depth and QRESYNC
@@ -572,6 +587,16 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- UID FETCH with CHANGEDSINCE and VANISHED reports historical removals through
+  `QResyncMailbox.Resync` as VANISHED (EARLIER) before FETCH responses, including
+  requests naming only removed UIDs. PARTIAL limits surviving FETCH results
+  without narrowing the history report. VANISHED requires the UID form and
+  advertised, enabled QRESYNC; NOMODSEQ remains refused. Resync errors fail
+  UID FETCH without abandoning the selection. No exported API change. (#54, G-3)
+- STORE checks UIDONLY before a read-only selection, so sequence-number STORE
+  on EXAMINE receives BAD [UIDREQUIRED]; UID STORE keeps NO [READ-ONLY].
+  No exported API change. (#54, G-2)
 
 - REPLACE shares APPEND's staged payload parser, supports CATENATE and BINARY
   literal8, and commits only after the complete command terminator. Malformed

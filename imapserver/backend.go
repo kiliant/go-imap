@@ -617,8 +617,9 @@ type SelectOptions struct {
 }
 
 // QResyncSelect is the client's claimed synchronisation state, supplied with
-// SELECT or EXAMINE under QRESYNC. A backend answers it by reporting the
-// messages that changed or vanished since ModSeq.
+// SELECT or EXAMINE under QRESYNC, or constructed by the framework for
+// UID FETCH with CHANGEDSINCE and VANISHED. A backend answers it by reporting
+// the messages that changed or vanished since ModSeq. See [QResyncMailbox].
 //
 // UIDValidity is the value the client last saw. When it does not match the
 // mailbox's current UIDVALIDITY the client's state is stale and the backend

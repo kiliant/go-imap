@@ -177,6 +177,9 @@ servers, Dovecot and Stalwart.
     reference `memory` backend implements it exactly within one process
     lifetime and documents that its removal record does not survive a restart —
     which is the case QRESYNC exists for. A durable backend must persist it.
+    Resync serves QRESYNC SELECT/EXAMINE and repeated UID FETCH with CHANGEDSINCE
+    and VANISHED. The full requested UID set bounds VANISHED (EARLIER), written
+    before FETCH results; PARTIAL does not narrow this historical report.
 
 [^srvitems]: No framework machinery and no backend interface: these are FETCH
     and STATUS items, and both sets are open types in `package imap`. The

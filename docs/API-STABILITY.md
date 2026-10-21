@@ -1188,3 +1188,34 @@ content may return NO [UNKNOWN-CTE], as RFC 3516 allows. No exported API changes
 A refused CATENATE URL normally produces NO [BADURL]. If the URL contains bytes
 that cannot be represented safely in a response code, the existing response
 encoder uses SERVERBUG instead; correcting that diagnostic is follow-up S-15.
+
+### T33 QRESYNC and UIDONLY follow-up — 2026-10-21 (#54)
+
+**BREAKING pre-v1 contract:** `QResyncMailbox.Resync` is no longer limited to
+one call for each QRESYNC SELECT/EXAMINE. The framework also calls it for each
+UID FETCH with CHANGEDSINCE and VANISHED for nonempty requested UID sets,
+permitting repeated history requests within one selection. `QResyncSelect`
+carries the selection's UIDVALIDITY,
+CHANGEDSINCE as ModSeq and the full requested UID set as KnownUIDs, with no
+sequence-match data. Only Vanished is used; the ordinary Fetch supplies changed
+messages. This expands the documented backend call contract without changing
+any exported method signature or adding an interface requirement.
+
+RFC 7162 section 3.2.6 requires VANISHED (EARLIER) before FETCH responses.
+Requested UIDs include messages no longer present; PARTIAL windows only the
+surviving FETCH results. Empty saved results never become unrestricted history
+requests. Invalid command forms, disabled/withdrawn QRESYNC and NOMODSEQ are
+refused before Resync. A failed UID FETCH retains its selection; the existing
+selection-release rule applies only to failed SELECT/EXAMINE resynchronisation.
+The QRESYNC-gated backendtest history check covers repeatable retained removals
+and KnownUIDs restriction, under this explicit pre-v1 contract correction.
+
+**BREAKING behaviour (pre-v1):** VANISHED now receives BAD outside UID FETCH
+or without advertised, enabled QRESYNC. Previously these forms were accepted
+and the modifier was ignored.
+
+**BREAKING behaviour (pre-v1):** UIDONLY SELECT/EXAMINE suppress the rev1
+UNSEEN response code because its value is a sequence number. STORE's UIDONLY
+check now precedes read-only refusal, preserving BAD [UIDREQUIRED] on EXAMINE;
+UID STORE still receives NO [READ-ONLY]. The latter correction rejects no new
+input. These changes close G-1–G-3 before the stability window.
