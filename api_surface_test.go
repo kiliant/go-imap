@@ -40,6 +40,7 @@ func TestAPISurfaceNoInternalLeak(t *testing.T) {
 	}{
 		{"github.com/kiliant/go-imap/internal/unicodenorm", "internal/unicodenorm"},
 		{"github.com/kiliant/go-imap/internal/imapwire", "internal/imapwire"},
+		{"github.com/kiliant/go-imap/internal/imapdeflate", "internal/imapdeflate"},
 		{"github.com/kiliant/go-imap/internal/imapsasl", "internal/imapsasl"},
 		{"github.com/kiliant/go-imap/internal/saslprep", "internal/saslprep"},
 		{"github.com/kiliant/go-imap", "."},

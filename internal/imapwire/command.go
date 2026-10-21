@@ -95,5 +95,8 @@ func (d *Decoder) PeekAtomEqual(atom string) bool {
 		}
 	}
 	p := d.peekN(len(atom) + 1)
+	if len(p) < len(atom) {
+		return false
+	}
 	return len(p) == len(atom) || !isAtomChar(p[len(atom)])
 }

@@ -74,6 +74,10 @@ func registerCommand(name string, states stateMask, barrier bool, parse func(*im
 }
 
 func parseUIDCommand(decoder *imapwire.Decoder) (any, int64, error) {
+	return parseUIDCommandDescriptor(decoder, nil)
+}
+
+func parseUIDCommandDescriptor(decoder *imapwire.Decoder, selected func(*commandDescriptor)) (any, int64, error) {
 	if !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
@@ -85,6 +89,9 @@ func parseUIDCommand(decoder *imapwire.Decoder) (any, int64, error) {
 	descriptor := uidCommandDescriptors[name]
 	if descriptor == nil {
 		return nil, 0, fmt.Errorf("unsupported UID subcommand %q", name)
+	}
+	if selected != nil {
+		selected(descriptor)
 	}
 	args, size, err := descriptor.parse(decoder)
 	return &uidCommandArgs{descriptor: descriptor, args: args}, size + int64(len(name)+1), err
@@ -123,6 +130,7 @@ func writeTaggedCondition(c *conn, tag, status string, code imap.ResponseCode, a
 		codeText, args = string(imap.CodeServerBug), ""
 	}
 	c.writeDeferredModSeqFence()
+	c.finishSearchSave(status)
 	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{
 		Status: status,
@@ -251,20 +259,8 @@ func seqSetContains(set imap.SeqSet, seq, maximum imap.SeqNum) bool {
 }
 
 func extractFetchUID(data *imap.FetchMessageData) (imap.UID, bool) {
-	if data == nil {
-		return 0, false
-	}
-	for key, values := range data.Items {
-		if !strings.EqualFold(string(key), "UID") {
-			continue
-		}
-		for _, value := range values {
-			if uid, ok := value.(imap.FetchDataUID); ok && uid != 0 {
-				return imap.UID(uid), true
-			}
-		}
-	}
-	return 0, false
+	uid, ok := imapcodec.FetchValue[imap.FetchDataUID](data, "UID")
+	return imap.UID(uid), ok && uid != 0
 }
 
 func mapFetchResponse(selected *selectedState, data *imap.FetchMessageData, includeUID bool) (*imap.FetchMessageData, error) {
@@ -289,12 +285,24 @@ func mapFetchResponse(selected *selectedState, data *imap.FetchMessageData, incl
 }
 
 func withFetchUID(items []imap.FetchItem) ([]imap.FetchItem, bool) {
+	// UID identifies the result rather than a repeatable section. Clients may
+	// request it more than once; forward one canonical request to the backend.
+	result := make([]imap.FetchItem, 0, len(items)+1)
+	requested := false
 	for _, item := range items {
 		if keyword, ok := item.(imap.FetchItemKeyword); ok && strings.EqualFold(string(keyword), string(imap.FetchItemUID)) {
-			return slices.Clone(items), true
+			if requested {
+				continue
+			}
+			requested = true
+			item = imap.FetchItemUID
 		}
+		result = append(result, item)
 	}
-	return append(slices.Clone(items), imap.FetchItemUID), false
+	if !requested {
+		result = append(result, imap.FetchItemUID)
+	}
+	return result, requested
 }
 
 func fetchLiteralReader(value imap.FetchData) io.Reader {

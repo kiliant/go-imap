@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	defaultMaxCommandLine       = 8 << 10
-	defaultMaxLiteral           = 32 << 20
-	defaultMaxQueuedCommands    = 16
-	defaultMaxQueuedCommandByte = 256 << 10
-	defaultMaxQueuedUpdates     = 256
-	defaultMaxQueuedUpdateBytes = 1 << 20
-	defaultMaxSelectedMessages  = 2_000_000
+	defaultMaxCommandLine        = 8 << 10
+	defaultMaxLiteral            = 32 << 20
+	defaultMaxQueuedCommands     = 16
+	defaultMaxQueuedCommandByte  = 256 << 10
+	defaultMaxQueuedUpdates      = 256
+	defaultMaxQueuedUpdateBytes  = 1 << 20
+	defaultMaxStoreResponseBytes = 32 << 20
+	defaultMaxSelectedMessages   = 2_000_000
 )
 
 var (
@@ -53,13 +54,22 @@ type Limits struct {
 	// Non-positive values mean unlimited (the default). A positive limit
 	// closes the connection with BYE before executing the next command.
 	MaxCommands int
-	// MaxQueuedUpdates bounds pending backend update batches, including
-	// retained removal announcements the protocol does not yet permit.
+	// MaxQueuedUpdates bounds backend update batches awaiting application.
+	// Applied removals awaiting a legal response are compact UID records bounded
+	// by MaxSelectedMessages and do not consume this backlog budget.
 	// The default is 256.
 	MaxQueuedUpdates int
-	// MaxQueuedUpdateBytes bounds their retained payload bytes in aggregate.
-	// The default is 1 MiB.
+	// MaxQueuedUpdateBytes bounds undrained update payload bytes. A queue at or
+	// below the budget admits one more atomic batch, so retention is bounded by
+	// the budget plus one commit. Applied, protocol-deferred removals are bounded
+	// separately by MaxSelectedMessages. The default is 1 MiB.
 	MaxQueuedUpdateBytes int64
+	// MaxStoreResponseBytes bounds buffered STORE responses, including
+	// CONDSTORE fallback results. Each response is charged its encoded size
+	// plus 1 KiB for retained descriptors and indexes. The default is 32 MiB.
+	// On exhaustion, results are refetched and streamed after the mutation
+	// returns; successful STORE and its MODIFIED result still complete with OK.
+	MaxStoreResponseBytes int64
 	// MaxSelectedMessages bounds the per-selection UID-to-sequence map.
 	// The default is 2,000,000 messages.
 	MaxSelectedMessages int
@@ -92,6 +102,9 @@ type Limits struct {
 }
 
 func (limits Limits) withDefaults() Limits {
+	if limits.MaxStoreResponseBytes <= 0 {
+		limits.MaxStoreResponseBytes = defaultMaxStoreResponseBytes
+	}
 	if limits.MaxCommandLineBytes <= 0 {
 		limits.MaxCommandLineBytes = defaultMaxCommandLine
 	}
@@ -162,6 +175,9 @@ type Options struct {
 	Limits Limits
 	// OnError receives backend failures hidden behind SERVERBUG, connection
 	// limits/timeouts, accept/TLS errors and recovered connection panics.
+	// Selection/session cleanup failures are reported even when they are
+	// protocol errors or cancellation, since cleanup cannot refuse a
+	// completed state transition.
 	// Nil disables diagnostics. Calls run serially on a separate goroutine,
 	// outside server locks, and may overlap ServeConn/Close returning. Close
 	// does not wait for callbacks; they may call Close themselves. The context
@@ -223,7 +239,7 @@ func New(backend Backend, options *Options) *Server {
 		framework: compiledFrameworkSupport(),
 		active:    make(map[*conn]struct{}),
 		bySource:  make(map[string]int),
-		changed:   make(chan struct{}, 1),
+		changed:   make(chan struct{}),
 	}
 }
 
@@ -298,6 +314,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, options *Serv
 			return err
 		}
 		if err := s.register(c); err != nil {
+			c.cancel(err)
 			if !errors.Is(err, net.ErrClosed) {
 				c.reportTerminal(terminalEventKind(err), err)
 			}
@@ -310,7 +327,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, options *Serv
 			}
 			return err
 		}
-		go func() { _ = s.serveRegisteredConn(c) }()
+		go func() { _ = s.serveRegisteredConn(ctx, c) }()
 	}
 }
 
@@ -332,16 +349,22 @@ func (s *Server) ServeConn(ctx context.Context, netConn net.Conn, options *Serve
 		return err
 	}
 	if err := s.register(c); err != nil {
+		c.cancel(err)
 		if !errors.Is(err, net.ErrClosed) {
 			c.reportTerminal(terminalEventKind(err), err)
 		}
 		_ = netConn.Close()
 		return err
 	}
-	return s.serveRegisteredConn(c)
+	return s.serveRegisteredConn(ctx, c)
 }
 
-func (s *Server) serveRegisteredConn(c *conn) error {
+func (s *Server) serveRegisteredConn(ctx context.Context, c *conn) error {
+	// Parent cancellation must interrupt transport I/O, including a greeting
+	// blocked before the reader starts. Internal cancellation still lets the
+	// event loop attempt terminal responses such as the overflow BYE.
+	stop := context.AfterFunc(ctx, c.closeTransport)
+	defer stop()
 	defer s.unregister(c)
 	defer c.close()
 	err := c.serve()
@@ -380,15 +403,12 @@ func (s *Server) unregister(c *conn) {
 			delete(s.bySource, source)
 		}
 	}
+	// Every Close waiter must observe the transition. Replacing a closed
+	// channel under mu broadcasts it without losing a wakeup between a
+	// waiter's active-set snapshot and its select.
+	close(s.changed)
+	s.changed = make(chan struct{})
 	s.mu.Unlock()
-	s.signalChanged()
-}
-
-func (s *Server) signalChanged() {
-	select {
-	case s.changed <- struct{}{}:
-	default:
-	}
 }
 
 func sourceAddress(addr net.Addr) string {
@@ -421,6 +441,7 @@ func (s *Server) Close(ctx context.Context, options *ServerCloseOptions) error {
 		for c := range s.active {
 			connections = append(connections, c)
 		}
+		changed := s.changed
 		s.mu.Unlock()
 		if len(connections) == 0 {
 			return nil
@@ -429,7 +450,7 @@ func (s *Server) Close(ctx context.Context, options *ServerCloseOptions) error {
 			c.close()
 		}
 		select {
-		case <-s.changed:
+		case <-changed:
 		case <-ctx.Done():
 			return ctx.Err()
 		}

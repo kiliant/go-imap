@@ -58,6 +58,14 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 		changedSince = options.ChangedSince
 		origin = options.Origin
 	}
+	// Build every result before marking anything \Seen: a later failure must
+	// not leave an earlier message's flag change stored but unpublished.
+	type built struct {
+		msg       *message
+		data      *imap.FetchMessageData
+		marksSeen bool
+	}
+	var pending []built
 	for i, msg := range s.mailbox.messages {
 		if !uids.Contains(msg.uid) {
 			continue
@@ -72,11 +80,18 @@ func (s *selected) Fetch(ctx context.Context, writer *imapserver.FetchWriter, ui
 			s.session.account.mu.Unlock()
 			return err
 		}
-		if marksSeen && !s.readOnly && !imap.ContainsFlag(msg.flags, imap.FlagSeen) {
+		pending = append(pending, built{msg: msg, data: data, marksSeen: marksSeen})
+	}
+	for _, p := range pending {
+		msg, data := p.msg, p.data
+		if p.marksSeen && !s.readOnly && !imap.ContainsFlag(msg.flags, imap.FlagSeen) {
 			msg.flags = append(msg.flags, imap.FlagSeen)
 			msg.modSeq = bumpModSeqLocked(s.mailbox)
 			if _, requested := data.Items[imap.FetchDataKey(imap.FetchItemFlags)]; requested {
 				data.Items[imap.FetchDataKey(imap.FetchItemFlags)] = []imap.FetchData{imap.FetchDataFlags(cloneFlags(msg.flags))}
+			}
+			if _, requested := data.Items[imap.FetchDataKey(imap.FetchItemModSeq)]; requested {
+				data.Items[imap.FetchDataKey(imap.FetchItemModSeq)] = []imap.FetchData{imap.FetchDataModSeq(msg.modSeq)}
 			}
 			flagUpdates = append(flagUpdates, &imapserver.UpdateFlags{UID: msg.uid, Flags: cloneFlags(msg.flags), ModSeq: msg.modSeq})
 		}
@@ -286,6 +301,7 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		destinationMailbox.uidNext++
 		clone := *msg
 		clone.uid = uid
+		clone.saveDate = time.Now()
 		clone.recent = true
 		clone.modSeq = bumpModSeqLocked(destinationMailbox)
 		clone.flags = cloneFlags(msg.flags)
@@ -294,6 +310,9 @@ func (s *selected) copyOrMove(ctx context.Context, uids imap.UIDSet, destination
 		sources, destinations = append(sources, msg.uid), append(destinations, uid)
 		additions = append(additions, &imapserver.UpdateAdd{UIDs: []imap.UID{uid}})
 		if move {
+			// RFC 7162 section 3.2: a MOVE is a removal from the source at a
+			// new modification sequence, which QRESYNC reports as VANISHED.
+			recordVanishedLocked(s.mailbox, msg.uid)
 			removals = append(removals, &imapserver.UpdateExpunge{UID: msg.uid})
 		}
 	}
@@ -452,7 +471,7 @@ func fetchMessageData(ctx context.Context, msg *message, seqNum imap.SeqNum, ite
 			key := imap.FetchDataKey(strings.ToUpper(string(item)))
 			switch item {
 			case imap.FetchItemUID:
-				data.Items[key] = append(data.Items[key], imap.FetchDataUID(msg.uid))
+				data.Items[key] = []imap.FetchData{imap.FetchDataUID(msg.uid)}
 			case imap.FetchItemFlags:
 				data.Items[key] = append(data.Items[key], imap.FetchDataFlags(cloneFlags(msg.flags)))
 			case imap.FetchItemModSeq:

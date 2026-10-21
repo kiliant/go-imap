@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -16,8 +17,8 @@ import (
 // It is a Session interface rather than server configuration because namespaces
 // are usually a property of the authenticated user: which shared and other-user
 // namespaces exist differs per account. A backend that does not implement it
-// gets the framework's configured default, which is the single personal
-// namespace almost every server presents.
+// does not advertise NAMESPACE; the framework supplies no default namespace
+// or hierarchy delimiter.
 type NamespaceSession interface {
 	Namespace(ctx context.Context, options *NamespaceOptions) (*imap.NamespaceData, error)
 }
@@ -29,6 +30,7 @@ type NamespaceOptions struct{ _ struct{} }
 // UnauthenticateSession is the optional UNAUTHENTICATE support of RFC 8437:
 // returning an authenticated connection to the not-authenticated state so it
 // can be reused for another user, without the cost of a new TLS handshake.
+// An error ends the connection with BYE; RFC 8437 forbids a tagged NO.
 type UnauthenticateSession interface {
 	Unauthenticate(ctx context.Context, options *UnauthenticateOptions) error
 }
@@ -133,25 +135,46 @@ func handleUnauthenticate(ctx context.Context, c *conn, command *queuedCommand) 
 	if !ok {
 		return c.writeBad(command.tag, "UNAUTHENTICATE is not available")
 	}
-	// Any selection is abandoned first. RFC 8437 section 3 returns the
-	// connection to the not-authenticated state, in which a selected mailbox
-	// cannot exist, and leaving the backend handle attached would leak it.
-	if err := abandonCurrentSelection(ctx, c); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
-	}
+	// A failure ends the connection so a pipelined authentication cannot run
+	// under the previous identity (RFC 8437 section 3).
 	if err := session.Unauthenticate(ctx, nil); err != nil {
-		return writeBackendError(c, command.tag, command.name, err)
+		c.reportBackendError(command.name, err)
+		if writeErr := c.writeBye("UNAUTHENTICATE failed"); writeErr != nil {
+			return writeErr
+		}
+		return err
 	}
+	abandonCurrentSelection(ctx, c)
 	// The session is discarded whether or not Close succeeded, and the state
 	// transition happens before the error is reported. An error from Close does
 	// not mean the session is still usable, and leaving it attached means the
 	// connection's teardown closes it a second time — which a backend that
 	// releases a pooled handle or decrements a refcount in Close experiences as
 	// a double release, on an error path, where it is hardest to find.
-	closeErr := c.state.session.Close(ctx, nil)
+	// The NOTIFY registration belongs to the session being discarded. Leaving
+	// its queue attached would deliver the previous user's events, and its
+	// selected policy, to whoever authenticates next.
+	c.closeNotify()
+	c.notifySelected = selectedNotifyPolicy{}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.server.options.Limits.CommandTimeout)
+	closeErr := c.state.session.Close(releaseCtx, nil)
+	cancel()
 	c.state.unauthenticate()
+	c.utf8Accept.Store(false)
 	if closeErr != nil {
-		return writeBackendError(c, command.tag, command.name, closeErr)
+		c.reportCleanupError("UNAUTHENTICATE", closeErr)
 	}
-	return c.writeTagged(command.tag, "OK", command.name+" completed")
+	if compressed, ok := c.currentTransport().(*compressedConn); ok {
+		_ = compressed.SetReadDeadline(time.Now().Add(c.server.options.Limits.CommandTimeout))
+		if err := compressed.finishRead(); err != nil {
+			_ = c.writeBye("unable to end compression")
+			return err
+		}
+	}
+	// The OK's CRLF is the last output under COMPRESS (RFC 8437 section 4.1).
+	if err := c.writeTagged(command.tag, "OK", command.name+" completed"); err != nil {
+		return err
+	}
+	c.disableCompression()
+	return nil
 }

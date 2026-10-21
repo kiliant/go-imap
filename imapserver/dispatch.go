@@ -243,18 +243,11 @@ func handleCheck(_ context.Context, c *conn, command *queuedCommand) error {
 }
 
 func handleUnselect(ctx context.Context, c *conn, command *queuedCommand) error {
-	selected := c.state.unselect()
+	selected := c.state.selected
 	if selected == nil {
 		return c.writeTagged(command.tag, "BAD", "no mailbox is selected")
 	}
-	selected.close()
-	err := selected.mailbox.Unselect(ctx, nil)
-	if err != nil {
-		if writeErr := c.writeTagged(command.tag, "NO", "UNSELECT failed"); writeErr != nil {
-			return writeErr
-		}
-		return fmt.Errorf("imapserver: backend UNSELECT failed: %w", err)
-	}
+	releaseInstalledSelection(ctx, c, selected)
 	return c.writeTagged(command.tag, "OK", "UNSELECT completed")
 }
 

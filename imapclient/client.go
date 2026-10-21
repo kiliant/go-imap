@@ -228,7 +228,8 @@ type Client struct {
 	// authInProgress excludes unrelated commands while an AUTHENTICATE
 	// exchange is consuming continuation requests. IMAP cannot safely
 	// disambiguate a continuation once another command is pipelined beside it.
-	authInProgress bool
+	authInProgress  bool
+	resetInProgress bool
 
 	// continuationMu is deliberately separate from mu. A synchronising
 	// literal is written while writeMu protects the encoder, while the reader
@@ -591,10 +592,11 @@ func (c *Client) trace(direction TraceDirection, data string) {
 // internal; new knobs are added here rather than as further positional
 // parameters on the command helpers.
 type commandOptions struct {
-	allowed    stateMask
-	write      func(*imapwire.Encoder)
-	collector  commandCollector
-	onComplete taggedCompleteFunc
+	resetsSession bool
+	allowed       stateMask
+	write         func(*imapwire.Encoder)
+	collector     commandCollector
+	onComplete    taggedCompleteFunc
 	// collectorForTag constructs a collector before registration or I/O. It
 	// must not block or call back into Client. Used for correlated responses.
 	collectorForTag func(string) commandCollector
@@ -697,6 +699,11 @@ func (c *Client) issue(name string, opts commandOptions) *Command {
 		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "command is not valid while authentication is in progress"})
 		return cmd
 	}
+	if c.resetInProgress {
+		c.mu.Unlock()
+		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "command is not valid while UNAUTHENTICATE is in progress"})
+		return cmd
+	}
 	if c.idle != nil && name != "IDLE" {
 		c.mu.Unlock()
 		cmd.complete(&imap.Error{Type: imap.ErrorTypeProtocol, Text: "command is not valid while IDLE is active"})
@@ -714,6 +721,9 @@ func (c *Client) issue(name string, opts commandOptions) *Command {
 		return cmd
 	}
 	c.nextTag++
+	if opts.resetsSession {
+		c.resetInProgress = true
+	}
 	cmd.tag = fmt.Sprintf("A%04d", c.nextTag)
 	if opts.collectorForTag != nil {
 		cmd.collector = opts.collectorForTag(cmd.tag)

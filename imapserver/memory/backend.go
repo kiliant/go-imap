@@ -6,6 +6,17 @@
 // server interfaces, and PLAIN, LOGIN and SCRAM authentication with configured
 // credentials. The capability witnesses in ext_a.go specify its supported
 // extensions. Future optional interfaces are adopted deliberately.
+//
+// RENAME INBOX moves its messages to a newly created mailbox and leaves the
+// empty INBOX, its identity, metadata, subscription and inferiors in place.
+// A destination beneath INBOX is refused with NO [CANNOT]. COPY, MOVE and
+// RENAME INBOX preserve INTERNALDATE and assign a new SAVEDATE on arrival.
+//
+// CATENATE resolves URLs within the authenticated account. In absolute IMAP
+// URLs, hostnames and ports are logical aliases for this backend; they do not
+// cause a connection to another server. Absolute URLs without userinfo inherit
+// the current account; mechanism-only userinfo is refused. URLs naming another
+// user or requiring URLAUTH are refused.
 package memory
 
 import (
@@ -59,6 +70,7 @@ type account struct {
 }
 
 type mailbox struct {
+	account     *account
 	name        string
 	uidValidity uint32
 	uidNext     imap.UID
@@ -120,6 +132,7 @@ func newAccount(password string) *account {
 // support modification sequences", which is what NOMODSEQ reports.
 func (a *account) createMailboxLocked(name string) *mailbox {
 	m := &mailbox{
+		account:       a,
 		name:          name,
 		uidValidity:   a.nextUIDValidity,
 		uidNext:       1,

@@ -87,6 +87,37 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- Guard shared command lookahead when a transport read fails after a complete
+  keyword. Authenticated server connections now return the read error instead
+  of recovering an internal bounds panic. No exported API or backend contract
+  change; publish the root correction before the server module. (#54)
+
+- The shared server-direction SEARCH parser accepts `UID $`, including nested
+  criteria, as the saved SEARCHRES result. This also repairs SORT, THREAD and
+  ESEARCH criteria and IMAP4rev2's incorporated syntax. Compatible correction;
+  no exported API change. Ship this root fix before the server release. (#54, H-2)
+
+- `imapclient.Client.Unauthenticate` ends an active COMPRESS layer at the
+  successful completion, preserves TLS and prefetched plaintext, and prevents
+  concurrent writes across the framing change. Shared internal boundary handling
+  accepts sync flush, a final block, or both. REPLACE emulation compares UID keys
+  without regard to case and rejects ambiguous UID values. Compatible corrections;
+  no exported API change. Ship in the root release preceding the server's
+  UNAUTHENTICATE teardown correction. (#54, RT-3/RT-4)
+
+- Root `imap.StatusItemDeletedStorage` documents octets, matching RFC 9208
+  and the server contract, rather than kibibytes. Documentation only. (#54)
+
+- `imapclient.Client.Notify` writes `NOTIFY SET STATUS (group) (group)`:
+  STATUS follows SET, and each watch group has its own parentheses (RFC 5465
+  section 8). Previously STATUS and multiple groups were rejected by compliant
+  servers. No exported signature change. (#197)
+
+- **imapcodec:** the server-direction UIDFETCH response is written as RFC 9586
+  section 7's `* <uid> UIDFETCH (...)`, not `* UIDFETCH <uid> (...)`. Only
+  `imapserver` writes it; a standalone server build receives the fix with the
+  next root release. No exported API change. (#54)
+
 - `imapclient.MultiSearchMailboxes` encodes multiple mailbox names as a
   parenthesized list, as required by RFC 5465 and RFC 7377. Correct the
   `MultiSearchInboxes` documentation to describe delivery destinations and
@@ -138,6 +169,104 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Changed
 
+- **BREAKING (pre-v1 contract):** `QResyncMailbox.Resync` may now be called
+  repeatedly within a selection for UID FETCH with CHANGEDSINCE and VANISHED,
+  in addition to QRESYNC SELECT/EXAMINE. `QResyncSelect` carries the selection's
+  UIDVALIDITY, CHANGEDSINCE clock and full requested UID set; sequence-match
+  data is absent. Only Vanished is used for UID FETCH, before ordinary FETCH
+  results. Backendtest checks repeatable history under the QRESYNC witness.
+  No exported signature or interface change. (#54, G-3)
+- **BREAKING behaviour (pre-v1):** VANISHED is refused with BAD unless used
+  on UID FETCH after ENABLE QRESYNC with QRESYNC still advertised. Previously
+  the parsed modifier was ignored, including in these invalid forms.
+  No exported API change. (#54, G-3)
+- **BREAKING behaviour (pre-v1):** UIDONLY SELECT and EXAMINE omit the rev1
+  UNSEEN response code, which carries a message sequence number. Ordinary
+  rev1 sessions retain it. No exported API change. (#54, G-1)
+
+- **BREAKING behaviour (pre-v1):** once UIDONLY is enabled, SEARCH, SORT,
+  THREAD, COPY, MOVE and REPLACE join FETCH and STORE in requiring their UID
+  forms. Sequence-set criteria at every search nesting depth and QRESYNC
+  sequence-match data are refused with BAD [UIDREQUIRED]. UID SEARCH `$`
+  continues to refer to saved UIDs. No exported API change. (#54, S-02)
+- **BREAKING behaviour (pre-v1):** APPEND, MULTIAPPEND, CATENATE and REPLACE
+  reject 8-bit message headers with NO until UTF8=ACCEPT or IMAP4rev2 is
+  enabled. The framework scans staged headers before calling the backend;
+  8-bit body content remains accepted. No exported API change. (#54, S-03)
+- **BREAKING behaviour (pre-v1):** the obsolete UTF8=APPEND capability and
+  memory witness are removed. Clients use UTF8=ACCEPT (RFC 9755) instead of
+  RFC 5738's obsolete `UTF8 (literal8)` syntax. CATENATE TEXT now requires an
+  ordinary literal as specified by RFC 4469; literal8 is accepted as the
+  whole APPEND/REPLACE payload with BINARY. No exported API change. (#54, S-06)
+
+- **BREAKING (pre-v1 contract):** `UpdateBatch` and `Updater.Push` now require
+  publishing every committed batch to all attached updaters before a mutating
+  call returns or STATUS/SELECT exposes the commit, including external commits
+  and commits followed by errors. Late-feed backends must add a publication
+  fence. Both reference backends already satisfy this duty; `backendtest.Run`
+  now checks APPEND, COPY, STORE, EXPUNGE and MOVE at the call boundary and tests
+  the STATUS/SELECT visibility fence. Correct
+  `ExpungeWriter.WriteExpunge`: wire removals come from the ordered batches
+  after the backend call. No interface or signature change. (#54, B-1)
+- **BREAKING (pre-v1 bound semantics):** `Limits.MaxQueuedUpdateBytes` permits
+  the undrained byte budget plus one atomic commit. `MaxQueuedUpdates` bounds
+  undrained batches. Applied, protocol-deferred removals are compact UID records
+  bounded by MaxSelectedMessages, separately from backlog. A withheld removal
+  therefore does not cause a later STORE or ordinary change to disconnect clients.
+  Add `Limits.MaxStoreResponseBytes`, default 32 MiB, charging wire bytes plus
+  1 KiB per retained response. Exhaustion switches to a fresh streaming refetch
+  after mutation completion, preserving OK and conditional MODIFIED results.
+  A failed committed-state stream sends BYE. (#54, B-2/D-5, review N-1/N-2)
+- **BREAKING behaviour:** SORT classifies keys before backend access. Unknown
+  keys and repeated REVERSE receive BAD; DISPLAYFROM/DISPLAYTO require
+  SORT=DISPLAY; RELEVANCY requires SEARCH=FUZZY and a FUZZY criterion. Correct
+  the SortMailbox contract. Enforce URL-PARTIAL withdrawal and report withdrawn
+  FILTERS as a gate refusal. Existing interfaces and signatures stay unchanged.
+  (#54, review N-4)
+- **BREAKING behaviour:** URL-PARTIAL withdrawal also refuses CATENATE range
+  URLs with NO [BADURL] before backend resolution. The command drains later
+  parts without resolving them or committing. URLFETCH returns NIL for each
+  unavailable range URL and continues serving other URLs. (#54, Z-3)
+
+- **BREAKING behaviour:** NOTIFY validates registrations before calling the
+  backend or closing the current one. Unpaired MessageNew/MessageExpunge,
+  FlagChange or AnnotationChange without both, two selected specifiers,
+  non-message events for the selected mailbox, fetch attributes outside it,
+  empty lists and a misplaced STATUS indicator are BAD; events the framework
+  cannot deliver are `NO [BADEVENT (MessageNew MessageExpunge FlagChange)]`,
+  and a backend's BADEVENT list is completed the same way (RFC 5465 sections
+  3.1, 5, 6.1). Backends now receive only legal configurations.
+  `NotifySession` documents both. No signature change. (#54, second
+  independent review R6)
+- **BREAKING behaviour:** the framework enforces NOTIFY's selected-mailbox
+  policy. NOTIFY NONE, SELECTED NONE or an omitted selected group suppress
+  other sessions' EXISTS, EXPUNGE/VANISHED, RECENT, FLAGS and FETCH;
+  per-event groups suppress FlagChange alone. Suppressed removals stay in the
+  client's sequence view and suppressed additions stay out of it; the
+  client's own commands still report their effects. A NOTIFY SET returns what
+  accumulated, SELECTED delivers removals immediately, overflow and
+  UNAUTHENTICATE end the policy. Backends keep publishing every change.
+  No signature change. (#54, second independent review R5)
+- **BREAKING behaviour:** once any CONDSTORE enabling command has been issued,
+  untagged FETCH from STORE, from FETCH with MODSEQ or CHANGEDSINCE or an
+  implicit `\Seen`, and from other sessions carries UID (RFC 7162 section
+  3.2.4); a FETCH asking for neither keeps its exemption. Selected NOTIFY
+  FlagChange carries UID with or without CONDSTORE (RFC 5465 section 5.1).
+  UIDONLY responses use RFC 9586's `* <uid> UIDFETCH` form. No signature
+  change. (#54, second independent review R3)
+- `StoreOptions.Silent` documents that a successful conditional STORE.SILENT
+  reports MODSEQ for each stored message, which the framework supplies itself
+  when the backend honoured Silent; no new backend obligation. `QResyncMailbox`
+  documents that Resync runs after the ordinary SELECT responses and that its
+  failure releases the selection. `Session.Rename` states that INBOX keeps its
+  inferiors. No signature change. (#54, second independent review R1/R2/R7)
+
+- **BREAKING:** remove `MessageLimitSession`, `MessageLimits` and
+  `MessageLimitOptions`, and withdraw MESSAGELIMIT/SAVELIMIT advertisements.
+  Their mailbox-size/retention meanings contradicted RFC 9738's per-command
+  processing limits, which the framework did not enforce. Server support is
+  deferred until the framework can enforce the RFC contract.
+  (#54, independent review A1)
 - **BREAKING:** correct the `QUOTA=RES-STORAGE` backend obligation introduced
   in #177: STATUS DELETED-STORAGE is in octets, not kibibytes. Memory now
   returns the sum of deleted messages' octet sizes. STORAGE quota usage
@@ -468,6 +597,192 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   framework's evaluation needs. No exported API change. (#34)
 
 #### Fixed
+
+- Narrow memory's CATENATE account-inheritance documentation to absolute URLs
+  without userinfo. Mechanism-only userinfo remains refused with NO [BADURL].
+  Resolver and APPEND regressions preserve that boundary. Documentation/test
+  correction; no exported API or runtime behaviour change. (#54, H-3, #207)
+
+- UID FETCH with CHANGEDSINCE and VANISHED retains wildcard ranges when the
+  mailbox is empty, so `1:*` reports the retained removal history. Repeated,
+  reversed and mixed ranges and PARTIAL retain the existing history semantics.
+  Compatible correction; no exported API or backend contract change. (#54, H-1)
+- Document the existing acceptance of repeated SEARCH ALL return options and
+  PARTIAL with ALL (#206), and memory's same-account CATENATE URL host/port
+  aliases (#207). Preserve those behaviours. State the struct-comparability
+  compatibility rule and clarify which resource budgets are implemented by
+  Limits and which remain application/backend policy or design goals.
+  Documentation only; no exported API, default or input-acceptance change. (#54, O-2/O-3)
+
+- UID FETCH with CHANGEDSINCE and VANISHED reports historical removals through
+  `QResyncMailbox.Resync` as VANISHED (EARLIER) before FETCH responses, including
+  requests naming only removed UIDs. PARTIAL limits surviving FETCH results
+  without narrowing the history report. VANISHED requires the UID form and
+  advertised, enabled QRESYNC; NOMODSEQ remains refused. Resync errors fail
+  UID FETCH without abandoning the selection. No exported API change. (#54, G-3)
+- STORE checks UIDONLY before a read-only selection, so sequence-number STORE
+  on EXAMINE receives BAD [UIDREQUIRED]; UID STORE keeps NO [READ-ONLY].
+  No exported API change. (#54, G-2)
+
+- REPLACE shares APPEND's staged payload parser, supports CATENATE and BINARY
+  literal8, and commits only after the complete command terminator. Malformed
+  REPLACE, LIST and LSUB lines cannot escape their parser; REPLACE read timeouts
+  send BYE before closing. BINARY also accepts synchronising and non-synchronising
+  literal8 APPEND and MULTIAPPEND. No exported API change. (#54, S-01, S-04, S-05, S-10)
+- UID FETCH accepts RFC 9394's PARTIAL modifier, including negative and reversed
+  ranges. The framework windows existing UIDs before applying CHANGEDSINCE,
+  independent of modifier order. An oversized LITERAL- APPEND-family literal
+  returns BAD [TOOBIG]. A failed SAVE search returning NO clears `$`; BAD
+  preserves it. No exported API change. (#54, S-07–S-09)
+- Memory resolves CATENATE relative and absolute URLs with account ownership,
+  UIDVALIDITY, BODY sections and byte ranges validated, using streaming readers
+  that retain cancellation. `backendtest.Run` checks relative section content
+  and BINARY APPEND under their existing advertised obligations; no new backend
+  duty or exported API change. (#199, #54)
+
+- When `UpdateFlags.ModSeq` is zero, the framework fetches current FLAGS and
+  MODSEQ together for CONDSTORE clients, skipping UIDs already removed. STORE's
+  fallback also refreshes FLAGS and MODSEQ from one fetch. Queued flag changes
+  keep the checkpoint fenced. The exported optional-zero contract remains
+  valid; no new backend obligation. (#54, final review)
+- SEARCH clock fallback, UIDONLY projection and keyword announcement compare
+  all FETCH item spellings case-insensitively. Enforce FetchWriter's existing
+  exactly-one-nonzero-UID rule across spellings, preventing random sequence
+  mappings from conflicting UID keys. Authenticated read timeouts send BYE.
+  UNAUTHENTICATE accepts an optional final DEFLATE block after sync flush.
+  No exported API change. (#54, review N-3 and teardown/timeout follow-ups)
+- Coalesce repeated UID requests before backend FETCH and in both reference
+  backends' results. Legal repeated items no longer produce NO [SERVERBUG] under
+  the strict single-UID validation; conflicting backend UID values still fail.
+  (#54, interop follow-up)
+- Retain backend ConnInfo.TLS and SCRAM-PLUS channel binding through the
+  buffered transport installed by UNAUTHENTICATE after COMPRESS. Cover
+  implicit TLS and STARTTLS, TLS 1.2/1.3, default mechanism selection and both
+  SCRAM-PLUS variants across repeated resets. Handler-owned APPEND literal
+  and IDLE reads, and incomplete unknown commands, also send BYE on transport
+  read timeout before closing. No exported API change. (#54, Z-1/Z-4)
+- LOGIN and AUTHENTICATE preserve commands buffered behind authentication,
+  including SASL continuation and UNAUTHENTICATE/re-authentication pipelines.
+  UNAUTHENTICATE errors send BYE instead of the forbidden NO; success removes
+  COMPRESS after its OK and closes the session with a fresh bounded cleanup
+  context. Correct the earlier refusal-preserves-selection claim. (#54, B-3,
+  D-1/D-2/D-8)
+- Enforce `CapabilityFilter` for MOVE and UID MOVE. FETCH result keys are
+  explicitly case-insensitive in `imap.FetchMessageData` and `FetchWriter`;
+  backendtest accepts those keys and diagnoses missing/malformed values
+  without indexing or type-assertion panics. Its RENAME INBOX removal-clock
+  check requires QRESYNC rather than CONDSTORE alone. (#54, B-4/B-5/D-6)
+- A failed drain-time FLAGS/MODSEQ fallback sends BYE and reports its cause.
+  Rejected Serve/ServeConn connections cancel their child contexts. Selected
+  STATUS lookups use the requested mailbox name, independent of the snapshot's
+  optional descriptive name. CLOSE emits neither own nor foreign removals;
+  CHANGEDSINCE 0 receives BAD. URLFETCH backend errors complete response framing
+  and use the normal error mapping instead of silently becoming NIL. No new
+  exported signatures. (#54, D-3/D-4/D-7/D-9/D-10/D-11)
+- Cancelling a Serve/ServeConn context interrupts transport reads and writes,
+  including an initial greeting blocked on an unread connection. The parent
+  context closes the transport without waiting for the write timeout, while
+  internal cancellation retains its terminal-response path. (#54, final review)
+- `backendtest` accepts an empty initial `MailboxRevision`, which the
+  framework already supports; revisions are opaque comparable values with
+  no reserved zero value. Clarify that contract and correct `NamespaceSession`
+  documentation: an absent interface withholds NAMESPACE, with no framework
+  default. No exported signature change. (#54, final review)
+- Concurrent `Server.Close` callers all wake when a connection finishes,
+  using a broadcast under the active-connection lock. A single-consumer signal
+  could leave another caller waiting until its context expired even after all
+  `ServeConn` calls had returned. No exported API change. (#54, final review)
+- Conditional STORE fills missing MODSEQ for rejected messages whose FLAGS
+  the backend reports, as well as successfully stored messages. No new backend
+  obligation. (#54, final review)
+- Live `UpdateVanished` batches use the client's negotiated removal form:
+  EXPUNGE for ordinary sessions and VANISHED after QRESYNC or UIDONLY. UIDs
+  never announced by EXISTS are omitted, and `Earlier` is normalized to live
+  removal semantics; SELECT/FETCH resync reports alone use EARLIER. The
+  exported field remains source-compatible and its documentation is corrected.
+  (#54, review N1)
+- Selected NOTIFY retains the latest withheld flags per UID and returns them
+  on successful SET, including SET with NONE. Resync checkpoints remain behind
+  withheld flags and removals, including after an own silent STORE of the
+  same UID. Document selected policy, refused replacement registrations,
+  own additions and operations on removed placeholders. (#54, N2/L1)
+- EXPUNGE, UID EXPUNGE and MOVE report HIGHESTMODSEQ after QRESYNC. The
+  framework uses the existing selected-mailbox STATUS contract before its
+  final update drain, then fences the checkpoint if changes remain withheld.
+  The synchronous-publication duty is now explicit; see the pre-v1 contract
+  correction below. No new backend interface. (#54, N3)
+- STORE fills missing MODSEQ in a FLAGS-only backend response through FETCH
+  after CONDSTORE is enabled, merging it into that response before accounting
+  for the own update. The exported Store contract still permits FLAGS-only
+  output. (#54, N4)
+- A completed CLOSE, UNSELECT or UNAUTHENTICATE answers OK after cleanup
+  errors, reports those errors through `Options.OnError`, and leaves the
+  connection usable in its new state. Replacing SELECT continues after a
+  release error. A failed UNAUTHENTICATE ends the connection with BYE. Document
+  once-only release, fresh bounded cleanup contexts and error handling on
+  `SelectedMailbox.Unselect` and `Session.Close`. Cleanup diagnostics include
+  protocol errors and cancellation, which ordinary command error reporting
+  treats as expected refusals. (#54, N5)
+- `backendtest`'s RENAME INBOX case accepts arbitrary FETCH order, a recreated
+  INBOX with new UIDVALIDITY and MAILBOXID, and checks clocks and resync only
+  within one incarnation. Clarify unique, unordered `SearchResult.UIDs`.
+  (#54, N6/O1)
+- Memory assigns a new SAVEDATE on COPY, MOVE and RENAME INBOX, preserving
+  INTERNALDATE (RFC 8514 section 3). Both backend package docs describe the
+  refusal of a RENAME INBOX destination beneath INBOX. (#54, N7/L1)
+
+- A SELECT or EXAMINE failing in QRESYNC's Resync or changed-message FETCH, or
+  in its OBJECTID or rev2 LIST response, releases the installed selection
+  before answering: the connection returns to the authenticated state, the
+  updater is closed and Unselect runs once on a fresh bounded context. The
+  tagged response keeps the original error's mapping; a failed Unselect goes
+  to `Options.OnError`. (#54, second independent review R1)
+- A successful conditional STORE.SILENT returns MODSEQ (and UID) for each
+  stored message instead of nothing. Only responses actually written are
+  accounted against the command's own flag updates, so a change the backend
+  did not report still reaches the client. (#54, second independent review R2)
+- `backendtest` accepts APPEND, COPY and MOVE results reported on some calls
+  but not others without UIDPLUS, checks every reported value against its own
+  message, accepts CATENATE's nil-reader refusal, checks CONDSTORE, QRESYNC,
+  REPLACE, SORT and THREAD only when witnessed, takes URLAUTH fixture UIDs and
+  LIST hierarchy delimiters from the backend, and passes NOTIFY only legal
+  registrations. Strict UIDPLUS, per-family SCRAM and zero `HighestModSeq`
+  behaviour is unchanged. A new baseline case covers RENAME INBOX.
+  (#54, second independent review R4)
+- Memory implements RENAME INBOX: messages move to a new mailbox identity
+  with new UIDs, keeping flags, INTERNALDATE and content; INBOX, its inferiors and
+  identity remain; INBOX selections see the removals, QRESYNC reports them,
+  and a destination conflict changes nothing. Memory MOVE now records its
+  source removals for QRESYNC and advances the source clock (RFC 7162 section
+  3.2). In both backends a message moved by RENAME INBOX is recent in its new
+  mailbox, as a COPY or MOVE destination is. (#54, second independent
+  review R7)
+
+- CONDSTORE activation routes backend failures through the normal error mapping,
+  preserving protocol response codes and keeping private diagnostics off the
+  wire. Its extra STATUS lookup uses the command context and timeout.
+  (#54, independent review A2/B1)
+- `backendtest` derives fixture UIDs when UIDPLUS is unwitnessed, requires
+  APPEND/COPY/REPLACE assigned results only for UIDPLUS witnesses, tests only
+  witnessed SCRAM families, and accepts the documented optional zero
+  `CondStoreResult.HighestModSeq`. (#54, independent review B2)
+- Memory NOTIFY matches the union of requested events, honors NONE and
+  SUBSCRIBED, and publishes message additions, expunges and flag changes from
+  every mutation. Selected mailboxes use their selected updater and receive no
+  NOTIFY STATUS; the STATUS indicator reports only watched message events.
+  Unsupported LIST/METADATA events receive `NO [BADEVENT (MessageNew
+  MessageExpunge FlagChange)]`. Legal MessageNew fetch-attribute lists are parsed
+  and refused with `NO [CANNOT]` before backend calls.
+  (#54, independent review B3)
+- Memory FETCH prepares all results before applying implicit `\Seen` changes,
+  preventing an error on a later message from leaving unpublished changes.
+  (#54, independent review B4)
+- APPEND stops resolving CATENATE URLs after refusal and bounds each assembled
+  message by the command's remaining aggregate byte budget.
+  (#54, independent review B5)
+- Memory RENAME moves inferiors atomically, refuses destination conflicts and
+  moves into its own hierarchy, and preserves the whole hierarchy on refusal.
+  `backendtest` now checks inferior renaming. (#54, independent review B6)
 
 - MULTISEARCH accepts the result options of extended SEARCH: MIN, MAX, ALL,
   COUNT, PARTIAL and CONTEXT per mailbox (RFC 7377 section 2.1), SAVE only

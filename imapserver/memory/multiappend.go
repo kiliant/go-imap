@@ -75,7 +75,6 @@ func (s *session) MultiAppend(ctx context.Context, name string, messages []imaps
 		origin = options.Origin
 	}
 	publishLocked(m, advanceLocked(m, origin, changes))
-	notifyMailboxLocked(s.account, m)
 	return &imap.MultiAppendData{HasUIDs: true, UIDValidity: m.uidValidity, UIDs: assigned}, nil
 }
 

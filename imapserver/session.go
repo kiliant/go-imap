@@ -398,16 +398,14 @@ func cloneUpdateBatch(batch *UpdateBatch) *UpdateBatch {
 }
 
 type updateQueue struct {
-	mu        sync.Mutex
-	items     []*UpdateBatch
-	bytes     int64
-	heldItems int
-	heldBytes int64
-	maxItems  int
-	maxBytes  int64
-	signal    chan struct{}
-	overflow  func()
-	closed    bool
+	mu       sync.Mutex
+	items    []*UpdateBatch
+	bytes    int64
+	maxItems int
+	maxBytes int64
+	signal   chan struct{}
+	overflow func()
+	closed   bool
 }
 
 func newUpdateQueue(maxItems int, maxBytes int64, overflow func()) *updateQueue {
@@ -426,8 +424,8 @@ func (q *updateQueue) push(batch *UpdateBatch) error {
 		q.mu.Unlock()
 		return ErrUpdaterClosed
 	}
-	if size < 0 || (q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems) ||
-		(q.maxBytes >= 0 && size > q.maxBytes-q.bytes) {
+	if size < 0 || (q.maxItems >= 0 && len(q.items) >= q.maxItems) ||
+		(q.maxBytes >= 0 && q.bytes > q.maxBytes) {
 		overflow := q.overflow
 		q.closed = true
 		q.mu.Unlock()
@@ -452,7 +450,7 @@ func (q *updateQueue) popAll() []*UpdateBatch {
 	q.mu.Lock()
 	items := q.items
 	q.items = nil
-	q.bytes = q.heldBytes
+	q.bytes = 0
 	q.mu.Unlock()
 	return items
 }
@@ -580,6 +578,22 @@ func (q *updateQueue) hasRemovals() bool {
 	return false
 }
 
+func (q *updateQueue) hasFlags() bool {
+	if q == nil {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, batch := range q.items {
+		for _, change := range batch.Changes {
+			if _, ok := change.(*UpdateFlags); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (q *updateQueue) close() {
 	if q == nil {
 		return
@@ -588,40 +602,6 @@ func (q *updateQueue) close() {
 	q.closed = true
 	q.items = nil
 	q.bytes = 0
-	q.heldBytes, q.heldItems = 0, 0
-	q.mu.Unlock()
-}
-
-// Withheld removals share the ordinary queue budget. Already delivered flag
-// and addition updates consume no retained budget, regardless of command count.
-func (q *updateQueue) holdRemovals(batch *UpdateBatch) error {
-	size := updateBatchSize(batch)
-	q.mu.Lock()
-	if q.closed {
-		q.mu.Unlock()
-		return ErrUpdaterClosed
-	}
-	if q.maxItems >= 0 && len(q.items)+q.heldItems >= q.maxItems ||
-		q.maxBytes >= 0 && size > q.maxBytes-q.bytes {
-		q.closed = true
-		overflow := q.overflow
-		q.mu.Unlock()
-		if overflow != nil {
-			overflow()
-		}
-		return ErrUpdateOverflow
-	}
-	q.heldItems++
-	q.heldBytes += size
-	q.bytes += size
-	q.mu.Unlock()
-	return nil
-}
-
-func (q *updateQueue) releaseRemovals() {
-	q.mu.Lock()
-	q.bytes -= q.heldBytes
-	q.heldBytes, q.heldItems = 0, 0
 	q.mu.Unlock()
 }
 
@@ -705,10 +685,20 @@ type selectedState struct {
 	// uids is the client's view. While removals are withheld, backendUIDs
 	// follows the fully applied revision without renumbering that view.
 	backendUIDs []imap.UID
-	withheld    []*UpdateBatch
+	withheld    []imap.UID
+	// suppressed, pendingAdds and pendingRecent are what NOTIFY told the
+	// framework not to announce: removed messages that stay in the client's
+	// view, added ones kept out of it, and the RECENT count that goes with
+	// them. Each UID appears at most once, so they are bounded by the
+	// selection's size rather than by the update queue.
+	suppressed       []Update
+	pendingFlags     map[imap.UID]*UpdateFlags
+	pendingAdds      []imap.UID
+	pendingRecent    uint32
+	hasPendingRecent bool
 	// The selection snapshot is a known-safe resynchronisation checkpoint.
-	// UpdateBatch does not carry removal mod-sequences, so a later FETCH
-	// value cannot establish a newer safe checkpoint past a withheld removal.
+	// A later FETCH cannot establish a newer checkpoint while removals or
+	// flag changes remain unreported.
 	snapshotModSeq uint64
 	// savedSearch is the SEARCHRES result referenced by "$". It is framework
 	// state, not backend state, per the contract on SelectedMailbox: it is
@@ -754,6 +744,7 @@ func openSelectedState(ctx context.Context, state *sessionState, mailbox string,
 		}
 		return nil, err
 	}
+	selected.name = mailbox
 	if !state.selectMailbox(selected) {
 		selected.close()
 		closeRejectedMailbox(selected.mailbox, limits.CommandTimeout)
@@ -867,6 +858,29 @@ const (
 type updateAccounting struct {
 	origin ChangeToken
 	effect commandEffect
+	// covered narrows effectStore to the messages whose new state the STORE
+	// response itself reported. Nil covers every message of the origin, which
+	// is how an unconditional .SILENT store is accounted: RFC 3501 section
+	// 6.4.6 lets it omit the new values entirely. A changed message outside
+	// it keeps its unsolicited FETCH, so a backend that reported less than it
+	// changed cannot hide a change from the client.
+	covered map[imap.UID]struct{}
+	// silent leaves an older withheld flag change unreported even if the
+	// command reports a newer MODSEQ for that same message.
+	silent bool
+}
+
+// suppressesFlags reports whether uid's flag update from this accounting's
+// origin was already answered by the command response.
+func (a updateAccounting) suppressesFlags(uid imap.UID) bool {
+	if a.effect != effectStore {
+		return false
+	}
+	if a.covered == nil {
+		return true
+	}
+	_, ok := a.covered[uid]
+	return ok
 }
 
 type deliveredUpdate struct {
@@ -919,10 +933,32 @@ func coalesceWireUpdates(updates []deliveredUpdate) []deliveredUpdate {
 }
 
 func (s *selectedState) applyBatch(batch *UpdateBatch, accounting updateAccounting) ([]deliveredUpdate, error) {
-	return s.applyBatchDeferringRemovals(batch, accounting, false)
+	return s.applyBatchWith(batch, accounting, batchDelivery{})
 }
 
 func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounting updateAccounting, deferRemovals bool) ([]deliveredUpdate, error) {
+	return s.applyBatchWith(batch, accounting, batchDelivery{deferRemovals: deferRemovals})
+}
+
+// batchDelivery is what one batch may announce to the client.
+//
+// The revision always advances and every change always reaches the backend
+// view; these only decide which changes reach the client's view, and when.
+type batchDelivery struct {
+	// deferRemovals withholds removals for RFC 3501 section 7.4.1 timing.
+	// They are delivered at the next drain that permits an EXPUNGE.
+	deferRemovals bool
+	// suppressMessages withholds additions and removals the client asked not
+	// to hear about through NOTIFY (RFC 5465 section 5). Removed messages
+	// stay in the client's view and additions stay out of it, so no sequence
+	// number the client holds changes meaning without it being told.
+	suppressMessages bool
+	// suppressFlags retains the latest flags per UID for the next NOTIFY SET.
+	// The resynchronisation fence covers them until they are reported.
+	suppressFlags bool
+}
+
+func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAccounting, delivery batchDelivery) ([]deliveredUpdate, error) {
 	if s == nil || batch == nil {
 		return nil, ErrUpdaterClosed
 	}
@@ -930,14 +966,21 @@ func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounti
 		return nil, fmt.Errorf("%w: got %q, want %q", ErrRevisionMismatch, batch.Before, s.revision)
 	}
 	var delivered []deliveredUpdate
-	withheld := &UpdateBatch{Before: batch.Before, After: batch.After}
+	suppress := batch.Origin != 0 && batch.Origin == accounting.origin
 	for _, change := range batch.Changes {
-		suppress := batch.Origin != 0 && batch.Origin == accounting.origin
 		switch change := change.(type) {
 		case *UpdateAdd:
 			if change == nil || len(change.UIDs) == 0 {
 				return nil, fmt.Errorf("%w: empty ADD update", ErrRevisionMismatch)
 			}
+			if delivery.suppressMessages {
+				if err := s.holdAdditions(change.UIDs); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			// Withheld additions precede these UIDs and enter the view first.
+			delivered = append(delivered, s.releaseAdditions()...)
 			if err := s.addUIDs(change.UIDs); err != nil {
 				return nil, err
 			}
@@ -945,9 +988,16 @@ func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounti
 			// do not tell the selected client the new sequence position.
 			delivered = append(delivered, deliveredUpdate{kind: updateExists, exists: uint32(len(s.uids))})
 		case *UpdateRecent:
-			if change == nil || uint64(change.NumRecent) > uint64(len(s.uids)) {
+			if change == nil || uint64(change.NumRecent) > uint64(s.backendCount()) {
 				return nil, fmt.Errorf("%w: invalid RECENT count", ErrRevisionMismatch)
 			}
+			// RECENT counts messages the client may not have been told exist
+			// yet, so it waits with them.
+			if delivery.suppressMessages || len(s.pendingAdds) != 0 {
+				s.pendingRecent, s.hasPendingRecent = change.NumRecent, true
+				continue
+			}
+			s.hasPendingRecent = false
 			if s.recent != change.NumRecent {
 				s.recent = change.NumRecent
 				delivered = append(delivered, deliveredUpdate{kind: updateRecent, exists: change.NumRecent})
@@ -956,26 +1006,37 @@ func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounti
 			if change == nil {
 				return nil, fmt.Errorf("%w: nil FLAGS update", ErrRevisionMismatch)
 			}
-			seq, ok := s.sequence(change.UID)
-			if s.backendUIDs != nil {
-				_, active := slices.BinarySearch(s.backendUIDs, change.UID)
-				ok = ok && active
-			}
-			if !ok {
+			if !s.backendHas(change.UID) {
 				return nil, fmt.Errorf("%w: flag update for unknown UID %d", ErrRevisionMismatch, change.UID)
 			}
-			if !(suppress && accounting.effect == effectStore) {
+			seq, visible := s.sequence(change.UID)
+			accounted := suppress && accounting.suppressesFlags(change.UID)
+			retainSilent := accounted && accounting.silent && s.pendingFlags[change.UID] != nil
+			if accounted && !retainSilent {
+				// A FLAGS response supersedes older retained flags. A silent
+				// response cannot acknowledge an earlier withheld change.
+				delete(s.pendingFlags, change.UID)
+			} else if delivery.suppressFlags || !visible || retainSilent {
+				if s.pendingFlags == nil {
+					s.pendingFlags = make(map[imap.UID]*UpdateFlags)
+				}
+				s.pendingFlags[change.UID] = &UpdateFlags{UID: change.UID, Flags: slices.Clone(change.Flags), ModSeq: change.ModSeq}
+			} else {
+				delete(s.pendingFlags, change.UID)
 				delivered = append(delivered, deliveredUpdate{kind: updateMessageFlags, seqNum: seq, uid: change.UID, flags: slices.Clone(change.Flags), modSeq: change.ModSeq})
 			}
 		case *UpdateMailboxFlags:
 			if change == nil {
 				return nil, fmt.Errorf("%w: nil mailbox FLAGS update", ErrRevisionMismatch)
 			}
-			if !slices.Equal(s.flags, change.Flags) {
+			// flags is what this client has been sent. Leaving it unchanged
+			// while suppressed lets ensureFetchFlagsAdvertised announce a new
+			// keyword before the first FETCH that carries it.
+			if !delivery.suppressFlags && !slices.Equal(s.flags, change.Flags) {
 				s.flags = slices.Clone(change.Flags)
 				delivered = append(delivered, deliveredUpdate{kind: updateMailboxFlags, flags: slices.Clone(change.Flags)})
 			}
-		case *UpdateExpunge, *queuedExpunges:
+		case *UpdateExpunge, *queuedExpunges, *UpdateVanished:
 			var uids []imap.UID
 			switch change := change.(type) {
 			case *UpdateExpunge:
@@ -986,21 +1047,50 @@ func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounti
 				if change != nil {
 					uids = change.uids
 				}
+			case *UpdateVanished:
+				if change == nil || change.UIDs.IsEmpty() || change.UIDs.Dynamic() {
+					return nil, fmt.Errorf("%w: invalid VANISHED update", ErrRevisionMismatch)
+				}
+				// Live updates always remove from the current view. EARLIER
+				// belongs only to SELECT/FETCH resynchronisation reports.
+				// Intersect with the backend view without expanding UID ranges;
+				// unknown UIDs and unannounced additions never reach the wire.
+				current := s.uids
+				if s.backendUIDs != nil {
+					current = s.backendUIDs
+				}
+				for _, uid := range current {
+					if change.UIDs.Contains(uid) {
+						uids = append(uids, uid)
+					}
+				}
+				if len(uids) == 0 {
+					continue
+				}
 			}
 			if len(uids) == 0 {
 				return nil, fmt.Errorf("%w: empty EXPUNGE update", ErrRevisionMismatch)
 			}
 			for _, uid := range uids {
-				if deferRemovals {
-					if s.backendUIDs == nil {
-						s.backendUIDs = slices.Clone(s.uids)
-					}
-					at, ok := slices.BinarySearch(s.backendUIDs, uid)
-					if !ok {
+				delete(s.pendingFlags, uid)
+				// A message removed before the client heard of it needs no
+				// announcement at all.
+				if s.cancelPendingAdd(uid) {
+					continue
+				}
+				if delivery.deferRemovals || delivery.suppressMessages {
+					if !s.removeBackendUID(uid) {
 						return nil, fmt.Errorf("%w: expunge for unknown UID %d", ErrRevisionMismatch, uid)
 					}
-					s.backendUIDs = slices.Delete(s.backendUIDs, at, at+1)
+					if delivery.suppressMessages {
+						s.suppressed = append(s.suppressed, &UpdateExpunge{UID: uid})
+					} else {
+						s.withheld = append(s.withheld, uid)
+					}
 					continue
+				}
+				if s.backendUIDs != nil && !s.removeBackendUID(uid) {
+					return nil, fmt.Errorf("%w: expunge for unknown UID %d", ErrRevisionMismatch, uid)
 				}
 				seq, ok := s.removeUID(uid)
 				if !ok {
@@ -1010,70 +1100,170 @@ func (s *selectedState) applyBatchDeferringRemovals(batch *UpdateBatch, accounti
 					delivered = append(delivered, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
 				}
 			}
-			if deferRemovals {
-				withheld.Changes = append(withheld.Changes, change)
-			}
-		case *UpdateVanished:
-			if change == nil || change.UIDs.IsEmpty() {
-				return nil, fmt.Errorf("%w: empty VANISHED update", ErrRevisionMismatch)
-			}
-			if change.UIDs.Dynamic() {
-				return nil, fmt.Errorf("%w: VANISHED update contains a dynamic UID set", ErrRevisionMismatch)
-			}
-			if deferRemovals {
-				if s.backendUIDs == nil {
-					s.backendUIDs = slices.Clone(s.uids)
-				}
-				s.backendUIDs = removeUIDsInSet(s.backendUIDs, change.UIDs)
-				withheld.Changes = append(withheld.Changes, change)
-				continue
-			}
-			s.removeUIDSet(change.UIDs)
-			if !(suppress && (accounting.effect == effectExpunge || accounting.effect == effectMoveOut)) {
-				delivered = append(delivered, deliveredUpdate{kind: updateMessageVanished, uids: slices.Clone(change.UIDs), earlier: change.Earlier})
-			}
 		default:
 			return nil, fmt.Errorf("imapserver: unsupported update type %T", change)
 		}
 	}
-	if len(withheld.Changes) != 0 {
-		if err := s.queue.holdRemovals(withheld); err != nil {
-			return nil, err
-		}
-		s.withheld = append(s.withheld, withheld)
-	}
 	s.revision = batch.After
+	s.reconcileViews()
 	return delivered, nil
 }
 
+// deliverWithheldRemovals announces the removals deferred for RFC 3501
+// section 7.4.1, in the order they happened.
 func (s *selectedState) deliverWithheldRemovals() ([]deliveredUpdate, error) {
 	var updates []deliveredUpdate
-	for _, batch := range s.withheld {
-		for _, change := range batch.Changes {
+	for _, uid := range s.withheld {
+		seq, ok := s.removeUID(uid)
+		if !ok {
+			return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, uid)
+		}
+		updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
+	}
+	s.withheld = nil
+	s.reconcileViews()
+	return updates, nil
+}
+
+// suppressWithheld moves protocol-deferred removals to NOTIFY suppression.
+// Both are bounded by the client UID view, independently of queued batches.
+func (s *selectedState) suppressWithheld() {
+	for _, uid := range s.withheld {
+		s.suppressed = append(s.suppressed, &UpdateExpunge{UID: uid})
+	}
+	s.withheld = nil
+}
+
+// releaseSuppressed announces what NOTIFY suppressed: additions always, and
+// removals when an EXPUNGE may be sent now.
+func (s *selectedState) releaseSuppressed(removals bool) []deliveredUpdate {
+	var updates []deliveredUpdate
+	if removals {
+		for _, change := range s.suppressed {
 			switch change := change.(type) {
 			case *UpdateExpunge:
-				seq, ok := s.removeUID(change.UID)
-				if !ok {
-					return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, change.UID)
-				}
-				updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: change.UID})
-			case *queuedExpunges:
-				for _, uid := range change.uids {
-					seq, ok := s.removeUID(uid)
-					if !ok {
-						return nil, fmt.Errorf("%w: withheld expunge for unknown UID %d", ErrRevisionMismatch, uid)
-					}
-					updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: uid})
+				if seq, ok := s.removeUID(change.UID); ok {
+					updates = append(updates, deliveredUpdate{kind: updateMessageExpunge, seqNum: seq, uid: change.UID})
 				}
 			case *UpdateVanished:
 				s.removeUIDSet(change.UIDs)
 				updates = append(updates, deliveredUpdate{kind: updateMessageVanished, uids: change.UIDs, earlier: change.Earlier})
 			}
 		}
+		s.suppressed = nil
 	}
-	s.withheld, s.backendUIDs = nil, nil
-	s.queue.releaseRemovals()
-	return updates, nil
+	updates = append(updates, s.releaseAdditions()...)
+	if s.hasPendingRecent {
+		s.hasPendingRecent = false
+		if s.recent != s.pendingRecent {
+			s.recent = s.pendingRecent
+			updates = append(updates, deliveredUpdate{kind: updateRecent, exists: s.recent})
+		}
+	}
+	s.reconcileViews()
+	return updates
+}
+
+// releaseFlags reports retained flags only after the message has a client
+// sequence number. Iterate the selection rather than the map for stable order.
+func (s *selectedState) releaseFlags() []deliveredUpdate {
+	var updates []deliveredUpdate
+	for i, uid := range s.uids {
+		if flags := s.pendingFlags[uid]; flags != nil {
+			updates = append(updates, deliveredUpdate{kind: updateMessageFlags, seqNum: imap.SeqNum(i + 1), uid: uid, flags: flags.Flags, modSeq: flags.ModSeq})
+			delete(s.pendingFlags, uid)
+		}
+	}
+	return updates
+}
+
+// holdAdditions records additions outside the client's view.
+func (s *selectedState) holdAdditions(uids []imap.UID) error {
+	if s.maxUIDs > 0 && len(uids) > s.maxUIDs-s.backendCount() {
+		return fmt.Errorf("%w: selected message limit of %d exceeded", ErrRevisionMismatch, s.maxUIDs)
+	}
+	s.ensureBackendView()
+	last := imap.UID(0)
+	if len(s.backendUIDs) > 0 {
+		last = s.backendUIDs[len(s.backendUIDs)-1]
+	}
+	for _, uid := range uids {
+		if uid == 0 || uid <= last {
+			return fmt.Errorf("%w: added UIDs are not strictly ascending", ErrRevisionMismatch)
+		}
+		last = uid
+	}
+	s.pendingAdds = append(s.pendingAdds, uids...)
+	s.backendUIDs = append(s.backendUIDs, uids...)
+	return nil
+}
+
+// releaseAdditions moves withheld additions into the client's view. They are
+// already in the backend view, and follow every UID the client holds.
+func (s *selectedState) releaseAdditions() []deliveredUpdate {
+	if len(s.pendingAdds) == 0 {
+		return nil
+	}
+	s.uids = append(s.uids, s.pendingAdds...)
+	s.pendingAdds = nil
+	return []deliveredUpdate{{kind: updateExists, exists: uint32(len(s.uids))}}
+}
+
+func (s *selectedState) cancelPendingAdd(uid imap.UID) bool {
+	at, ok := slices.BinarySearch(s.pendingAdds, uid)
+	if !ok {
+		return false
+	}
+	s.pendingAdds = slices.Delete(s.pendingAdds, at, at+1)
+	s.removeBackendUID(uid)
+	return true
+}
+
+// ensureBackendView starts tracking the backend view separately from the
+// client's, which is needed while anything is withheld from the client.
+func (s *selectedState) ensureBackendView() {
+	if s.backendUIDs == nil {
+		s.backendUIDs = slices.Clone(s.uids)
+	}
+}
+
+func (s *selectedState) removeBackendUID(uid imap.UID) bool {
+	s.ensureBackendView()
+	at, ok := slices.BinarySearch(s.backendUIDs, uid)
+	if !ok {
+		return false
+	}
+	s.backendUIDs = slices.Delete(s.backendUIDs, at, at+1)
+	return true
+}
+
+func (s *selectedState) backendHas(uid imap.UID) bool {
+	if s.backendUIDs != nil {
+		_, ok := slices.BinarySearch(s.backendUIDs, uid)
+		return ok
+	}
+	_, ok := s.sequence(uid)
+	return ok
+}
+
+func (s *selectedState) backendCount() int {
+	if s.backendUIDs != nil {
+		return len(s.backendUIDs)
+	}
+	return len(s.uids)
+}
+
+// withholdsRemovals reports whether a removal the backend has applied is still
+// unannounced, for any reason.
+func (s *selectedState) withholdsRemovals() bool {
+	return len(s.withheld) != 0 || len(s.suppressed) != 0
+}
+
+// reconcileViews stops tracking the backend view once the client's agrees.
+func (s *selectedState) reconcileViews() {
+	if len(s.withheld) == 0 && len(s.suppressed) == 0 && len(s.pendingAdds) == 0 {
+		s.backendUIDs = nil
+	}
 }
 
 func (s *selectedState) sequence(uid imap.UID) (imap.SeqNum, bool) {
@@ -1085,7 +1275,7 @@ func (s *selectedState) sequence(uid imap.UID) (imap.SeqNum, bool) {
 }
 
 func (s *selectedState) addUIDs(uids []imap.UID) error {
-	if s.maxUIDs > 0 && len(uids) > s.maxUIDs-len(s.uids) {
+	if s.maxUIDs > 0 && len(uids) > s.maxUIDs-max(len(s.uids), s.backendCount()) {
 		return fmt.Errorf("%w: selected message limit of %d exceeded", ErrRevisionMismatch, s.maxUIDs)
 	}
 	last := imap.UID(0)

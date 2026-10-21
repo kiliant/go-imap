@@ -8,8 +8,7 @@ import (
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
-// PARTIAL (RFC 9394): returning a window of a search result rather than all of
-// it, so a client can page through a large mailbox.
+// PARTIAL (RFC 9394) windows SEARCH results and the UID set of UID FETCH.
 //
 // This is framework-owned. The backend still evaluates the whole search; only
 // the response is windowed. That is honest about what it does and does not buy:

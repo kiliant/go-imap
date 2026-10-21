@@ -370,7 +370,9 @@ func WriteFetchResponse(enc *imapwire.Encoder, data *imap.FetchMessageData, size
 }
 
 // WriteUIDFetchResponse writes the UIDFETCH response form of UIDONLY, RFC 9586
-// section 3.2: the message is identified by UID and no sequence number appears.
+// section 3.3: the message is identified by UID and no sequence number appears.
+// The UID takes the sequence number's place, "* 25996 UIDFETCH (...)", as the
+// section 7 grammar uidfetch-resp = uniqueid SP "UIDFETCH" SP msg-att defines.
 //
 // It shares the item encoding with WriteFetchResponse rather than duplicating
 // it, because the item grammar is identical between the two and two copies of it
@@ -386,7 +388,7 @@ func WriteUIDFetchResponse(enc *imapwire.Encoder, uid imap.UID, data *imap.Fetch
 	if err != nil {
 		return err
 	}
-	enc.BeginResponse(imapwire.ResponseUntagged, "").Atom("UIDFETCH").SP().Number(uint32(uid)).SP()
+	enc.BeginResponse(imapwire.ResponseUntagged, "").Number(uint32(uid)).SP().Atom("UIDFETCH").SP()
 	return writeFetchEntries(enc, entries)
 }
 

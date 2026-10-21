@@ -63,128 +63,66 @@ func init() {
 }
 
 type replaceArgs struct {
-	set          string
-	mailbox      string
-	flags        []imap.Flag
-	internalDate time.Time
-	literal      *imapwire.LiteralReader
+	set     string
+	mailbox string
+	message appendMessage
 }
 
-// parseReplace reads REPLACE's message identifier followed by APPEND's
-// argument shape. RFC 8508 section 4.
 func parseReplace(decoder *imapwire.Decoder) (any, int64, error) {
-	if !decoder.ExpectSP() {
-		return nil, 0, decoder.Err()
-	}
 	args := &replaceArgs{}
-	if !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() {
+	if !decoder.ExpectSP() || !expectMessageSet(decoder, &args.set) || !decoder.ExpectSP() ||
+		!decoder.ExpectMailbox(&args.mailbox) || !decoder.ExpectSP() {
 		return nil, 0, decoder.Err()
 	}
-	if !decoder.ExpectMailbox(&args.mailbox) || !decoder.ExpectSP() {
-		return nil, 0, decoder.Err()
+	if err := parseAppendMessagePrefix(decoder, &args.message); err != nil {
+		return nil, 0, err
 	}
-	if decoder.PeekSpecial('(') {
-		var rawFlags []string
-		if err := decoder.ExpectFlagList(&rawFlags); err != nil {
-			return nil, 0, err
-		}
-		for _, flag := range rawFlags {
-			args.flags = append(args.flags, imap.Flag(flag))
-		}
-		if !decoder.ExpectSP() {
-			return nil, 0, decoder.Err()
-		}
+	if err := parseAppendPayloadStart(decoder, &args.message); err != nil {
+		return nil, 0, err
 	}
-	if decoder.PeekSpecial('"') {
-		if !decoder.ExpectDateTime(&args.internalDate) || !decoder.ExpectSP() {
-			return nil, 0, decoder.Err()
-		}
-	}
-	literal, ok := decoder.Literal()
-	if !ok {
-		return nil, 0, decoder.Err()
-	}
-	if literal.Binary() {
-		if err := literal.Discard(); err != nil {
-			return nil, 0, err
-		}
-		return nil, 0, fmt.Errorf("literal8 REPLACE requires BINARY")
-	}
-	args.literal = literal
-	return args, int64(len(args.set) + len(args.mailbox) + len(args.flags)*16), nil
+	return args, int64(len(args.set) + len(args.mailbox) + len(args.message.flags)*16), nil
 }
 
 func handleReplace(ctx context.Context, c *conn, command *queuedCommand) error {
 	args, _ := command.args.(*replaceArgs)
-	if args == nil || args.literal == nil {
+	if args == nil {
 		return c.writeBad(command.tag, "invalid REPLACE arguments")
 	}
-	literal := &appendLiteral{reader: args.literal, remaining: args.literal.Size()}
-	// The literal is on the wire whatever happens next, so every failure path
-	// below must still drain it or the connection desynchronises.
-	terminated := false
-	drain := func() error {
-		if terminated {
-			return nil
+	failure := requireUIDCommand(c, command)
+	if failure == nil {
+		if err := requireCapability(c, "REPLACE"); err != nil {
+			failure = &imap.Error{Type: imap.ErrorTypeBad, Text: err.Error()}
 		}
-		if err := args.literal.Discard(); err != nil {
-			return err
-		}
-		literal.remaining = 0
-		// The reader owns the decoder. Both REPLACE forms are barriers, so
-		// it services this request before parsing the next command.
-		_, err := c.readClientData(ctx, func(decoder *imapwire.Decoder) (any, error) {
-			if !decoder.ExpectCRLF() {
-				return nil, decoder.Err()
-			}
-			return nil, nil
-		})
-		terminated = err == nil
-		return err
 	}
-	if err := requireCapability(c, "REPLACE"); err != nil {
-		if drainErr := drain(); drainErr != nil {
-			return drainErr
-		}
-		return c.writeBad(command.tag, err.Error())
-	}
-	if c.state.selected.readOnly {
-		if err := drain(); err != nil {
-			return err
-		}
-		return writeTaggedCondition(c, command.tag, "NO", imap.CodeReadOnly, "", "mailbox is read-only")
+	if failure == nil && c.state.selected.readOnly {
+		failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeReadOnly, Text: "mailbox is read-only"}
 	}
 	_, ordered, err := resolveMessageSet(c.state.selected, args.set, commandUsesUIDs(command))
-	if err != nil {
-		if drainErr := drain(); drainErr != nil {
-			return drainErr
-		}
-		return c.writeBad(command.tag, "invalid REPLACE message set")
-	}
-	// RFC 8508 section 4: REPLACE names exactly one message.
-	if len(ordered) != 1 {
-		if drainErr := drain(); drainErr != nil {
-			return drainErr
-		}
-		return c.writeBad(command.tag, "REPLACE requires exactly one message")
+	if failure == nil && (err != nil || len(ordered) != 1) {
+		failure = &imap.Error{Type: imap.ErrorTypeBad, Text: "REPLACE requires exactly one message"}
 	}
 	mailbox, ok := c.state.selected.mailbox.(ReplaceMailbox)
-	if !ok {
-		if drainErr := drain(); drainErr != nil {
-			return drainErr
-		}
-		return writeBackendError(c, command.tag, command.name,
-			fmt.Errorf("imapserver: backend advertises REPLACE but the selected mailbox does not implement ReplaceMailbox"))
+	if failure == nil && !ok {
+		failure = fmt.Errorf("imapserver: backend advertises REPLACE but the selected mailbox does not implement ReplaceMailbox")
 	}
+	staged, err := c.stageAppend(ctx, args.message, true, failure)
+	defer staged.close()
+	if err != nil {
+		return writeAppendDecodeError(c, command.tag, err, "invalid REPLACE payload")
+	}
+	if staged.failure != nil {
+		return writeBackendError(c, command.tag, command.name, staged.failure)
+	}
+	if err := ctx.Err(); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	message := staged.messages[0]
 	origin := nextCommandOrigin()
-	data, backendErr := mailbox.Replace(ctx, ordered[0], args.mailbox, literal, &ReplaceOptions{
+	data, backendErr := mailbox.Replace(ctx, ordered[0], args.mailbox, message.Literal, &ReplaceOptions{
 		MutationOptions: MutationOptions{Origin: origin},
-		Flags:           args.flags,
-		InternalDate:    args.internalDate,
+		Flags:           message.Flags,
+		InternalDate:    message.InternalDate,
 	})
-	if err := drain(); err != nil {
-		return err
-	}
 	if backendErr != nil {
 		return writeBackendError(c, command.tag, command.name, backendErr)
 	}

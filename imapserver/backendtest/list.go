@@ -45,6 +45,7 @@ func runList(t *testing.T, harness *Harness) {
 				t.Skip("backend cannot create a special-use fixture")
 			}
 			ctx := context.Background()
+			child := "recursive" + hierarchyDelimiter(t, session) + "child"
 			var create *imapserver.CreateOptions
 			if test.special {
 				create = &imapserver.CreateOptions{SpecialUse: []imap.MailboxAttr{imap.MailboxAttrArchive}}
@@ -52,10 +53,10 @@ func runList(t *testing.T, harness *Harness) {
 			if err := session.Create(ctx, "recursive", create); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.Create(ctx, "recursive/child", nil); err != nil {
+			if err := session.Create(ctx, child, nil); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.Subscribe(ctx, "recursive/child", nil); err != nil {
+			if err := session.Subscribe(ctx, child, nil); err != nil {
 				t.Fatal(err)
 			}
 			options := &imapserver.ListOptions{
@@ -124,12 +125,14 @@ func runList(t *testing.T, harness *Harness) {
 		if supportsCapability(instance, session, "LIST-EXTENDED") {
 			t.Skip("backend evaluates RECURSIVEMATCH itself")
 		}
-		for _, name := range []string{"recursive", "recursive/child"} {
+		d := hierarchyDelimiter(t, session)
+		child := "recursive" + d + "child"
+		for _, name := range []string{"recursive", child} {
 			if err := session.Create(context.Background(), name, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := session.Subscribe(context.Background(), "recursive/child", nil); err != nil {
+		if err := session.Subscribe(context.Background(), child, nil); err != nil {
 			t.Fatal(err)
 		}
 		// Only check the harness names. A backend may legitimately hide other
@@ -142,11 +145,11 @@ func runList(t *testing.T, harness *Harness) {
 				reference string
 				patterns  []string
 			}{
-				{patterns: []string{"recursive", "recursive/child"}},
-				{reference: "recursive/", patterns: []string{"%"}},
+				{patterns: []string{"recursive", child}},
+				{reference: "recursive" + d, patterns: []string{"%"}},
 			} {
 				listed := listMailboxes(t, session, query.reference, query.patterns, options)
-				if listed["recursive/child"] == nil {
+				if listed[child] == nil {
 					t.Fatalf("LIST %q %q omitted the harness child", query.reference, query.patterns)
 				}
 				for name := range listed {
@@ -157,6 +160,20 @@ func runList(t *testing.T, harness *Harness) {
 			}
 		}
 	})
+}
+
+// hierarchyDelimiter returns the backend's hierarchy delimiter, which the
+// fixtures must use rather than assume, and skips for a flat namespace.
+func hierarchyDelimiter(t *testing.T, session imapserver.Session) string {
+	t.Helper()
+	var delimiter rune
+	for _, data := range listMailboxes(t, session, "", []string{""}, nil) {
+		delimiter = data.Delimiter
+	}
+	if delimiter == 0 {
+		t.Skip("backend has a flat namespace")
+	}
+	return string(delimiter)
 }
 
 func listMailboxes(t *testing.T, session imapserver.Session, reference string, patterns []string, options *imapserver.ListOptions) map[string]*imap.ListData {

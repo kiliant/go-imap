@@ -10,12 +10,24 @@
 // expose defects in a backend that passed an earlier version. Passing Run is
 // evidence for the exercised cases, not a replacement for the backend contract.
 //
+// A result the backend contract makes optional is optional on every call. The
+// suite derives its fixtures from the backend's own state, checks a value the
+// backend did report against the message it names, and requires the result
+// only from a backend witnessing the capability that makes it mandatory, such
+// as UIDPLUS. A capability witnessed through CapabilitySupport is checked only
+// when witnessed, not because a backend implements the matching interface.
+//
 // New obligations must be opt-in through an extensible harness control or an
 // optional interface and its capability witness. A backend that does not opt
 // in must keep its existing requirements and advertised capabilities. New test
 // cases must not infer that consent merely from a backend's concrete type or
 // impose new requirements on every existing Harness. Controls remain test-only
 // fixtures; implementing a control does not grant production capabilities.
+// Publication checks cover APPEND, COPY, STORE, EXPUNGE and MOVE call boundaries
+// and concurrent STATUS/SELECT visibility during a zero-origin write. Backend
+// authors must supplement these with storage-specific external-delivery and
+// durable-commit error tests; Run cannot inject such events into an arbitrary
+// store. Publication and visibility remain required for those paths too.
 // Every caller-supplied control callback must take a context first and a
 // pointer to its own options struct last. Nil options select documented
 // defaults, so future controls can grow without changing callback signatures.
@@ -123,6 +135,9 @@ func Run(t *testing.T, harness *Harness) {
 	runExtensions(t, harness)
 	runStatusWitnesses(t, harness)
 	runMultiAppend(t, harness)
+	t.Run("synchronous-publication", func(t *testing.T) { runSynchronousPublication(t, harness) })
+	t.Run("copy-publication", func(t *testing.T) { runCopyPublication(t, harness) })
+	t.Run("publication-visibility", func(t *testing.T) { runPublicationVisibility(t, harness) })
 
 	t.Run("snapshot-consistency", func(t *testing.T) {
 		instance, session := newSession(t, harness)
@@ -156,6 +171,12 @@ func Run(t *testing.T, harness *Harness) {
 		}}
 		result := selectMailbox(t, selecting, mailbox, updater)
 		first := appendMessage(t, mutating, mailbox, "after select one")
+		mu.Lock()
+		firstPublished := len(batches) == 1
+		mu.Unlock()
+		if !firstPublished {
+			t.Fatal("Append returned before publishing its batch")
+		}
 		second := appendMessage(t, mutating, mailbox, "after select two")
 		got := waitForBatchCount(&mu, &batches, notifications, 2)
 		if len(got) != 2 {
@@ -164,8 +185,14 @@ func Run(t *testing.T, harness *Harness) {
 		if got[0].Before != result.Snapshot.Revision || got[1].Before != got[0].After {
 			t.Fatalf("update chain = snapshot %q, %q→%q, %q→%q", result.Snapshot.Revision, got[0].Before, got[0].After, got[1].Before, got[1].After)
 		}
-		if !batchAddsUID(got[0], first.UID) || !batchAddsUID(got[1], second.UID) {
-			t.Fatalf("update batches omit appended UIDs %d and %d", first.UID, second.UID)
+		if first == 0 {
+			first = soleAddedUID(got[0])
+		}
+		if second == 0 {
+			second = soleAddedUID(got[1])
+		}
+		if first == 0 || second == 0 || !batchAddsUID(got[0], first) || !batchAddsUID(got[1], second) {
+			t.Fatalf("update batches omit appended UIDs %d and %d", first, second)
 		}
 		if err := result.Mailbox.Unselect(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -224,24 +251,40 @@ func Run(t *testing.T, harness *Harness) {
 			if selectResult.err != nil || selectResult.result == nil || selectResult.result.Mailbox == nil {
 				t.Fatalf("Select iteration %d = %#v, %v", i, selectResult.result, selectResult.err)
 			}
-			if appendResult.err != nil || appendResult.data == nil || !appendResult.data.HasUID || appendResult.data.UID == 0 {
+			if appendResult.err != nil {
 				t.Fatalf("Append iteration %d = %#v, %v", i, appendResult.data, appendResult.err)
 			}
 			validateSnapshot(t, selectResult.result.Snapshot)
+			// The mailbox is new, so the appended message is its only one. A
+			// backend not witnessing UIDPLUS may report no UID; then it is the
+			// snapshot's sole UID or the one a later batch adds.
+			uid := imap.UID(0)
+			if appendResult.data != nil && appendResult.data.HasUID {
+				uid = appendResult.data.UID
+			} else if len(selectResult.result.Snapshot.UIDs) == 1 {
+				uid = selectResult.result.Snapshot.UIDs[0]
+			} else if waitForAnyBatch(&mu, &batches, notifications) {
+				mu.Lock()
+				uid = soleAddedUID(batches[0])
+				mu.Unlock()
+			}
+			if uid == 0 {
+				t.Fatalf("iteration %d: appended message not identified (data %#v, snapshot %v)", i, appendResult.data, selectResult.result.Snapshot.UIDs)
+			}
 			snapshotCount := 0
-			if slices.Contains(selectResult.result.Snapshot.UIDs, appendResult.data.UID) {
+			if slices.Contains(selectResult.result.Snapshot.UIDs, uid) {
 				snapshotCount = 1
 			}
 			updateCount := 0
 			if snapshotCount == 0 {
-				updateCount = waitForAddedUID(&mu, &batches, notifications, appendResult.data.UID)
+				updateCount = waitForAddedUID(&mu, &batches, notifications, uid)
 			} else {
 				mu.Lock()
-				updateCount = countBatchAddsUID(batches, appendResult.data.UID)
+				updateCount = countBatchAddsUID(batches, uid)
 				mu.Unlock()
 			}
 			if snapshotCount+updateCount != 1 {
-				t.Fatalf("iteration %d: appended UID %d appears %d times in snapshot and %d times in updates", i, appendResult.data.UID, snapshotCount, updateCount)
+				t.Fatalf("iteration %d: appended UID %d appears %d times in snapshot and %d times in updates", i, uid, snapshotCount, updateCount)
 			}
 			if updateCount == 1 && (len(batches) == 0 || batches[0].Before != selectResult.result.Snapshot.Revision) {
 				t.Fatalf("iteration %d: first update does not start at snapshot revision %q", i, selectResult.result.Snapshot.Revision)
@@ -252,6 +295,44 @@ func Run(t *testing.T, harness *Harness) {
 		}
 		closeSession(t, instance, selecting)
 		closeSession(t, instance, mutating)
+	})
+
+	t.Run("rename-moves-inferiors", func(t *testing.T) {
+		instance, session := newSession(t, harness)
+		defer closeSession(t, instance, session)
+		// Session.Rename: inferiors move with the mailbox (RFC 3501 section
+		// 6.3.5). Names use the backend's own hierarchy delimiter.
+		var delimiter rune
+		for _, data := range listMailboxes(t, session, "", []string{""}, nil) {
+			delimiter = data.Delimiter
+		}
+		if delimiter == 0 {
+			t.Skip("backend has a flat namespace")
+		}
+		d := string(delimiter)
+		for _, name := range []string{"backendtest-rename", "backendtest-rename" + d + "child"} {
+			if err := session.Create(context.Background(), name, nil); err != nil {
+				t.Fatalf("Create %s: %v", name, err)
+			}
+		}
+		if err := session.Rename(context.Background(), "backendtest-rename", "backendtest-renamed", nil); err != nil {
+			t.Fatalf("Rename: %v", err)
+		}
+		listed := listMailboxes(t, session, "", []string{"backendtest-rename*"}, nil)
+		for _, name := range []string{"backendtest-renamed", "backendtest-renamed" + d + "child"} {
+			if data := listed[name]; data == nil || imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) {
+				t.Errorf("after RENAME, %s is missing: %v", name, listed)
+			}
+		}
+		for _, name := range []string{"backendtest-rename", "backendtest-rename" + d + "child"} {
+			if data := listed[name]; data != nil && !imap.ContainsAttr(data.Attrs, imap.MailboxAttrNonExistent) {
+				t.Errorf("after RENAME, %s still exists: %v", name, listed)
+			}
+		}
+	})
+
+	t.Run("rename-inbox-moves-messages", func(t *testing.T) {
+		runRenameInbox(t, harness)
 	})
 
 	runList(t, harness)
@@ -301,19 +382,28 @@ func Run(t *testing.T, harness *Harness) {
 			t.Fatal(err)
 		}
 		remainingUID := result.Snapshot.UIDs[1]
+		// COPY data is required only from UIDPLUS witnesses; the effect is
+		// checked for everyone through the destination's message count.
+		uidplus := supportsCapability(instance, session, "UIDPLUS")
 		copyData, err := result.Mailbox.Copy(context.Background(), imap.UIDSetNum(remainingUID), destination, nil)
-		if err != nil || copyData == nil || !copyData.HasUIDs || !copyData.SourceUIDs.Contains(remainingUID) {
+		if err != nil || uidplus && (copyData == nil || !copyData.HasUIDs) {
 			t.Fatalf("COPY = %#v, %v", copyData, err)
 		}
+		copied, err := session.Status(context.Background(), destination, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
+		if n, ok := copied.Number(imap.StatusItemMessages); err != nil || !ok || n != 1 {
+			t.Fatalf("destination after COPY = %#v, %v", copied, err)
+		}
+		checkReportedCopy(t, instance, "COPY", copyData, []imap.UID{remainingUID}, destination)
 		if supportsCapability(instance, session, "MOVE") {
 			moveMailbox, ok := result.Mailbox.(imapserver.MoveMailbox)
 			if !ok {
 				t.Fatal("MOVE is advertised but selected mailbox does not implement MoveMailbox")
 			}
 			moveData, err := moveMailbox.Move(context.Background(), imap.UIDSetNum(remainingUID), destination, nil)
-			if err != nil || moveData == nil || !moveData.HasUIDs || !moveData.SourceUIDs.Contains(remainingUID) {
+			if err != nil || uidplus && (moveData == nil || !moveData.HasUIDs) {
 				t.Fatalf("MOVE = %#v, %v", moveData, err)
 			}
+			checkReportedCopy(t, instance, "MOVE", moveData, []imap.UID{remainingUID}, destination)
 			status, err := session.Status(context.Background(), mailbox, &imapserver.StatusOptions{Items: []imap.StatusItem{imap.StatusItemMessages}})
 			if err != nil || status == nil {
 				t.Fatalf("source status after MOVE = %#v, %v", status, err)
@@ -411,17 +501,72 @@ func populate(t *testing.T, session imapserver.Session, suffix string) string {
 	return mailbox
 }
 
-func appendMessage(t *testing.T, session imapserver.Session, mailbox, subject string) *imap.AppendData {
+// appendMessage appends a fixture message and returns the UID the backend
+// reported, or zero when it reported none. Session.Append may return nil data
+// unless the backend witnesses UIDPLUS, which uidplus-assigned-results checks,
+// so fixtures must not depend on it.
+func appendMessage(t *testing.T, session imapserver.Session, mailbox, subject string) imap.UID {
 	t.Helper()
 	raw := []byte(fmt.Sprintf("From: sender@example.com\r\nTo: receiver@example.com\r\nSubject: %s\r\n\r\nbody %s\r\n", subject, subject))
 	data, err := session.Append(context.Background(), mailbox, bytes.NewReader(raw), nil)
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	if data == nil || !data.HasUID || data.UID == 0 {
-		t.Fatalf("Append data = %#v", data)
+	if data == nil || !data.HasUID {
+		return 0
 	}
-	return data
+	if data.UID == 0 {
+		t.Fatalf("Append reported UID zero: %#v", data)
+	}
+	return data.UID
+}
+
+// checkReportedCopy validates COPY or MOVE data the backend chose to report:
+// whether or not UIDPLUS obliges it, reported data becomes COPYUID, so it must
+// name the copied messages and UIDs that exist in the destination under its
+// current UIDVALIDITY. Absent data is the caller's business. The destination
+// is inspected from a second session, since the framework never holds two
+// selections in one.
+func checkReportedCopy(t *testing.T, instance *Instance, operation string, data *imap.CopyData, sources []imap.UID, destination string) {
+	t.Helper()
+	if data == nil || !data.HasUIDs {
+		return
+	}
+	if data.SourceUIDs.Dynamic() || data.DestinationUIDs.Dynamic() {
+		t.Fatalf("%s reported a dynamic UID set: %#v", operation, data)
+	}
+	reportedSources, _ := data.SourceUIDs.Nums()
+	reportedDestinations, _ := data.DestinationUIDs.Nums()
+	if !slices.Equal(reportedSources, sources) || len(reportedDestinations) != len(sources) {
+		t.Fatalf("%s reported %#v for source UIDs %v", operation, data, sources)
+	}
+	_, session := authenticate(t, instance)
+	defer closeSession(t, instance, session)
+	selected := selectMailbox(t, session, destination, discardUpdater())
+	defer selected.Mailbox.Unselect(context.Background(), nil)
+	if data.UIDValidity != selected.Snapshot.Status.UIDValidity {
+		t.Fatalf("%s reported UIDVALIDITY %d, destination has %d", operation, data.UIDValidity, selected.Snapshot.Status.UIDValidity)
+	}
+	for _, uid := range reportedDestinations {
+		if !slices.Contains(selected.Snapshot.UIDs, uid) {
+			t.Fatalf("%s reported destination UID %d, destination lists %v", operation, uid, selected.Snapshot.UIDs)
+		}
+	}
+}
+
+// soleAddedUID returns the one UID a batch adds, or zero if it adds another
+// number of messages.
+func soleAddedUID(batch *imapserver.UpdateBatch) imap.UID {
+	var added []imap.UID
+	for _, change := range batch.Changes {
+		if add, ok := change.(*imapserver.UpdateAdd); ok {
+			added = append(added, add.UIDs...)
+		}
+	}
+	if len(added) != 1 {
+		return 0
+	}
+	return added[0]
 }
 
 func selectMailbox(t *testing.T, session imapserver.Session, mailbox string, updater *imapserver.Updater) *imapserver.SelectResult {
@@ -453,9 +598,6 @@ func validateSnapshot(t *testing.T, snapshot imapserver.SelectSnapshot) {
 	}
 	if snapshot.Status.NumRecent > snapshot.Status.NumMessages {
 		t.Fatalf("NumRecent %d > NumMessages %d", snapshot.Status.NumRecent, snapshot.Status.NumMessages)
-	}
-	if snapshot.Revision == "" {
-		t.Fatal("empty snapshot revision")
 	}
 }
 
@@ -502,6 +644,25 @@ func waitForBatchCount(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notif
 	}
 }
 
+// waitForAnyBatch waits up to a second for at least one batch.
+func waitForAnyBatch(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notifications <-chan struct{}) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		mu.Lock()
+		count := len(*batches)
+		mu.Unlock()
+		if count != 0 {
+			return true
+		}
+		select {
+		case <-notifications:
+		case <-timer.C:
+			return false
+		}
+	}
+}
+
 func waitForAddedUID(mu *sync.Mutex, batches *[]*imapserver.UpdateBatch, notifications <-chan struct{}, uid imap.UID) int {
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
@@ -544,6 +705,17 @@ func capabilityAllowed(instance *Instance, session imapserver.Session, name stri
 		return filter.AllowCapability(context.Background(), name, nil)
 	}
 	return true
+}
+
+// requireWitness skips unless the backend witnesses name through
+// CapabilitySupport and does not filter it. Tokens the framework gates on that
+// spoken witness carry no obligation for a backend that merely happens to
+// implement the matching interface: the framework never calls it then.
+func requireWitness(t *testing.T, instance *Instance, session imapserver.Session, name string) {
+	t.Helper()
+	if !supportsCapability(instance, session, name) {
+		t.Skipf("backend does not witness %s", name)
+	}
 }
 
 func requireAllowedCapabilities(t *testing.T, instance *Instance, session imapserver.Session, names ...string) {

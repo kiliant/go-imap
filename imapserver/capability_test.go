@@ -60,9 +60,6 @@ func TestBackendInterfaceMethodSets(t *testing.T) {
 			"Languages(ctx context.Context, options *LanguageOptions) ([]string, error)",
 			"SetLanguage(ctx context.Context, tag string, options *LanguageOptions) (*LanguageResult, error)",
 		},
-		"MessageLimitSession": {
-			"MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)",
-		},
 		"MetadataSession": {
 			"GetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntryName, options *GetMetadataOptions) (*imap.MailboxMetadata, error)",
 			"SetMetadata(ctx context.Context, mailbox string, entries []imap.MetadataEntry, options *SetMetadataOptions) error",

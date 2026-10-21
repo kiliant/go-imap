@@ -628,7 +628,8 @@ func fetchData(ctx context.Context, msg *messageRecord, analysis *message.Messag
 			var value imap.FetchData
 			switch item {
 			case imap.FetchItemUID:
-				value = imap.FetchDataUID(msg.UID)
+				data.Items[key] = []imap.FetchData{imap.FetchDataUID(msg.UID)}
+				continue
 			case imap.FetchItemFlags:
 				value = imap.FetchDataFlags(slices.Clone(msg.Flags))
 			case imap.FetchItemModSeq:

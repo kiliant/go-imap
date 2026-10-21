@@ -846,7 +846,7 @@ the command that produced it, not "drop everything originating in this session".
 Session-origin suppression is the shape that loses an `EXISTS` the client needed.
 
 **The token has to reach the backend before the transaction starts**, or the
-backend has no way to stamp asynchronously published batches with it. So it is an
+backend has no way to stamp its commit batches with it. So it is an
 input to every mutating call, carried by a shared embedded struct rather than
 repeated field-by-field:
 
@@ -859,6 +859,16 @@ type MutationOptions struct {
 
 `AppendOptions`, `StoreOptions`, `CopyOptions`, `MoveOptions` and
 `ExpungeOptions` embed it, and `UpdateBatch.Origin` echoes it back.
+
+**Publication is synchronous.** Every committed change is pushed to all attached
+updaters before the mutating call returns, including commits followed by an
+error. STATUS and SELECT must not expose a commit before publication, including
+commits from external writers. A change-feed backend must fence these reads and
+mutation completion against its feed. Push only enqueues; it never waits for the
+event loop or calls the backend, so it can run inside commit serialization.
+EXPUNGE's writer validates removed UIDs; the framework emits their responses
+after the call from the ordered update batches. This ordering is necessary for
+correct sequence numbers and QRESYNC checkpoints.
 
 Matching is exact, not merely non-zero:
 
@@ -877,6 +887,22 @@ dropped for the closing selection, not delivered to the next one — a new selec
 starts from a fresh `Status`.
 
 ### Overflow: never drop, and BYE is best-effort
+
+The byte budget bounds undrained backlog. A queue at or below
+`MaxQueuedUpdateBytes` admits one more atomic batch: retained bytes are bounded
+by the budget plus one backend commit. Splitting a commit would violate the
+update contract. `MaxQueuedUpdates` bounds the undrained batch count. Applied
+removals that cannot yet be announced are compact UID records, bounded by the
+client's `MaxSelectedMessages` view, and consume neither backlog budget. A normal
+protocol deferral must not prevent a later STORE from completing.
+
+STORE's response collection has a separate `Limits.MaxStoreResponseBytes`
+budget (default 32 MiB). It charges encoded response bytes plus 1 KiB per
+response for descriptors and fallback indexes. Exhaustion discards the buffered
+responses and switches to a fresh streaming FLAGS/MODSEQ FETCH after the backend
+returns. STORE still completes with OK, including its conditional MODIFIED set;
+the bound never changes an already successful mutation into a NO. A failure while
+streaming the committed state sends BYE so the client can resynchronise.
 
 If the client stops reading, the queue fills. Dropping an EXPUNGE is not
 available: it desynchronises the client's sequence numbers permanently and
@@ -1046,6 +1072,17 @@ vulnerability class:
 ---
 
 ## 8. Resource limits
+
+**Implementation status (T33).** This section records the resource-budget design.
+The framework's implemented bounds and defaults are specified by
+`imapserver.Limits`. The table below also includes outstanding design goals and
+application/backend budgets: the framework has no dedicated authentication-attempt,
+per-account connection/concurrency, or LIST/SEARCH result-cardinality limits.
+Applications requiring those policies must enforce them at their connection,
+authentication or storage boundaries. They must not assume that every table row
+is supplied by `Server`. Additional framework controls can be introduced through
+the extensible options types; this clarification changes no implemented limit or
+default and does not claim that the outstanding design goals are implemented.
 
 The threat model inverts. T13 asked whether a hostile *server* could make the
 client panic, hang or allocate without bound. The server faces the same parser

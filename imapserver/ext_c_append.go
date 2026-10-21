@@ -78,6 +78,8 @@ type CatenateSession interface {
 	// ResolveCatenateURL returns the bytes an IMAP URL names, which must refer
 	// to a message the authenticated user can read. A nil reader means the URL
 	// did not resolve, which fails the APPEND.
+	// The framework refuses URLs with ;PARTIAL= before this call unless
+	// URL-PARTIAL is advertised, including after CapabilityFilter.
 	ResolveCatenateURL(ctx context.Context, url string, options *CatenateOptions) (io.ReadCloser, error)
 }
 
@@ -176,12 +178,6 @@ func parseAppendPayloadStart(decoder *imapwire.Decoder, message *appendMessage) 
 	literal, ok := decoder.Literal()
 	if !ok {
 		return decodeFailure(decoder, "APPEND literal")
-	}
-	if literal.Binary() {
-		if err := literal.Discard(); err != nil {
-			return err
-		}
-		return fmt.Errorf("literal8 APPEND requires BINARY")
 	}
 	message.literal = literal
 	return nil
@@ -295,11 +291,13 @@ type appendPayload struct {
 	cleanup func()
 }
 
-func (p *appendPayload) drain() {
+func (p *appendPayload) drain() error {
 	if p.literal != nil && p.pending != nil && p.pending.remaining != 0 {
-		_ = p.literal.Discard()
+		err := p.literal.Discard()
 		p.pending.remaining = 0
+		return err
 	}
+	return nil
 }
 
 func (p *appendPayload) close() {

@@ -192,7 +192,7 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if newName == "" || mailboxKey(oldName) == "INBOX" {
+	if newName == "" {
 		return noError(imap.CodeCannot, "mailbox cannot be renamed")
 	}
 	s.account.mu.Lock()
@@ -200,18 +200,93 @@ func (s *session) Rename(ctx context.Context, oldName, newName string, _ *imapse
 	if s.closed {
 		return noError(imap.CodeClosed, "session is closed")
 	}
-	oldKey, newKey := mailboxKey(oldName), mailboxKey(newName)
+	if mailboxKey(oldName) == "INBOX" {
+		return s.renameInboxLocked(newName)
+	}
+	oldKey := mailboxKey(oldName)
 	m := s.account.mailboxes[oldKey]
 	if m == nil {
 		return nonexistentMailbox(oldName)
 	}
-	if s.account.mailboxes[newKey] != nil {
+	// RFC 3501 section 6.3.5: inferiors move with the mailbox. Plan the whole
+	// hierarchy and check every destination before renaming anything, so a
+	// conflict leaves no partial rename; identities move with their mailboxes.
+	if strings.HasPrefix(newName, m.name+"/") {
+		return noError(imap.CodeCannot, "a mailbox cannot be renamed into its own hierarchy")
+	}
+	moving := map[string]string{oldKey: newName}
+	for key, child := range s.account.mailboxes {
+		if suffix, ok := strings.CutPrefix(child.name, m.name+"/"); ok {
+			moving[key] = newName + "/" + suffix
+		}
+	}
+	for _, target := range moving {
+		if _, ok := moving[mailboxKey(target)]; !ok && s.account.mailboxes[mailboxKey(target)] != nil {
+			return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
+		}
+	}
+	moved := make(map[string]*mailbox, len(moving))
+	for key := range moving {
+		moved[key] = s.account.mailboxes[key]
+		delete(s.account.mailboxes, key)
+		delete(s.account.urlAuthKeys, key)
+	}
+	for key, target := range moving {
+		moved[key].name = target
+		s.account.mailboxes[mailboxKey(target)] = moved[key]
+	}
+	return nil
+}
+
+// renameInboxLocked is RFC 3501 section 6.3.5's special case: INBOX's
+// messages move to a new mailbox, and INBOX itself, with its inferiors,
+// identity, subscription and metadata, stays where it is, empty.
+//
+// The new mailbox is created as CREATE would create it, so it has its own
+// UIDVALIDITY, MAILBOXID and UIDs. Each message keeps its flags, INTERNALDATE and
+// content, and with the content its EMAILID; in its new mailbox it is recent,
+// as a copied message is. INBOX records each removal at a new modification
+// sequence for QRESYNC, and its selections see the removals like an EXPUNGE.
+// Every check precedes the first change, all under the account lock, so a
+// refusal changes nothing and no session observes half a rename.
+//
+// The caller must hold the account lock.
+func (s *session) renameInboxLocked(newName string) error {
+	inbox := s.account.mailboxes["INBOX"]
+	if inbox == nil {
+		return nonexistentMailbox("INBOX")
+	}
+	if s.account.mailboxes[mailboxKey(newName)] != nil {
 		return noError(imap.CodeAlreadyExists, "destination mailbox already exists")
 	}
-	delete(s.account.mailboxes, oldKey)
-	delete(s.account.urlAuthKeys, oldKey)
-	m.name = newName
-	s.account.mailboxes[newKey] = m
+	// INBOX remains, so a name beneath it would be one of its own inferiors.
+	// Refused, as the Maildir backend does, rather than created below the
+	// mailbox it is being emptied out of.
+	if strings.HasPrefix(newName, inbox.name+"/") {
+		return noError(imap.CodeCannot, "INBOX cannot be renamed into its own hierarchy")
+	}
+	destination := s.account.createMailboxLocked(newName)
+	var added []imap.UID
+	var removals []imapserver.Update
+	for _, msg := range inbox.messages {
+		clone := *msg
+		clone.uid = destination.uidNext
+		clone.saveDate = time.Now()
+		destination.uidNext++
+		clone.recent = true
+		clone.flags = cloneFlags(msg.flags)
+		clone.modSeq = bumpModSeqLocked(destination)
+		destination.messages = append(destination.messages, &clone)
+		ensureMailboxFlagsLocked(destination, clone.flags)
+		added = append(added, clone.uid)
+		recordVanishedLocked(inbox, msg.uid)
+		removals = append(removals, &imapserver.UpdateExpunge{UID: msg.uid})
+	}
+	inbox.messages = nil
+	if len(removals) != 0 {
+		publishLocked(inbox, advanceLocked(inbox, 0, removals))
+		publishLocked(destination, advanceLocked(destination, 0, []imapserver.Update{&imapserver.UpdateAdd{UIDs: added}}))
+	}
 	return nil
 }
 
@@ -286,7 +361,6 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	batch := advanceLocked(m, origin, changes)
 	publishLocked(m, batch)
 	// NOTIFY watchers hear about a mailbox they have not selected.
-	notifyMailboxLocked(s.account, m)
 	uidValidity := m.uidValidity
 	s.account.mu.Unlock()
 	return &imap.AppendData{HasUID: true, UIDValidity: uidValidity, UID: uid}, nil

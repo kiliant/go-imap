@@ -16,6 +16,7 @@ import (
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapcodec"
+	"github.com/kiliant/go-imap/internal/imapdeflate"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -39,22 +40,27 @@ type readerResult struct {
 type compressedConn struct {
 	net.Conn
 
-	readOnce sync.Once
-	reader   io.ReadCloser
-	writeMu  sync.Mutex
-	writer   *flate.Writer
+	reader  *imapdeflate.Reader
+	writeMu sync.Mutex
+	writer  *flate.Writer
 }
 
 func newCompressedConn(conn net.Conn) (*compressedConn, error) {
+	input := io.Reader(conn)
+	if plain, ok := conn.(*bufferedConn); ok {
+		conn = plain.Conn
+		input = imapdeflate.ResumeReader(plain.reader)
+	}
 	writer, err := flate.NewWriter(conn, flate.DefaultCompression)
 	if err != nil {
 		return nil, err
 	}
-	return &compressedConn{Conn: conn, writer: writer}, nil
+	return &compressedConn{Conn: conn, writer: writer, reader: imapdeflate.NewReader(input)}, nil
 }
 
+func (c *compressedConn) finishRead() error { return c.reader.Finish() }
+
 func (c *compressedConn) Read(p []byte) (int, error) {
-	c.readOnce.Do(func() { c.reader = flate.NewReader(c.Conn) })
 	return c.reader.Read(p)
 }
 
@@ -89,15 +95,21 @@ type conn struct {
 	// inputPending reports that the reader has bytes it has not yet turned into
 	// a command — that the client is pipelining. Written by the reader
 	// goroutine, read by the event loop, which is why it is atomic.
-	inputPending atomic.Bool
-	utf8Accept   atomic.Bool
-	resetDecoder atomic.Bool
-	ready        chan struct{}
+	inputPending  atomic.Bool
+	utf8Accept    atomic.Bool
+	authenticated atomic.Bool // reader-facing mirror; sessionState is event-loop owned
+	resetDecoder  atomic.Bool
+	ready         chan struct{}
 
 	// notifyQueue and notifyUpdater are the session-scoped NOTIFY channel,
 	// distinct from the selection-scoped Updater by design. See ext_d_notify.go.
 	notifyQueue   *sessionUpdateQueue
 	notifyUpdater *SessionUpdater
+	// notifySelected is the selected-mailbox half of the registration, which
+	// the framework enforces itself on the selection's update stream.
+	notifySelected selectedNotifyPolicy
+	// releasingNotify is set for the implicit NOOP of a NOTIFY SET.
+	releasingNotify bool
 
 	state sessionState // event-loop owned
 	// executingSeqSensitive is event-loop owned, like state: it is set and
@@ -106,11 +118,13 @@ type conn struct {
 	// commandInProgress is the other half of RFC 3501 §7.4.1, and is event-loop
 	// owned for the same reason. See expungeDeliveryDeferred.
 	commandInProgress bool
+	// saveSearchOnNO scopes RFC 5182 failure handling to the current handler.
+	saveSearchOnNO bool
 	// updateEffects remembers command-side responses whose matching update
 	// batch could not yet be applied because an earlier unsolicited removal
 	// remains deferred. It is event-loop owned. When that batch is eventually
 	// applied, its original accounting still suppresses the duplicate response.
-	updateEffects map[ChangeToken]commandEffect
+	updateEffects map[ChangeToken]updateAccounting
 	logout        bool
 
 	fatalMu sync.Mutex
@@ -158,19 +172,23 @@ func (c *conn) newEncoder(writer io.Writer) *imapwire.Encoder {
 }
 
 func (c *conn) newDecoder(reader io.Reader) *imapwire.Decoder {
-	readTimeout := c.server.options.Limits.ReadTimeout
-	if c.state.state == stateNotAuthenticated && c.server.options.Limits.PreAuthTimeout > 0 &&
-		(readTimeout <= 0 || c.server.options.Limits.PreAuthTimeout < readTimeout) {
-		readTimeout = c.server.options.Limits.PreAuthTimeout
-	}
 	decoder := imapwire.NewDecoder(reader, &imapwire.Options{
 		MaxLiteralSize:         c.server.options.Limits.MaxLiteralBytes,
 		MaxBufferedLiteralSize: c.server.options.Limits.MaxLiteralBytes,
 		MaxLineLength:          c.server.options.Limits.MaxCommandLineBytes,
-		ReadTimeout:            readTimeout,
+		ReadTimeout:            c.decoderReadTimeout(),
 	})
 	decoder.SetUTF8Accept(c.utf8Accept.Load())
 	return decoder
+}
+
+func (c *conn) decoderReadTimeout() time.Duration {
+	readTimeout := c.server.options.Limits.ReadTimeout
+	if !c.authenticated.Load() && c.server.options.Limits.PreAuthTimeout > 0 &&
+		(readTimeout <= 0 || c.server.options.Limits.PreAuthTimeout < readTimeout) {
+		readTimeout = c.server.options.Limits.PreAuthTimeout
+	}
+	return readTimeout
 }
 
 func (c *conn) serve() error {
@@ -248,6 +266,15 @@ func (c *conn) readCommands() error {
 				c.cancel(io.EOF)
 				return io.EOF
 			}
+			var timeout net.Error
+			if errors.As(err, &timeout) && timeout.Timeout() {
+				command := &queuedCommand{stopErr: err, done: make(chan struct{})}
+				if queueErr := c.queueCommand(command); queueErr != nil {
+					return queueErr
+				}
+				c.waitCommandDone(command)
+				return err
+			}
 			fatal := decoder.Fatal()
 			if !fatal {
 				_ = decoder.DiscardLine()
@@ -281,12 +308,34 @@ func (c *conn) readCommands() error {
 		command := &queuedCommand{tag: tag, name: name, descriptor: descriptor, done: make(chan struct{})}
 		if descriptor == nil {
 			if err := discardUnknownCommand(decoder); err != nil {
+				if readTimedOut(err) {
+					command.stopErr = err
+					if queueErr := c.queueCommand(command); queueErr != nil {
+						return queueErr
+					}
+					c.waitCommandDone(command)
+					return err
+				}
 				c.cancel(err)
 				return err
 			}
 		} else {
-			command.args, command.bytes, command.parseErr = descriptor.parse(decoder)
+			if name == "UID" {
+				command.args, command.bytes, command.parseErr = parseUIDCommandDescriptor(decoder, func(d *commandDescriptor) { currentDescriptor = d })
+			} else {
+				command.args, command.bytes, command.parseErr = descriptor.parse(decoder)
+			}
 			if command.parseErr != nil {
+				var timeout net.Error
+				if errors.As(command.parseErr, &timeout) && timeout.Timeout() {
+					err := command.parseErr
+					command.stopErr, command.parseErr, command.args = err, nil, nil
+					if queueErr := c.queueCommand(command); queueErr != nil {
+						return queueErr
+					}
+					c.waitCommandDone(command)
+					return err
+				}
 				fatal := decoder.Fatal()
 				if !fatal {
 					_ = decoder.DiscardLine()
@@ -295,7 +344,7 @@ func (c *conn) readCommands() error {
 					if err := c.queueCommand(command); err != nil {
 						return err
 					}
-					if name == "APPEND" && appendLiteralTooBig(command.parseErr) {
+					if appendFamilyCommand(command) && appendLiteralTooBig(command.parseErr) {
 						// Flush the tagged policy refusal before closing an unread,
 						// oversized non-synchronising payload.
 						c.waitCommandDone(command)
@@ -351,6 +400,7 @@ func (c *conn) readCommands() error {
 				decoder = newCommandDecoder()
 			} else {
 				decoder.SetUTF8Accept(c.utf8Accept.Load())
+				decoder.SetReadTimeout(c.decoderReadTimeout())
 			}
 		}
 	}
@@ -375,7 +425,7 @@ func (c *conn) waitBarrier(decoder *imapwire.Decoder, command *queuedCommand) er
 			}
 			request.reply <- readerResult{value: value, err: err}
 			if decoder.Fatal() {
-				if command.name == "APPEND" && appendLiteralTooBig(err) {
+				if readTimedOut(err) || appendFamilyCommand(command) && appendLiteralTooBig(err) {
 					c.waitCommandDone(command)
 				}
 				c.cancel(err)
@@ -395,6 +445,20 @@ func (c *conn) waitCommandDone(command *queuedCommand) {
 	case <-command.done:
 	case <-c.ctx.Done():
 	}
+}
+
+func readTimedOut(err error) bool {
+	var timeout net.Error
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
+// Called by the event loop after a handler-owned transport read fails. The
+// reader barrier waits for command.done before cancelling a fatal decoder.
+func (c *conn) writeReadTimeout(err error) error {
+	if writeErr := c.writeBye("connection read timeout"); writeErr != nil {
+		return writeErr
+	}
+	return err
 }
 
 func (c *conn) readClientData(ctx context.Context, read func(*imapwire.Decoder) (any, error)) (any, error) {
@@ -492,6 +556,9 @@ func (c *conn) idleUntilDone(ctx context.Context) error {
 		select {
 		case result := <-request.reply:
 			if result.err != nil {
+				if readTimedOut(result.err) {
+					return c.writeReadTimeout(result.err)
+				}
 				return result.err
 			}
 			line, ok := result.value.(string)
@@ -599,14 +666,14 @@ func (c *conn) eventLoop() (retErr error) {
 			c.releaseCommandBytes(command.bytes)
 			wasPreAuth := c.state.state == stateNotAuthenticated
 			err := c.execute(command)
+			c.authenticated.Store(c.state.state != stateNotAuthenticated)
 			if wasPreAuth && c.state.state != stateNotAuthenticated {
 				if c.preAuthTimer != nil {
 					c.preAuthTimer.Stop()
 				}
-				// Authentication changes both the allowed commands and the
-				// connection's read deadline. AUTHENTICATE/LOGIN are barriers,
-				// so rebuild the decoder before admitting another command.
-				c.resetDecoder.Store(true)
+			}
+			if !wasPreAuth && c.state.state == stateNotAuthenticated && c.preAuthTimer != nil {
+				c.preAuthTimer.Reset(c.server.options.Limits.PreAuthTimeout)
 			}
 			close(command.done)
 			if err != nil {
@@ -659,8 +726,13 @@ func (c *conn) execute(command *queuedCommand) error {
 	c.commandInProgress = true
 	defer func() { c.commandInProgress = false }()
 	if command.stopErr != nil {
+		text := "command limit exceeded"
+		var timeout net.Error
+		if errors.As(command.stopErr, &timeout) && timeout.Timeout() {
+			text = "connection read timeout"
+		}
 		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
-			Status: "BYE", Text: imapwire.RespText{Text: "command limit exceeded"},
+			Status: "BYE", Text: imapwire.RespText{Text: text},
 		}).CRLF()
 		if err := c.encoder.Flush(); err != nil {
 			return err
@@ -668,7 +740,7 @@ func (c *conn) execute(command *queuedCommand) error {
 		return command.stopErr
 	}
 	if command.parseErr != nil {
-		if command.name == "APPEND" {
+		if appendFamilyCommand(command) {
 			return writeAppendDecodeError(c, command.tag, command.parseErr, "invalid command syntax")
 		}
 		return c.writeBad(command.tag, "invalid command syntax")
@@ -688,7 +760,12 @@ func (c *conn) execute(command *queuedCommand) error {
 	// them. Their UID forms and UID COPY also drain before it, where removals
 	// are permitted. See drainBeforeCompletion.
 	c.executingSeqSensitive = sequenceSensitiveCommands[command.name]
-	err := c.drainUpdates(updateAccounting{})
+	var err error
+	// CLOSE forbids removal responses, including changes already queued by
+	// other sessions. Its selection and pending updates will be discarded.
+	if command.name != "CLOSE" {
+		err = c.drainUpdates(updateAccounting{})
+	}
 	c.executingSeqSensitive = false
 	if err != nil {
 		return err
@@ -713,14 +790,14 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 	if request.descriptor == nil || !c.state.allows(request.descriptor.states) {
 		err = fmt.Errorf("literal is not accepted for this command")
 	} else if max := c.server.options.Limits.MaxLiteralBytes; max >= 0 && request.info.Size > max {
-		if request.descriptor.name == "APPEND" {
+		if request.descriptor.name == "APPEND" || request.descriptor.name == "REPLACE" {
 			err = resolvedContentTooBig()
 		} else {
 			err = fmt.Errorf("literal exceeds the connection limit")
 		}
 	} else if request.info.NonSynchronising && request.info.Size > maxLiteralMinusSize &&
 		!slices.Contains(deriveCapabilitiesContext(c.ctx, &c.state, c.server), "LITERAL+") {
-		err = fmt.Errorf("non-synchronising literal exceeds the LITERAL- limit")
+		err = &imap.Error{Type: imap.ErrorTypeBad, Code: imap.CodeTooBig, Text: "non-synchronising literal exceeds the LITERAL- limit"}
 	} else if !request.info.NonSynchronising {
 		c.encoder.BeginResponse(imapwire.ResponseContinuation, "").ContinuationText("ready for literal").CRLF()
 		err = c.encoder.Flush()
@@ -743,6 +820,7 @@ func (c *conn) writeGreeting() error {
 
 func (c *conn) writeTagged(tag, status, text string) error {
 	c.writeDeferredModSeqFence()
+	c.finishSearchSave(status)
 	c.completeCommand()
 	c.encoder.BeginResponse(imapwire.ResponseTagged, tag).RespCond(imapwire.RespCond{Status: status, Text: imapwire.RespText{Text: text}}).CRLF()
 	return c.encoder.Flush()
@@ -816,6 +894,13 @@ func (c *conn) upgradeTLS(ctx context.Context) error {
 	return nil
 }
 
+func (c *conn) writeBye(text string) error {
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
+		Status: "BYE", Text: imapwire.RespText{Text: text},
+	}).CRLF()
+	return c.encoder.Flush()
+}
+
 func (c *conn) preAuthContext(parent context.Context) (context.Context, context.CancelFunc) {
 	if timeout := c.server.options.Limits.PreAuthTimeout; timeout > 0 {
 		return context.WithTimeout(parent, timeout)
@@ -843,19 +928,45 @@ func (c *conn) currentTransport() net.Conn {
 	return c.transport
 }
 
+// bufferedConn preserves plaintext read ahead by the compression layer when
+// UNAUTHENTICATE returns to the underlying transport. It retains TLS, if any.
+type bufferedConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func (c *conn) disableCompression() {
+	compressed, ok := c.currentTransport().(*compressedConn)
+	if !ok {
+		return
+	}
+	if compressed.reader != nil {
+		_ = compressed.reader.Close()
+	}
+	transport := &bufferedConn{Conn: compressed.Conn, reader: compressed.reader.PlainReader()}
+	c.transportMu.Lock()
+	c.transport = transport
+	c.transportMu.Unlock()
+	c.encoder = c.newEncoder(transport)
+	c.state.compressed = false
+	c.resetDecoder.Store(true)
+}
+
 func (c *conn) cleanupBackend() {
 	if selected := c.state.unselect(); selected != nil {
 		selected.close()
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
 		if err := selected.mailbox.Unselect(ctx, nil); err != nil {
-			c.reportBackendError("UNSELECT", err)
+			c.reportCleanupError("UNSELECT", err)
 		}
 		cancel()
 	}
 	if session := c.state.session; session != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.server.options.Limits.CommandTimeout)
 		if err := session.Close(ctx, nil); err != nil {
-			c.reportBackendError("LOGOUT", err)
+			c.reportCleanupError("LOGOUT", err)
 		}
 		cancel()
 		c.state.session = nil
@@ -895,6 +1006,12 @@ func (c *conn) updateSignal() <-chan struct{} {
 // pipelined behind it — §7.4.1's forbidden window, reached through the
 // exemption meant for the command's own changes. See drainUpdates.
 func (c *conn) expungeDeliveryDeferred() bool {
+	// NOTIFY's SELECTED specifier asks for removals as they happen; a client
+	// registering it has stopped using sequence numbers in commands (RFC 5465
+	// sections 5.3 and 6.1.1). SELECTED-DELAYED keeps the rules below.
+	if c.notifySelected.immediateRemovals() {
+		return false
+	}
 	// §7.4.1 opens with the condition this missed for a release: "An EXPUNGE
 	// response MUST NOT be sent when no command is in progress". Between
 	// commands the server knows nothing about what the client has already put on
@@ -973,12 +1090,20 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if selected == nil || selected.queue == nil {
 		return nil
 	}
-	if accounting.origin != 0 && accounting.effect != effectNone {
+	// Every origin a command of this connection drains with is recorded, even
+	// without an effect: it is also what identifies the command's own
+	// batches, whose changes are command results that NOTIFY never filters.
+	if accounting.origin != 0 {
 		if c.updateEffects == nil {
-			c.updateEffects = make(map[ChangeToken]commandEffect)
+			c.updateEffects = make(map[ChangeToken]updateAccounting)
 		}
-		c.updateEffects[accounting.origin] = accounting.effect
+		c.updateEffects[accounting.origin] = accounting
 	}
+	// NOTIFY's selected policy decides what other sessions' changes may
+	// announce. A NOTIFY SET's implicit NOOP releases everything accumulated
+	// under the previous registration first (RFC 5465 section 3.1).
+	suppressMessages := c.notifySelected.suppressesMessages() && !c.releasingNotify
+	suppressFlags := c.notifySelected.suppressesFlags() && !c.releasingNotify
 	// Revisions always advance in order. Only removal announcements and the
 	// corresponding client sequence-number changes wait; later EXISTS and
 	// FLAGS updates use that unchanged client view.
@@ -999,7 +1124,8 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			}
 		}
 	}()
-	if len(batches) == 0 && (deferred || len(selected.withheld) == 0) {
+	releasable := !suppressFlags && len(selected.pendingFlags) != 0 || !suppressMessages && (len(selected.pendingAdds) != 0 || selected.hasPendingRecent || !deferred && len(selected.suppressed) != 0)
+	if len(batches) == 0 && !releasable && (deferred || len(selected.withheld) == 0) {
 		return nil
 	}
 	// removed collects the expunged UIDs so CONTEXT registrations can be told
@@ -1012,23 +1138,34 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 		}
 	}
 	var pending []deliveredUpdate
+	if !suppressMessages {
+		pending = selected.releaseSuppressed(!deferred)
+	}
 	if !deferred && len(selected.withheld) != 0 {
-		var err error
-		pending, err = selected.deliverWithheldRemovals()
-		if err != nil {
-			c.failFatal(err)
-			return err
+		if suppressMessages {
+			selected.suppressWithheld()
+		} else {
+			delivered, err := selected.deliverWithheldRemovals()
+			if err != nil {
+				c.failFatal(err)
+				return err
+			}
+			pending = append(pending, delivered...)
 		}
 	}
 	for _, batch := range batches {
-		batchAccounting := updateAccounting{
-			origin: batch.Origin,
-			effect: c.updateEffects[batch.Origin],
+		batchAccounting, own := c.updateEffects[batch.Origin]
+		if !own {
+			batchAccounting = updateAccounting{origin: batch.Origin}
 		}
 		if batch.Origin != 0 && batch.Origin == accounting.origin {
-			batchAccounting = accounting
+			batchAccounting, own = accounting, true
 		}
-		updates, err := selected.applyBatchDeferringRemovals(batch, batchAccounting, deferred)
+		updates, err := selected.applyBatchWith(batch, batchAccounting, batchDelivery{
+			deferRemovals:    deferred,
+			suppressMessages: suppressMessages && !own,
+			suppressFlags:    suppressFlags && !own,
+		})
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
 			// knows the selected mailbox's sequence view. Continuing would risk
@@ -1037,6 +1174,13 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			return err
 		}
 		pending = append(pending, updates...)
+	}
+	if !suppressFlags {
+		pending = append(pending, selected.releaseFlags()...)
+	}
+	pending, err := c.completeUpdateFlags(pending)
+	if err != nil {
+		return err
 	}
 	wireUpdates := coalesceWireUpdates(pending)
 	for _, update := range wireUpdates {
@@ -1071,19 +1215,27 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 }
 
 // RFC 7162 sections 3.2 and 6 require an explicit safe checkpoint when
-// higher per-message MODSEQs pass a delayed removal. A client MUST prefer
-// this code over the larger FETCH values when completing the command.
+// higher per-message MODSEQs pass an unreported flag change or removal.
+// A client MUST prefer this code over larger FETCH values at completion.
 func (c *conn) writeDeferredModSeqFence() {
 	selected := c.state.selected
 	if selected == nil || !condStoreMailboxEnabled(c) {
 		return
 	}
 	// A backend may emit a FETCH and then fail before the handler's normal
-	// drain. Its already-published removal still needs to fence that response.
-	if len(selected.withheld) == 0 && !selected.queue.hasRemovals() {
+	// drain. Its already-published changes still need to fence that response.
+	if !c.hasUnreportedChanges() {
 		return
 	}
-	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "removal announcements pending")
+	writeUntaggedOK(c, imap.CodeHighestModSeq, fmt.Sprint(max(uint64(1), selected.snapshotModSeq)), "change announcements pending")
+}
+
+// hasUnreportedChanges also checks queued changes: a backend may publish
+// and then fail before the handler drains its updates.
+func (c *conn) hasUnreportedChanges() bool {
+	s := c.state.selected
+	return s != nil && (s.withholdsRemovals() || s.queue.hasRemovals() ||
+		len(s.pendingFlags) != 0 || s.queue.hasFlags())
 }
 
 func (c *conn) writeUpdate(update deliveredUpdate) error {
@@ -1119,6 +1271,12 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		if uidOnlyEnabled(c) {
 			return imapcodec.WriteUIDFetchResponse(c.encoder, update.uid, data, nil)
 		}
+		// Otherwise the UID is a data item: RFC 7162 section 3.2.4 requires it
+		// once CONDSTORE is enabled, and RFC 5465 section 5.1 in a FlagChange
+		// notification for the selected mailbox, with or without CONDSTORE.
+		if condStoreRequiresUID(c) || c.notifySelected.flagChangeRegistered() {
+			data.Items[imap.FetchDataKey("UID")] = []imap.FetchData{imap.FetchDataUID(update.uid)}
+		}
 		return imapcodec.WriteFetchResponse(c.encoder, data, nil)
 	case updateMessageExpunge:
 		// An untagged EXPUNGE carries a sequence number, which UIDONLY forbids
@@ -1138,6 +1296,88 @@ func (c *conn) writeUpdate(update deliveredUpdate) error {
 		c.encoder.SP().RawValue([]byte(update.uids.String())).CRLF()
 	}
 	return c.encoder.Err()
+}
+
+// UpdateFlags permits an unavailable MODSEQ. Once CONDSTORE is active the
+// wire requires it. Fetch FLAGS and MODSEQ together, once for the whole drain,
+// and replace every pending flag report for these UIDs with that snapshot.
+// Otherwise a later report in this drain could overwrite the fetched state
+// with older flags at a lower MODSEQ.
+func (c *conn) completeUpdateFlags(updates []deliveredUpdate) ([]deliveredUpdate, error) {
+	if !condStoreMailboxEnabled(c) {
+		return updates, nil
+	}
+	type currentFlags struct {
+		flags    []imap.Flag
+		modSeq   uint64
+		hasFlags bool
+	}
+	current := make(map[imap.UID]*currentFlags)
+	var missing []imap.UID
+	for _, update := range updates {
+		if update.kind == updateMessageFlags && update.modSeq == 0 && current[update.uid] == nil {
+			current[update.uid] = &currentFlags{}
+			missing = append(missing, update.uid)
+		}
+	}
+	if len(missing) == 0 {
+		return updates, nil
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	defer cancel()
+	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
+		uid, ok := extractFetchUID(data)
+		flags := current[uid]
+		if !ok || flags == nil {
+			return fmt.Errorf("imapserver: flag-update FETCH returned an unexpected UID")
+		}
+		for _, values := range data.Items {
+			for _, value := range values {
+				switch value := value.(type) {
+				case imap.FetchDataFlags:
+					flags.flags = slices.Clone([]imap.Flag(value))
+					flags.hasFlags = true
+				case imap.FetchDataModSeq:
+					flags.modSeq = uint64(value)
+				}
+			}
+		}
+		return nil
+	})
+	err := c.state.selected.mailbox.Fetch(ctx, writer, imap.UIDSetNum(missing...), &FetchOptions{
+		Items: []imap.FetchItem{imap.FetchItemUID, imap.FetchItemFlags, imap.FetchItemModSeq},
+	})
+	writer.core.close()
+	if err == nil {
+		for _, flags := range current {
+			if flags.hasFlags != (flags.modSeq != 0) {
+				err = fmt.Errorf("imapserver: flag-update FETCH omitted FLAGS or MODSEQ")
+				break
+			}
+		}
+	}
+	if err != nil {
+		c.reportBackendError("FETCH", err)
+		// A missing CONDSTORE clock cannot be announced safely. End the
+		// session explicitly so the client knows it must resynchronise.
+		_ = c.writeBye("unable to complete mailbox updates")
+		return nil, err
+	}
+	kept := updates[:0]
+	for _, update := range updates {
+		if update.kind == updateMessageFlags {
+			if flags := current[update.uid]; flags != nil {
+				// FETCH skips a concurrently removed UID. Its removal update
+				// supplies the announcement instead of stale FLAGS.
+				if !flags.hasFlags {
+					continue
+				}
+				update.flags, update.modSeq = flags.flags, flags.modSeq
+			}
+		}
+		kept = append(kept, update)
+	}
+	return kept, nil
 }
 
 func (c *conn) failFatal(err error) {

@@ -55,6 +55,29 @@ import (
 // again, because a gate can simply *be* a feature's own predicate.
 type keyGate func(state *sessionState, advertised map[string]bool) bool
 
+var sortKeyGates = map[imap.SortKey]keyGate{
+	imap.SortKeyArrival: baselineKey, imap.SortKeyCc: baselineKey,
+	imap.SortKeyDate: baselineKey, imap.SortKeyFrom: baselineKey,
+	imap.SortKeySize: baselineKey, imap.SortKeySubject: baselineKey,
+	imap.SortKeyTo:          baselineKey,
+	imap.SortKeyDisplayFrom: requiresToken("SORT=DISPLAY"),
+	imap.SortKeyDisplayTo:   requiresToken("SORT=DISPLAY"),
+	imap.SortKeyRelevancy:   requiresToken("SEARCH=FUZZY"),
+}
+
+func searchHasFuzzy(criteria imap.SearchCriteria) bool {
+	if _, ok := criteria.(imap.SearchFuzzy); ok {
+		return true
+	}
+	children, _ := searchCriteriaChildren(criteria)
+	for _, child := range children {
+		if searchHasFuzzy(child) {
+			return true
+		}
+	}
+	return false
+}
+
 // baselineKey is the IMAP4rev1 grammar: available to every session.
 func baselineKey(*sessionState, map[string]bool) bool { return true }
 
@@ -278,6 +301,11 @@ func fetchItemCapability(item imap.FetchItem) (keyGate, bool) {
 // requireCriteriaCapabilities refuses a search whose criteria tree names a key
 // this session has not been offered, at any nesting depth.
 func requireCriteriaCapabilities(c *conn, criteria imap.SearchCriteria) error {
+	if uidOnlyEnabled(c) {
+		if _, sequence := criteria.(imap.SearchSeqNum); sequence {
+			return uidRequiredError("message sequence numbers are not allowed once UIDONLY is enabled")
+		}
+	}
 	if criteria == nil {
 		return nil
 	}

@@ -39,8 +39,9 @@ import (
 //
 // A Decoder is not safe for concurrent use.
 type Decoder struct {
-	r    *bufio.Reader
-	opts Options
+	r       *bufio.Reader
+	opts    Options
+	timeout *timeoutReader
 
 	err error
 	eof bool
@@ -122,12 +123,24 @@ func (t *timeoutReader) Read(p []byte) (int, error) {
 // is bounded by that timeout.
 func NewDecoder(r io.Reader, opts *Options) *Decoder {
 	o := opts.withDefaults()
+	var timeout *timeoutReader
 	if o.ReadTimeout > 0 {
 		if ds, ok := r.(deadlineSetter); ok {
-			r = &timeoutReader{r: r, setter: ds, timeout: o.ReadTimeout}
+			timeout = &timeoutReader{r: r, setter: ds, timeout: o.ReadTimeout}
+			r = timeout
 		}
 	}
-	return &Decoder{r: bufio.NewReader(r), opts: o, utf8Accept: o.UTF8Accept}
+	return &Decoder{r: bufio.NewReader(r), opts: o, timeout: timeout, utf8Accept: o.UTF8Accept}
+}
+
+// SetReadTimeout changes the read deadline without discarding buffered input.
+// It is used at authentication barriers, where the transport is unchanged.
+func (d *Decoder) SetReadTimeout(timeout time.Duration) {
+	d.opts.ReadTimeout = timeout
+	if d.timeout != nil {
+		d.timeout.timeout = timeout
+		d.timeout.deadline = time.Time{}
+	}
 }
 
 // NewDecoderString returns a Decoder over s. It is meant for decoding a

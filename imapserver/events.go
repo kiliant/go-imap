@@ -164,3 +164,18 @@ func (c *conn) reportBackendError(operation string, err error) {
 	}
 	c.reportEvent(kind, command, err)
 }
+
+// Cleanup cannot refuse an already-completed state transition. Report every
+// failure, including a protocol error or cancellation that a command handler
+// would ordinarily treat as an expected refusal.
+func (c *conn) reportCleanupError(operation string, err error) {
+	kind := ServerEventBackendError
+	if errors.Is(err, context.DeadlineExceeded) {
+		kind = ServerEventTimeout
+	}
+	command, _ := c.eventCommand.Load().(string)
+	if command == "" {
+		command = operation
+	}
+	c.reportEvent(kind, command, err)
+}

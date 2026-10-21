@@ -714,11 +714,14 @@ func TestUpdateQueueBoundsBeforeCloneAndOwnsAcceptedBatch(t *testing.T) {
 		Before: "a", After: "b",
 		Changes: []Update{&UpdateFlags{UID: 1, Flags: []imap.Flag{imap.Flag(strings.Repeat("x", 128))}}},
 	}
-	if err := updater.Push(large); !errors.Is(err, ErrUpdateOverflow) || !overflowed {
-		t.Fatalf("oversized batch = %v, overflow %v", err, overflowed)
+	if err := updater.Push(large); err != nil || overflowed {
+		t.Fatalf("single oversized atomic batch = %v, overflow %v", err, overflowed)
 	}
-	if items := tooSmall.popAll(); len(items) != 0 {
-		t.Fatalf("oversized batch was retained: %#v", items)
+	if err := updater.Push(&UpdateBatch{Before: "b", After: "c"}); !errors.Is(err, ErrUpdateOverflow) || !overflowed {
+		t.Fatalf("backlog behind oversized batch = %v, overflow %v", err, overflowed)
+	}
+	if items := tooSmall.popAll(); len(items) != 1 {
+		t.Fatalf("accepted batch was lost: %#v", items)
 	}
 
 	queue := newUpdateQueue(1, 1024, nil)

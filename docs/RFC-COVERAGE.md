@@ -167,12 +167,19 @@ servers, Dovecot and Stalwart.
 
 [^srvcondstore]: Backend-delegated through the optional `CondStoreMailbox`.
     Conditional STORE reports rejected messages via MODIFIED on a successful
-    tagged OK, never as an error.
+    tagged OK, never as an error. A successful conditional STORE.SILENT still
+    returns MODSEQ for each stored message; the framework fetches it when the
+    backend honoured Silent. After any CONDSTORE enabling command, untagged
+    FETCH from STORE, implicit `\Seen`, MODSEQ/CHANGEDSINCE FETCH and other
+    sessions carries UID (RFC 7162 sections 3.1.3, 3.2.4). (#54, R2/R3)
 
 [^srvqresync]: Backend-delegated through the optional `QResyncMailbox`. The
     reference `memory` backend implements it exactly within one process
     lifetime and documents that its removal record does not survive a restart —
     which is the case QRESYNC exists for. A durable backend must persist it.
+    Resync serves QRESYNC SELECT/EXAMINE and repeated UID FETCH with CHANGEDSINCE
+    and VANISHED. The full requested UID set bounds VANISHED (EARLIER), written
+    before FETCH results; PARTIAL does not narrow this historical report.
 
 [^srvitems]: No framework machinery and no backend interface: these are FETCH
     and STATUS items, and both sets are open types in `package imap`. The
@@ -220,7 +227,7 @@ CONDSTORE `MODIFIED` on tagged OK.
 | COMPRESS=DEFLATE | 4978 | verified [^t26c] | done [^srvcompress] |
 | UTF8=ACCEPT | 9755 | verified [^t26c] | done [^srvcompress] |
 | UTF8=ALL | 5738, 9755 | done | — [^srvutf8] |
-| UTF8=APPEND | 5738, 9755 | done | done |
+| UTF8=APPEND | 5738, 9755 | done | obsolete; not advertised [^srvutf8] |
 | UTF8=ONLY | 9755 | done | — [^srvutf8] |
 | UTF8=USER | 5738, 9755 | done | — [^srvutf8] |
 | SORT | 5256 | verified [^t26c] | done |
@@ -250,8 +257,9 @@ CONDSTORE `MODIFIED` on tagged OK.
     normalising text lines to CRLF and slicing decoded partial ranges. Unknown
     or malformed CTEs fail with UNKNOWN-CTE. IMAP4REV2 requires the backend-only
     BINARY-FETCH witness, independently of full BINARY advertisement. (#126)
-    Binary APPEND (a literal8 payload) is blocked with CATENATE and MULTIAPPEND
-    below.
+    Whole-message literal8 APPEND, MULTIAPPEND and REPLACE are accepted only
+    with full BINARY advertised. CATENATE TEXT uses ordinary literals, as
+    specified by RFC 4469.
 
 [^srvmultiappend]: Parsing continues between literals: the parser reads to the
     first literal's announcement, the handler consumes it, then asks the reader
@@ -267,7 +275,10 @@ CONDSTORE `MODIFIED` on tagged OK.
     input returns NO [TOOBIG] without committing, and remaining literals drain
     without resolving further URLs.
 
-[^srvutf8]: **The only capabilities left unimplemented, and both by decision.**
+[^srvutf8]: UTF8=APPEND is obsolete and is not advertised. RFC 9755's
+    UTF8=ACCEPT replaces the obsolete APPEND syntax. Unenabled rev1 clients'
+    8-bit APPEND-family headers are rejected by the framework before mutation;
+    ENABLE UTF8=ACCEPT or IMAP4rev2 permits them.
     RFC 9755 deprecates UTF8=ALL and UTF8=USER outright — implementing a
     deprecated capability would be a mistake, not an omission. UTF8=ONLY asserts
     the server *refuses* ASCII-only clients, which is a deployment policy this
@@ -292,7 +303,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvpartial]: Framework-owned windowing of an ESEARCH result, including RFC
     9394's negative ranges. It saves wire bytes and client memory, not backend
     work — the backend still evaluates the whole search, and RFC 9394 defines no
-    interface that would let it stop early.
+    interface that would let it stop early. UID FETCH also supports PARTIAL,
+    windowing existing UIDs before CHANGEDSINCE regardless of modifier order.
 
 [^srvfuzzy]: The FUZZY modifier reaches the backend through the open search
     criteria tree with no framework translation, so the capability is purely a
@@ -329,8 +341,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 | UNAUTHENTICATE | 8437 | done | done |
 | UIDONLY | 9586 | done | done [^srvuidonly] |
 | INPROGRESS | 9585 | done [^t27inprogress] | done [^srvinprogress] |
-| MESSAGELIMIT= | 9738 | done | done |
-| SAVELIMIT= | 9738 | done | done |
+| MESSAGELIMIT= | 9738 | done | deferred [^srvmsglistlimit] |
+| SAVELIMIT= | 9738 | done | deferred [^srvmsglistlimit] |
 | JMAPACCESS | 9698 | done | done [^srvjmap] |
 | UIDBATCHES | 10022 | done [^t31uidbatches] | done [^t31uidbatches] |
 
@@ -349,7 +361,8 @@ CONDSTORE `MODIFIED` on tagged OK.
 [^srvuidonly]: All-or-nothing, as the RFC requires. Sequence-number commands are
     refused rather than reinterpreted as UIDs, unilateral FETCH becomes
     UIDFETCH, and EXPUNGE becomes VANISHED because an untagged EXPUNGE carries a
-    sequence number and cannot be sent at all. `WriteUIDFetchResponse` was added
+    sequence number and cannot be sent at all. The wire form is RFC 9586
+    section 7's `* <uid> UIDFETCH (...)`. `WriteUIDFetchResponse` was added
     to `internal/imapcodec`, sharing the item grammar with `WriteFetchResponse`
     rather than duplicating it.
 
@@ -359,11 +372,27 @@ CONDSTORE `MODIFIED` on tagged OK.
     selection-scoped push outlive its selection. Events name a mailbox and carry
     no sequence numbers, because the client has not selected the mailbox and has
     no sequence-number view of it; RFC 5465 §6 reports them as STATUS for that
-    reason. The queue coalesces per mailbox and drops oldest on overflow rather
-    than killing the connection — the opposite of the selection queue's rule,
-    because a dropped notification costs a refresh while a dropped selection
-    update desynchronises a view in active use. Overflow is reported rather than
-    hidden.
+    reason. The queue coalesces per mailbox. Overflow ends the registration and
+    reports NOTIFICATIONOVERFLOW without closing the connection; like NOTIFY
+    NONE it then silences the selected mailbox too. The framework validates
+    every registration before the backend or the current registration is
+    touched: event pairing, one selected specifier and selected-only message
+    events are BAD; events it cannot deliver (LIST/METADATA/ANNOTATION) are
+    `NO [BADEVENT (MessageNew MessageExpunge FlagChange)]`. It enforces the
+    selected mailbox's policy itself — NONE, omitted, per-event and
+    SELECTED's immediate removals — withholding suppressed additions and
+    removals so sequence numbers stay stable, and a NOTIFY SET returns what
+    accumulated. Selected FlagChange carries UID. NONE groups request no
+    events, SUBSCRIBED uses current subscriptions, and selected mailboxes
+    receive no STATUS. MessageNew fetch-attribute syntax is recognized but
+    refused with `NO [CANNOT]` before backend calls; unsolicited FETCH
+    attributes remain deferred. (#54, independent review B3, R3/R5/R6)
+
+[^srvmsglistlimit]: Server advertisements and the incorrect mailbox-size/retention
+    API were removed after the independent review (#54, A1). RFC 9738 limits
+    messages processed per command; support is deferred until the framework
+    enforces that contract, including the associated SEARCH keys and partial
+    completion responses.
 
 [^t27notify]: Events for other mailboxes are the unsolicited STATUS and LIST
     responses of RFC 5465 section 5. The client discarded them until T27 added

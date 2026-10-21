@@ -19,6 +19,7 @@ type UnauthenticateOptions struct {
 // closing the connection. UNAUTHENTICATE, RFC 8437.
 //
 // On success the ENABLE set is cleared and any selected mailbox is closed.
+// An active COMPRESS layer ends at the command/response boundary; TLS remains.
 // Capabilities are reset and then rediscovered with CAPABILITY, matching the
 // post-login refresh LOGIN/AUTHENTICATE perform: a tagged OK [CAPABILITY …]
 // on the UNAUTHENTICATE response is preserved when present, otherwise a
@@ -31,7 +32,19 @@ func (c *Client) Unauthenticate(ctx context.Context, options *UnauthenticateOpti
 	if !c.Supports("UNAUTHENTICATE") {
 		return capabilityError("UNAUTHENTICATE", "UNAUTHENTICATE")
 	}
-	cmd := c.beginCommandWithCompletion("UNAUTHENTICATE", stateAuthenticated|stateSelected, nil, nil, func(success bool, code, args string) {
+	var resetErr error
+	finished := func(success bool, code, args string) {
+		c.writeMu.Lock()
+		defer c.writeMu.Unlock()
+		if success {
+			resetErr = c.disableDeflateLocked()
+			if resetErr != nil {
+				c.poison(resetErr)
+			}
+		}
+		c.mu.Lock()
+		c.resetInProgress = false
+		c.mu.Unlock()
 		if !success {
 			return
 		}
@@ -53,9 +66,13 @@ func (c *Client) Unauthenticate(ctx context.Context, options *UnauthenticateOpti
 			}
 		}
 		c.mu.Unlock()
-	})
+	}
+	cmd := c.issue("UNAUTHENTICATE", commandOptions{allowed: stateAuthenticated | stateSelected, resetsSession: true, onComplete: finished})
 	if err := cmd.Wait(ctx); err != nil {
 		return err
+	}
+	if resetErr != nil {
+		return resetErr
 	}
 	if len(c.Capabilities()) != 0 {
 		return nil

@@ -28,6 +28,9 @@ func handleCopy(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil {
 		return c.writeBad(command.tag, "invalid COPY arguments")
 	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	uids, _, err := resolveMessageSet(c.state.selected, args.set, commandUsesUIDs(command))
 	if err != nil {
 		return c.writeBad(command.tag, "invalid COPY message set")

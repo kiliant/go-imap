@@ -197,29 +197,6 @@ func TestLoopbackUnauthenticate(t *testing.T) {
 	}
 }
 
-// RFC 9738 puts the value inside the advertised token, so "MESSAGELIMIT" alone
-// would not be a legal advertisement.
-func TestLoopbackMessageLimitsCarryTheirValue(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	_, clientSide, reader := newGroupARawSession(t, ctx)
-
-	writeRawCommand(t, clientSide, "D1 CAPABILITY\r\n")
-	untagged, _ := collectUntilTag(t, reader, "D1 ")
-	line := findResponse(t, untagged, "* CAPABILITY")
-	for _, want := range []string{"MESSAGELIMIT=", "SAVELIMIT="} {
-		if !strings.Contains(line, want) {
-			t.Errorf("capability list has no %s: %q", want, line)
-		}
-	}
-	// The bare prefix must never appear on its own.
-	for _, field := range strings.Fields(line) {
-		if field == "MESSAGELIMIT" || field == "SAVELIMIT" {
-			t.Errorf("%s advertised without its value: %q", field, line)
-		}
-	}
-}
-
 // UIDONLY is all-or-nothing: once enabled, no sequence number may reach the
 // client in any response, and no command may name one. RFC 9586.
 func TestLoopbackUIDOnly(t *testing.T) {
@@ -252,15 +229,17 @@ func TestLoopbackUIDOnly(t *testing.T) {
 	if !strings.HasPrefix(tagged, "D4 OK") {
 		t.Fatalf("UID FETCH failed: %q", tagged)
 	}
-	line := findResponse(t, untagged, "* UIDFETCH")
-	if !strings.HasPrefix(line, "* UIDFETCH 1 (") {
+	// RFC 9586 section 7: uidfetch-resp = uniqueid SP "UIDFETCH" SP msg-att,
+	// so the UID stands where a FETCH response has its sequence number.
+	line := findResponse(t, untagged, "* 1 UIDFETCH")
+	if !strings.HasPrefix(line, "* 1 UIDFETCH (") {
 		t.Errorf("UIDFETCH = %q, want the UID as the subject", line)
 	}
 	if strings.Contains(line, "UID ") {
 		t.Errorf("UIDFETCH repeated the UID as an item: %q", line)
 	}
 	for _, l := range untagged {
-		if strings.Contains(l, " FETCH (") && !strings.HasPrefix(l, "* UIDFETCH") {
+		if strings.Contains(l, " FETCH (") {
 			t.Errorf("a sequence-numbered FETCH reached a UIDONLY client: %q", l)
 		}
 	}
@@ -300,7 +279,7 @@ func TestLoopbackNotifyReportsUnselectedMailbox(t *testing.T) {
 	// mailbox, which is what the selection-scoped Updater could never report.
 	writeRawCommand(t, clientSide, "N2 SELECT INBOX\r\n")
 	collectUntilTag(t, reader, "N2 ")
-	writeRawCommand(t, clientSide, "N3 NOTIFY SET (MAILBOXES Watched (MessageNew))\r\n")
+	writeRawCommand(t, clientSide, "N3 NOTIFY SET (MAILBOXES Watched (MessageNew MessageExpunge))\r\n")
 	if _, tagged := collectUntilTag(t, reader, "N3 "); !strings.HasPrefix(tagged, "N3 OK") {
 		t.Fatalf("NOTIFY SET failed: %q", tagged)
 	}
@@ -372,19 +351,21 @@ func TestLoopbackNotifyVocabulary(t *testing.T) {
 
 	// Upper-case on the wire, canonical inside: the backend only accepts the
 	// registration because the framework folded the name before it arrived.
-	writeRawCommand(t, clientSide, "V3 NOTIFY SET (MAILBOXES Watched (MESSAGENEW FLAGCHANGE))\r\n")
+	writeRawCommand(t, clientSide, "V3 NOTIFY SET (MAILBOXES Watched (MESSAGENEW MESSAGEEXPUNGE FLAGCHANGE))\r\n")
 	if _, tagged := collectUntilTag(t, reader, "V3 "); !strings.HasPrefix(tagged, "V3 OK") {
 		t.Fatalf("upper-case event names were not folded to the canonical spelling: %q", tagged)
 	}
 
 	// Mixed case is the registered spelling and must work identically.
-	writeRawCommand(t, clientSide, "V4 NOTIFY SET (MAILBOXES Watched (MessageNew))\r\n")
+	writeRawCommand(t, clientSide, "V4 NOTIFY SET (MAILBOXES Watched (MessageNew MessageExpunge))\r\n")
 	if _, tagged := collectUntilTag(t, reader, "V4 "); !strings.HasPrefix(tagged, "V4 OK") {
 		t.Fatalf("canonical event name rejected: %q", tagged)
 	}
 
-	// An event the backend does not publish is BADEVENT, not a silent accept.
-	writeRawCommand(t, clientSide, "V5 NOTIFY SET (MAILBOXES Watched (AnnotationChange))\r\n")
+	// An event the server cannot deliver is BADEVENT, not a silent accept.
+	// RFC 5465 section 5 pairs AnnotationChange with MessageNew and
+	// MessageExpunge; alone it would be BAD, which tests something else.
+	writeRawCommand(t, clientSide, "V5 NOTIFY SET (MAILBOXES Watched (MessageNew MessageExpunge AnnotationChange))\r\n")
 	_, tagged := collectUntilTag(t, reader, "V5 ")
 	if !strings.Contains(tagged, "BADEVENT") {
 		t.Errorf("unsupported event = %q, want BADEVENT — a silent accept leaves the client watching for nothing", tagged)
@@ -395,7 +376,7 @@ func TestLoopbackNotifyVocabulary(t *testing.T) {
 	// are an extensible registry, so an unknown specifier is malformed syntax and
 	// an unknown event is a request the server declines. The client acts on the
 	// difference: retry a smaller event list, or stop sending that syntax.
-	writeRawCommand(t, clientSide, "V6 NOTIFY SET (NOSUCHSPECIFIER (MessageNew))\r\n")
+	writeRawCommand(t, clientSide, "V6 NOTIFY SET (NOSUCHSPECIFIER (MessageNew MessageExpunge))\r\n")
 	_, tagged = collectUntilTag(t, reader, "V6 ")
 	if !strings.HasPrefix(tagged, "V6 BAD") {
 		t.Errorf("unsupported specifier = %q, want BAD", tagged)

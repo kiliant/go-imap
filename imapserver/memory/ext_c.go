@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"slices"
@@ -228,7 +227,7 @@ func (s *selected) matching(ctx context.Context, query *imapserver.SearchQuery, 
 // the same path URLFETCH uses, minus the authorization token: the client is
 // already authenticated as the owner, so RFC 4469 section 3 requires only that
 // the URL refer to something it may read — which here means its own mailboxes.
-func (s *session) ResolveCatenateURL(ctx context.Context, url string, _ *imapserver.CatenateOptions) (io.ReadCloser, error) {
+func (s *session) ResolveCatenateURL(ctx context.Context, raw string, _ *imapserver.CatenateOptions) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -237,17 +236,30 @@ func (s *session) ResolveCatenateURL(ctx context.Context, url string, _ *imapser
 	if s.closed {
 		return nil, noError(imap.CodeClosed, "session is closed")
 	}
-	m := s.account.mailboxes[mailboxKey(urlMailbox(url))]
-	if m == nil {
-		return nil, noError(imap.CodeNonExistent, "no such mailbox in CATENATE URL")
-	}
-	uid := urlUID(url)
-	for _, msg := range m.messages {
-		if msg.uid == uid {
-			return io.NopCloser(bytes.NewReader(append([]byte(nil), msg.raw...))), nil
+	selectedName := ""
+	if len(s.selections) == 1 {
+		for selection := range s.selections {
+			selectedName = selection.mailbox.name
 		}
 	}
-	return nil, noError(imap.CodeNonExistent, "no such message in CATENATE URL")
+	request, ok := parseCatenateURL(raw, s.username, selectedName)
+	if !ok {
+		return nil, noError(imap.CodeBadURL, "invalid or unauthorized CATENATE URL")
+	}
+	m := s.account.mailboxes[request.mailbox]
+	if m == nil || request.uidValidity != 0 && request.uidValidity != m.uidValidity {
+		return nil, noError(imap.CodeBadURL, "CATENATE mailbox or UIDVALIDITY did not resolve")
+	}
+	for _, msg := range m.messages {
+		if msg.uid == request.uid {
+			reader, _, err := msg.analysis.OpenBodySection(ctx, request.section, nil)
+			if err != nil {
+				return nil, err
+			}
+			return io.NopCloser(reader), nil
+		}
+	}
+	return nil, noError(imap.CodeBadURL, "no such message in CATENATE URL")
 }
 
 var (

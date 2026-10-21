@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
@@ -26,6 +27,8 @@ type URLAuthSession interface {
 	// URLs. A non-nil result must supply Body, including for empty content.
 	// The framework closes Body exactly once, including on errors and refusal.
 	// Reads must respect ctx; known lengths stream directly to the client.
+	// Errors fail the command through the normal backend-error mapping; use a
+	// nil result and nil error for an invalid or unauthorized URL.
 	FetchURLAuth(ctx context.Context, url string, options *URLFetchOptions) (*URLFetchResult, error)
 	// ResetURLAuthKey invalidates the secrets behind a mailbox's URLs. An empty
 	// mailbox name revokes every mailbox key, per RFC 4467's RESETKEY command.
@@ -182,6 +185,11 @@ func handleGenURLAuth(ctx context.Context, c *conn, command *queuedCommand) erro
 	if err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	for _, pair := range args.pairs {
+		if err := requireURLCapabilities(c, pair.url); err != nil {
+			return c.writeBad(command.tag, err.Error())
+		}
+	}
 	urls := make([]string, 0, len(args.pairs))
 	for _, pair := range args.pairs {
 		authorized, backendErr := session.GenerateURLAuth(ctx, pair.url, pair.mechanism, nil)
@@ -215,7 +223,9 @@ func handleURLFetch(ctx context.Context, c *conn, command *queuedCommand) error 
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("URLFETCH")
 	for _, url := range urls {
 		c.encoder.SP().String(url).SP()
-		if failure != nil {
+		// A URL whose range feature is unavailable is invalid individually,
+		// just like a failed authorization (RFC 4467, URLFETCH response).
+		if failure != nil || requireURLCapabilities(c, url) != nil {
 			c.encoder.NIL()
 			continue
 		}
@@ -243,7 +253,10 @@ func writeURLFetchContent(ctx context.Context, c *conn, session URLAuthSession, 
 	if content != nil && content.Body != nil {
 		defer content.Body.Close()
 	}
-	if backendErr != nil || content == nil {
+	if backendErr != nil {
+		return false, backendErr
+	}
+	if content == nil {
 		c.encoder.NIL()
 		return false, nil
 	}
@@ -305,6 +318,13 @@ func urlAuthSession(c *conn, _ *queuedCommand) (URLAuthSession, error) {
 }
 
 var errURLAuthUnavailable = &urlAuthError{"URLAUTH is not available"}
+
+func requireURLCapabilities(c *conn, url string) error {
+	if strings.Contains(strings.ToUpper(url), ";PARTIAL=") {
+		return requireCapability(c, "URL-PARTIAL")
+	}
+	return nil
+}
 
 type urlAuthError struct{ text string }
 

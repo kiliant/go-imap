@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kiliant/go-imap"
+	"github.com/kiliant/go-imap/internal/imapcodec"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
@@ -224,10 +225,8 @@ func (c *Client) replaceResolveUID(ctx context.Context, seqNum imap.SeqNum) (ima
 		if err != nil {
 			return 0, err
 		}
-		for _, value := range data.Items[imap.FetchDataKey("UID")] {
-			if v, ok := value.(imap.FetchDataUID); ok {
-				found = imap.UID(v)
-			}
+		if value, ok := imapcodec.FetchValue[imap.FetchDataUID](data, "UID"); ok {
+			found = imap.UID(value)
 		}
 	}
 	if err := cmd.Wait(ctx); err != nil {

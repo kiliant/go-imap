@@ -4,8 +4,27 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
+
+type atomLookaheadErrorReader struct{}
+
+func (atomLookaheadErrorReader) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestPeekAtomEqualReadFailure(t *testing.T) {
+	for _, atom := range []string{"CATENATE", "STATUS", "RETURN", "$"} {
+		t.Run(atom, func(t *testing.T) {
+			dec := NewDecoder(io.MultiReader(strings.NewReader(atom), atomLookaheadErrorReader{}), nil)
+			if dec.PeekAtomEqual(atom) {
+				t.Fatal("matched an atom despite failing to read its delimiter")
+			}
+			if !errors.Is(dec.Err(), io.ErrClosedPipe) {
+				t.Fatalf("decoder error = %v; want closed pipe", dec.Err())
+			}
+		})
+	}
+}
 
 func TestBeginCommandAndLiteralDecision(t *testing.T) {
 	dec := NewDecoderString("A1 APPEND inbox {3}\r\nabc\r\nA2 NOOP\r\n", nil)

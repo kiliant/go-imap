@@ -82,7 +82,6 @@ var supportedCapabilities = map[string]bool{
 	// parsed, evaluated and returned results from a server that never offered
 	// it. Advertising it is what makes the key legitimately usable.
 	"SEARCH=FUZZY": true,
-	"UTF8=APPEND":  true,
 	// Group E. LANGUAGE and URLAUTH witness themselves through their optional
 	// interfaces; these are the tokens that need a spoken claim.
 	"I18NLEVEL=1": true,

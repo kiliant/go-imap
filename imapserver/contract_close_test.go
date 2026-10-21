@@ -94,10 +94,7 @@ func TestUnauthenticateClosesSessionOnce(t *testing.T) {
 			}
 			writeRawCommand(t, clientSide, "A2 UNAUTHENTICATE\r\n")
 			_, tagged := collectUntilTag(t, reader, "A2 ")
-			if failing && !strings.HasPrefix(tagged, "A2 NO") {
-				t.Errorf("UNAUTHENTICATE with a failing Close = %q, want NO", tagged)
-			}
-			if !failing && !strings.HasPrefix(tagged, "A2 OK") {
+			if !strings.HasPrefix(tagged, "A2 OK") {
 				t.Errorf("UNAUTHENTICATE = %q, want OK", tagged)
 			}
 

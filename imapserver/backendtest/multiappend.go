@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -98,12 +99,21 @@ func runMultiAppend(t *testing.T, harness *Harness) {
 		if len(got) != 1 || got[0].Before != before.Revision || got[0].After != after.Snapshot.Revision || got[0].Origin != origin {
 			t.Fatalf("atomic update chain = %#v", got)
 		}
-		for _, uid := range after.Snapshot.UIDs[len(before.UIDs):] {
+		added := after.Snapshot.UIDs[len(before.UIDs):]
+		for _, uid := range added {
 			if !batchAddsUID(got[0], uid) {
 				t.Errorf("atomic update omits UID %d", uid)
 			}
 			if supportsCapability(instance, session, "UIDPLUS") && (data == nil || !data.HasUIDs || data.UIDValidity != before.Status.UIDValidity || !data.UIDs.Contains(uid)) {
 				t.Errorf("APPENDUID omits UID %d: %#v", uid, data)
+			}
+		}
+		// Reported data becomes APPENDUID whether or not UIDPLUS obliges it,
+		// so it must name exactly the appended messages.
+		if data != nil && data.HasUIDs {
+			reported, ok := data.UIDs.Nums()
+			if !ok || data.UIDValidity != before.Status.UIDValidity || !slices.Equal(reported, added) {
+				t.Errorf("MultiAppend reported %#v, but appended UIDs %v under UIDVALIDITY %d", data, added, before.Status.UIDValidity)
 			}
 		}
 	})

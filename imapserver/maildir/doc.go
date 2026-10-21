@@ -5,6 +5,10 @@
 // configuration, polling diagnostics and orderly shutdown. From imapserver,
 // run it with: go run ./examples/maildir.go ./examples/config.go.
 //
+// RENAME INBOX moves its messages to a newly created mailbox, leaving the
+// empty INBOX and its inferiors in place. A destination beneath INBOX is
+// refused with NO [CANNOT].
+//
 // # Storage contract
 //
 // This backend supports local filesystems on Linux and macOS that implement

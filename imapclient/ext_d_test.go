@@ -206,7 +206,7 @@ func TestNotifyAndUnauthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
-	if !strings.Contains(server.LastLine(), "NOTIFY STATUS SET") {
+	if !strings.Contains(server.LastLine(), "NOTIFY SET STATUS") {
 		t.Fatalf("wire = %q", server.LastLine())
 	}
 	if err := c.Notify(ctx, nil, &NotifyOptions{None: true}); err != nil {
@@ -333,5 +333,37 @@ func TestListMyRightsAndMetadata(t *testing.T) {
 	})
 	if err != nil || len(boxes) != 1 || len(meta) != 1 || meta[0].Entries[0].Value == nil {
 		t.Fatalf("ListMailboxesExt METADATA = %#v %#v %v", boxes, meta, err)
+	}
+}
+
+// RFC 5465 section 8 places STATUS after SET and gives each watch group
+// its own parentheses. Exercise the public client and inspect its command.
+func TestNotifyWireGrammar(t *testing.T) {
+	selected := NotifyFilter{Specifier: NotifySelected, Events: []NotifyEventName{NotifyEventMessageNew, NotifyEventMessageExpunge}}
+	personal := NotifyFilter{Specifier: NotifyPersonal, Events: selected.Events}
+	for _, tc := range []struct {
+		name    string
+		filters []NotifyFilter
+		options *NotifyOptions
+		want    string
+	}{
+		{"single", []NotifyFilter{selected}, nil, "NOTIFY SET (SELECTED (MessageNew MessageExpunge))"},
+		{"status", []NotifyFilter{selected}, &NotifyOptions{Status: true}, "NOTIFY SET STATUS (SELECTED (MessageNew MessageExpunge))"},
+		{"groups", []NotifyFilter{selected, personal}, nil, "NOTIFY SET (SELECTED (MessageNew MessageExpunge)) (PERSONAL (MessageNew MessageExpunge))"},
+		{"status-groups", []NotifyFilter{selected, personal}, &NotifyOptions{Status: true}, "NOTIFY SET STATUS (SELECTED (MessageNew MessageExpunge)) (PERSONAL (MessageNew MessageExpunge))"},
+		{"selected-none", []NotifyFilter{{Specifier: NotifySelected, None: true}}, nil, "NOTIFY SET (SELECTED NONE)"},
+		{"none", nil, &NotifyOptions{None: true}, "NOTIFY NONE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, server := extDDial(t, func(tag, _ string) string { return tag + " OK done\r\n" })
+			extDReady(c, []string{"IMAP4rev1", "NOTIFY"}, nil, true)
+			if err := c.Notify(extDContext(t), tc.filters, tc.options); err != nil {
+				t.Fatal(err)
+			}
+			_, command, _ := strings.Cut(strings.TrimSpace(server.LastLine()), " ")
+			if command != tc.want {
+				t.Errorf("wire = %q, want %q", command, tc.want)
+			}
+		})
 	}
 }

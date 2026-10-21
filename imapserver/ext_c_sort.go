@@ -23,6 +23,9 @@ import (
 //
 // The returned UIDs are in the requested order, and the framework preserves
 // that order rather than sorting them — the ordering is the entire result.
+// Keys are classified by the framework before this call: unknown keys are
+// refused, DISPLAYFROM/DISPLAYTO require SORT=DISPLAY, and RELEVANCY requires
+// SEARCH=FUZZY and a FUZZY criterion. REVERSE applies to exactly one key.
 type SortMailbox interface {
 	Sort(ctx context.Context, query *SearchQuery, keys []imap.SortKeySpec, options *SortOptions) ([]imap.UID, error)
 }
@@ -231,6 +234,9 @@ func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
 			}
 		}
 		spec.Key = imap.SortKey(strings.ToUpper(key))
+		if _, known := sortKeyGates[spec.Key]; !known {
+			return fmt.Errorf("unknown SORT key %q", key)
+		}
 		args.keys = append(args.keys, spec)
 		return nil
 	}); err != nil {
@@ -286,8 +292,20 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid SORT arguments")
 	}
+	if err := requireUIDSearchCriteria(c, args.criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	if err := requireCapability(c, "SORT"); err != nil {
 		return c.writeBad(command.tag, err.Error())
+	}
+	for _, key := range args.keys {
+		gate, known := sortKeyGates[key.Key]
+		if !known || !gate(&c.state, advertisedCapabilities(c)) {
+			return c.writeBad(command.tag, fmt.Sprintf("SORT key %s is not available", key.Key))
+		}
 	}
 	if err := validateSortReturnOptions(c, args.returnOptions); err != nil {
 		return c.writeBad(command.tag, err.Error())
@@ -308,9 +326,14 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	for _, key := range args.keys {
+		if key.Key == imap.SortKeyRelevancy && !searchHasFuzzy(criteria) {
+			return c.writeBad(command.tag, "SORT RELEVANCY requires FUZZY")
+		}
+	}
 	usesModSeq := sortHasModSeqCriterion(criteria)
-	if err := validateSelectedCondStoreUse(c, usesModSeq, "SORT MODSEQ"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := validateSelectedCondStoreUse(ctx, c, usesModSeq, "SORT MODSEQ"); err != nil {
+		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids, c.state.selected.savedSearch)
 	uids, err := mailbox.Sort(ctx, query, args.keys, &SortOptions{Charset: args.charset})
@@ -361,6 +384,12 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	if args == nil || args.criteria == nil {
 		return c.writeBad(command.tag, "invalid THREAD arguments")
 	}
+	if err := requireUIDSearchCriteria(c, args.criteria); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
+	if err := requireUIDCommand(c, command); err != nil {
+		return writeBackendError(c, command.tag, command.name, err)
+	}
 	// Gate on the algorithm the client actually asked for. The old bare-THREAD
 	// gate let a request for an unimplemented algorithm through to the backend,
 	// which could only answer with an error the client had no way to anticipate
@@ -383,8 +412,8 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids, c.state.selected.savedSearch)
-	if err := validateSelectedCondStoreUse(c, searchHasModSeq(criteria), "THREAD MODSEQ"); err != nil {
-		return c.writeBad(command.tag, err.Error())
+	if err := validateSelectedCondStoreUse(ctx, c, searchHasModSeq(criteria), "THREAD MODSEQ"); err != nil {
+		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	roots, err := mailbox.Thread(ctx, query, args.algorithm, &ThreadOptions{Charset: args.charset})
 	if err != nil {

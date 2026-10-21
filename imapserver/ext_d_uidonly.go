@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapcodec"
@@ -48,7 +49,18 @@ func requireUIDCommand(c *conn, command *queuedCommand) error {
 	if !uidOnlyEnabled(c) || commandUsesUIDs(command) {
 		return nil
 	}
-	return fmt.Errorf("%s requires the UID form once UIDONLY is enabled", command.name)
+	return uidRequiredError(command.name + " requires the UID form once UIDONLY is enabled")
+}
+
+func requireUIDSearchCriteria(c *conn, criteria imap.SearchCriteria) error {
+	if uidOnlyEnabled(c) && searchMentionsSeqNum(criteria) {
+		return uidRequiredError("message sequence numbers are not allowed once UIDONLY is enabled")
+	}
+	return nil
+}
+
+func uidRequiredError(text string) error {
+	return &imap.Error{Type: imap.ErrorTypeBad, Code: imap.CodeUIDRequired, Text: text}
 }
 
 // writeFetchLikeResponse writes one FETCH response in the shape the session's
@@ -81,7 +93,7 @@ func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
 	trimmed := *data
 	trimmed.Items = make(map[imap.FetchDataKey][]imap.FetchData, len(data.Items))
 	for key, values := range data.Items {
-		if imap.FetchDataKey(imap.FetchItemUID) == key {
+		if strings.EqualFold(string(key), string(imap.FetchItemUID)) {
 			continue
 		}
 		trimmed.Items[key] = values
@@ -105,7 +117,7 @@ func ensureFetchFlagsAdvertised(c *conn, data *imap.FetchMessageData) error {
 	}
 	flags := append([]imap.Flag(nil), c.state.selected.flags...)
 	changed := false
-	for _, value := range data.Items[imap.FetchDataKey(imap.FetchItemFlags)] {
+	for _, value := range imapcodec.FetchValues(data, imap.FetchDataKey(imap.FetchItemFlags)) {
 		fetchFlags, ok := value.(imap.FetchDataFlags)
 		if !ok {
 			continue

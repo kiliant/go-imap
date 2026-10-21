@@ -19,8 +19,23 @@ import (
 // QResyncMailbox is the optional resynchronisation report of QRESYNC. A selected
 // mailbox implements it when the backend witnesses QRESYNC.
 //
-// The framework calls Resync once, immediately after a SELECT carrying the
-// QRESYNC parameter, before it writes the selection's untagged responses.
+// The framework calls Resync after a QRESYNC SELECT or EXAMINE has written
+// the ordinary selection responses, only when the client's UIDVALIDITY matches
+// the snapshot's. It also calls Resync for UID FETCH with CHANGEDSINCE and
+// VANISHED when the requested UID set is nonempty, before any FETCH responses.
+// Calls may repeat throughout a selection.
+// For UID FETCH, params carries the selection's UIDVALIDITY, CHANGEDSINCE as
+// ModSeq, and the full requested UID set as KnownUIDs, including expunged UIDs;
+// sequence-match data is absent. PARTIAL does not restrict this history report.
+// Only the Vanished result is used; Fetch separately reports current changes.
+// Changes published after a snapshot still arrive through the selection's Updater.
+//
+// An error from Resync, or from the Fetch that reports a SELECT/EXAMINE Changed
+// set, fails that selection command. The framework releases the selection before
+// answering: the Updater is closed and Unselect is called once, on a fresh bounded
+// context. A UID FETCH error uses ordinary backend-error mapping and retains the
+// selection. Resync always receives the command's context and must honor its
+// cancellation and deadline.
 type QResyncMailbox interface {
 	// Resync reports the messages removed since the client's claimed
 	// modification sequence. Changed messages are reported by the framework
@@ -245,6 +260,19 @@ func writeQResyncChanged(ctx context.Context, c *conn, changed imap.UIDSet) erro
 	if changed.IsEmpty() || changed.Dynamic() {
 		return nil
 	}
+	// The report describes the backend's current state, which may already
+	// include messages added after the snapshot. Those have no sequence number
+	// yet; the selection's updates announce them, with their flags.
+	var known []imap.UID
+	for _, uid := range c.state.selected.uids {
+		if changed.Contains(uid) {
+			known = append(known, uid)
+		}
+	}
+	if len(known) == 0 {
+		return nil
+	}
+	changed = imap.UIDSetNum(known...)
 	items := applyCondStoreFetchItems(c, []imap.FetchItem{imap.FetchItemFlags, imap.FetchItemUID})
 	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
 		mapped, err := mapFetchResponse(c.state.selected, data, true)
@@ -259,4 +287,65 @@ func writeQResyncChanged(ctx context.Context, c *conn, changed imap.UIDSet) erro
 	err := c.state.selected.mailbox.Fetch(ctx, writer, changed, &FetchOptions{Items: items})
 	writer.core.close()
 	return err
+}
+
+// writeFetchVanished reports historical removals over the full requested UID
+// set, before FETCH responses (RFC 7162 section 3.2.6). Resolving only current
+// messages, or applying PARTIAL here, would lose the expunged UIDs being sought.
+func writeFetchVanished(ctx context.Context, c *conn, args *fetchArgs) error {
+	requested, err := requestedResyncUIDs(c.state.selected, args.set)
+	if err != nil {
+		return err
+	}
+	if requested.IsEmpty() {
+		// An empty KnownUIDs means unrestricted to Resync. An empty saved
+		// result must instead produce no historical removals.
+		return nil
+	}
+	mailbox, ok := c.state.selected.mailbox.(QResyncMailbox)
+	if !ok {
+		return fmt.Errorf("imapserver: backend advertises QRESYNC but the selected mailbox does not implement QResyncMailbox")
+	}
+	result, err := mailbox.Resync(ctx, &QResyncSelect{
+		UIDValidity: c.state.selected.uidValidity,
+		ModSeq:      args.changedSince,
+		KnownUIDs:   requested,
+	}, nil)
+	if err != nil || result == nil {
+		return err
+	}
+	return writeVanished(c, result.Vanished, true)
+}
+
+// requestedResyncUIDs binds wildcards to the current selection without
+// intersecting with its existing UIDs. Static ranges and saved UIDs retain
+// messages that no longer exist. No range is expanded into individual UIDs.
+func requestedResyncUIDs(selected *selectedState, raw string) (imap.UIDSet, error) {
+	if raw == searchResultMarker {
+		return selected.savedSearch.Normalized(), nil
+	}
+	set, err := imap.ParseUIDSet(raw)
+	if err != nil {
+		return nil, err
+	}
+	// In an empty mailbox '*' denotes UIDNEXT, which has never been
+	// assigned. Widening that endpoint to the UID maximum therefore selects
+	// the same expunged messages, while a lone '*' still matches none.
+	maximum := ^imap.UID(0)
+	if len(selected.uids) != 0 {
+		maximum = selected.uids[len(selected.uids)-1]
+	}
+	var requested imap.UIDSet
+	for _, r := range set {
+		if r.Start == 0 || r.Stop == 0 {
+			if r.Start == 0 {
+				r.Start = maximum
+			}
+			if r.Stop == 0 {
+				r.Stop = maximum
+			}
+		}
+		requested = append(requested, r)
+	}
+	return requested.Normalized(), nil
 }

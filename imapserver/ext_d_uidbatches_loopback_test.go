@@ -88,7 +88,7 @@ func TestUIDBatchesWireStateAndErrors(t *testing.T) {
 	lines = request("UID FETCH $ (UID)", "OK")
 	fetched := 0
 	for _, line := range lines {
-		if strings.HasPrefix(line, "* UIDFETCH 2 ") || strings.HasPrefix(line, "* UIDFETCH 3 ") {
+		if strings.HasPrefix(line, "* 2 UIDFETCH ") || strings.HasPrefix(line, "* 3 UIDFETCH ") {
 			fetched++
 		}
 	}

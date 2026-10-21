@@ -272,6 +272,12 @@ asks for: it makes an unkeyed literal fail to compile. Adding one is itself a
 breaking change — it invalidates any unkeyed literal already written — so it can
 only be done before v1.0. After the tag, the doc comment is all we have.
 
+Comparability is also part of the compatibility promise. An exported struct
+that is comparable today must remain usable as a map key and with `==`.
+Do not add a slice, map or function field directly to it. A pointer to a richer
+policy or result value can carry those fields while preserving comparability.
+The struct-literal guard does not protect this property; apidiff checks it.
+
 **Rule.** Every exported struct in `package imap` carries the `_ struct{}`
 guard. Exceptions are listed here, each with a reason.
 
@@ -628,7 +634,7 @@ backend-backed capability after its ordinary witnesses succeed; true never
 grants support. The Session's filter answers alone when present, otherwise the
 Backend's filter is used. Without either, the existing witness rules are
 unchanged. The name is the upper-case descriptor token before a dynamic value
-is appended, such as `MESSAGELIMIT`; nil options select the defaults. A filter
+is appended, such as `APPENDLIMIT`; nil options select the defaults. A filter
 that only suppresses specific tokens should return true for all other names.
 
 Do not reinterpret false from `CapabilitySupport` as a veto of structural
@@ -1104,3 +1110,143 @@ signature or existing backend interface changes.
 For `message.Metadata`, nil private and shared per-entry clock maps select
 RFC 7162's single-clock model for `/flags/` MODSEQ queries. Non-nil maps preserve
 entry-specific behavior, including zero for an absent entry.
+
+### T33 publication and resource contracts — 2026-10-21 (#54, #196)
+
+Before the release window, `UpdateBatch` and `Updater.Push` explicitly require
+synchronous publication to every attached updater before a mutation returns,
+including commits followed by errors. STATUS/SELECT visibility is fenced behind
+publication, including external commits. This is a **BREAKING pre-v1 backend
+duty**, previously relied on by the framework but absent from its written
+contract. A backend using a late change feed must add a publication fence.
+`backendtest.Run` checks the call boundary for APPEND, COPY, STORE, EXPUNGE and MOVE
+against both the mutating selection and a bystander. Both reference backends
+already serialize publication with commit visibility. `WriteExpunge` reports a
+UID; the ordered update batch supplies its later wire response.
+
+`Limits.MaxQueuedUpdateBytes` bounds undrained backlog and permits the budget
+plus one atomic commit. `MaxQueuedUpdates` bounds undrained batches. Applied,
+protocol-deferred removals are compact UIDs bounded by the selected client view
+(`MaxSelectedMessages`), separately from backlog. These are pre-v1 changes to
+the bounds' meanings. `Limits.MaxStoreResponseBytes` is an additive guarded
+field, defaulting to 32 MiB, charging encoded bytes plus 1 KiB per retained STORE
+response. Exhaustion switches to a streaming FLAGS/MODSEQ refetch after mutation
+completion, preserving OK and MODIFIED. A failed post-commit stream sends BYE.
+
+FETCH item keys are case-insensitive in both framework and conformance suite;
+no canonical-spelling duty is imposed. RENAME INBOX requires strict removal-clock
+advancement only with QRESYNC, retaining CONDSTORE's monotonic-clock contract.
+UNAUTHENTICATE errors send BYE and close, as RFC 8437 requires; success removes
+COMPRESS after the OK's CRLF and gives Session.Close a fresh cleanup deadline.
+URLAUTH returns nil/nil for an unresolved URL; errors fail URLFETCH through its
+ordinary error mapping after completing the untagged response framing.
+
+The publication fence is also stated directly on `Session.Status` and
+`Session.Select`. Conformance exercises concurrent STATUS/SELECT reads while
+publication is held open, including writes without a framework origin. Truly
+external delivery and durable-commit error paths still need backend-specific
+tests; the generic suite does not manufacture storage events or failures.
+
+SORT keys join the explicit capability classification: unknown keys and repeated
+REVERSE are BAD, DISPLAYFROM/DISPLAYTO require SORT=DISPLAY, and RELEVANCY requires
+SEARCH=FUZZY and a FUZZY criterion after filter expansion. This tightening is
+marked BREAKING behaviour before the window. FILTERS and URL-PARTIAL withdrawals
+are enforced before backend calls. Duplicate case variants cannot bypass
+FetchWriter's existing exactly-one-UID rule.
+
+The URL-PARTIAL gate includes CATENATE: range URLs receive NO [BADURL] before
+resolution when the token is absent or filtered out. Later parts are drained
+without further resolution or a commit. This tightening is marked BREAKING
+behaviour before the release window. URLFETCH treats an unavailable range as
+an individually invalid URL (NIL), preserving other URLs and tagged OK.
+
+The compatible root client correction ends COMPRESS at successful UNAUTHENTICATE
+completion, preserving TLS and prefetched plaintext. The shared internal boundary
+reader accepts sync flush, final block, and sync flush followed by a final block.
+Ship the root correction before the server's compression teardown correction.
+
+### T33 fixed sweep corrections — 2026-10-21 (#54)
+
+Before the stability window, three **BREAKING behaviour** changes close S-02,
+S-03 and S-06: UIDONLY prohibits all sequence-number command forms, sequence-set
+search criteria at any depth and SELECT QRESYNC sequence-match data, returning
+BAD [UIDREQUIRED]; the framework rejects 8-bit headers in staged APPEND-family
+messages until UTF8=ACCEPT or IMAP4rev2 is enabled; and the obsolete UTF8=APPEND
+token and memory witness are removed. RFC 9755 does not extend IMAP4rev2, which
+already incorporates UTF-8 headers, so ENABLE IMAP4rev2 also permits them.
+CATENATE TEXT's grammar is an ordinary literal (RFC 4469); refusing the previously
+accepted literal8 TEXT syntax is also recorded as BREAKING behaviour. The BINARY
+witness permits whole-message literal8 APPEND, MULTIAPPEND and REPLACE.
+
+Compatible corrections share APPEND staging with REPLACE, prevent mutation
+before its command terminator, send BYE on its read timeouts, and repair
+REPLACE/LIST/LSUB framing. UID FETCH PARTIAL windows resolved, existing UIDs
+before CHANGEDSINCE (RFC 9394 section 3.4). Oversized LITERAL- APPEND-family
+literals return BAD [TOOBIG]. NO on a supported SAVE search empties the saved
+result; BAD preserves it. SORT's unsupported RETURN (SAVE) still receives BAD.
+
+Memory's CATENATE URL resolver now honors relative URLs, sections, UIDVALIDITY
+and byte ranges under the existing CatenateSession contract (#199). The
+backendtest relative-section and BINARY APPEND checks enforce existing witness
+obligations, adding no backend duty. BINARY mailboxes that cannot store binary
+content may return NO [UNKNOWN-CTE], as RFC 3516 allows. No exported API changes.
+
+A refused CATENATE URL normally produces NO [BADURL]. If the URL contains bytes
+that cannot be represented safely in a response code, the existing response
+encoder uses SERVERBUG instead; correcting that diagnostic is follow-up S-15.
+
+### T33 QRESYNC and UIDONLY follow-up — 2026-10-21 (#54)
+
+**BREAKING pre-v1 contract:** `QResyncMailbox.Resync` is no longer limited to
+one call for each QRESYNC SELECT/EXAMINE. The framework also calls it for each
+UID FETCH with CHANGEDSINCE and VANISHED for nonempty requested UID sets,
+permitting repeated history requests within one selection. `QResyncSelect`
+carries the selection's UIDVALIDITY,
+CHANGEDSINCE as ModSeq and the full requested UID set as KnownUIDs, with no
+sequence-match data. Only Vanished is used; the ordinary Fetch supplies changed
+messages. This expands the documented backend call contract without changing
+any exported method signature or adding an interface requirement.
+
+RFC 7162 section 3.2.6 requires VANISHED (EARLIER) before FETCH responses.
+Requested UIDs include messages no longer present; PARTIAL windows only the
+surviving FETCH results. Empty saved results never become unrestricted history
+requests. Invalid command forms, disabled/withdrawn QRESYNC and NOMODSEQ are
+refused before Resync. A failed UID FETCH retains its selection; the existing
+selection-release rule applies only to failed SELECT/EXAMINE resynchronisation.
+The QRESYNC-gated backendtest history check covers repeatable retained removals
+and KnownUIDs restriction, under this explicit pre-v1 contract correction.
+
+**BREAKING behaviour (pre-v1):** VANISHED now receives BAD outside UID FETCH
+or without advertised, enabled QRESYNC. Previously these forms were accepted
+and the modifier was ignored.
+
+**BREAKING behaviour (pre-v1):** UIDONLY SELECT/EXAMINE suppress the rev1
+UNSEEN response code because its value is a sequence number. STORE's UIDONLY
+check now precedes read-only refusal, preserving BAD [UIDREQUIRED] on EXAMINE;
+UID STORE still receives NO [READ-ONLY]. The latter correction rejects no new
+input. These changes close G-1–G-3 before the stability window.
+
+### T33 H follow-up corrections and compatibility decisions — 2026-10-21 (#54)
+
+The compatible H-1 correction retains UID FETCH VANISHED wildcard ranges on an
+empty selection. UIDNEXT has not been assigned; using the UID maximum as that
+endpoint selects the same historical removals, while a lone `*` matches none.
+The existing Resync contract already accepts these static UID ranges. The root
+codec's H-2 correction maps `UID $` to the existing saved-result criterion at
+any search depth. The SEARCHRES gate and UID normalization remain unchanged.
+Neither correction changes exported declarations or backend obligations; the
+root codec correction must ship before the server release.
+
+Preserve and document the accepted SEARCH return-option combinations in #206:
+repeated ALL is treated once; PARTIAL together with ALL reports both the full
+result and its requested window. Preserve memory's CATENATE authority aliases
+in #207: absolute hostnames and ports identify the same authenticated account.
+Absolute URLs without userinfo inherit that account; mechanism-only userinfo is
+refused. Other-user and URLAUTH-only URLs remain refused.
+No stricter parsing or authority rejection is introduced. A future opt-in policy
+may restrict these forms while retaining existing default acceptance.
+
+The comparability rule in section 7 applies to server types too. SERVER-DESIGN
+section 8 now distinguishes implemented Limits from application/backend budgets
+and outstanding design goals; it does not make every listed budget an implicit
+Server guarantee. These documentation corrections alter no limit or default.

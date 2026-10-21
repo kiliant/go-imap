@@ -20,6 +20,14 @@
 // docs/RELEASING.md for the two-module scheme and docs/API-STABILITY.md §10 for
 // the rules this package is held to in the meantime.
 //
+// # SEARCH return options
+//
+// Repeated ALL return options are accepted and treated as one ALL. PARTIAL
+// together with ALL is also accepted: ALL reports the complete result and
+// PARTIAL reports the requested window. These accepted forms remain supported
+// for compatibility; clients should follow the return-option constraints of
+// their negotiated extensions.
+//
 // # Writing a backend
 //
 // Start with [github.com/kiliant/go-imap/imapserver/backendtest], not with the
@@ -32,6 +40,24 @@
 // [github.com/kiliant/go-imap/imapserver/memory] is a complete worked example
 // and is supported, not a toy — it is the backend this project's own conformance
 // and interoperability suites run against.
+//
+// # Selected notifications
+//
+// The framework applies NOTIFY's selected-mailbox policy to every Updater
+// batch; backends continue to publish all changes. Suppressed additions stay
+// outside the client's sequence view, removals leave stable placeholders in
+// it, and the latest flags per UID are retained. A successful NOTIFY SET
+// reports accumulated changes, including when the new registration requests
+// NONE. Until they are reported, an explicit HIGHESTMODSEQ checkpoint keeps
+// later per-message MODSEQs from concealing those changes on resynchronisation.
+// Commands on a removed placeholder succeed without message data, as commands
+// on an expunged UID do. The client's own mutations bypass the selected policy;
+// an own addition first announces any earlier withheld additions in UID order.
+//
+// A backend's refusal of a replacement NOTIFY leaves the previous selected
+// policy in force. Its session-scoped updater has already been closed; the
+// next successful registration installs a new one. Validation refusals before
+// the backend call leave both the registration and selected policy untouched.
 //
 // # Backend errors
 //
@@ -46,6 +72,9 @@
 // "<operation> failed" text. The underlying error text is not sent to clients.
 // Wrapped errors retain these mappings; an *imap.Error takes precedence over a
 // cancellation error in the same chain.
+// UNAUTHENTICATE is the exception: an error sends BYE and ends the connection,
+// as required by RFC 8437. A failed update-completion FETCH likewise sends BYE
+// because the selected view can no longer be reported safely.
 package imapserver
 
 import (
@@ -89,6 +118,9 @@ type Session interface {
 	// Status answers STATUS for any mailbox, including the selected mailbox.
 	// Only the items options requests need be populated; the framework writes
 	// what it asked for and nothing else.
+	// Status must not expose a commit until its UpdateBatch has been pushed to
+	// every updater attached before that commit, including external writes.
+	// A change-feed backend must fence this read against publication.
 	Status(ctx context.Context, mailbox string, options *StatusOptions) (*imap.StatusData, error)
 	// Create makes a mailbox. Creating one that exists is an error, and
 	// [imap.CodeAlreadyExists] is the code that says so precisely enough for a
@@ -105,7 +137,7 @@ type Session interface {
 	Delete(ctx context.Context, mailbox string, options *DeleteOptions) error
 	// Rename moves a mailbox, and by RFC 3501 §6.3.5 its inferiors with it.
 	// Renaming INBOX is the documented special case: its messages move to the
-	// new name and INBOX itself remains.
+	// new name, and INBOX itself remains, empty, with its inferiors.
 	Rename(ctx context.Context, oldName, newName string, options *RenameOptions) error
 	// Subscribe adds a mailbox to the subscription list. RFC 3501 §6.3.6 allows
 	// subscribing to a name that does not exist, so this is not required to
@@ -129,11 +161,14 @@ type Session interface {
 	Append(ctx context.Context, mailbox string, literal io.Reader, options *AppendOptions) (*imap.AppendData, error)
 	// Select captures Snapshot and attaches updater to that exact state atomically.
 	// If it attaches updater and then fails, it must detach before returning.
+	// A snapshot must not expose a commit before publication to the previously
+	// attached updaters, including external commits; see UpdateBatch.
 	Select(ctx context.Context, mailbox string, updater *Updater, options *SelectOptions) (*SelectResult, error)
 	// Close releases everything the session holds. The framework calls it once,
 	// when the connection ends, including after an error and after
 	// UNAUTHENTICATE. No other method is called afterwards, and the session is
-	// discarded even if Close returns an error.
+	// discarded even if Close returns an error. Cleanup errors go to
+	// Options.OnError; a successful UNAUTHENTICATE still answers OK.
 	Close(ctx context.Context, options *SessionCloseOptions) error
 }
 
@@ -180,7 +215,9 @@ type SelectedMailbox interface {
 	//
 	// A conditional store (UNCHANGEDSINCE) does not arrive here; it goes to
 	// [CondStoreMailbox.StoreCondStore], so this method never implements the
-	// modification-sequence comparison.
+	// modification-sequence comparison. Store need not include MODSEQ in its
+	// output: when required by CONDSTORE, the framework fetches missing values
+	// through Fetch before writing the response.
 	Store(ctx context.Context, writer *FetchWriter, uids imap.UIDSet, flags *StoreFlags, options *StoreOptions) error
 	// Copy copies messages to another mailbox. The returned CopyData carries
 	// the source and destination UIDs when the backend can supply them, which
@@ -202,7 +239,11 @@ type SelectedMailbox interface {
 	Expunge(ctx context.Context, writer *ExpungeWriter, uids *imap.UIDSet, options *ExpungeOptions) error
 	// Unselect releases the selection. The framework calls it once per
 	// selection — on CLOSE, UNSELECT, a replacing SELECT, or connection
-	// teardown — after which this handle is not used again.
+	// teardown or UNAUTHENTICATE — after which this handle is not used again,
+	// even on error. The updater is closed first. Cleanup uses a fresh
+	// context bounded by Limits.CommandTimeout, and errors go to
+	// Options.OnError. A completed CLOSE, UNSELECT or UNAUTHENTICATE answers
+	// OK; replacing SELECT continues with the new selection.
 	Unselect(ctx context.Context, options *UnselectOptions) error
 }
 
@@ -325,7 +366,6 @@ type MoveMailbox interface {
 //	LIST-MYRIGHTS | gate | ACLSession | AS | Supply MYRIGHTS for each listed mailbox; requires ACL.
 //	LOGIN-REFERRALS | gate | CapabilitySupport | N | Support login referral response codes.
 //	MAILBOX-REFERRALS | gate | CapabilitySupport | AS | Support mailbox referral response codes.
-//	MESSAGELIMIT | gate | MessageLimitSession | AS | Return message-count limits and honor advertised limits.
 //	METADATA | gate | MetadataSession | AS | Get and set mailbox and server metadata with depth/size semantics.
 //	METADATA-SERVER | gate | MetadataSession | AS | Get and set server-scope metadata.
 //	MOVE | gate | CapabilitySupport + MoveMailbox | AS | Provide atomic MOVE with the selected mailbox interface.
@@ -345,7 +385,6 @@ type MoveMailbox interface {
 //	REPLACE | gate | CapabilitySupport + ReplaceMailbox | AS | Provide atomic selected-message replacement into the destination mailbox.
 //	SASL-IR | gate | Backend | N | Have an authentication backend; framework handles initial-response syntax.
 //	SAVEDATE | gate | CapabilitySupport | AS | Return save dates and evaluate saved-date SEARCH criteria.
-//	SAVELIMIT | gate | MessageLimitSession | AS | Return search-result saving limits and honor advertised limits.
 //	SEARCH=FUZZY | gate | CapabilitySupport | AS | Evaluate FUZZY criteria using the supported matching policy.
 //	SORT | gate | CapabilitySupport + SortMailbox | AS | Evaluate SORT keys on the selected mailbox.
 //	SORT=DISPLAY | gate | CapabilitySupport + SortMailbox | AS | Evaluate DISPLAYFROM/DISPLAYTO sorting; requires SORT.
@@ -358,7 +397,6 @@ type MoveMailbox interface {
 //	UNAUTHENTICATE | gate | UnauthenticateSession | AS | Release authenticated state and reset the session.
 //	URL-PARTIAL | gate | CapabilitySupport + URLAuthSession | AS | Resolve URL byte ranges; requires URLAUTH.
 //	URLAUTH | gate | URLAuthSession | AS | Generate/reset authorization tokens and return owned URLFETCH bodies.
-//	UTF8=APPEND | gate | CapabilitySupport | AS | Accept messages with UTF-8 headers; requires UTF8=ACCEPT.
 //	WITHIN | gate | CapabilitySupport | AS | Evaluate OLDER/YOUNGER criteria against internal dates.
 //
 // Backend implementations must make SupportsCapability safe for concurrent use.
@@ -380,8 +418,8 @@ type CapabilitySupportOptions struct{ _ struct{} }
 // CapabilitySupport retains its existing meaning, including for structural
 // capabilities it does not witness.
 //
-// name is the upper-case descriptor token, before backend-supplied values are
-// appended (for example "MESSAGELIMIT"). Return true for tokens that should
+// name is the upper-case descriptor token, such as "ACL" or "QUOTA=RES-STORAGE";
+// a token whose advertisement carries a value is named without it. Return true for tokens that should
 // remain available, including names the filter does not intend to suppress.
 // False also withdraws dependent capabilities and an IMAP4REV2 umbrella that
 // incorporates the withdrawn behaviour. Framework-only tokens such as
@@ -587,8 +625,9 @@ type SelectOptions struct {
 }
 
 // QResyncSelect is the client's claimed synchronisation state, supplied with
-// SELECT or EXAMINE under QRESYNC. A backend answers it by reporting the
-// messages that changed or vanished since ModSeq.
+// SELECT or EXAMINE under QRESYNC, or constructed by the framework for
+// UID FETCH with CHANGEDSINCE and VANISHED. A backend answers it by reporting
+// the messages that changed or vanished since ModSeq. See [QResyncMailbox].
 //
 // UIDValidity is the value the client last saw. When it does not match the
 // mailbox's current UIDVALIDITY the client's state is stale and the backend
@@ -670,7 +709,13 @@ type StoreFlags struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type StoreOptions struct {
 	MutationOptions
-	// Silent suppresses the command's FETCH responses, but not state updates.
+	// Silent reports the client's .SILENT suffix. It suppresses the new FLAGS
+	// the command would return, never the mutation or the updates other
+	// sessions see. The framework applies it: a backend may write nothing, or
+	// what it writes without Silent. A conditional store (HasUnchangedSince)
+	// still reports each stored message's MODSEQ, as RFC 7162 section 3.1.3
+	// requires; the framework keeps it from what the backend wrote and
+	// fetches it for any stored message the backend did not report.
 	Silent bool
 	// UnchangedSince makes the store conditional: a message whose modification
 	// sequence exceeds this value must be left unmodified. Backends report the
@@ -742,7 +787,8 @@ type SelectSnapshot struct {
 }
 
 // MailboxRevision is an opaque, comparable backend revision. Backends should
-// use their natural transaction identifier when possible.
+// use their natural transaction identifier when possible. The empty value is
+// valid; revisions need only be comparable and form the Before/After chain.
 type MailboxRevision string
 
 // ChangeToken identifies the currently executing mutating command. Zero means
@@ -750,6 +796,14 @@ type MailboxRevision string
 type ChangeToken uint64
 
 // UpdateBatch is every observable change from one atomic backend commit.
+// Publication is synchronous: before a mutating call returns, the backend
+// must Push its committed changes, with the supplied MutationOptions.Origin,
+// to every attached updater. This also applies to commits followed by an error.
+// Status and Select must not expose a commit until its batch has been pushed
+// to every updater attached before that commit, including external changes.
+// A backend using an asynchronous change feed must fence these calls against
+// publication. Push never waits for the framework's event loop, so publication
+// can run under the same serialization as the commit and snapshot reads.
 // Changes are applied in slice order and batches are never merged.
 // Removal announcements may be delayed where the protocol forbids them;
 // later additions and flags still use the client's unrenumbered sequence view.
@@ -805,6 +859,10 @@ type UpdateFlags struct {
 	// Flags is the message's complete new flag set.
 	Flags []imap.Flag
 	// ModSeq is the new modification sequence, or zero when unavailable.
+	// After CONDSTORE is enabled, the framework fetches current FLAGS and
+	// MODSEQ together when this value is zero.
+	// If that FETCH fails, the framework reports the error to Options.OnError
+	// and ends the connection with BYE so the client can resynchronise.
 	ModSeq uint64
 	_      struct{}
 }
@@ -833,13 +891,17 @@ type UpdateExpunge struct {
 
 func (*UpdateExpunge) update() {}
 
-// UpdateVanished removes one or more UIDs using QRESYNC VANISHED semantics.
-// Earlier and non-Earlier values are never coalesced together.
+// UpdateVanished removes one or more UIDs from the live selection. Unknown
+// UIDs and additions not yet announced to the client produce no response.
+// The framework projects removals to EXPUNGE or VANISHED according to the
+// session's enabled features; a backend need not track QRESYNC negotiation.
 // Construct with keyed fields only; fields may be added in a future release.
 type UpdateVanished struct {
 	// UIDs is a concrete, non-dynamic set of removed UIDs.
 	UIDs imap.UIDSet
-	// Earlier selects the VANISHED (EARLIER) wire form.
+	// Earlier is retained for source compatibility but ignored in live update
+	// batches. EARLIER is legal only in SELECT/FETCH resynchronisation reports;
+	// use QResyncResult.Vanished for those.
 	Earlier bool
 	_       struct{}
 }
@@ -849,7 +911,8 @@ func (*UpdateVanished) update() {}
 // SearchResult is the UID-keyed result returned by SelectedMailbox.Search.
 // Construct with keyed fields only; fields may be added in a future release.
 type SearchResult struct {
-	// UIDs are the matching message identifiers.
+	// UIDs are the matching message identifiers, without duplicates. Their
+	// order is unrestricted.
 	UIDs []imap.UID
 	// ModSeq is the highest modification sequence among the matching messages,
 	// or zero when the backend does not track them. The framework reports it
@@ -1128,6 +1191,7 @@ func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 // framework ignores FetchMessageData.SeqNum and uses that UID to derive the
 // response sequence number from its atomic selection map. It removes the
 // internally requested UID again when the client did not request it.
+// Item keys are case-insensitive, including UID, FLAGS and extension items.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
 	// WriteFunc receives streamed results when the writer is constructed by an
@@ -1184,8 +1248,10 @@ type ExpungeWriter struct {
 // Construct with keyed fields only; fields may be added in a future release.
 type WriteExpungeOptions struct{ _ struct{} }
 
-// WriteExpunge writes one removed UID. The framework converts it to the
-// sequence number current at this exact point in the response.
+// WriteExpunge reports one removed UID. The framework validates the UID here;
+// it emits removals from the synchronously published UpdateBatch after the
+// backend call returns, converting UIDs through the ordered revision chain.
+// It suppresses removal responses for CLOSE.
 //
 // options may be nil.
 func (w *ExpungeWriter) WriteExpunge(ctx context.Context, uid imap.UID, options *WriteExpungeOptions) error {
@@ -1215,6 +1281,9 @@ type Updater struct {
 // Push publishes one atomic batch. It returns ErrUpdaterClosed after the
 // selection ends and ErrUpdateOverflow when bounded update accounting forces
 // the connection to terminate.
+// Publish before the mutating call returns or Status/Select exposes the commit;
+// see UpdateBatch. An error from one updater does not prevent publication to
+// the other attached updaters or roll back an already committed change.
 func (u *Updater) Push(batch *UpdateBatch) error {
 	if u == nil {
 		return ErrUpdaterClosed

@@ -380,31 +380,6 @@ func (s *session) Unauthenticate(ctx context.Context, _ *imapserver.Unauthentica
 	return ctx.Err()
 }
 
-// MessageLimits implements [imapserver.MessageLimitSession].
-//
-// RFC 9738 puts the value inside the advertised capability token. Presence is
-// carried by the Has fields, so a backend can enforce one limit and not the
-// other, and a genuine limit of zero stays expressible.
-func (s *session) MessageLimits(ctx context.Context, _ *imapserver.MessageLimitOptions) (*imapserver.MessageLimits, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return &imapserver.MessageLimits{
-		MessageLimit:    memoryMessageLimit,
-		HasMessageLimit: true,
-		SaveLimit:       memorySaveLimit,
-		HasSaveLimit:    true,
-	}, nil
-}
-
-// The reference backend keeps everything in memory, so these are modest on
-// purpose: a limit a test can actually reach is worth more than a large one
-// that never fires.
-const (
-	memoryMessageLimit = 10_000
-	memorySaveLimit    = 1_000
-)
-
 // Notify implements [imapserver.NotifySession].
 //
 // The registration is recorded on the session and every mutating path publishes
@@ -424,12 +399,11 @@ func (s *session) Notify(ctx context.Context, updater *imapserver.SessionUpdater
 	if config == nil {
 		return nil
 	}
-	// STATUS on SET reports every watched mailbox immediately, so a client that
-	// has just registered does not have to poll once to learn where it stands.
-	// RFC 5465 section 6.
+	// RFC 5465 section 3.1 requests STATUS only for message events on
+	// unselected mailboxes. Selected events use the selection's updater.
 	if config.StatusOnSet {
 		for _, m := range s.account.mailboxes {
-			if !s.notifyWatchesLocked(m.name) {
+			if s.notifySelectedLocked(m) || !s.notifyWatchesLocked(m, notifySupportedEvents...) {
 				continue
 			}
 			_ = updater.Push(&imapserver.SessionUpdate{
@@ -442,14 +416,20 @@ func (s *session) Notify(ctx context.Context, updater *imapserver.SessionUpdater
 }
 
 // notifySupportedEvents are the events this backend actually publishes. The
-// metadata events of RFC 5464 are absent because nothing here changes metadata
-// in a way that would raise them.
+// mailbox and subscription events require LIST delivery, and metadata events
+// require METADATA delivery. SessionUpdate currently carries only STATUS.
 var notifySupportedEvents = []imap.NotifyEventName{
 	imap.NotifyEventMessageNew,
 	imap.NotifyEventMessageExpunge,
 	imap.NotifyEventFlagChange,
-	imap.NotifyEventMailboxName,
-	imap.NotifyEventSubscriptionChange,
+}
+
+func notifySupportedEventArgs() string {
+	names := make([]string, len(notifySupportedEvents))
+	for i, event := range notifySupportedEvents {
+		names[i] = string(event)
+	}
+	return "(" + strings.Join(names, " ") + ")"
 }
 
 // notifyServedSpecifiers are the watch groups notifyWatchesLocked can actually
@@ -498,17 +478,19 @@ func validateNotifyWatches(config *imapserver.NotifyConfig) error {
 		// request.
 		if !slices.Contains(notifyServedSpecifiers, watch.Specifier) {
 			return &imap.Error{
-				Type: imap.ErrorTypeNo,
-				Code: imap.CodeBadEvent,
-				Text: "unsupported NOTIFY mailbox specifier " + string(watch.Specifier),
+				Type:     imap.ErrorTypeNo,
+				Code:     imap.CodeBadEvent,
+				CodeArgs: notifySupportedEventArgs(),
+				Text:     "unsupported NOTIFY mailbox specifier " + string(watch.Specifier),
 			}
 		}
 		for _, event := range watch.Events {
 			if !slices.Contains(notifySupportedEvents, event) {
 				return &imap.Error{
-					Type: imap.ErrorTypeNo,
-					Code: imap.CodeBadEvent,
-					Text: "unsupported NOTIFY event " + string(event),
+					Type:     imap.ErrorTypeNo,
+					Code:     imap.CodeBadEvent,
+					CodeArgs: notifySupportedEventArgs(),
+					Text:     "unsupported NOTIFY event " + string(event),
 				}
 			}
 		}
@@ -516,33 +498,61 @@ func validateNotifyWatches(config *imapserver.NotifyConfig) error {
 	return nil
 }
 
-// notifyWatchesLocked reports whether the current registration covers a mailbox.
+// notifyWatchesLocked reports whether any group requests one of the events for
+// this mailbox. NONE groups add no events; they do not override other groups.
 //
 // The caller must hold the account lock.
-func (s *session) notifyWatchesLocked(name string) bool {
+func (s *session) notifyWatchesLocked(m *mailbox, events ...imap.NotifyEventName) bool {
 	if s.notifyConfig == nil {
 		return false
 	}
+	selected := s.notifySelectedLocked(m)
 	for _, group := range s.notifyConfig.Watches {
+		if !slices.ContainsFunc(events, func(event imap.NotifyEventName) bool {
+			return slices.Contains(group.Events, event)
+		}) {
+			continue
+		}
+		if selected {
+			// Only these selectors govern message events for the selection,
+			// even when other groups also name or match it (RFC 5465 section 6).
+			if group.Specifier == imap.NotifySelected || group.Specifier == imap.NotifySelectedDelayed {
+				return true
+			}
+			continue
+		}
 		switch group.Specifier {
-		case imap.NotifyPersonal, imap.NotifySubscribed:
+		case imap.NotifyPersonal:
 			return true
+		case imap.NotifySubscribed:
+			if m.subscribed {
+				return true
+			}
 		case imap.NotifyInboxes:
-			if mailboxKey(name) == "INBOX" {
+			if mailboxKey(m.name) == "INBOX" {
 				return true
 			}
 		case imap.NotifyMailboxes:
 			for _, watched := range group.Names {
-				if mailboxKey(watched) == mailboxKey(name) {
+				if mailboxKey(watched) == mailboxKey(m.name) {
 					return true
 				}
 			}
 		case imap.NotifySubtree:
 			for _, watched := range group.Names {
-				if name == watched || strings.HasPrefix(name, watched+"/") {
+				if mailboxKey(m.name) == mailboxKey(watched) || strings.HasPrefix(m.name, watched+"/") {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+func (s *session) notifySelectedLocked(m *mailbox) bool {
+	for selection := range s.selections {
+		if !selection.closed && selection.mailbox == m {
+			return true
 		}
 	}
 	return false
@@ -552,9 +562,9 @@ func (s *session) notifyWatchesLocked(name string) bool {
 // it. It is called from the paths that change a mailbox.
 //
 // The caller must hold the account lock.
-func notifyMailboxLocked(a *account, m *mailbox) {
-	for s := range a.sessions {
-		if s.notify == nil || !s.notifyWatchesLocked(m.name) {
+func notifyMailboxLocked(m *mailbox, events ...imap.NotifyEventName) {
+	for s := range m.account.sessions {
+		if s.notify == nil || s.notifySelectedLocked(m) || !s.notifyWatchesLocked(m, events...) {
 			continue
 		}
 		_ = s.notify.Push(&imapserver.SessionUpdate{
@@ -566,7 +576,6 @@ func notifyMailboxLocked(a *account, m *mailbox) {
 
 var (
 	_ imapserver.NotifySession         = (*session)(nil)
-	_ imapserver.MessageLimitSession   = (*session)(nil)
 	_ imapserver.QuotaSession          = (*session)(nil)
 	_ imapserver.QuotaSetSession       = (*session)(nil)
 	_ imapserver.ACLSession            = (*session)(nil)

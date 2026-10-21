@@ -3,87 +3,22 @@ package imapserver
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
 )
 
 // The LIST return options of LIST-MYRIGHTS (RFC 8440) and LIST-METADATA
-// (RFC 9590), and the advertisement-only limits of MESSAGELIMIT= and SAVELIMIT=
-// (RFC 9738).
+// (RFC 9590).
+//
+// RFC 9738's MESSAGELIMIT= and SAVELIMIT= were removed before v1: they limit
+// the messages one command processes, which the framework must enforce, and
+// the earlier advertisement-only interface described different semantics.
 //
 // The two LIST return options are answered the same way LIST-STATUS is: the
 // framework issues the per-mailbox query after Session.List has returned, so no
 // backend learns that LIST grew an option. What differs is only which optional
 // interface supplies the answer.
-
-// Limits advertised as capability values. RFC 9738 section 3 spells them
-// "MESSAGELIMIT=<n>" and "SAVELIMIT=<n>", where the value is part of the token.
-const (
-	messageLimitPrefix = "MESSAGELIMIT="
-	saveLimitPrefix    = "SAVELIMIT="
-)
-
-// MessageLimitSession is the optional RFC 9738 support: the largest number of
-// messages the server will accept into one mailbox, and the largest it will
-// keep. A backend implements it when it enforces such a limit.
-//
-// A limit is absent when its Has field on [MessageLimits] is unset, not when its
-// value is zero: RFC 9738 lets a server advertise one limit without the other,
-// and MESSAGELIMIT=0 is a legal advertisement meaning nothing may be stored.
-// Reading zero as "unlimited" would make that server indistinguishable from one
-// with no limit at all, and this doc previously said exactly that.
-type MessageLimitSession interface {
-	MessageLimits(ctx context.Context, options *MessageLimitOptions) (*MessageLimits, error)
-}
-
-// MessageLimits is a backend's RFC 9738 limits.
-//
-// Each limit carries its presence separately rather than using zero as an
-// absence, because RFC 9738 lets a server advertise one limit without the other
-// and a limit of zero is a legal — if unwelcoming — value. The "…LIMIT=" family
-// already has more than one member in this library (RFC 7889's APPENDLIMIT), so
-// a third is a field here rather than another return value.
-// Construct with keyed fields only; fields may be added in a future release.
-type MessageLimits struct {
-	// MessageLimit is the largest number of messages the server accepts into
-	// one mailbox, valid only when HasMessageLimit is set.
-	MessageLimit uint32
-	// HasMessageLimit reports whether the backend enforces a message limit.
-	HasMessageLimit bool
-	// SaveLimit is the largest number the server retains, valid only when
-	// HasSaveLimit is set.
-	SaveLimit uint32
-	// HasSaveLimit reports whether the backend enforces a save limit.
-	HasSaveLimit bool
-	_            struct{}
-}
-
-// MessageLimitOptions configures the limit query. A nil pointer selects the
-// defaults.
-// Construct with keyed fields only; fields may be added in a future release.
-type MessageLimitOptions struct{ _ struct{} }
-
-func init() {
-	registerCapabilities(
-		// The advertised token carries the value, so the descriptor's Name is a
-		// prefix completed at derivation time. deriveCapabilities has no notion
-		// of a dynamic name, so the value is appended by the Available hook
-		// writing it into the session's cache and the name being rewritten in
-		// capabilityValueOverrides.
-		capabilityDescriptor{
-			Name:            "MESSAGELIMIT",
-			States:          stateMaskAuthenticated | stateMaskSelected,
-			RequiresBackend: sessionImplements[MessageLimitSession](),
-		},
-		capabilityDescriptor{
-			Name:            "SAVELIMIT",
-			States:          stateMaskAuthenticated | stateMaskSelected,
-			RequiresBackend: sessionImplements[MessageLimitSession](),
-		},
-	)
-}
 
 // listReturnMyRights and listReturnMetadata are the two return options this
 // file adds. RFC 8440 section 3, RFC 9590 section 3.
@@ -179,67 +114,6 @@ func parseListMetadataEntries(decoder *imapwire.Decoder, args *listArgs) error {
 		return decoder.ExpectList(readEntry)
 	}
 	return readEntry()
-}
-
-// capabilityValueOverrides rewrites the parameterised capability tokens whose
-// advertised value comes from the backend.
-//
-// RFC 9738 puts the limit inside the token, so "MESSAGELIMIT" alone is not a
-// legal advertisement. The descriptor table decides *whether* to advertise;
-// this decides what the token says.
-func capabilityValueOverrides(state *sessionState, names []string) []string {
-	if state == nil || state.limits == nil {
-		return names
-	}
-	limits := state.limits
-	rewritten := make([]string, 0, len(names))
-	for _, name := range names {
-		switch name {
-		case "MESSAGELIMIT":
-			// A backend may enforce one limit and not the other, so each token
-			// is advertised only when its own limit is present.
-			if !limits.HasMessageLimit {
-				continue
-			}
-			rewritten = append(rewritten, messageLimitPrefix+strconv.FormatUint(uint64(limits.MessageLimit), 10))
-		case "SAVELIMIT":
-			if !limits.HasSaveLimit {
-				continue
-			}
-			rewritten = append(rewritten, saveLimitPrefix+strconv.FormatUint(uint64(limits.SaveLimit), 10))
-		default:
-			rewritten = append(rewritten, name)
-		}
-	}
-	return rewritten
-}
-
-// resolveMessageLimits asks the backend for its RFC 9738 limits once, at
-// authentication.
-//
-// It deliberately does not happen during capability derivation. Every extension
-// command now calls requireCapability, which derives capabilities, so a backend
-// call from there would put an uncancellable round trip behind LIST, GETQUOTA
-// and everything else — with context.Background(), since derivation has no
-// context to pass. Resolving once against the authentication context keeps the
-// "context first on every blocking call" rule intact.
-func resolveMessageLimits(ctx context.Context, state *sessionState, backend Backend) {
-	if state == nil || state.session == nil {
-		return
-	}
-	session, ok := state.session.(MessageLimitSession)
-	if !ok {
-		return
-	}
-	if !backendAllowsCapability(ctx, state, backend, "MESSAGELIMIT") &&
-		!backendAllowsCapability(ctx, state, backend, "SAVELIMIT") {
-		return
-	}
-	limits, err := session.MessageLimits(ctx, nil)
-	if err != nil || limits == nil {
-		return
-	}
-	state.limits = limits
 }
 
 // validateListExtensionReturnOptions accepts the two return options this file

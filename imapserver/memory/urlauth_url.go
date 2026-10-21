@@ -113,7 +113,12 @@ func parseURLAuthURL(raw string, full bool, now time.Time) (*urlAuthURL, bool) {
 	if err != nil {
 		return nil, false
 	}
-	path, ok := strings.CutPrefix(resource.EscapedPath(), "/")
+	return parseMessageURLPath(resource.EscapedPath(), result)
+}
+
+// Shared stored-byte section and range parsing; MAC input remains unchanged.
+func parseMessageURLPath(escapedPath string, result *urlAuthURL) (*urlAuthURL, bool) {
+	path, ok := strings.CutPrefix(escapedPath, "/")
 	if !ok {
 		return nil, false
 	}

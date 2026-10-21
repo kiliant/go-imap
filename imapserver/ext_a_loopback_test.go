@@ -205,7 +205,7 @@ func TestLoopbackListReturnOptionsAreOptIn(t *testing.T) {
 	_, clientSide, reader := newGroupARawSession(t, ctx)
 
 	for i, mailbox := range []string{"Parent", "Parent/Child"} {
-		tag := "A3" + string(rune('a'+i))
+		tag := "A3" + string(rune('a'+i%26))
 		writeRawCommand(t, clientSide, tag+" CREATE "+mailbox+"\r\n")
 		if _, tagged := collectUntilTag(t, reader, tag+" "); !strings.HasPrefix(tagged, tag+" OK") {
 			t.Fatalf("CREATE %s failed: %q", mailbox, tagged)
@@ -357,7 +357,7 @@ func newGroupAClient(t *testing.T, ctx context.Context) (*imapclient.Client, <-c
 func seedMessages(t *testing.T, ctx context.Context, client *imapclient.Client, count int) {
 	t.Helper()
 	for i := range count {
-		body := "Subject: seeded " + string(rune('a'+i)) + "\r\n\r\nbody\r\n"
+		body := "Subject: seeded " + string(rune('a'+i%26)) + "\r\n\r\nbody\r\n"
 		if _, err := client.Append(ctx, "INBOX", nil, int64(len(body)), strings.NewReader(body)).Wait(ctx); err != nil {
 			t.Fatal(err)
 		}

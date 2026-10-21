@@ -49,7 +49,9 @@ func runSearch(t *testing.T, harness *Harness) {
 		if err := empty.Mailbox.Unselect(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
-		var ids []imap.UID
+		// reported[i] is the UID APPEND reported for message i, or zero when it
+		// reported none. Without UIDPLUS each result is optional on its own.
+		var reported []imap.UID
 		var sizes []int
 		flags := [][]imap.Flag{{imap.FlagSeen, "$search-fixture"}, {imap.FlagFlagged}, {imap.FlagAnswered, imap.FlagDeleted, imap.FlagDraft}}
 		for i, subject := range []string{"Red apple", "Blue berry", "Red berry"} {
@@ -58,13 +60,30 @@ func runSearch(t *testing.T, harness *Harness) {
 			data, err := session.Append(t.Context(), name, strings.NewReader(raw), &imapserver.AppendOptions{
 				Flags: flags[i], InternalDate: date.AddDate(0, 0, 1),
 			})
-			if err != nil || data == nil || !data.HasUID || data.UID == 0 {
+			if err != nil {
 				t.Fatalf("seed SEARCH message: %#v, %v", data, err)
 			}
-			ids = append(ids, data.UID)
+			uid := imap.UID(0)
+			if data != nil && data.HasUID {
+				uid = data.UID
+			}
+			reported = append(reported, uid)
 			sizes = append(sizes, len(raw))
 		}
 		selected := selectMailbox(t, session, name, discardUpdater())
+		// The mailbox held nothing before, so the snapshot lists the seeded
+		// messages in append order and is the fixture's source of UIDs. A UID
+		// APPEND did report must name its own message; reporting is optional
+		// per call without UIDPLUS, so absent ones are not compared.
+		ids := selected.Snapshot.UIDs
+		if len(ids) != len(reported) {
+			t.Fatalf("seeded SEARCH mailbox lists %v, want %d messages", ids, len(reported))
+		}
+		for i, uid := range reported {
+			if uid != 0 && uid != ids[i] {
+				t.Fatalf("APPEND %d reported UID %d, but the snapshot lists %v", i, uid, ids)
+			}
+		}
 		defer func() {
 			if err := selected.Mailbox.Unselect(context.Background(), nil); err != nil {
 				t.Error(err)
@@ -158,8 +177,15 @@ func runSearch(t *testing.T, harness *Harness) {
 		}
 		var recent, old, newMessages, saved []imap.UID
 		writer := &imapserver.FetchWriter{WriteFunc: func(_ context.Context, data *imap.FetchMessageData) error {
-			uid := imap.UID(data.Items["UID"][0].(imap.FetchDataUID))
-			flags := []imap.Flag(data.Items["FLAGS"][0].(imap.FetchDataFlags))
+			uidValue, ok := fetchValue[imap.FetchDataUID](data, "UID")
+			if !ok || uidValue == 0 {
+				return fmt.Errorf("FETCH omitted a valid UID")
+			}
+			flagValue, ok := fetchValue[imap.FetchDataFlags](data, "FLAGS")
+			if !ok {
+				return fmt.Errorf("FETCH omitted valid FLAGS for UID %d", uidValue)
+			}
+			uid, flags := imap.UID(uidValue), []imap.Flag(flagValue)
 			if imap.ContainsFlag(flags, imap.FlagRecent) {
 				recent = append(recent, uid)
 				if !imap.ContainsFlag(flags, imap.FlagSeen) {
@@ -168,8 +194,8 @@ func runSearch(t *testing.T, harness *Harness) {
 			} else {
 				old = append(old, uid)
 			}
-			if values := data.Items["SAVEDATE"]; len(values) != 0 {
-				if date := values[0].(*imap.FetchDataSaveDate).Date; date != nil {
+			if value, ok := fetchValue[*imap.FetchDataSaveDate](data, "SAVEDATE"); ok && value != nil {
+				if date := value.Date; date != nil {
 					saved = append(saved, uid)
 					// Restrict each comparison to this UID, since other messages
 					// may have been appended on the same calendar day.
@@ -184,8 +210,8 @@ func runSearch(t *testing.T, harness *Harness) {
 					}
 				}
 			}
-			if values := data.Items["EMAILID"]; len(values) != 0 {
-				id := string(values[0].(imap.FetchDataObjectID))
+			if value, ok := fetchValue[imap.FetchDataObjectID](data, "EMAILID"); ok {
+				id := string(value)
 				if id == "" {
 					t.Error("OBJECTID witnessed but FETCH EMAILID is empty")
 				} else {
