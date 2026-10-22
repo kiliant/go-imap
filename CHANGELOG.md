@@ -27,6 +27,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+Requires root `v1.3.1`; `imapserver/go.mod` was bumped from `v1.2.0` for this
+release. Root `v1.3.0` supplies the UIDBATCHES vocabulary
+(`imap.UIDBatchesData`, `UIDBatch`, `UIDBatchIndexRange`, `CodeTooFew`,
+`CodeTooMany`) and the shared COMPRESS boundary handling the server imports. Root `v1.3.1` supplies the shared
+message-analysis corrections behind BINARY, SEARCH text matching and NUL-part
+re-encoding. This release carries deliberate pre-v1 breaking API,
+backend-contract and behaviour changes, each marked `BREAKING` below. It opens
+the `imapserver` v1 stability window and does not count toward it. (#54)
+
 #### Changed
 
 - **BREAKING behaviour (pre-v1):** SEARCH, SORT and MULTISEARCH reject reuse
@@ -344,8 +353,12 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   (#132)
 
 - **BREAKING:** `backendtest.Controls` hooks now end in dedicated guarded
-  options pointers. `ForceSelectFailureOptions.Enabled` replaces the positional
-  boolean; nil options restore normal selection. Document the callback shape
+  options pointers. `Controls.ForceSelectFailure` takes
+  `*ForceSelectFailureOptions`, whose `Enabled` replaces the positional
+  boolean; nil options restore normal selection.
+  `Controls.ForceUIDValidityChange` gains a trailing
+  `*ForceUIDValidityChangeOptions`, which has no fields yet; nil options select
+  the defaults. Document the callback shape
   for future controls and verify restoration in the conformance suite. (#129)
 
 - **Maildir format migration:** account state/journals migrate to version 3,
@@ -486,8 +499,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   paging and UIDONLY, and leave SEARCHRES unchanged. Invalid requests receive
   TOOFEW, TOOMANY or CLIENTBUG; identical repeats receive LIMIT until at least
   half a batch was added or expunged. Different sizes/ranges and reselections
-  are deliberately allowed. No exported API change. The server release must
-  require the published root release containing the shared vocabulary. (#51)
+  are deliberately allowed. No exported API change. (#51)
 - `imapserver.NewSearchQuery` and guarded `SearchQueryOptions` let backend
   authors construct validated UID-only queries for direct calls. The constructor
   copies criteria and UID sets and rejects unresolved, unknown or excessively

@@ -212,8 +212,8 @@ against both backends. See `INTEROP.md`.
 
 ## Post-M6 — reliability and event delivery
 
-The original milestones are complete. Root `v1.2.0` and server
-`imapserver/v0.3.0` are published; the two module lines remain independent.
+The original milestones are complete. Root `v1.3.1` and server
+`imapserver/v0.4.0` are published; the two module lines remain independent.
 Current execution status lives on the issue tracker, not in this plan.
 
 The next work is ordered deliberately:

@@ -52,12 +52,14 @@ required. No tag or release is created automatically by this plan.
 **The root module must be released before the server module can be, and this is
 not a preference.**
 
-The next root release must include the T33 `Client.Unauthenticate` COMPRESS
-correction and the shared `internal/imapdeflate` boundary reader. The server's
-corrected teardown requires that client behavior, and server production code
-imports the new helper. Before publishing that server release, pin its go.mod
-to the actual root release containing these changes and run the standalone and
-clean-consumer gates below.
+Root `v1.3.0` carries the T33 `Client.Unauthenticate` COMPRESS correction and
+the shared `internal/imapdeflate` boundary reader. The server's corrected
+teardown requires that client behavior, and server production code imports the
+helper. `imapserver/v0.4.0` therefore requires a root release no older than
+`v1.3.0`; it pins `v1.3.1`, which also carries the shared message-analysis
+corrections the server relies on. Each later server release pins the root
+release containing what it imports and runs the standalone and clean-consumer
+gates below.
 
 `imapserver`'s production code imports `internal/imapcodec`, `internal/imapmessage`
 and `internal/imapwire` from the root module. The first two landed after
