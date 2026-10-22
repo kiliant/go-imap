@@ -411,7 +411,9 @@ func contextRuns(list []imap.UID, pick func(imap.UID) bool, number func(imap.UID
 // place between its neighbours, and an entry that would enter between those
 // neighbours waits until it leaves: the context must stay in the requested
 // order (RFC 5267 section 4.3.2), and its order against the removed message is
-// no longer known.
+// no longer known. After a COMPARATOR change the neighbours no longer follow
+// the backend's order either, so nothing enters and the old order stays until
+// the removed message leaves. A reorder replaces the list from position one.
 func refreshSortContext(ctx context.Context, c *conn, held *searchContext, removed, before map[imap.UID]imap.SeqNum) (searchContextDelta, error) {
 	selected := c.state.selected
 	sorter, ok := selected.mailbox.(SortMailbox)

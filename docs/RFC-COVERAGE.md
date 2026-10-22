@@ -388,7 +388,9 @@ CONDSTORE `MODIFIED` on tagged OK.
     applied. A new message enters, as it is now, after its EXISTS. Only the
     waiting message's update waits, except that a sorted context adds a
     match it cannot order against a message whose removal is still withheld
-    only once that EXPUNGE is reported.
+    only once that EXPUNGE is reported; after a COMPARATOR change that
+    reorders the context's entries, that is every match, and the old order
+    stays until then.
     Selected FlagChange carries UID. NONE groups request no
     events, SUBSCRIBED uses current subscriptions, and selected mailboxes
     receive no STATUS. MessageNew fetch-attribute syntax is recognized but
@@ -538,8 +540,9 @@ break the client; full command support is best-effort.
     changes, the event loop refreshes it through the existing SEARCH or SORT
     operation, after mutations return. ADDTO and REMOVEFROM preserve the query's
     order and UID/sequence-number mode; sorted results insert and remove each
-    entry at its own position. An expunged match is removed before its
-    EXPUNGE; other changes follow the FETCH or EXISTS that caused them.
+    entry at its own position, and a reorder, as after a COMPARATOR change,
+    replaces the list from position one. An expunged match is removed before
+    its EXPUNGE; other changes follow the FETCH or EXISTS that caused them.
     CANCELUPDATE and selection teardown end the registration. Reusing an active
     UPDATE tag gets BAD; refresh failure sends untagged NO [NOUPDATE "tag"] and
     drops the context. No additional backend interface is required.

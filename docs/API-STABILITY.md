@@ -1325,4 +1325,7 @@ the tag.
 capability predicates (`SupportsCapability`, `AllowCapability`) receive a
 context bounded by `Limits.CommandTimeout`, as that field promises; they
 previously inherited the connection's lifetime. A drain's refresh pass shares
-one timeout, and a context whose refresh misses it ends with NOUPDATE.
+one timeout, and a context whose refresh misses it ends with NOUPDATE. A
+sorted context's refresh can call `Sort` a second time, with a UID-set query
+over the entries it keeps, to place them; that call shares the same timeout
+and adds no obligation beyond answering UID criteria.

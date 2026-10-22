@@ -379,6 +379,70 @@ func TestNotifySortedContextWaitsBesideWithheldRemoval(t *testing.T) {
 		`^\* ESEARCH \(TAG "C"\) ADDTO \(2 3\)$`)
 }
 
+// comparatorContext registers C over UIDs 1 "a", 2 "B" and 3 "c", which are
+// unseen, and 4 "0", which is seen. The context is 1 2 3 under the default
+// i;unicode-casemap and 2 1 3 under i;octet; "0" sorts first under both.
+func comparatorContext(t *testing.T) (obs, other *r4Wire) {
+	t.Helper()
+	store := r4Memory()
+	obs, other = r4Open(t, store, nil), r4Open(t, store, nil)
+	r4Append(other, "INBOX", "", "a")
+	r4Append(other, "INBOX", "", "B")
+	r4Append(other, "INBOX", "", "c")
+	r4Append(other, "INBOX", `\Seen`, "0")
+	sweepWant(t, obs.cmd("S", "SELECT INBOX"), "OK")
+	sweepWant(t, other.cmd("S", "SELECT INBOX"), "OK")
+	sweepWant(t, obs.cmd("C", "UID SORT RETURN (UPDATE) (SUBJECT) UTF-8 UNSEEN"), "OK")
+	return obs, other
+}
+
+// While NOTIFY NONE withholds UID 3's EXPUNGE, the client's own STORE makes
+// UID 4 match. It sorts first, outside UID 3's neighbours, so it enters at
+// once. After a COMPARATOR change that reorders the context, the backend's
+// order no longer places UID 3 by its neighbours: nothing enters and the old
+// order stays until NOTIFY SET reports the EXPUNGE, and the reorder then
+// replaces the list from position one.
+func TestSortedContextComparatorChangeBesideWithheldRemoval(t *testing.T) {
+	for _, comparator := range []string{"", "i;octet"} {
+		t.Run("comparator="+comparator, func(t *testing.T) {
+			obs, other := comparatorContext(t)
+			sweepWant(t, obs.cmd("N", "NOTIFY NONE"), "OK")
+			sweepWant(t, other.cmd("D", `UID STORE 3 +FLAGS.SILENT (\Deleted)`), "OK")
+			sweepWant(t, other.cmd("X", "EXPUNGE"), "OK")
+			if got := append(obs.quiet(300*time.Millisecond), obs.cmd("Q", "NOOP")...); r4Has(got, "ESEARCH|EXPUNGE") {
+				t.Fatalf("suppressed expunge reached the wire: %q", got)
+			}
+			if comparator != "" {
+				sweepWant(t, obs.cmd("CO", "COMPARATOR "+comparator), "OK")
+			}
+			got := append(obs.cmd("O", `UID STORE 4 -FLAGS (\Seen)`), obs.cmd("Q", "NOOP")...)
+			if comparator == "" {
+				contextWantOrder(t, got, `^\* \d+ FETCH`, `^\* ESEARCH \(TAG "C"\) UID ADDTO \(1 4\)$`)
+				return
+			}
+			contextWantOrder(t, got, `^\* \d+ FETCH`)
+			got = obs.cmd("R", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))")
+			contextWantOrder(t, got,
+				`^\* ESEARCH \(TAG "C"\) UID REMOVEFROM \(3 3\)$`,
+				`^\* 3 EXPUNGE$`,
+				`^\* ESEARCH \(TAG "C"\) UID REMOVEFROM \(1 1:2\)$`,
+				`^\* ESEARCH \(TAG "C"\) UID ADDTO \(1 4,2,1\)$`)
+		})
+	}
+}
+
+// Without a withheld removal, a reorder after a COMPARATOR change is sent at
+// the next refresh, as a replacement of the list from position one.
+func TestSortedContextComparatorReorder(t *testing.T) {
+	obs, other := comparatorContext(t)
+	sweepWant(t, obs.cmd("CO", "COMPARATOR i;octet"), "OK")
+	sweepWant(t, other.cmd("F", `UID STORE 4 -FLAGS.SILENT (\Seen)`), "OK")
+	got := append(obs.quiet(300*time.Millisecond), obs.cmd("Q", "NOOP")...)
+	contextWantOrder(t, got,
+		`^\* ESEARCH \(TAG "C"\) UID REMOVEFROM \(1 1:3\)$`,
+		`^\* ESEARCH \(TAG "C"\) UID ADDTO \(1 4,2,1,3\)$`)
+}
+
 // sortedContextModel is a client's copy of a sorted context, kept by applying
 // every REMOVEFROM, ADDTO and EXPUNGE in the order they arrive (RFC 5267
 // sections 4.3.2 to 4.3.4).
