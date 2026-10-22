@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
@@ -60,11 +61,11 @@ func compareBySortKey(a, b *message, key imap.SortKey, comparator string) int {
 	case imap.SortKeyDate:
 		return sentDate(a).Compare(sentDate(b))
 	case imap.SortKeySubject:
-		return strings.Compare(collationKey(baseSubject(a), comparator), collationKey(baseSubject(b), comparator))
+		return compareCollated(baseSubject(a), baseSubject(b), comparator)
 	case imap.SortKeyFrom, imap.SortKeyDisplayFrom:
-		return strings.Compare(collationKey(addressKey(a, key, true), comparator), collationKey(addressKey(b, key, true), comparator))
+		return compareCollated(addressKey(a, key, true), addressKey(b, key, true), comparator)
 	case imap.SortKeyTo, imap.SortKeyCc, imap.SortKeyDisplayTo:
-		return strings.Compare(collationKey(addressKey(a, key, false), comparator), collationKey(addressKey(b, key, false), comparator))
+		return compareCollated(addressKey(a, key, false), addressKey(b, key, false), comparator)
 	default:
 		// An unknown key must not reorder anything. A stable sort with a
 		// constant comparison leaves the sequence untouched, which is safer
@@ -92,13 +93,36 @@ func baseSubject(msg *message) string {
 	return subjectBase(subject)
 }
 
-// The empty session value selects i;unicode-casemap, the SORT/THREAD default
-// required by RFC 5256 and RFC 5255. i;octet preserves case and every octet.
+// collationKey groups ORDEREDSUBJECT threads. i;unicode-casemap is the
+// SORT/THREAD default required by RFC 5256 and RFC 5255; i;octet preserves
+// case and every octet. Casemap keeps invalid UTF-8 as its octets, and its
+// output for valid input is valid UTF-8, so a subject that fails conversion
+// groups only with octet-identical subjects.
 func collationKey(s, comparator string) string {
 	if comparator == "i;octet" {
 		return s
 	}
 	return unicodenorm.Casemap(s)
+}
+
+// compareCollated orders two textual sort keys. Under i;unicode-casemap,
+// RFC 5255 section 4.6 compares a string that fails conversion (here, invalid
+// UTF-8) with i;octet and places it after every string the comparator
+// accepts. i;octet accepts every string.
+func compareCollated(a, b, comparator string) int {
+	if comparator == "i;octet" {
+		return strings.Compare(a, b)
+	}
+	switch aValid, bValid := utf8.ValidString(a), utf8.ValidString(b); {
+	case aValid && bValid:
+		return strings.Compare(unicodenorm.Casemap(a), unicodenorm.Casemap(b))
+	case aValid:
+		return -1
+	case bValid:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
 }
 
 // subjectBase follows RFC 5256 section 2.1 step by step; the section requires

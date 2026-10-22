@@ -237,12 +237,8 @@ func (s *session) Comparators(ctx context.Context, _ *imapserver.ComparatorOptio
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
-	active := s.comparator
-	if active == "" {
-		active = comparators[0]
-	}
 	return &imapserver.ComparatorData{
-		Active:    active,
+		Active:    s.comparator,
 		Available: append([]string(nil), comparators...),
 	}, nil
 }

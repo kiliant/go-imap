@@ -41,7 +41,9 @@ type MatchOptions struct {
 	// Charset names the charset of string arguments. Empty means US-ASCII or
 	// UTF-8 after UTF8=ACCEPT.
 	Charset string
-	// Comparator selects substring semantics. Empty uses i;unicode-casemap.
+	// Comparator selects substring semantics. Empty and i;unicode-casemap
+	// both prepare convertible text with RFC 5051; they differ for text that
+	// cannot be converted. See asciiCasemap.
 	Comparator string
 	// Now is the reference instant for OLDER/YOUNGER. Zero uses time.Now.
 	Now time.Time
@@ -372,7 +374,7 @@ func (m *Message) bodyContains(needle, comparator string) (bool, error) {
 		switch strings.ToLower(p.params["charset"]) {
 		case "", "us-ascii", "ascii", "utf-8", "utf8", "iso-8859-1", "iso8859-1", "latin1", "latin-1":
 		default:
-			partComparator = "i;octet"
+			partComparator = fallbackComparator(comparator)
 		}
 		ok, err := containsComparatorReader(reader, needle, partComparator)
 		if err == nil {
@@ -380,7 +382,7 @@ func (m *Message) bodyContains(needle, comparator string) (bool, error) {
 		}
 		// A malformed transfer encoding must not make the whole stored
 		// message unsearchable. Fall back to its encoded octets.
-		return containsComparatorReader(io.NewSectionReader(m.r, p.headers.bodyStart, p.end-p.headers.bodyStart), needle, "i;octet")
+		return containsComparatorReader(io.NewSectionReader(m.r, p.headers.bodyStart, p.end-p.headers.bodyStart), needle, fallbackComparator(comparator))
 	}
 	return walk(m.root)
 }

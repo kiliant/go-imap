@@ -1306,8 +1306,12 @@ closes the connection (#210).
 struct. Empty selects i;unicode-casemap; i;octet selects exact octets. Unknown
 names return NO [BADCOMPARATOR]. Memory passes its active comparator to SEARCH,
 SORT/THREAD criteria and MULTISEARCH; textual sort keys and ORDEREDSUBJECT use
-the same RFC 5051 preparation. Invalid UTF-8 and unknown stored charsets retain
-binary comparison. No backend interface or obligation is added.
+the same RFC 5051 preparation. Text that cannot be converted (invalid UTF-8,
+unknown stored charsets, malformed transfer encodings) compares as i;octet
+under a named comparator and sorts after valid keys (RFC 5255 section 4.6).
+An empty comparator keeps RFC 3501's ASCII case-insensitive matching for that
+text, which is what a backend without I18NLEVEL, such as Maildir, gets. No
+backend interface or obligation is added.
 
 SORT UPDATE now registers its complete ordered result, including outside a
 PARTIAL window. Refreshes use the existing SortMailbox operation, and explicit

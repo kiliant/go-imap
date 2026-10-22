@@ -966,3 +966,28 @@ func TestVanishedMessageFileIsNotJournalled(t *testing.T) {
 		t.Fatalf("reopened INBOX has %d messages, want the vanished one reconciled away", n)
 	}
 }
+
+// Maildir advertises no I18NLEVEL, so RFC 3501 section 6.4.4's
+// case-insensitive SEARCH also covers text it cannot convert.
+func TestSearchFoldsUnconvertibleText(t *testing.T) {
+	ctx := context.Background()
+	s := loginTest(t, openTest(t, t.TempDir()))
+	for _, raw := range []string{
+		"Subject: one\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello world\r\n",
+		"Subject: two\r\nContent-Type: text/plain; charset=windows-1252\r\n\r\nCaf\xe9 Hello world\r\n",
+		"Subject: three\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nHello=20world\r\n",
+	} {
+		if _, err := s.Append(ctx, "INBOX", strings.NewReader(raw), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sel := selectTest(t, s, "INBOX")
+	query, err := imapserver.NewSearchQuery(imap.SearchString{Key: imap.SearchKeyBody, Value: "hello"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sel.Search(ctx, query, nil)
+	if err != nil || len(result.UIDs) != 3 {
+		t.Fatalf("BODY hello = %+v, %v; want all three messages", result, err)
+	}
+}

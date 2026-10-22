@@ -25,7 +25,10 @@ type session struct {
 	// See ext_d.go.
 	notify       *imapserver.SessionUpdater
 	notifyConfig *imapserver.NotifyConfig
-	// comparator is the active RFC 5255 collation. See ext_e.go.
+	// comparator is the active RFC 5255 collation, always named: memory
+	// advertises I18NLEVEL, so text that cannot be converted compares as
+	// i;octet (RFC 5255 section 4.6), which the message helper applies only
+	// to a named comparator. See ext_e.go.
 	comparator string
 }
 

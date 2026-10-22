@@ -31,7 +31,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   including fields and continuations beyond semantic header-retention limits.
   Decode the rewritten CTE even when it appears beyond those limits. Shared
   text matching now supports RFC 5051 Unicode preparation and exact octets,
-  with bounded streaming substring matching. No exported root API change. (#54)
+  with bounded streaming substring matching. Text that cannot be converted
+  (invalid UTF-8, an unknown charset, a malformed transfer encoding) still
+  matches ASCII case-insensitively by default, as RFC 3501 requires; only a
+  named comparator compares it as octets. No exported root API change. (#54)
 
 - **imapmessage:** base64 bodies decode as RFC 2045 section 6.8 requires:
   characters outside the alphabet are ignored and `=` ends the data. Spaces or
@@ -58,7 +61,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   SORT and ORDEREDSUBJECT previously used ASCII folding and SEARCH ignored the
   selected comparator. Add `message.MatchOptions.Comparator` on the guarded
   options struct; empty selects Unicode and unsupported names return
-  NO [BADCOMPARATOR]. No backend interface or obligation is added. (#54)
+  NO [BADCOMPARATOR]. Memory names its comparator, so text that cannot be
+  converted compares as i;octet and sorts after valid keys (RFC 5255 section
+  4.6). An empty comparator, which Maildir uses, keeps RFC 3501 ASCII
+  case-insensitive matching for such text. No backend interface or obligation
+  is added. (#54)
 
 - **BREAKING (pre-v1 contract):** `QResyncMailbox.Resync` may now be called
   repeatedly within a selection for UID FETCH with CHANGEDSINCE and VANISHED,

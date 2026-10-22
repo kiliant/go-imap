@@ -180,7 +180,7 @@ func (b *Backend) Authenticate(ctx context.Context, _ *imapserver.ConnInfo, cred
 	if a == nil || (!verified && credentials.Password != a.password) {
 		return nil, authenticationError()
 	}
-	s := &session{backend: b, account: a, username: credentials.Username, selections: make(map[*selected]struct{})}
+	s := &session{backend: b, account: a, username: credentials.Username, selections: make(map[*selected]struct{}), comparator: comparators[0]}
 	a.mu.Lock()
 	if a.sessions == nil {
 		a.sessions = make(map[*session]struct{})

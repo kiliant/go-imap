@@ -16,8 +16,15 @@ func TestComparatorSubstring(t *testing.T) {
 		{"body Å body", "a\u030a", "", true},
 		{"body Å body", "å", "i;unicode-casemap", true},
 		{"body Å body", "å", "i;octet", false},
-		{"a" + strings.Repeat("x", 40000) + "\xff", "A", "", false},
+		// A late invalid byte discards the prepared match. A named
+		// i;unicode-casemap then compares octets (RFC 5255 section 4.6); the
+		// default still folds ASCII (RFC 3501 section 6.4.4).
+		{"a" + strings.Repeat("x", 40000) + "\xff", "A", "i;unicode-casemap", false},
+		{"a" + strings.Repeat("x", 40000) + "\xff", "A", "", true},
 		{"a" + strings.Repeat("x", 40000) + "\xff", "a", "", true},
+		{"Caf\xe9 Hello", "hello", "", true},
+		{"Caf\xe9 Hello", "hello", "i;unicode-casemap", false},
+		{"Caf\xe9 Hello", "hello", "i;octet", false},
 		{"b\xffdy", "\xff", "", true},
 		{"repeated repeated", "repeated", "i;octet", true},
 		{"", "", "", true},
@@ -40,10 +47,13 @@ func FuzzComparatorSubstring(f *testing.F) {
 		if len(haystack) > 1<<16 || len(needle) > 1<<12 {
 			t.Skip()
 		}
-		for _, comparator := range []string{"i;unicode-casemap", "i;octet"} {
+		for _, comparator := range []string{"", "i;unicode-casemap", "i;octet"} {
 			h, n := string(haystack), string(needle)
-			if comparator != "i;octet" && utf8.Valid(haystack) && utf8.Valid(needle) {
+			switch {
+			case comparator != "i;octet" && utf8.Valid(haystack) && utf8.Valid(needle):
 				h, n = unicodenorm.Casemap(h), unicodenorm.Casemap(n)
+			case comparator == "":
+				h, n = asciiUpper(h), asciiUpper(n)
 			}
 			want := strings.Contains(h, n)
 			got, err := containsComparatorReader(strings.NewReader(string(haystack)), string(needle), comparator)

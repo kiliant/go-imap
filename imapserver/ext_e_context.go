@@ -251,6 +251,11 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 			continue
 		}
 		result, err := selected.mailbox.Search(ctx, held.query, &SearchOptions{Charset: held.charset})
+		if err == nil {
+			// Backends need not return promptly on cancellation. A success
+			// after the pass's deadline is a miss all the same.
+			err = ctx.Err()
+		}
 		if err != nil || result == nil || len(result.UIDs) > maxCommandSearchResults {
 			writeNoUpdate(c, held.tag, "search context could not be refreshed")
 			continue
@@ -333,6 +338,9 @@ func refreshSortContext(ctx context.Context, c *conn, held *searchContext, befor
 		return searchContextDelta{}, false, fmt.Errorf("SORT is no longer available")
 	}
 	uids, err := sorter.Sort(ctx, held.query, held.keys, &SortOptions{Charset: held.charset})
+	if err == nil {
+		err = ctx.Err() // a late success is a miss; see refreshSearchContexts
+	}
 	if err != nil || len(uids) > maxCommandSearchResults {
 		if err == nil {
 			err = fmt.Errorf("SORT result limit exceeded")

@@ -54,8 +54,12 @@ type MatchOptions struct {
 	Charset string
 	// Comparator selects i;unicode-casemap (the default) or i;octet for text
 	// substring comparisons. Unsupported names return NO [BADCOMPARATOR].
-	// Unicode preparation uses RFC 5051 titlecasing and decomposition; unknown
-	// stored charsets or invalid UTF-8 use the original octets.
+	// Unicode preparation uses RFC 5051 titlecasing and decomposition. Text
+	// that cannot be converted (invalid UTF-8, an unknown stored charset or a
+	// malformed transfer encoding's octets) matches ASCII case-insensitively
+	// when Comparator is empty, as RFC 3501 section 6.4.4 requires, and as
+	// octets under a named comparator, as RFC 5255 section 4.6 requires of an
+	// I18NLEVEL server.
 	Comparator string
 	// Now is the reference instant for OLDER/YOUNGER. Zero uses time.Now.
 	Now time.Time

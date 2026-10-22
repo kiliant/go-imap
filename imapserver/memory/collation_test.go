@@ -67,3 +67,23 @@ func TestThreadActiveComparator(t *testing.T) {
 		t.Fatalf("octet comparator did not distinguish subjects: %v, %v", roots, err)
 	}
 }
+
+// RFC 5255 section 4.6: a key that fails conversion sorts after every key the
+// comparator accepts, compared with i;octet among its peers.
+func TestSortFailedConversionLast(t *testing.T) {
+	m := sortTestMailbox(t, []string{"Subject: A\xff", "Subject: B", "Subject: A", "Subject: A\xfe"})
+	for spec, want := range map[imap.SortKeySpec]string{
+		{Key: imap.SortKeySubject}:                "3 2 4 1",
+		{Key: imap.SortKeySubject, Reverse: true}: "1 4 2 3",
+	} {
+		if got := sortedUIDs(t, m, spec); got != want {
+			t.Errorf("reverse=%v = %s, want %s", spec.Reverse, got, want)
+		}
+	}
+	if _, err := m.session.SetComparator(t.Context(), []string{"i;octet"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sortedUIDs(t, m, imap.SortKeySpec{Key: imap.SortKeySubject}); got != "3 4 1 2" {
+		t.Errorf("i;octet = %s, want 3 4 1 2", got)
+	}
+}
