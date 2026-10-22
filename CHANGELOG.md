@@ -559,10 +559,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   or removal NOTIFY suppresses no longer leaks as ADDTO or REMOVEFROM; NOTIFY
   SET releases the update after its FETCH or before its EXPUNGE. A flag
   change's update follows its FETCH instead of preceding it, and a refresh
-  that sees a change the session has not applied yet waits for it. A sorted
-  context removes an expunged entry at its own position instead of replacing
-  the whole list. The client's own STORE still updates its contexts under
-  suppression. No exported API change. (#54)
+  that sees a change to a known message that the session has not applied yet
+  waits for it; a new message enters as it is now, after its EXISTS. Only the
+  affected message's update waits, and the client's own STORE and APPEND
+  update contexts under suppression too, apart from one sorted-context case:
+  a sorted context inserts and removes each entry at its own position instead
+  of replacing the whole list, and a match it cannot order against a message
+  whose removal is still withheld from the client enters once that EXPUNGE is
+  reported. No exported API change. (#54)
 
 - THREAD responses follow the RFC 5256 section 5 grammar. A single reply
   continues its parent's number run, `(1 2)` rather than `(1 (2))`, and

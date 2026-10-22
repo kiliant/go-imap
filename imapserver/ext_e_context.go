@@ -220,9 +220,8 @@ func handleCancelUpdate(_ context.Context, c *conn, command *queuedCommand) erro
 // every other change follows the FETCH or EXISTS that caused it, in current
 // numbers (RFC 5465 sections 5.1 and 5.2).
 type searchContextDelta struct {
-	context     *searchContext
-	expunged    []contextRun
-	added, gone []uint32
+	context               *searchContext
+	expunged, gone, added []contextRun
 }
 
 // contextRun is one context position with the results removed starting there.
@@ -329,13 +328,7 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 			if !visible {
 				continue
 			}
-			if selected.backendUIDs != nil {
-				if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
-					current[uid] = struct{}{}
-					continue // its EXPUNGE is still withheld
-				}
-			}
-			if waits(uid) {
+			if removalWithheld(selected, uid) || waits(uid) {
 				current[uid] = struct{}{}
 				continue
 			}
@@ -346,10 +339,7 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 		slices.Sort(added)
 		slices.Sort(gone)
 		slices.Sort(expunged)
-		delta := searchContextDelta{context: held, added: added, gone: gone}
-		if len(expunged) != 0 {
-			delta.expunged = []contextRun{{numbers: expunged}}
-		}
+		delta := searchContextDelta{context: held, expunged: unsortedRun(expunged), gone: unsortedRun(gone), added: unsortedRun(added)}
 		if delta.changed() {
 			deltas = append(deltas, delta)
 		}
@@ -371,97 +361,243 @@ func (held *searchContext) number(uid imap.UID, seq imap.SeqNum) uint32 {
 	return uint32(seq)
 }
 
-// A sorted context reports each expunged run at its own position, highest
-// first: a client processes the pairs in order (RFC 5267 section 4.3.4), and
-// removing a later run does not move an earlier one. Any other change is a
-// full replacement, a valid ordered delta: remove the remaining list from
-// position one, then insert the new list there, both after the mailbox
-// notifications and in current numbers. Sort keys never change, so a
-// replacement held back while a change waits is caught up by a later drain.
-func refreshSortContext(ctx context.Context, c *conn, held *searchContext, removed, before map[imap.UID]imap.SeqNum) (searchContextDelta, error) {
-	selected := c.state.selected
-	delta := searchContextDelta{context: held}
-	remaining := make([]imap.UID, 0, len(held.ordered))
-	for i, uid := range held.ordered {
-		seq, expunged := removed[uid]
-		if !expunged {
-			remaining = append(remaining, uid)
+// removalWithheld reports whether uid is still in the client's view although
+// the backend view has lost it: a command or NOTIFY withholds its EXPUNGE.
+func removalWithheld(selected *selectedState, uid imap.UID) bool {
+	if _, visible := selected.sequence(uid); !visible || selected.backendUIDs == nil {
+		return false
+	}
+	_, active := slices.BinarySearch(selected.backendUIDs, uid)
+	return !active
+}
+
+// unsortedRun is a SEARCH context's update set, at position zero.
+func unsortedRun(numbers []uint32) []contextRun {
+	if len(numbers) == 0 {
+		return nil
+	}
+	return []contextRun{{numbers: numbers}}
+}
+
+// contextRuns groups the entries of list that pick selects into runs of
+// adjacent positions, in list order.
+func contextRuns(list []imap.UID, pick func(imap.UID) bool, number func(imap.UID) uint32) []contextRun {
+	var runs []contextRun
+	for i, uid := range list {
+		if !pick(uid) {
 			continue
 		}
-		number := held.number(uid, seq)
-		if n := len(delta.expunged); n != 0 && i > 0 {
-			if _, previous := removed[held.ordered[i-1]]; previous {
-				delta.expunged[n-1].numbers = append(delta.expunged[n-1].numbers, number)
-				continue
-			}
+		if n := len(runs); n != 0 && pick(list[i-1]) {
+			runs[n-1].numbers = append(runs[n-1].numbers, number(uid))
+			continue
 		}
-		delta.expunged = append(delta.expunged, contextRun{position: uint32(i + 1), numbers: []uint32{number}})
+		runs = append(runs, contextRun{position: uint32(i + 1), numbers: []uint32{number(uid)}})
 	}
+	return runs
+}
+
+// A sorted context is updated entry by entry, at explicit positions. An
+// expunged entry leaves before the EXPUNGE, in the numbers the client holds;
+// every other entry enters or leaves after the mailbox notifications, in
+// current numbers. Removal runs go highest position first and insertion runs
+// lowest first, so each pair stays valid as a client processes them in order
+// (RFC 5267 sections 4.3.3 and 4.3.4).
+//
+// An entry whose change waits keeps the membership the client has, and so
+// does one whose removal is withheld from the client; every other entry
+// changes regardless. When such a kept entry is missing from the result, a
+// second Sort over the target's UIDs places it, since sort keys never change.
+// That cannot place a message the backend has already removed. It keeps its
+// place between its neighbours, and an entry that would enter between those
+// neighbours waits until it leaves: the context must stay in the requested
+// order (RFC 5267 section 4.3.2), and its order against the removed message is
+// no longer known.
+func refreshSortContext(ctx context.Context, c *conn, held *searchContext, removed, before map[imap.UID]imap.SeqNum) (searchContextDelta, error) {
+	selected := c.state.selected
+	sorter, ok := selected.mailbox.(SortMailbox)
+	if !ok {
+		return searchContextDelta{}, fmt.Errorf("SORT is no longer available")
+	}
+	expunged := func(uid imap.UID) bool {
+		_, ok := removed[uid]
+		return ok
+	}
+	delta := searchContextDelta{context: held}
+	delta.expunged = contextRuns(held.ordered, expunged, func(uid imap.UID) uint32 {
+		return held.number(uid, removed[uid])
+	})
 	slices.Reverse(delta.expunged)
+	remaining := slices.DeleteFunc(slices.Clone(held.ordered), expunged)
 	held.ordered = remaining
 	held.uids = make(map[imap.UID]struct{}, len(remaining))
 	for _, uid := range remaining {
 		held.uids[uid] = struct{}{}
 	}
-	for _, uid := range remaining {
-		if _, visible := selected.sequence(uid); visible && selected.backendUIDs != nil {
-			if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
-				// A command or NOTIFY still withholds this removal. Keep the
-				// rest of the order until the drain that delivers its EXPUNGE.
-				return delta, nil
-			}
-		}
-	}
-	sorter, ok := selected.mailbox.(SortMailbox)
-	if !ok {
-		return searchContextDelta{}, fmt.Errorf("SORT is no longer available")
-	}
-	uids, err := sorter.Sort(ctx, held.query, held.keys, &SortOptions{Charset: held.charset})
-	if err == nil {
-		err = ctx.Err() // a late success is a miss; see refreshSearchContexts
-	}
-	if err != nil || len(uids) > maxCommandSearchResults {
-		if err == nil {
-			err = fmt.Errorf("SORT result limit exceeded")
-		}
+	uids, err := sortContext(ctx, sorter, held, held.query)
+	if err != nil {
 		return searchContextDelta{}, err
 	}
 	waits := contextChangeWaits(selected, removed, before)
-	current := make(map[imap.UID]struct{}, len(uids))
-	ordered := make([]imap.UID, 0, len(uids))
+	target := make(map[imap.UID]struct{}, len(uids))
+	result := make([]imap.UID, 0, len(uids))
 	for _, uid := range uids {
 		if _, visible := selected.sequence(uid); !visible {
 			continue
 		}
-		if _, duplicate := current[uid]; duplicate {
+		if _, duplicate := target[uid]; duplicate {
 			continue
 		}
-		current[uid] = struct{}{}
-		ordered = append(ordered, uid)
-	}
-	if slices.Equal(remaining, ordered) {
-		return delta, nil
-	}
-	for _, uid := range remaining {
-		if _, still := current[uid]; !still && waits(uid) {
-			return delta, nil
-		}
-	}
-	for _, uid := range ordered {
 		if _, had := held.uids[uid]; !had && waits(uid) {
-			return delta, nil
+			continue
+		}
+		target[uid] = struct{}{}
+		result = append(result, uid)
+	}
+	kept := false
+	for _, uid := range remaining {
+		if _, in := target[uid]; !in && (removalWithheld(selected, uid) || waits(uid)) {
+			target[uid] = struct{}{}
+			kept = true
 		}
 	}
-	for _, uid := range remaining {
-		seq, _ := selected.sequence(uid)
-		delta.gone = append(delta.gone, held.number(uid, seq))
+	ordered := result
+	if kept {
+		if ordered, err = orderKeptEntries(ctx, c, sorter, held, target); err != nil {
+			return searchContextDelta{}, err
+		}
 	}
+	delta.gone, delta.added = sortedContextChanges(selected, held, remaining, ordered)
+	held.ordered = ordered
+	held.uids = make(map[imap.UID]struct{}, len(ordered))
 	for _, uid := range ordered {
-		seq, _ := selected.sequence(uid)
-		delta.added = append(delta.added, held.number(uid, seq))
+		held.uids[uid] = struct{}{}
 	}
-	held.uids, held.ordered = current, ordered
 	return delta, nil
+}
+
+// sortContext is one refresh Sort under the pass's deadline.
+func sortContext(ctx context.Context, sorter SortMailbox, held *searchContext, query *SearchQuery) ([]imap.UID, error) {
+	uids, err := sorter.Sort(ctx, query, held.keys, &SortOptions{Charset: held.charset})
+	if err == nil {
+		err = ctx.Err() // a late success is a miss; see refreshSearchContexts
+	}
+	if err == nil && len(uids) > maxCommandSearchResults {
+		err = fmt.Errorf("SORT result limit exceeded")
+	}
+	return uids, err
+}
+
+// orderKeptEntries orders target, which includes entries the context keeps
+// although the result no longer holds them. See refreshSortContext.
+func orderKeptEntries(ctx context.Context, c *conn, sorter SortMailbox, held *searchContext, target map[imap.UID]struct{}) ([]imap.UID, error) {
+	var set imap.UIDSet
+	for uid := range target {
+		set.AddNum(uid)
+	}
+	uids, err := sortContext(ctx, sorter, held, newSearchQuery(imap.SearchUID{Set: set.Normalized()}, c.state.selected.uids, nil))
+	if err != nil {
+		return nil, err
+	}
+	at := make(map[imap.UID]int, len(uids))
+	var sorted []imap.UID
+	for _, uid := range uids {
+		if _, in := target[uid]; !in {
+			continue
+		}
+		if _, duplicate := at[uid]; duplicate {
+			continue
+		}
+		at[uid] = len(sorted)
+		sorted = append(sorted, uid)
+	}
+	keep := slices.DeleteFunc(slices.Clone(held.ordered), func(uid imap.UID) bool {
+		_, in := target[uid]
+		return !in
+	})
+	placed := slices.DeleteFunc(slices.Clone(keep), func(uid imap.UID) bool {
+		_, ok := at[uid]
+		return !ok
+	})
+	if len(placed) == len(keep) {
+		return sorted, nil
+	}
+	if !slices.Equal(placed, slices.DeleteFunc(slices.Clone(sorted), func(uid imap.UID) bool {
+		_, had := held.uids[uid]
+		return !had
+	})) {
+		// The backend orders the client's entries differently, as after a
+		// COMPARATOR change, so their neighbours cannot place the removed
+		// message either. Nothing enters until it leaves.
+		return keep, nil
+	}
+	// after holds each run of unplaceable entries under the entry before it,
+	// zero standing for the start; gaps are the stretches of the backend's
+	// order between such a run's neighbours.
+	after := make(map[imap.UID][]imap.UID)
+	var gaps [][2]int
+	var anchor imap.UID
+	from, open := -1, false
+	for _, uid := range keep {
+		position, placeable := at[uid]
+		if !placeable {
+			after[anchor] = append(after[anchor], uid)
+			open = true
+			continue
+		}
+		if open {
+			gaps = append(gaps, [2]int{from, position})
+			open = false
+		}
+		anchor, from = uid, position
+	}
+	if open {
+		gaps = append(gaps, [2]int{from, len(sorted)})
+	}
+	ordered := append(make([]imap.UID, 0, len(target)), after[0]...)
+	for _, uid := range sorted {
+		if _, had := held.uids[uid]; !had && slices.ContainsFunc(gaps, func(gap [2]int) bool {
+			return at[uid] > gap[0] && at[uid] < gap[1]
+		}) {
+			continue // its place against the removed neighbour is unknown
+		}
+		ordered = append(ordered, uid)
+		ordered = append(ordered, after[uid]...)
+	}
+	return ordered, nil
+}
+
+// sortedContextChanges is the positioned delta from the client's list to
+// ordered, in current numbers. Entries both lists hold keep their relative
+// order, since sort keys never change; if the backend reorders them anyway,
+// as after a COMPARATOR change, the delta replaces the list from position one.
+func sortedContextChanges(selected *selectedState, held *searchContext, from, to []imap.UID) (gone, added []contextRun) {
+	inFrom := make(map[imap.UID]struct{}, len(from))
+	for _, uid := range from {
+		inFrom[uid] = struct{}{}
+	}
+	inTo := make(map[imap.UID]struct{}, len(to))
+	for _, uid := range to {
+		inTo[uid] = struct{}{}
+	}
+	leaves := func(uid imap.UID) bool {
+		_, in := inTo[uid]
+		return !in
+	}
+	enters := func(uid imap.UID) bool {
+		_, in := inFrom[uid]
+		return !in
+	}
+	number := func(uid imap.UID) uint32 {
+		seq, _ := selected.sequence(uid)
+		return held.number(uid, seq)
+	}
+	if !slices.Equal(slices.DeleteFunc(slices.Clone(from), leaves), slices.DeleteFunc(slices.Clone(to), enters)) {
+		everything := func(imap.UID) bool { return true }
+		return contextRuns(from, everything, number), contextRuns(to, everything, number)
+	}
+	gone = contextRuns(from, leaves, number)
+	slices.Reverse(gone)
+	return gone, contextRuns(to, enters, number)
 }
 
 // NOUPDATE's argument is a quoted tag. Write that typed production directly:
@@ -482,16 +618,8 @@ func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, expunged boo
 			writeContextUpdate(c, delta.context, "REMOVEFROM", delta.expunged)
 			continue
 		}
-		position := uint32(0)
-		if delta.context.sorted {
-			position = 1
-		}
-		if len(delta.gone) != 0 {
-			writeContextUpdate(c, delta.context, "REMOVEFROM", []contextRun{{position: position, numbers: delta.gone}})
-		}
-		if len(delta.added) != 0 {
-			writeContextUpdate(c, delta.context, "ADDTO", []contextRun{{position: position, numbers: delta.added}})
-		}
+		writeContextUpdate(c, delta.context, "REMOVEFROM", delta.gone)
+		writeContextUpdate(c, delta.context, "ADDTO", delta.added)
 	}
 	return c.encoder.Flush()
 }

@@ -55,12 +55,18 @@
 // an own addition first announces any earlier withheld additions in UID order.
 //
 // CONTEXT=SEARCH and CONTEXT=SORT updates follow the event that caused them.
-// A context's ADDTO or REMOVEFROM is withheld with a suppressed flag change or
-// removal, follows the FETCH or EXISTS that reports its cause, and precedes
-// the EXPUNGE that renumbers an expunged match away. A refresh searches live
-// backend state; a change it sees whose batch is still queued waits for the
-// drain that applies that batch. Recognising it relies on Search and Sort not
-// exposing a commit before its batch is pushed, as the shipped backends do.
+// For a message the client knows, an ADDTO or REMOVEFROM is withheld with its
+// suppressed flag change or removal, follows the FETCH that reports its cause,
+// and precedes the EXPUNGE that renumbers an expunged match away. A refresh
+// searches live backend state; such a message's change that it sees while the
+// change's batch is still queued waits for the drain that applies that batch.
+// Recognising it relies on Search and Sort not exposing a commit before its
+// batch is pushed, as the shipped backends do. A message new to the client
+// enters as it is now, after its EXISTS. Only the waiting message's update
+// waits, with one exception. A sorted context cannot always order a match
+// against a message the backend has removed while the client still sees it;
+// a match it cannot order, one that would enter between that message's
+// neighbours, enters once that EXPUNGE is reported.
 //
 // A backend's refusal of a replacement NOTIFY leaves the previous selected
 // policy in force. Its session-scoped updater has already been closed; the

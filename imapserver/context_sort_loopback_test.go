@@ -42,13 +42,14 @@ func TestSortContextUpdates(t *testing.T) {
 			}
 			raw := "Subject: new\r\n\r\nnew body\r\n"
 			lines = w.cmd("A", fmt.Sprintf("APPEND INBOX \"04-Jan-2024 10:00:00 +0000\" {%d+}\r\n%s", len(raw), raw))
-			added := "3,2,1"
+			// UID 4, message 3, sorts first in REVERSE ARRIVAL.
+			added := "3"
 			if uidMode {
-				added = "4,3,1"
+				added = "4"
 			}
 			add := `* ESEARCH (TAG "REG")` + marker + " ADDTO (1 " + added + ")"
-			if exists, addAt := slices.Index(lines, "* 3 EXISTS"), slices.Index(lines, add); exists < 0 || addAt <= exists {
-				t.Fatalf("context addition must preserve full sort order after EXISTS: %q", lines)
+			if exists, addAt := slices.Index(lines, "* 3 EXISTS"), slices.Index(lines, add); exists < 0 || addAt <= exists || r4Has(lines, "REMOVEFROM") {
+				t.Fatalf("the new message must enter at its own position after EXISTS: %q", lines)
 			}
 			sweepWant(t, w.cmd("C", "CANCELUPDATE REG"), "OK")
 			lines = w.cmd("A", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw))

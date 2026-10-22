@@ -3,6 +3,8 @@ package imapserver_test
 import (
 	"context"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,11 +34,11 @@ var contextRegistrations = []struct {
 		addition: `^\* ESEARCH \(TAG "C"\) ADDTO \(0 1\)$`,
 	},
 	{
-		// A sorted context replaces its list from position one.
+		// A sorted context names the position, here the first.
 		name:     "sort",
 		command:  "SORT RETURN (UPDATE) (ARRIVAL) US-ASCII UNSEEN",
-		removal:  `^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 1:2\)$`,
-		addition: `^\* ESEARCH \(TAG "C"\) ADDTO \(1 1:2\)$`,
+		removal:  `^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 1\)$`,
+		addition: `^\* ESEARCH \(TAG "C"\) ADDTO \(1 1\)$`,
 	},
 	{
 		name:     "multisearch",
@@ -98,11 +100,7 @@ func TestNotifySuppressedFlagChangeHoldsContextUpdate(t *testing.T) {
 				}
 				got = obs.cmd("R", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))")
 				sweepWant(t, got, "OK")
-				if registration.name == "sort" {
-					contextWantOrder(t, got, seenFetch, registration.removal, `^\* ESEARCH \(TAG "C"\) ADDTO \(1 2\)$`)
-				} else {
-					contextWantOrder(t, got, seenFetch, registration.removal)
-				}
+				contextWantOrder(t, got, seenFetch, registration.removal)
 			})
 		}
 	}
@@ -118,18 +116,10 @@ func TestNotifyFlagChangeOrdersContextUpdateAfterFetch(t *testing.T) {
 			sweepWant(t, obs.cmd("N", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))"), "OK")
 			sweepWant(t, other.cmd("F", `STORE 1 +FLAGS (\Seen)`), "OK")
 			got := append(obs.quiet(300*time.Millisecond), obs.cmd("Q", "NOOP")...)
-			if registration.name == "sort" {
-				contextWantOrder(t, got, seenFetch, registration.removal, `^\* ESEARCH \(TAG "C"\) ADDTO \(1 2\)$`)
-			} else {
-				contextWantOrder(t, got, seenFetch, registration.removal)
-			}
+			contextWantOrder(t, got, seenFetch, registration.removal)
 			sweepWant(t, other.cmd("F", `STORE 1 -FLAGS (\Seen)`), "OK")
 			got = append(obs.quiet(300*time.Millisecond), obs.cmd("Q", "NOOP")...)
-			if registration.name == "sort" {
-				contextWantOrder(t, got, `^\* 1 FETCH \(FLAGS`, `^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 2\)$`, registration.addition)
-			} else {
-				contextWantOrder(t, got, `^\* 1 FETCH \(FLAGS`, registration.addition)
-			}
+			contextWantOrder(t, got, `^\* 1 FETCH \(FLAGS`, registration.addition)
 		})
 	}
 }
@@ -149,12 +139,28 @@ func TestNotifySuppressionKeepsOwnStoreContextUpdate(t *testing.T) {
 				if silent == "" {
 					want = append([]string{seenFetch}, want...)
 				}
-				if registration.name == "sort" {
-					want = append(want, `^\* ESEARCH \(TAG "C"\) ADDTO \(1 2\)$`)
-				}
 				contextWantOrder(t, got, want...)
 			})
 		}
+	}
+}
+
+// The client's own APPEND is announced under NOTIFY NONE, and so is its
+// context update, after the EXISTS.
+func TestNotifySuppressionKeepsOwnAppendContextUpdate(t *testing.T) {
+	additions := map[string]string{
+		"search":      `^\* ESEARCH \(TAG "C"\) ADDTO \(0 3\)$`,
+		"sort":        `^\* ESEARCH \(TAG "C"\) ADDTO \(3 3\)$`,
+		"multisearch": `^\* ESEARCH \(TAG "C" MAILBOX INBOX UIDVALIDITY \d+\) UID ADDTO \(0 3\)$`,
+	}
+	for _, registration := range contextRegistrations {
+		t.Run(registration.name, func(t *testing.T) {
+			obs, _ := r4SeedSelected(t, 2)
+			sweepWant(t, obs.cmd("C", registration.command), "OK")
+			sweepWant(t, obs.cmd("N", "NOTIFY NONE"), "OK")
+			got := append(r4Append(obs, "INBOX", "", "own"), obs.cmd("Q", "NOOP")...)
+			contextWantOrder(t, got, `^\* 3 EXISTS$`, additions[registration.name])
+		})
 	}
 }
 
@@ -322,8 +328,7 @@ func TestNotifyReleaseOrdersMixedContextUpdates(t *testing.T) {
 			`^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 1\)$`,
 			`^\* 1 EXPUNGE$`,
 			seenFetch,
-			`^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 1:2\)$`,
-			`^\* ESEARCH \(TAG "C"\) ADDTO \(1 2\)$`,
+			`^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 1\)$`,
 		}},
 		{"multisearch", "ESEARCH IN (selected) RETURN (UPDATE) UNSEEN", []string{
 			`^\* ESEARCH \(TAG "C" MAILBOX INBOX UIDVALIDITY \d+\) UID REMOVEFROM \(0 1\)$`,
@@ -347,5 +352,232 @@ func TestNotifyReleaseOrdersMixedContextUpdates(t *testing.T) {
 			got = obs.cmd("R", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))")
 			contextWantOrder(t, got, registration.want...)
 		})
+	}
+}
+
+// A sorted context cannot order a new match against a message the backend has
+// removed while the client still sees it, here because NOTIFY NONE withholds
+// the EXPUNGE. A match that would enter next to that message waits for it to
+// leave (RFC 5267 section 4.3.2 keeps the requested order); the context's
+// other updates do not wait.
+func TestNotifySortedContextWaitsBesideWithheldRemoval(t *testing.T) {
+	obs, other := r4SeedSelected(t, 3)
+	sweepWant(t, obs.cmd("C", "SORT RETURN (UPDATE) (ARRIVAL) US-ASCII UNSEEN"), "OK")
+	sweepWant(t, obs.cmd("N", "NOTIFY NONE"), "OK")
+	sweepWant(t, other.cmd("D", `STORE 3 +FLAGS.SILENT (\Deleted)`), "OK")
+	sweepWant(t, other.cmd("X", "EXPUNGE"), "OK")
+	got := append(r4Append(obs, "INBOX", "", "new"), obs.cmd("Q", "NOOP")...)
+	if !r4Has(got, `^\* 4 EXISTS$`) || r4Has(got, "ESEARCH") {
+		t.Fatalf("want the own APPEND's EXISTS and no update beside the withheld removal: %q", got)
+	}
+	got = append(obs.cmd("F", `STORE 1 +FLAGS (\Seen)`), obs.cmd("Q", "NOOP")...)
+	contextWantOrder(t, got, seenFetch, `^\* ESEARCH \(TAG "C"\) REMOVEFROM \(1 1\)$`)
+	got = obs.cmd("R", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))")
+	contextWantOrder(t, got,
+		`^\* ESEARCH \(TAG "C"\) REMOVEFROM \(2 3\)$`,
+		`^\* 3 EXPUNGE$`,
+		`^\* ESEARCH \(TAG "C"\) ADDTO \(2 3\)$`)
+}
+
+// sortedContextModel is a client's copy of a sorted context, kept by applying
+// every REMOVEFROM, ADDTO and EXPUNGE in the order they arrive (RFC 5267
+// sections 4.3.2 to 4.3.4).
+type sortedContextModel struct {
+	t    *testing.T
+	uid  bool
+	list []uint32
+}
+
+var (
+	sortedContextUpdate = regexp.MustCompile(`^\* ESEARCH \(TAG "C"\)(?: UID)? (REMOVEFROM|ADDTO) \((.*)\)$`)
+	sortedContextResult = regexp.MustCompile(`^\* SORT((?: \d+)*)$`)
+	expungeResponse     = regexp.MustCompile(`^\* (\d+) EXPUNGE$`)
+)
+
+func contextNumbers(t *testing.T, set string) []uint32 {
+	t.Helper()
+	var numbers []uint32
+	for _, item := range strings.Split(set, ",") {
+		low, high, isRange := strings.Cut(item, ":")
+		from, err := strconv.ParseUint(low, 10, 32)
+		to := from
+		if err == nil && isRange {
+			to, err = strconv.ParseUint(high, 10, 32)
+		}
+		if err != nil {
+			t.Fatalf("bad update set %q", set)
+		}
+		for n := from; ; {
+			numbers = append(numbers, uint32(n))
+			if n == to {
+				break
+			}
+			if n < to {
+				n++
+			} else {
+				n--
+			}
+		}
+	}
+	return numbers
+}
+
+func sortResult(lines []string) ([]uint32, bool) {
+	for _, line := range lines {
+		if g := sortedContextResult.FindStringSubmatch(line); g != nil {
+			var numbers []uint32
+			for _, field := range strings.Fields(g[1]) {
+				n, _ := strconv.ParseUint(field, 10, 32)
+				numbers = append(numbers, uint32(n))
+			}
+			return numbers, true
+		}
+	}
+	return nil, false
+}
+
+func (m *sortedContextModel) apply(lines []string) {
+	m.t.Helper()
+	for _, line := range lines {
+		if g := sortedContextUpdate.FindStringSubmatch(line); g != nil {
+			fields := strings.Fields(g[2])
+			if len(fields)%2 != 0 {
+				m.t.Fatalf("odd update pairs: %s", line)
+			}
+			for i := 0; i < len(fields); i += 2 {
+				position, _ := strconv.Atoi(fields[i])
+				items := contextNumbers(m.t, fields[i+1])
+				at := position - 1
+				switch {
+				case position < 1:
+					m.t.Fatalf("sorted update without a position: %s", line)
+				case g[1] == "ADDTO" && at <= len(m.list):
+					m.list = slices.Insert(m.list, at, items...)
+				case g[1] == "REMOVEFROM" && at+len(items) <= len(m.list) && slices.Equal(m.list[at:at+len(items)], items):
+					m.list = slices.Delete(m.list, at, at+len(items))
+				default:
+					m.t.Fatalf("%s does not apply to %v", line, m.list)
+				}
+			}
+			continue
+		}
+		if g := expungeResponse.FindStringSubmatch(line); g != nil && !m.uid {
+			n64, _ := strconv.ParseUint(g[1], 10, 32)
+			n := uint32(n64)
+			if slices.Contains(m.list, n) {
+				m.t.Fatalf("EXPUNGE %d arrived before its REMOVEFROM: %v", n, m.list)
+			}
+			for i := range m.list {
+				if m.list[i] > n {
+					m.list[i]--
+				}
+			}
+		}
+	}
+}
+
+// check compares the model with fresh SORT commands, which are drain points
+// themselves. The model must hold the backend's messages in the backend's
+// order at every step. A strict check also requires it to equal the result,
+// apart from the messages with the UIDs in withheld.
+func (m *sortedContextModel) check(w *r4Wire, sort, label string, strict bool, withheld ...uint32) {
+	m.t.Helper()
+	result := func(command string) []uint32 {
+		lines := w.cmd("V", command)
+		m.apply(lines)
+		numbers, ok := sortResult(lines)
+		if !ok {
+			m.t.Fatalf("%s: no SORT result: %q", label, lines)
+		}
+		return numbers
+	}
+	order := result(sort + " ALL")
+	want := result(sort + " UNSEEN")
+	var except []uint32
+	for _, uid := range withheld {
+		if m.uid {
+			except = append(except, uid)
+			continue
+		}
+		lines := w.cmd("V", "SEARCH UID "+strconv.FormatUint(uint64(uid), 10))
+		m.apply(lines)
+		for _, line := range lines {
+			if seq, ok := strings.CutPrefix(line, "* SEARCH "); ok {
+				n, _ := strconv.ParseUint(seq, 10, 32)
+				except = append(except, uint32(n))
+			}
+		}
+	}
+	at := make(map[uint32]int, len(order))
+	for i, n := range order {
+		at[n] = i
+	}
+	last := -1
+	for _, n := range m.list {
+		if i, held := at[n]; held {
+			if i <= last {
+				m.t.Fatalf("%s: context %v is out of the requested order %v", label, m.list, order)
+			}
+			last = i
+		}
+	}
+	without := func(list []uint32) []uint32 {
+		return slices.DeleteFunc(slices.Clone(list), func(n uint32) bool { return slices.Contains(except, n) })
+	}
+	if strict && !slices.Equal(without(m.list), without(want)) {
+		m.t.Fatalf("%s: context %v, want %v apart from %v", label, m.list, want, except)
+	}
+}
+
+// A sorted context under NOTIFY, followed by a client's model of it. Withheld
+// flag changes and expunges, arrivals and the client's own changes mix. Every
+// update must apply, keep the requested order and precede the EXPUNGE that
+// renumbers it away, and after NOTIFY SET the context is the SORT result.
+func TestNotifySortedContextModel(t *testing.T) {
+	policies := []string{"NOTIFY SET (selected (MessageNew MessageExpunge))", "NOTIFY NONE"}
+	for _, key := range []string{"ARRIVAL", "REVERSE ARRIVAL", "SUBJECT"} {
+		for _, uid := range []bool{false, true} {
+			for _, policy := range policies {
+				t.Run(key+"/uid="+strconv.FormatBool(uid)+"/"+policy[7:11], func(t *testing.T) {
+					store := r4Memory()
+					obs, other := r4Open(t, store, nil), r4Open(t, store, nil)
+					for _, subject := range []string{"e", "a", "d", "b", "c"} {
+						r4Append(other, "INBOX", "", subject)
+					}
+					sweepWant(t, obs.cmd("S", "SELECT INBOX"), "OK")
+					sweepWant(t, other.cmd("S", "SELECT INBOX"), "OK")
+					sort := "SORT (" + key + ") US-ASCII"
+					if uid {
+						sort = "UID " + sort
+					}
+					m := &sortedContextModel{t: t, uid: uid}
+					m.list, _ = sortResult(obs.cmd("P", sort+" UNSEEN"))
+					sweepWant(t, obs.cmd("C", strings.Replace(sort, "SORT", "SORT RETURN (UPDATE)", 1)+" UNSEEN"), "OK")
+					sweepWant(t, obs.cmd("N", policy), "OK")
+					// With removals reported as they happen, only UID 2's
+					// withheld flag change may keep the context from the
+					// result. Under NONE, withheld removals can also hold
+					// back an addition whose place next to them is unknown.
+					step := func(label string, lines []string) {
+						t.Helper()
+						m.apply(append(lines, obs.quiet(200*time.Millisecond)...))
+						m.apply(obs.cmd("Q", "NOOP"))
+						m.check(obs, sort, label, policy != "NOTIFY NONE", 2)
+					}
+					sweepWant(t, other.cmd("F", `UID STORE 2 +FLAGS (\Seen)`), "OK")
+					step("foreign flag", nil)
+					r4Append(other, "INBOX", "", "ab")
+					step("arrival", nil)
+					step("own flag", obs.cmd("O", `UID STORE 4 +FLAGS (\Seen)`))
+					sweepWant(t, other.cmd("D", `UID STORE 5 +FLAGS.SILENT (\Deleted)`), "OK")
+					sweepWant(t, other.cmd("X", "EXPUNGE"), "OK")
+					step("foreign expunge", nil)
+					step("own append", r4Append(obs, "INBOX", "", "ac"))
+					step("own unflag", obs.cmd("O", `UID STORE 4 -FLAGS (\Seen)`))
+					m.apply(obs.cmd("R", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))"))
+					m.check(obs, sort, "released", true)
+				})
+			}
+		}
 	}
 }

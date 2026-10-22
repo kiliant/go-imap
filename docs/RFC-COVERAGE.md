@@ -382,9 +382,13 @@ CONDSTORE `MODIFIED` on tagged OK.
     selected mailbox's policy itself — NONE, omitted, per-event and
     SELECTED's immediate removals — withholding suppressed additions and
     removals so sequence numbers stay stable, and a NOTIFY SET returns what
-    accumulated. CONTEXT ADDTO/REMOVEFROM updates belong to the event that
-    caused them: suppressed with it, sent after its FETCH or EXISTS and before
-    its EXPUNGE, never ahead of a change the session has not applied.
+    accumulated. A CONTEXT ADDTO/REMOVEFROM for a message the client knows
+    belongs to the event that caused it: suppressed with it, sent after its
+    FETCH and before its EXPUNGE, never ahead of a change the session has not
+    applied. A new message enters, as it is now, after its EXISTS. Only the
+    waiting message's update waits, except that a sorted context adds a
+    match it cannot order against a message whose removal is still withheld
+    only once that EXPUNGE is reported.
     Selected FlagChange carries UID. NONE groups request no
     events, SUBSCRIBED uses current subscriptions, and selected mailboxes
     receive no STATUS. MessageNew fetch-attribute syntax is recognized but
@@ -533,9 +537,9 @@ break the client; full command support is best-effort.
     including when PARTIAL limits the initial response. After queued mailbox
     changes, the event loop refreshes it through the existing SEARCH or SORT
     operation, after mutations return. ADDTO and REMOVEFROM preserve the query's
-    order and UID/sequence-number mode; sorted results use explicit positions.
-    An expunged match is removed before its EXPUNGE, at its own position in a
-    sorted result; other changes follow the FETCH or EXISTS that caused them.
+    order and UID/sequence-number mode; sorted results insert and remove each
+    entry at its own position. An expunged match is removed before its
+    EXPUNGE; other changes follow the FETCH or EXISTS that caused them.
     CANCELUPDATE and selection teardown end the registration. Reusing an active
     UPDATE tag gets BAD; refresh failure sends untagged NO [NOUPDATE "tag"] and
     drops the context. No additional backend interface is required.
