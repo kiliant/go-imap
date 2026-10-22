@@ -110,6 +110,10 @@ type conn struct {
 	notifySelected selectedNotifyPolicy
 	// releasingNotify is set for the implicit NOOP of a NOTIFY SET.
 	releasingNotify bool
+	// comparatorSelections counts COMPARATOR commands that selected a
+	// comparator; sorted contexts compare it with the count their order
+	// was last established under. See refreshSortContext.
+	comparatorSelections uint64
 
 	state sessionState // event-loop owned
 	// executingSeqSensitive is event-loop owned, like state: it is set and

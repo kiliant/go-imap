@@ -386,11 +386,11 @@ CONDSTORE `MODIFIED` on tagged OK.
     belongs to the event that caused it: suppressed with it, sent after its
     FETCH and before its EXPUNGE, never ahead of a change the session has not
     applied. A new message enters, as it is now, after its EXISTS. Only the
-    waiting message's update waits, except that a sorted context adds a
-    match it cannot order against a message whose removal is still withheld
-    only once that EXPUNGE is reported; after a COMPARATOR change that
-    reorders the context's entries, that is every match, and the old order
-    stays until then.
+    waiting message's update waits, except that a sorted context keeps a
+    message whose removal is still withheld in its place until that EXPUNGE
+    is reported. Until then, a match that would enter between that message's
+    nearest still-sortable neighbours waits too, and after a COMPARATOR
+    command that selects a comparator any match may wait.
     Selected FlagChange carries UID. NONE groups request no
     events, SUBSCRIBED uses current subscriptions, and selected mailboxes
     receive no STATUS. MessageNew fetch-attribute syntax is recognized but

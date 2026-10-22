@@ -63,13 +63,14 @@
 // Recognising it relies on Search and Sort not exposing a commit before its
 // batch is pushed, as the shipped backends do. A message new to the client
 // enters as it is now, after its EXISTS. Only the waiting message's update
-// waits, with one exception. A sorted context cannot always order a match
-// against a message the backend has removed while the client still sees it.
-// A match that would enter between that message's neighbours enters once
-// that EXPUNGE is reported. After a COMPARATOR change that reorders the
-// context's entries, no match enters and the old order stays until then;
-// entries still leave. A sorted context's updates name each entry's own
-// position, except that a reorder replaces the list from position one.
+// waits, with one exception in a sorted context. A message the backend has
+// removed while the client still sees it can no longer be sorted, so it keeps
+// its place in the list until its EXPUNGE is reported. Until then, a match
+// that would enter between that message's nearest neighbours the backend can
+// still sort waits too, and after a COMPARATOR command that selects a
+// comparator any match may wait; entries still leave. A sorted context's
+// updates name each entry's own position, except that a reorder replaces the
+// list from position one.
 //
 // A backend's refusal of a replacement NOTIFY leaves the previous selected
 // policy in force. Its session-scoped updater has already been closed; the

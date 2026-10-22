@@ -565,10 +565,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   update contexts under suppression too. A sorted context inserts and removes
   each entry at its own position instead of replacing the whole list; only a
   reorder, as after a COMPARATOR change, still replaces it from position one.
-  While a removal is withheld from the client, a match that would enter
-  between that message's neighbours enters once that EXPUNGE is reported;
-  after a COMPARATOR change that reorders the context's entries, no match
-  enters and the old order stays until then. No exported API change. (#54)
+  A message removed while the client still sees it keeps its place there
+  until its EXPUNGE is reported. Until then, a match that would enter between
+  that message's nearest still-sortable neighbours waits too, and after a
+  COMPARATOR command that selects a comparator any match may wait. No
+  exported API change. (#54)
 
 - THREAD responses follow the RFC 5256 section 5 grammar. A single reply
   continues its parent's number run, `(1 2)` rather than `(1 (2))`, and

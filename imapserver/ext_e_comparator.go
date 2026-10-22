@@ -145,6 +145,7 @@ func handleComparator(ctx context.Context, c *conn, command *queuedCommand) erro
 			return writeTaggedCondition(c, command.tag, "NO", imap.CodeBadComparator, "",
 				"no requested comparator is available")
 		}
+		c.comparatorSelections++
 	}
 	data, err := session.Comparators(ctx, nil)
 	if err != nil {

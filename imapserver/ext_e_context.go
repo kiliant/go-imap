@@ -55,6 +55,9 @@ type searchContext struct {
 	sorted  bool
 	keys    []imap.SortKeySpec
 	ordered []imap.UID
+	// comparatorSelections is the connection's count when the backend last
+	// ordered every entry of ordered.
+	comparatorSelections uint64
 	// mailbox and uidValidity are set for a MULTISEARCH registration, whose
 	// updates carry the MAILBOX and UIDVALIDITY correlators (RFC 7377 2.1).
 	mailbox     string
@@ -136,6 +139,7 @@ func registerSortContext(c *conn, tag string, uids []imap.UID, uidMode bool, que
 	putSearchContext(c, &searchContext{
 		tag: tag, uidMode: uidMode, query: query, charset: args.charset,
 		sorted: true, keys: slices.Clone(args.keys), ordered: slices.Clone(uids),
+		comparatorSelections: c.comparatorSelections,
 	}, uids)
 }
 
@@ -411,9 +415,10 @@ func contextRuns(list []imap.UID, pick func(imap.UID) bool, number func(imap.UID
 // place between its neighbours, and an entry that would enter between those
 // neighbours waits until it leaves: the context must stay in the requested
 // order (RFC 5267 section 4.3.2), and its order against the removed message is
-// no longer known. After a COMPARATOR change the neighbours no longer follow
-// the backend's order either, so nothing enters and the old order stays until
-// the removed message leaves. A reorder replaces the list from position one.
+// no longer known. Once a comparator has been selected since the backend last
+// ordered the whole list, the removed message's place shows nothing about the
+// new order, so nothing enters until it leaves. A reorder replaces the list
+// from position one.
 func refreshSortContext(ctx context.Context, c *conn, held *searchContext, removed, before map[imap.UID]imap.SeqNum) (searchContextDelta, error) {
 	selected := c.state.selected
 	sorter, ok := selected.mailbox.(SortMailbox)
@@ -462,13 +467,16 @@ func refreshSortContext(ctx context.Context, c *conn, held *searchContext, remov
 			kept = true
 		}
 	}
-	ordered := result
+	ordered, settled := result, true
 	if kept {
-		if ordered, err = orderKeptEntries(ctx, c, sorter, held, target); err != nil {
+		if ordered, settled, err = orderKeptEntries(ctx, c, sorter, held, target); err != nil {
 			return searchContextDelta{}, err
 		}
 	}
 	delta.gone, delta.added = sortedContextChanges(selected, held, remaining, ordered)
+	if settled {
+		held.comparatorSelections = c.comparatorSelections
+	}
 	held.ordered = ordered
 	held.uids = make(map[imap.UID]struct{}, len(ordered))
 	for _, uid := range ordered {
@@ -490,15 +498,16 @@ func sortContext(ctx context.Context, sorter SortMailbox, held *searchContext, q
 }
 
 // orderKeptEntries orders target, which includes entries the context keeps
-// although the result no longer holds them. See refreshSortContext.
-func orderKeptEntries(ctx context.Context, c *conn, sorter SortMailbox, held *searchContext, target map[imap.UID]struct{}) ([]imap.UID, error) {
+// although the result no longer holds them. settled reports that the backend
+// placed every entry. See refreshSortContext.
+func orderKeptEntries(ctx context.Context, c *conn, sorter SortMailbox, held *searchContext, target map[imap.UID]struct{}) (ordered []imap.UID, settled bool, err error) {
 	var set imap.UIDSet
 	for uid := range target {
 		set.AddNum(uid)
 	}
 	uids, err := sortContext(ctx, sorter, held, newSearchQuery(imap.SearchUID{Set: set.Normalized()}, c.state.selected.uids, nil))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	at := make(map[imap.UID]int, len(uids))
 	var sorted []imap.UID
@@ -521,16 +530,16 @@ func orderKeptEntries(ctx context.Context, c *conn, sorter SortMailbox, held *se
 		return !ok
 	})
 	if len(placed) == len(keep) {
-		return sorted, nil
+		return sorted, true, nil
 	}
-	if !slices.Equal(placed, slices.DeleteFunc(slices.Clone(sorted), func(uid imap.UID) bool {
+	if held.comparatorSelections != c.comparatorSelections || !slices.Equal(placed, slices.DeleteFunc(slices.Clone(sorted), func(uid imap.UID) bool {
 		_, had := held.uids[uid]
 		return !had
 	})) {
-		// The backend orders the client's entries differently, as after a
-		// COMPARATOR change, so their neighbours cannot place the removed
-		// message either. Nothing enters until it leaves.
-		return keep, nil
+		// A comparator was selected since the backend last ordered the whole
+		// list, so the removed message's place no longer shows where an
+		// entry belongs. Nothing enters until it leaves.
+		return keep, false, nil
 	}
 	// after holds each run of unplaceable entries under the entry before it,
 	// zero standing for the start; gaps are the stretches of the backend's
@@ -555,7 +564,7 @@ func orderKeptEntries(ctx context.Context, c *conn, sorter SortMailbox, held *se
 	if open {
 		gaps = append(gaps, [2]int{from, len(sorted)})
 	}
-	ordered := append(make([]imap.UID, 0, len(target)), after[0]...)
+	ordered = append(make([]imap.UID, 0, len(target)), after[0]...)
 	for _, uid := range sorted {
 		if _, had := held.uids[uid]; !had && slices.ContainsFunc(gaps, func(gap [2]int) bool {
 			return at[uid] > gap[0] && at[uid] < gap[1]
@@ -565,7 +574,7 @@ func orderKeptEntries(ctx context.Context, c *conn, sorter SortMailbox, held *se
 		ordered = append(ordered, uid)
 		ordered = append(ordered, after[uid]...)
 	}
-	return ordered, nil
+	return ordered, false, nil
 }
 
 // sortedContextChanges is the positioned delta from the client's list to

@@ -443,6 +443,47 @@ func TestSortedContextComparatorReorder(t *testing.T) {
 		`^\* ESEARCH \(TAG "C"\) UID ADDTO \(1 4,2,1,3\)$`)
 }
 
+// UIDs 1 "a", 2 "b" and 3 "C" are unseen and 4 "D" is seen; UID 3's EXPUNGE
+// is withheld when the client's own STORE makes UID 4 match. "D" follows "C"
+// under both comparators, but only the default order puts it between UID 3's
+// neighbours; i;octet sorts "C" and "D" before "a" and "b". A COMPARATOR
+// command leaves UID 3's place in the context saying nothing about the new
+// order, so UID 4 waits for the EXPUNGE there too instead of being placed
+// on the wrong side of UID 3.
+func TestSortedContextComparatorCommandHoldsMatches(t *testing.T) {
+	for _, comparator := range []string{"", "i;octet"} {
+		t.Run("comparator="+comparator, func(t *testing.T) {
+			store := r4Memory()
+			obs, other := r4Open(t, store, nil), r4Open(t, store, nil)
+			for _, subject := range []string{"a", "b", "C"} {
+				r4Append(other, "INBOX", "", subject)
+			}
+			r4Append(other, "INBOX", `\Seen`, "D")
+			sweepWant(t, obs.cmd("S", "SELECT INBOX"), "OK")
+			sweepWant(t, other.cmd("S", "SELECT INBOX"), "OK")
+			sweepWant(t, obs.cmd("C", "UID SORT RETURN (UPDATE) (SUBJECT) UTF-8 UNSEEN"), "OK")
+			sweepWant(t, obs.cmd("N", "NOTIFY NONE"), "OK")
+			sweepWant(t, other.cmd("D", `UID STORE 3 +FLAGS.SILENT (\Deleted)`), "OK")
+			sweepWant(t, other.cmd("X", "EXPUNGE"), "OK")
+			if got := append(obs.quiet(300*time.Millisecond), obs.cmd("Q", "NOOP")...); r4Has(got, "ESEARCH|EXPUNGE") {
+				t.Fatalf("suppressed expunge reached the wire: %q", got)
+			}
+			added := `^\* ESEARCH \(TAG "C"\) UID ADDTO \(3 4\)$`
+			if comparator != "" {
+				sweepWant(t, obs.cmd("CO", "COMPARATOR "+comparator), "OK")
+				added = `^\* ESEARCH \(TAG "C"\) UID ADDTO \(1 4\)$`
+			}
+			got := append(obs.cmd("O", `UID STORE 4 -FLAGS (\Seen)`), obs.cmd("Q", "NOOP")...)
+			contextWantOrder(t, got, `^\* \d+ FETCH`)
+			got = obs.cmd("R", "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange))")
+			contextWantOrder(t, got,
+				`^\* ESEARCH \(TAG "C"\) UID REMOVEFROM \(3 3\)$`,
+				`^\* 3 EXPUNGE$`,
+				added)
+		})
+	}
+}
+
 // sortedContextModel is a client's copy of a sorted context, kept by applying
 // every REMOVEFROM, ADDTO and EXPUNGE in the order they arrive (RFC 5267
 // sections 4.3.2 to 4.3.4).
