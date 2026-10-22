@@ -408,7 +408,7 @@ func gs2Header(bound bool, authzID string) string {
 // scramPlusAdvertised reports whether any -PLUS mechanism is offered to this
 // session, which decides whether a "y" header is a downgrade attempt.
 func scramPlusAdvertised(c *conn) bool {
-	for _, capability := range deriveCapabilitiesContext(c.ctx, &c.state, c.server) {
+	for _, capability := range connCapabilities(c) {
 		if strings.HasPrefix(capability, "AUTH=SCRAM-") && strings.HasSuffix(capability, "-PLUS") {
 			return true
 		}

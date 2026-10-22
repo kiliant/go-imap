@@ -79,7 +79,7 @@ func createOptions(c *conn, args *createArgs) (*CreateOptions, error) {
 	if len(args.specialUse) == 0 {
 		return nil, nil
 	}
-	features := activeFeaturesContext(c.ctx, &c.state, c.server)
+	features := connFeatures(c)
 	if !features[featureCreateSpecialUse] {
 		return nil, &imap.Error{
 			Type: imap.ErrorTypeNo,

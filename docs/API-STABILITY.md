@@ -1316,3 +1316,9 @@ failure sends untagged NO [NOUPDATE "tag"]. Reusing an active UPDATE tag is
 refused before backend access across SEARCH, SORT and MULTISEARCH; this is a
 BREAKING pre-v1 behavior correction. Cancellation or selection teardown frees
 the tag.
+
+**Backend-observable deadline:** context refresh calls (`Search`, `Sort`) and
+capability predicates (`SupportsCapability`, `AllowCapability`) receive a
+context bounded by `Limits.CommandTimeout`, as that field promises; they
+previously inherited the connection's lifetime. A drain's refresh pass shares
+one timeout, and a context whose refresh misses it ends with NOUPDATE.

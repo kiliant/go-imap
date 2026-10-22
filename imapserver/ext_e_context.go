@@ -224,14 +224,22 @@ type searchContextDelta struct {
 
 func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.SeqNum) []searchContextDelta {
 	selected := c.state.selected
-	if selected == nil {
+	if selected == nil || len(selected.contexts) == 0 {
 		return nil
 	}
+	// A drain runs before, between or after commands, so no command context
+	// bounds these backend calls. One CommandTimeout covers the whole pass:
+	// the client chooses how many contexts it registers, and a per-call bound
+	// would let that number multiply how long the event loop is held. A
+	// context whose refresh misses the deadline gets NOUPDATE and is dropped,
+	// as for any other refresh failure.
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	defer cancel()
 	var deltas []searchContextDelta
 	var live []*searchContext
 	for _, held := range selected.contexts {
 		if held.sorted {
-			delta, changed, err := refreshSortContext(c, held, beforeSequences)
+			delta, changed, err := refreshSortContext(ctx, c, held, beforeSequences)
 			if err != nil {
 				writeNoUpdate(c, held.tag, "sort context could not be refreshed")
 				continue
@@ -242,7 +250,7 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 			}
 			continue
 		}
-		result, err := selected.mailbox.Search(c.ctx, held.query, &SearchOptions{Charset: held.charset})
+		result, err := selected.mailbox.Search(ctx, held.query, &SearchOptions{Charset: held.charset})
 		if err != nil || result == nil || len(result.UIDs) > maxCommandSearchResults {
 			writeNoUpdate(c, held.tag, "search context could not be refreshed")
 			continue
@@ -309,7 +317,7 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 // A full replacement is a valid ordered delta: remove the old list from
 // position one, then insert the new list there. The two halves straddle the
 // mailbox notifications, preserving pre-EXPUNGE and post-EXISTS numbering.
-func refreshSortContext(c *conn, held *searchContext, before map[imap.UID]imap.SeqNum) (searchContextDelta, bool, error) {
+func refreshSortContext(ctx context.Context, c *conn, held *searchContext, before map[imap.UID]imap.SeqNum) (searchContextDelta, bool, error) {
 	selected := c.state.selected
 	for uid := range held.uids {
 		if _, visible := selected.sequence(uid); visible && selected.backendUIDs != nil {
@@ -324,7 +332,7 @@ func refreshSortContext(c *conn, held *searchContext, before map[imap.UID]imap.S
 	if !ok {
 		return searchContextDelta{}, false, fmt.Errorf("SORT is no longer available")
 	}
-	uids, err := sorter.Sort(c.ctx, held.query, held.keys, &SortOptions{Charset: held.charset})
+	uids, err := sorter.Sort(ctx, held.query, held.keys, &SortOptions{Charset: held.charset})
 	if err != nil || len(uids) > maxCommandSearchResults {
 		if err == nil {
 			err = fmt.Errorf("SORT result limit exceeded")

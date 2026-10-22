@@ -540,6 +540,13 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   continuations beyond header-retention limits, removes duplicate CTE fields,
   and leaves the rewritten encoding visible to message analysis. BINARY
   round trips retain all payload octets. No exported signature change. (#54)
+- `Limits.CommandTimeout` now bounds two kinds of backend call that escaped
+  it. SEARCH and SORT context refreshes ran in update drains with only the
+  connection's lifetime as a bound, and so did capability predicates
+  (`SupportsCapability`, `AllowCapability`) asked from the greeting or from a
+  handler's helpers.
+  One timeout now covers a drain's whole refresh pass, however many contexts
+  the client registered; a refresh that misses it gets NOUPDATE. (#54)
 
 - THREAD responses follow the RFC 5256 section 5 grammar. A single reply
   continues its parent's number run, `(1 2)` rather than `(1 (2))`, and

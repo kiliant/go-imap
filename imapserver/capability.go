@@ -296,6 +296,23 @@ func deriveCapabilities(state *sessionState, server *Server) []string {
 	return deriveCapabilitiesContext(context.Background(), state, server)
 }
 
+// connCapabilities and connFeatures serve helpers that hold only the
+// connection's context: the greeting, literal admission and the option checks
+// handlers delegate. The predicates they consult are backend calls, so
+// Limits.CommandTimeout bounds them rather than the connection's lifetime. A
+// caller holding its command context passes that to deriveCapabilitiesContext.
+func connCapabilities(c *conn) []string {
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	defer cancel()
+	return deriveCapabilitiesContext(ctx, &c.state, c.server)
+}
+
+func connFeatures(c *conn) map[featureID]bool {
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	defer cancel()
+	return activeFeaturesContext(ctx, &c.state, c.server)
+}
+
 func tlsMatches(active bool, requirement tlsRequirement) bool {
 	switch requirement {
 	case tlsOnly:

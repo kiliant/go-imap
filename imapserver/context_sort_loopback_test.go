@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/imapserver"
 	"github.com/kiliant/go-imap/imapserver/memory"
 )
@@ -132,6 +135,126 @@ func TestContextRefreshFailureIsNoUpdate(t *testing.T) {
 			lines = w.cmd("A", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw))
 			if strings.Contains(strings.Join(lines, "\n"), "NOUPDATE") {
 				t.Fatalf("failed context was not dropped: %q", lines)
+			}
+		})
+	}
+}
+
+// slowRefreshBackend blocks the armed kind of context refresh until its
+// context ends, recording the deadline the framework gave it.
+type slowRefreshBackend struct {
+	*memory.Backend
+	kind     string
+	armed    atomic.Bool
+	observed chan slowRefresh
+}
+
+type slowRefresh struct {
+	deadline  bool
+	remaining time.Duration
+	err       error
+}
+
+type slowRefreshSession struct {
+	imapserver.Session
+	backend *slowRefreshBackend
+}
+
+type slowRefreshMailbox struct {
+	imapserver.SelectedMailbox
+	backend *slowRefreshBackend
+}
+
+func (b *slowRefreshBackend) Authenticate(ctx context.Context, info *imapserver.ConnInfo, credentials *imapserver.Credentials, options *imapserver.AuthenticateOptions) (imapserver.Session, error) {
+	session, err := b.Backend.Authenticate(ctx, info, credentials, options)
+	if err != nil {
+		return nil, err
+	}
+	return &slowRefreshSession{session, b}, nil
+}
+
+func (s *slowRefreshSession) Select(ctx context.Context, name string, updater *imapserver.Updater, options *imapserver.SelectOptions) (*imapserver.SelectResult, error) {
+	result, err := s.Session.Select(ctx, name, updater, options)
+	if err == nil {
+		result.Mailbox = &slowRefreshMailbox{result.Mailbox, s.backend}
+	}
+	return result, err
+}
+
+func (m *slowRefreshMailbox) block(ctx context.Context, kind string) bool {
+	if kind != m.backend.kind || !m.backend.armed.Load() {
+		return false
+	}
+	deadline, ok := ctx.Deadline()
+	got := slowRefresh{deadline: ok, remaining: time.Until(deadline)}
+	select {
+	case <-ctx.Done():
+		got.err = ctx.Err()
+	case <-time.After(5 * time.Second):
+	}
+	m.backend.observed <- got
+	return true
+}
+
+func (m *slowRefreshMailbox) Search(ctx context.Context, query *imapserver.SearchQuery, options *imapserver.SearchOptions) (*imapserver.SearchResult, error) {
+	if m.block(ctx, "SEARCH") {
+		return nil, errors.New("refresh blocked")
+	}
+	return m.SelectedMailbox.Search(ctx, query, options)
+}
+
+func (m *slowRefreshMailbox) Sort(ctx context.Context, query *imapserver.SearchQuery, keys []imap.SortKeySpec, options *imapserver.SortOptions) ([]imap.UID, error) {
+	if m.block(ctx, "SORT") {
+		return nil, errors.New("refresh blocked")
+	}
+	return m.SelectedMailbox.(imapserver.SortMailbox).Sort(ctx, query, keys, options)
+}
+
+// A refresh runs in an update drain, where no command context applies.
+// Limits.CommandTimeout must still bound it: a stalled refresh is cancelled at
+// the deadline, its context is dropped with NOUPDATE, and a context refreshed
+// before it keeps updating on a connection that stays usable.
+func TestContextRefreshHonoursCommandTimeout(t *testing.T) {
+	const timeout = 500 * time.Millisecond
+	commands := map[string]string{
+		"SEARCH": "UID SEARCH RETURN (ALL UPDATE) ALL",
+		"SORT":   "UID SORT RETURN (ALL UPDATE) (ARRIVAL) US-ASCII ALL",
+	}
+	for slow, healthy := range map[string]string{"SEARCH": "SORT", "SORT": "SEARCH"} {
+		t.Run(slow, func(t *testing.T) {
+			b := &slowRefreshBackend{Backend: r4Memory(), kind: slow, observed: make(chan slowRefresh, 4)}
+			w := r4Open(t, b, &imapserver.Options{AllowInsecureAuth: true, Limits: imapserver.Limits{CommandTimeout: timeout}})
+			sweepWant(t, w.cmd("S", "SELECT INBOX"), "OK")
+			sweepWant(t, w.cmd("OK", commands[healthy]), "OK")
+			sweepWant(t, w.cmd("SLOW", commands[slow]), "OK")
+			b.armed.Store(true)
+			raw := "Subject: update\r\n\r\nbody\r\n"
+			lines := w.cmd("A", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw))
+			select {
+			case got := <-b.observed:
+				if !got.deadline || got.remaining > timeout {
+					t.Fatalf("%s refresh deadline = %v (set %v), want within %v", slow, got.remaining, got.deadline, timeout)
+				}
+				if got.err == nil {
+					t.Fatalf("%s refresh was not cancelled at the deadline", slow)
+				}
+			default:
+				t.Fatalf("%s refresh did not reach the backend: %q", slow, lines)
+			}
+			sweepWant(t, lines, "OK")
+			joined := strings.Join(lines, "\n")
+			if want := fmt.Sprintf(`* NO [NOUPDATE "SLOW"] %s context could not be refreshed`, strings.ToLower(slow)); !strings.Contains(joined, want) {
+				t.Fatalf("timed-out refresh = %q, want %q", lines, want)
+			}
+			if !strings.Contains(joined, `* ESEARCH (TAG "OK") UID ADDTO`) {
+				t.Fatalf("context refreshed before the stall lost its update: %q", lines)
+			}
+			sweepWant(t, w.cmd("N", "NOOP"), "OK")
+			lines = w.cmd("A", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw))
+			sweepWant(t, lines, "OK")
+			joined = strings.Join(lines, "\n")
+			if strings.Contains(joined, "NOUPDATE") || !strings.Contains(joined, `* ESEARCH (TAG "OK") UID ADDTO`) {
+				t.Fatalf("after the timeout, want only the surviving context updated: %q", lines)
 			}
 		})
 	}

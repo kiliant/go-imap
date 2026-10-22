@@ -796,7 +796,7 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 			err = fmt.Errorf("literal exceeds the connection limit")
 		}
 	} else if request.info.NonSynchronising && request.info.Size > maxLiteralMinusSize &&
-		!slices.Contains(deriveCapabilitiesContext(c.ctx, &c.state, c.server), "LITERAL+") {
+		!slices.Contains(connCapabilities(c), "LITERAL+") {
 		err = &imap.Error{Type: imap.ErrorTypeBad, Code: imap.CodeTooBig, Text: "non-synchronising literal exceeds the LITERAL- limit"}
 	} else if !request.info.NonSynchronising {
 		c.encoder.BeginResponse(imapwire.ResponseContinuation, "").ContinuationText("ready for literal").CRLF()
@@ -806,7 +806,7 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 }
 
 func (c *conn) writeGreeting() error {
-	capabilities := deriveCapabilitiesContext(c.ctx, &c.state, c.server)
+	capabilities := connCapabilities(c)
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
 		Status: "OK",
 		Text: imapwire.RespText{
