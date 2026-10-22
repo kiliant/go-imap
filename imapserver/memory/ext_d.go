@@ -525,7 +525,7 @@ func (s *session) notifyWatchesLocked(m *mailbox, events ...imap.NotifyEventName
 		case imap.NotifyPersonal:
 			return true
 		case imap.NotifySubscribed:
-			if m.subscribed {
+			if s.account.subscribedLocked(m.name) {
 				return true
 			}
 		case imap.NotifyInboxes:

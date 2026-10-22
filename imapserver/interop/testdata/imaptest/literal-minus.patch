@@ -1,0 +1,49 @@
+--- a/src/imap-client.h
++++ b/src/imap-client.h
+@@ -11,6 +11,7 @@
+ 	CAP_CONDSTORE		= 0x04,
+ 	CAP_QRESYNC		= 0x08,
+ 	CAP_UIDPLUS		= 0x10,
++	CAP_LITERALMINUS	= 0x20,
+ };
+
+ struct imap_capability_name {
+@@ -24,6 +25,7 @@
+ 	{ "CONDSTORE", CAP_CONDSTORE },
+ 	{ "QRESYNC", CAP_QRESYNC },
+ 	{ "UIDPLUS", CAP_UIDPLUS },
++	{ "LITERAL-", CAP_LITERALMINUS },
+
+ 	{ NULL, 0 }
+ };
+--- a/src/commands.c
++++ b/src/commands.c
+@@ -69,6 +69,7 @@
+ 	string_t *str;
+ 	const unsigned char *p;
+ 	unsigned long len, lit_size;
++	bool nonsync;
+
+ 	p = memchr(cmdline, '\n', cmdline_len);
+ 	if (p == NULL)
+@@ -88,13 +89,16 @@
+ 				p--;
+ 			}
+ 			i_assert(p[-1] == '}');
+-			if ((client->capabilities & CAP_LITERALPLUS) == 0 &&
+-			    p[-2] == '+') {
++			/* RFC 7888: LITERAL- permits non-synchronizing
++			   literals of up to 4096 octets. */
++			nonsync = (client->capabilities & CAP_LITERALPLUS) != 0 ||
++				((client->capabilities & CAP_LITERALMINUS) != 0 &&
++				 lit_size <= 4096);
++			if (!nonsync && p[-2] == '+') {
+ 				/* using literal+ without server support,
+ 				   change it to a normal literal */
+ 				i_fatal("FIXME: Add support for sync literals");
+-			} else if ((client->capabilities & CAP_LITERALPLUS) != 0 &&
+-				   p[-2] != '+') {
++			} else if (nonsync && p[-2] != '+') {
+ 				/* for now we always convert to literal+ */
+ 				buffer_append(str, cmdline, p-cmdline-1);
+ 				str_append(str, "+}");

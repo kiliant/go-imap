@@ -52,6 +52,57 @@ func TestCatenateURLUserinfoInheritance(t *testing.T) {
 	}
 }
 
+// A login that is an e-mail address must survive the userinfo the resolver
+// supplies for inherited URLs. url.PathEscape leaves "@" alone, so the
+// synthesized authority held two and every relative URL was refused (#205).
+func TestCatenateURLUsernameWithAt(t *testing.T) {
+	const user = "alice@example.org"
+	backend := New(&Options{Users: map[string]string{user: "secret"}})
+	authenticated, err := backend.Authenticate(t.Context(), nil, &imapserver.Credentials{Mechanism: "LOGIN", Username: user, Password: "secret"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authenticated.Close(context.Background(), nil) })
+	s := authenticated.(*session)
+	if _, err := s.Append(t.Context(), "INBOX", strings.NewReader("Subject: at\r\n\r\nat body"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Select(t.Context(), "INBOX", &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		raw     string
+		resolve bool
+	}{
+		{"/INBOX/;UID=1/;SECTION=TEXT", true},
+		{";UID=1/;SECTION=TEXT", true},
+		{"imap://localhost/INBOX/;UID=1/;SECTION=TEXT", true},
+		{"imap://alice%40example.org@localhost/INBOX/;UID=1/;SECTION=TEXT", true},
+		{"imap://alice%40example.org;AUTH=*@localhost/INBOX/;UID=1/;SECTION=TEXT", true},
+		// RFC 5092 enc-user cannot carry a bare "@".
+		{"imap://alice@example.org@localhost/INBOX/;UID=1/;SECTION=TEXT", false},
+		{"imap://alice@localhost/INBOX/;UID=1/;SECTION=TEXT", false},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			r, err := s.ResolveCatenateURL(t.Context(), tc.raw, nil)
+			if !tc.resolve {
+				if r != nil {
+					r.Close()
+					t.Fatalf("resolved %s", tc.raw)
+				}
+				return
+			}
+			if err != nil || r == nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			defer r.Close()
+			if got, err := io.ReadAll(r); err != nil || string(got) != "at body" {
+				t.Fatalf("content = %q, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestCatenateURLContent(t *testing.T) {
 	s, _ := urlAuthSessions(t)
 	selected, err := s.Select(t.Context(), "INBOX", &imapserver.Updater{PushFunc: func(*imapserver.UpdateBatch) error { return nil }}, nil)

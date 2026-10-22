@@ -594,6 +594,57 @@ func (q *updateQueue) hasFlags() bool {
 	return false
 }
 
+// pendingMessageChanges reports which UIDs a queued, not yet applied batch
+// changes or removes. A context refresh searches live backend state, which can
+// already include such a change; its ADDTO or REMOVEFROM waits for the drain
+// that announces the change itself.
+func (q *updateQueue) pendingMessageChanges() func(imap.UID) bool {
+	uids := make(map[imap.UID]struct{})
+	var sets []imap.UIDSet
+	if q != nil {
+		q.mu.Lock()
+		for _, batch := range q.items {
+			if batch == nil {
+				continue
+			}
+			for _, change := range batch.Changes {
+				switch change := change.(type) {
+				case *UpdateFlags:
+					if change != nil {
+						uids[change.UID] = struct{}{}
+					}
+				case *UpdateExpunge:
+					if change != nil {
+						uids[change.UID] = struct{}{}
+					}
+				case *queuedExpunges:
+					if change != nil {
+						for _, uid := range change.uids {
+							uids[uid] = struct{}{}
+						}
+					}
+				case *UpdateVanished:
+					if change != nil {
+						sets = append(sets, change.UIDs)
+					}
+				}
+			}
+		}
+		q.mu.Unlock()
+	}
+	return func(uid imap.UID) bool {
+		if _, ok := uids[uid]; ok {
+			return true
+		}
+		for _, set := range sets {
+			if set.Contains(uid) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 func (q *updateQueue) close() {
 	if q == nil {
 		return

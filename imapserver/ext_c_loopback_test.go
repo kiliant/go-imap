@@ -3,10 +3,13 @@ package imapserver_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiliant/go-imap"
 )
 
 // SORT's answer is an order, so the assertions are about sequence, not
@@ -61,8 +64,38 @@ func TestLoopbackThread(t *testing.T) {
 	if !strings.HasPrefix(tagged, "C1 OK") {
 		t.Fatalf("THREAD failed: %q", tagged)
 	}
-	if line := findResponse(t, untagged, "* THREAD"); strings.TrimSpace(line) != "* THREAD (1) (2) (3)" {
+	if line := findResponse(t, untagged, "* THREAD"); strings.TrimSpace(line) != "* THREAD (1)(2)(3)" {
 		t.Errorf("THREAD = %q, want three single-message threads", line)
+	}
+}
+
+// Our own client must read what our server writes. The client implements the
+// RFC 5256 grammar strictly, and it rejected the space-separated lists and
+// nested single replies the server used to send.
+func TestLoopbackThreadClientDecodes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client, _ := newGroupAClient(t, ctx)
+	for _, subject := range []string{"one", "two", "Re: one", "Re: two", "Re: two"} {
+		body := "Subject: " + subject + "\r\n\r\nbody\r\n"
+		if _, err := client.Append(ctx, "INBOX", nil, int64(len(body)), strings.NewReader(body)).Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := client.Select("INBOX", nil).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	data, err := client.Thread(ctx, imap.ThreadOrderedSubject, imap.SearchAll, nil)
+	if err != nil {
+		t.Fatalf("Thread: %v", err)
+	}
+	got := fmt.Sprint(data.Roots)
+	want := fmt.Sprint([]imap.ThreadNode{
+		{Num: 1, Children: []imap.ThreadNode{{Num: 3}}},
+		{Num: 2, Children: []imap.ThreadNode{{Num: 4}, {Num: 5}}},
+	})
+	if got != want {
+		t.Errorf("Thread roots = %s, want %s", got, want)
 	}
 }
 

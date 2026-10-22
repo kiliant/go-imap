@@ -23,9 +23,49 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Root module — `github.com/kiliant/go-imap`
+
+#### Fixed
+
+- **imapmessage:** preserve non-CTE header bytes when re-encoding NUL parts,
+  including fields and continuations beyond semantic header-retention limits.
+  Decode the rewritten CTE even when it appears beyond those limits. Shared
+  text matching now supports RFC 5051 Unicode preparation and exact octets,
+  with bounded streaming substring matching. Text that cannot be converted
+  (invalid UTF-8, an unknown charset, a malformed transfer encoding) still
+  matches ASCII case-insensitively by default, as RFC 3501 requires; only a
+  named comparator compares it as octets. No exported root API change. (#54)
+
+- **imapmessage:** base64 bodies decode as RFC 2045 section 6.8 requires:
+  characters outside the alphabet are ignored and `=` ends the data. Spaces or
+  tabs inside base64 no longer make BINARY fail with UNKNOWN-CTE or SEARCH fall
+  back to the encoded octets. BINARY accepts multipart and message sections
+  and returns their stored octets (RFC 3516). An address without a domain,
+  such as `From: d`, stays in the ENVELOPE with host `MISSING_DOMAIN` rather
+  than being dropped. Adds the re-encoding of NUL-bearing parts behind
+  `imapserver/message`. Only `imapserver` uses this package; a standalone
+  server build receives these fixes with the next root release. No exported
+  API change. (#205)
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed
+
+- **BREAKING behaviour (pre-v1):** SEARCH, SORT and MULTISEARCH reject reuse
+  of an active UPDATE tag with BAD before backend access, preserving the
+  existing context. CANCELUPDATE or selection teardown permits reuse.
+  Previously SEARCH silently replaced it. No exported signature change. (#54)
+- **BREAKING behaviour (memory):** SEARCH, SORT, THREAD and MULTISEARCH use
+  the active session comparator. The default is i;unicode-casemap with RFC 5051
+  titlecasing and decomposition; i;octet preserves case and octets. Textual
+  SORT and ORDEREDSUBJECT previously used ASCII folding and SEARCH ignored the
+  selected comparator. Add `message.MatchOptions.Comparator` on the guarded
+  options struct; empty selects Unicode and unsupported names return
+  NO [BADCOMPARATOR]. Memory names its comparator, so text that cannot be
+  converted compares as i;octet and sorts after valid keys (RFC 5255 section
+  4.6). An empty comparator, which Maildir uses, keeps RFC 3501 ASCII
+  case-insensitive matching for such text. No backend interface or obligation
+  is added. (#54)
 
 - **BREAKING (pre-v1 contract):** `QResyncMailbox.Resync` may now be called
   repeatedly within a selection for UID FETCH with CHANGEDSINCE and VANISHED,
@@ -85,6 +125,32 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   URLs with NO [BADURL] before backend resolution. The command drains later
   parts without resolving them or committing. URLFETCH returns NIL for each
   unavailable range URL and continues serving other URLs. (#54, Z-3)
+- **BREAKING behaviour:** A refused CATENATE URL containing `]`, CR, LF or
+  NUL is answered with a plain NO, because BADURL cannot echo it (RFC 4469
+  section 5). It was NO [SERVERBUG], and `OnError` received a
+  `backend-error` event carrying the client's URL; no event is reported now.
+  Other refused URLs keep NO [BADURL <url>]. APPEND and REPLACE commit nothing
+  either way. No exported API change. (#204)
+- **BREAKING (pre-v1 contract):** `message.Message.OpenBinarySection` accepts
+  multipart and encapsulated message sections and returns their stored octets,
+  as RFC 3516 allows; it refused them before. Base64 that contains characters
+  outside the alphabet is decoded with those characters ignored (RFC 2045
+  section 6.8) instead of failing with CodeUnknownCTE. Unknown transfer
+  encodings and quoted-printable decoding failures retain that code. (#205)
+- **BREAKING behaviour (memory):** A BINARY APPEND whose parts contain NUL is
+  stored with those parts re-encoded as base64, which RFC 3516 section 4.4
+  permits because nothing is lost. FETCH BODY of such a message closed the
+  connection, since no IMAP string can carry NUL; BODY and BODYSTRUCTURE now
+  describe base64 and BINARY returns the original octets. (#205)
+- **BREAKING behaviour (memory):** Subscriptions belong to mailbox names, not
+  mailboxes. DELETE keeps a subscription (RFC 3501 section 6.3.9), and
+  LIST (SUBSCRIBED) returns it as `\NonExistent` (RFC 5258 section 3).
+  UNSUBSCRIBE removes it even after the mailbox is gone, and re-creating the
+  name finds it subscribed. RENAME no longer moves the subscription to the new
+  name; it stays on the old one (RFC 9051 section 6.3.6). LIST also returns a
+  hierarchy level that is not a mailbox as `\NonExistent \HasChildren` when a
+  pattern such as `a/%` matches it and its descendants lie beyond the
+  pattern (RFC 5258 section 3.5). No exported API change. (#205)
 
 - **BREAKING behaviour:** NOTIFY validates registrations before calling the
   backend or closing the current one. Unpaired MessageNew/MessageExpunge,
@@ -365,6 +431,21 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Added
 
+- `message.Message.EncodeNULParts` and `message.EncodeOptions` write a stored
+  message with every NUL-bearing part re-encoded as base64, for backends that
+  accept BINARY APPEND (RFC 3516 section 4.4). Other bytes are copied unchanged,
+  and a message that needs no change is not written. Additive. (#205)
+
+- SORT and UID SORT accept the PARTIAL return option under CONTEXT=SORT
+  (RFC 5267 section 4.4, as RFC 9394 extends it). The window is taken from
+  the sorted order and reported as `PARTIAL (<range> <set>)`, or `NIL` when
+  it holds nothing; negative ranges count from the end. A malformed range is
+  refused with BAD. As for SEARCH (#206), PARTIAL together with ALL reports
+  both, and a repeated PARTIAL uses the last range. ESORT results
+  write ascending runs as ranges, `1:5` rather than `1,2,3,4,5`, and spell
+  out every other order (RFC 5267 section 3.2). Framework-owned; no exported
+  API or backend contract change. (#205)
+
 - `imapserver.MultiSearchMailboxResult.ModSeqs` optionally pairs each matching
   UID with its modification sequence, so ESEARCH can report MODSEQ for MIN,
   MAX, PARTIAL or the whole result (RFC 7162 section 3.1.5, RFC 4731 section
@@ -456,8 +537,79 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- SORT RETURN (UPDATE) registers its complete ordered result, including with
+  PARTIAL. Later changes produce position-aware REMOVEFROM and ADDTO around
+  the corresponding EXPUNGE/EXISTS notifications, preserving UID or sequence
+  numbering. Cancellation and selection teardown stop updates. Refresh
+  failures use untagged NO [NOUPDATE "tag"] and end the context; SEARCH uses
+  that framing too. No exported interface or backend obligation is added. (#54)
+- `message.Message.EncodeNULParts` preserves non-CTE header lines and their
+  continuations beyond header-retention limits, removes duplicate CTE fields,
+  and leaves the rewritten encoding visible to message analysis. BINARY
+  round trips retain all payload octets. No exported signature change. (#54)
+- `Limits.CommandTimeout` now bounds two kinds of backend call that escaped
+  it. SEARCH and SORT context refreshes ran in update drains with only the
+  connection's lifetime as a bound, and so did capability predicates
+  (`SupportsCapability`, `AllowCapability`) asked from the greeting or from a
+  handler's helpers.
+  One timeout now covers a drain's whole refresh pass, however many contexts
+  the client registered; a refresh that misses it gets NOUPDATE. (#54)
+- CONTEXT=SEARCH and CONTEXT=SORT updates are part of the event that caused
+  them (RFC 5465 sections 5.1 and 5.2, RFC 5267 section 4.3.4). A flag change
+  or removal NOTIFY suppresses no longer leaks as ADDTO or REMOVEFROM; NOTIFY
+  SET releases the update after its FETCH or before its EXPUNGE. A flag
+  change's update follows its FETCH instead of preceding it, and a refresh
+  that sees a change to a known message that the session has not applied yet
+  waits for it; a new message enters as it is now, after its EXISTS. Only the
+  affected message's update waits, and the client's own STORE and APPEND
+  update contexts under suppression too. A sorted context inserts and removes
+  each entry at its own position instead of replacing the whole list; only a
+  reorder, as after a COMPARATOR change, still replaces it from position one.
+  A message removed while the client still sees it keeps its place there
+  until its EXPUNGE is reported. Until then, a match that would enter between
+  that message's nearest still-sortable neighbours waits too, and after a
+  COMPARATOR command that selects a comparator any match may wait. No
+  exported API change. (#54)
+
+- THREAD responses follow the RFC 5256 section 5 grammar. A single reply
+  continues its parent's number run, `(1 2)` rather than `(1 (2))`, and
+  sibling and top-level thread-lists are adjacent, `(2 (7)(12))` and
+  `(1)(2)`, rather than separated by SP. `imapclient` rejected the old form as
+  an invalid server response. Compatible wire correction; no exported API or
+  backend contract change. (#205)
+
+- The STATUS responses a NOTIFY SET STATUS writes before its tagged OK carry
+  HIGHESTMODSEQ when FlagChange or AnnotationChange is registered and the server
+  advertises CONDSTORE or QRESYNC, whether or not CONDSTORE is enabled, as RFC
+  5465 section 3 requires. Event STATUS responses keep the section 5.2 rule
+  and include it only once CONDSTORE is enabled. No exported API change. (#205)
+
+- APPEND and REPLACE answer NO [TRYCREATE] when the destination does not
+  exist, even if staging refused the command first, for example over a
+  CATENATE URL. RFC 3501 section 6.3.11 requires TRYCREATE for a missing
+  destination; the framework now asks `Session.Status` with no items whether
+  the destination exists before reporting such a refusal. Any answer other
+  than NONEXISTENT or TRYCREATE keeps the original response. No exported API
+  change and no new backend obligation. (#205)
+
+- memory: CATENATE URLs that inherit the account (relative, message-only and
+  absolute without userinfo) resolve for logins containing `@` or `:`, such as
+  e-mail addresses. The resolver wrote the login into the URL's userinfo
+  unescaped, gave the authority a second `@` and refused every such URL with
+  NO [BADURL]. No exported API change. (#205)
+
+- memory: SORT and THREAD ORDEREDSUBJECT follow RFC 5256 and RFC 5957
+  exactly. The base subject is computed by the full section 2.1 procedure,
+  including `[blob]` prefixes, `Re[2]:`-style leaders and `[fwd: ...]`
+  wrappers. FROM, TO and CC compare the first address's mailbox alone, and
+  DISPLAYFROM and DISPLAYTO fall back to mailbox@host, then mailbox. String
+  keys are compared under i;ascii-casemap, which folds to upper case, so
+  punctuation such as `[` and `_` now sorts before letters. No exported API
+  change. (#205)
+
 - Narrow memory's CATENATE account-inheritance documentation to absolute URLs
-  without userinfo. Mechanism-only userinfo remains refused with NO [BADURL].
+  without userinfo. Mechanism-only userinfo remains refused: NO [BADURL], or
+  a plain NO when the URL cannot be echoed (#204).
   Resolver and APPEND regressions preserve that boundary. Documentation/test
   correction; no exported API or runtime behaviour change. (#54, H-3, #207)
 

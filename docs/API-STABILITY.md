@@ -1191,9 +1191,12 @@ backendtest relative-section and BINARY APPEND checks enforce existing witness
 obligations, adding no backend duty. BINARY mailboxes that cannot store binary
 content may return NO [UNKNOWN-CTE], as RFC 3516 allows. No exported API changes.
 
-A refused CATENATE URL normally produces NO [BADURL]. If the URL contains bytes
-that cannot be represented safely in a response code, the existing response
-encoder uses SERVERBUG instead; correcting that diagnostic is follow-up S-15.
+A refused CATENATE URL produces NO [BADURL <url>]. BADURL must echo the URL, and
+url-resp-text cannot carry "]", CR, LF or NUL (RFC 4469 section 5), so a URL
+containing one of them is refused with a plain NO. The response code is optional
+(section 3). The refusal is the client's, not the backend's, so it is not
+reported to OnError (#204, follow-up S-15). The response encoder's SERVERBUG
+substitution remains for backend errors whose code cannot be written.
 
 ### T33 QRESYNC and UIDONLY follow-up — 2026-10-21 (#54)
 
@@ -1250,3 +1253,79 @@ The comparability rule in section 7 applies to server types too. SERVER-DESIGN
 section 8 now distinguishes implemented Limits from application/backend budgets
 and outstanding design goals; it does not make every listed budget an implicit
 Server guarantee. These documentation corrections alter no limit or default.
+
+### T33 pre-window conformance corrections — 2026-10-21 (#204, #205)
+
+imaptest's scripted corpus now runs against memory (#205), and the corrections
+it prompted land before the stability window opens.
+
+**Additive:** `message.Message.EncodeNULParts` and `message.EncodeOptions`.
+The method follows the package's shape: a context, a caller-owned writer and
+a guarded options struct for future policy. It is a method on a concrete
+type, not an interface. It re-encodes NUL-bearing parts as base64 for backends
+that accept BINARY APPEND (RFC 3516 section 4.4). Memory uses it; no backend
+is required to.
+
+**BREAKING pre-v1 contract:** `message.Message.OpenBinarySection` accepts
+multipart and encapsulated message sections and returns their stored octets.
+RFC 3516 allows these sections; RFC 9051 lets an IMAP4rev2 client request only
+leaf parts, and serving them anyway is the lenient choice. Base64 decoding
+ignores characters outside the alphabet (RFC 2045 section 6.8), so malformed
+base64 no longer returns CodeUnknownCTE. Unknown transfer encodings and
+quoted-printable decoding failures still return that code.
+
+**Backend-observable call:** when APPEND or REPLACE is refused while staging,
+for example over a CATENATE URL, the framework calls `Session.Status` with no
+items for the destination. A NONEXISTENT or TRYCREATE answer turns the
+refusal into NO [TRYCREATE], as RFC 3501 section 6.3.11 requires; any other
+answer keeps the original response. Status already answers for any mailbox,
+and with no items requested it need populate nothing, so this adds no backend
+obligation.
+
+**Framework wire corrections:** THREAD responses follow the RFC 5256 section
+5 grammar. SORT accepts the PARTIAL return option under CONTEXT=SORT, as
+SEARCH accepts it (#206). ESORT sets write ascending runs as ranges, which
+RFC 5267 section 3.2 permits.
+
+**Memory behaviour (reference backend):** Subscriptions belong to names and
+survive DELETE and RENAME. LIST returns missing hierarchy levels as
+`\NonExistent \HasChildren`. SORT and THREAD keys follow RFC 5256 and RFC
+5957, using the session's active comparator (i;unicode-casemap by default).
+CATENATE escapes the login
+inherited into URL userinfo. A BINARY APPEND is stored with NUL-bearing parts
+re-encoded.
+
+**Root, for the next root release:** `internal/imapmessage` keeps
+domainless addresses in the ENVELOPE with host `MISSING_DOMAIN`, the
+placeholder Dovecot uses, because a NIL host would mean group syntax.
+
+**Left open:** a BODY section that a backend already stores with NUL still
+closes the connection (#210).
+
+`message.MatchOptions.Comparator` is an additive field on a guarded options
+struct. Empty selects i;unicode-casemap; i;octet selects exact octets. Unknown
+names return NO [BADCOMPARATOR]. Memory passes its active comparator to SEARCH,
+SORT/THREAD criteria and MULTISEARCH; textual sort keys and ORDEREDSUBJECT use
+the same RFC 5051 preparation. Text that cannot be converted (invalid UTF-8,
+unknown stored charsets, malformed transfer encodings) compares as i;octet
+under a named comparator and sorts after valid keys (RFC 5255 section 4.6).
+An empty comparator keeps RFC 3501's ASCII case-insensitive matching for that
+text, which is what a backend without I18NLEVEL, such as Maildir, gets. No
+backend interface or obligation is added.
+
+SORT UPDATE now registers its complete ordered result, including outside a
+PARTIAL window. Refreshes use the existing SortMailbox operation, and explicit
+positions preserve the requested order across removals and additions. Context
+failure sends untagged NO [NOUPDATE "tag"]. Reusing an active UPDATE tag is
+refused before backend access across SEARCH, SORT and MULTISEARCH; this is a
+BREAKING pre-v1 behavior correction. Cancellation or selection teardown frees
+the tag.
+
+**Backend-observable deadline:** context refresh calls (`Search`, `Sort`) and
+capability predicates (`SupportsCapability`, `AllowCapability`) receive a
+context bounded by `Limits.CommandTimeout`, as that field promises; they
+previously inherited the connection's lifetime. A drain's refresh pass shares
+one timeout, and a context whose refresh misses it ends with NOUPDATE. A
+sorted context's refresh can call `Sort` a second time, with a UID-set query
+over the entries it keeps, to place them; that call shares the same timeout
+and adds no obligation beyond answering UID criteria.

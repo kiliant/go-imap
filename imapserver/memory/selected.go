@@ -132,7 +132,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	// support must not depend on whether the per-message loop runs.
 	empty, err := servermessage.Analyze(ctx, bytes.NewReader(nil), 0, nil)
 	if err == nil {
-		_, err = servermessage.Match(ctx, empty, servermessage.Metadata{}, criteria, &servermessage.MatchOptions{Charset: charset})
+		_, err = servermessage.Match(ctx, empty, servermessage.Metadata{}, criteria, &servermessage.MatchOptions{Charset: charset, Comparator: s.session.comparator})
 	}
 	if err != nil {
 		s.session.account.mu.Unlock()
@@ -143,7 +143,7 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 	needsEmailID := searchNeedsEmailID(criteria)
 	for i, msg := range s.mailbox.messages {
 		metadata := searchMetadata(i, msg, s.recentFlags(msg.uid, msg.flags), needsEmailID)
-		matched, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset})
+		matched, err := servermessage.Match(ctx, msg.analysis, metadata, criteria, &servermessage.MatchOptions{Charset: charset, Comparator: s.session.comparator})
 		if err != nil {
 			s.session.account.mu.Unlock()
 			return nil, err

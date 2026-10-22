@@ -102,7 +102,7 @@ func (b *Backend) SupportsCapability(_ context.Context, name string, _ *imapserv
 // The caller must hold the account lock.
 func (s *session) mailboxAttrsLocked(m *mailbox) []imap.MailboxAttr {
 	attrs := slices.Clone(m.specialUse)
-	if m.subscribed {
+	if s.account.subscribedLocked(m.name) {
 		attrs = append(attrs, imap.MailboxAttrSubscribed)
 	}
 	if s.hasChildrenLocked(m.name) {
@@ -111,6 +111,54 @@ func (s *session) mailboxAttrsLocked(m *mailbox) []imap.MailboxAttr {
 		attrs = append(attrs, imap.MailboxAttrHasNoChildren)
 	}
 	return attrs
+}
+
+// nonexistentAttrsLocked reports the attributes of a name LIST returns although
+// no mailbox has it: a subscription that outlived its mailbox, or a hierarchy
+// level above existing mailboxes. \NonExistent implies \NoSelect (RFC 5258
+// section 3).
+//
+// The caller must hold the account lock.
+func (s *session) nonexistentAttrsLocked(name string) []imap.MailboxAttr {
+	attrs := []imap.MailboxAttr{imap.MailboxAttrNonExistent}
+	if s.account.subscribedLocked(name) {
+		attrs = append(attrs, imap.MailboxAttrSubscribed)
+	}
+	if s.hasChildrenLocked(name) {
+		attrs = append(attrs, imap.MailboxAttrHasChildren)
+	} else {
+		attrs = append(attrs, imap.MailboxAttrHasNoChildren)
+	}
+	return attrs
+}
+
+// listHierarchyLevelsLocked returns the hierarchy levels above existing
+// mailboxes that are not mailboxes themselves, when a level matches the
+// patterns and has a descendant that does not. That is the "%" case: "a/%"
+// with only "a/b/c" existing returns "a/b". RFC 3501 section 6.3.8 returns such
+// levels, and RFC 5258 section 3.5 asks a server whose mailboxes may exist
+// without their parent to mark them "\NonExistent \HasChildren" (example 11).
+//
+// The caller must hold the account lock.
+func (s *session) listHierarchyLevelsLocked(reference string, patterns []string) []*imap.ListData {
+	unmatchedBelow := make(map[string]bool)
+	for _, m := range s.account.mailboxes {
+		matched := matchesAnyMailbox(m.name, reference, patterns)
+		for i := strings.IndexByte(m.name, '/'); i >= 0; i = nextDelimiter(m.name, i) {
+			parent := m.name[:i]
+			if parent == "" || s.account.mailboxes[mailboxKey(parent)] != nil {
+				continue
+			}
+			unmatchedBelow[parent] = unmatchedBelow[parent] || !matched
+		}
+	}
+	var results []*imap.ListData
+	for name, unmatched := range unmatchedBelow {
+		if unmatched && matchesAnyMailbox(name, reference, patterns) {
+			results = append(results, &imap.ListData{Attrs: s.nonexistentAttrsLocked(name), Delimiter: '/', Mailbox: name})
+		}
+	}
+	return results
 }
 
 // hasChildrenLocked reports whether any mailbox is a descendant of name under
@@ -180,31 +228,42 @@ var _ imapserver.CapabilitySupport = (*Backend)(nil)
 //
 // The caller must hold the account lock.
 func (s *session) listRecursiveSubscribedLocked(reference string, patterns []string) []*imap.ListData {
-	// names maps every candidate name to its mailbox, nil for a hierarchy level
-	// that is not one.
+	// names maps every candidate name to its mailbox, nil for a name that is
+	// not one: a hierarchy level, or a subscription that outlived its mailbox.
 	names := make(map[string]*mailbox)
 	// unreturnedBelow marks names with a subscribed descendant the patterns do
 	// not return, the only case where CHILDINFO tells the client something.
 	unreturnedBelow := make(map[string]bool)
+	candidates := make([]string, 0, len(s.account.mailboxes)+len(s.account.subscriptions))
 	for _, m := range s.account.mailboxes {
 		names[m.name] = m
-		returned := m.subscribed && matchesAnyMailbox(m.name, reference, patterns)
-		for i := strings.IndexByte(m.name, '/'); i >= 0; i = nextDelimiter(m.name, i) {
-			parent := m.name[:i]
+		candidates = append(candidates, m.name)
+	}
+	for key, name := range s.account.subscriptions {
+		if s.account.mailboxes[key] == nil {
+			names[name] = nil
+			candidates = append(candidates, name)
+		}
+	}
+	for _, name := range candidates {
+		subscribed := s.account.subscribedLocked(name)
+		returned := subscribed && matchesAnyMailbox(name, reference, patterns)
+		for i := strings.IndexByte(name, '/'); i >= 0; i = nextDelimiter(name, i) {
+			parent := name[:i]
 			if parent == "" {
 				continue
 			}
 			if _, ok := names[parent]; !ok {
 				names[parent] = nil
 			}
-			if m.subscribed && !returned {
+			if subscribed && !returned {
 				unreturnedBelow[parent] = true
 			}
 		}
 	}
 	var results []*imap.ListData
 	for name, m := range names {
-		subscribed := m != nil && m.subscribed
+		subscribed := s.account.subscribedLocked(name)
 		if !subscribed && !unreturnedBelow[name] || !matchesAnyMailbox(name, reference, patterns) {
 			continue
 		}
@@ -212,7 +271,7 @@ func (s *session) listRecursiveSubscribedLocked(reference string, patterns []str
 		if m != nil {
 			data.Attrs = s.mailboxAttrsLocked(m)
 		} else {
-			data.Attrs = []imap.MailboxAttr{imap.MailboxAttrNonExistent, imap.MailboxAttrHasChildren}
+			data.Attrs = s.nonexistentAttrsLocked(name)
 		}
 		if unreturnedBelow[name] {
 			data.ChildInfo = []string{"SUBSCRIBED"}

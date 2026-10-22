@@ -3,14 +3,12 @@ package imapmessage
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"mime/quotedprintable"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/kiliant/go-imap"
@@ -43,6 +41,10 @@ type MatchOptions struct {
 	// Charset names the charset of string arguments. Empty means US-ASCII or
 	// UTF-8 after UTF8=ACCEPT.
 	Charset string
+	// Comparator selects substring semantics. Empty and i;unicode-casemap
+	// both prepare convertible text with RFC 5051; they differ for text that
+	// cannot be converted. See asciiCasemap.
+	Comparator string
 	// Now is the reference instant for OLDER/YOUNGER. Zero uses time.Now.
 	Now time.Time
 	// SavedUIDs is the connection's SEARCHRES "$" result.
@@ -60,6 +62,12 @@ func Match(message *Message, metadata Metadata, criterion imap.SearchCriteria, o
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
+	}
+	opts.Comparator = strings.ToLower(opts.Comparator)
+	switch opts.Comparator {
+	case "", "i;unicode-casemap", "i;octet":
+	default:
+		return false, &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadComparator, Text: "unsupported SEARCH comparator"}
 	}
 	return match(message, metadata, criterion, opts)
 }
@@ -109,7 +117,7 @@ func match(message *Message, metadata Metadata, criterion imap.SearchCriteria, o
 			return false, err
 		}
 		for _, value := range message.root.headers.values(c.Field) {
-			if containsFoldString(imap.DecodeHeader(value), needle) {
+			if containsComparatorString(imap.DecodeHeader(value), needle, opts.Comparator) {
 				return true, nil
 			}
 		}
@@ -119,7 +127,7 @@ func match(message *Message, metadata Metadata, criterion imap.SearchCriteria, o
 		if err != nil {
 			return false, err
 		}
-		return matchString(message, c.Key, needle)
+		return matchString(message, c.Key, needle, opts.Comparator)
 	case imap.SearchDate:
 		return matchDate(message, metadata, c), nil
 	case imap.SearchSize:
@@ -224,10 +232,10 @@ func hasFlag(flags []imap.Flag, want imap.Flag) bool {
 	return false
 }
 
-func matchString(message *Message, key imap.SearchStringKey, needle string) (bool, error) {
+func matchString(message *Message, key imap.SearchStringKey, needle, comparator string) (bool, error) {
 	headerContains := func(name string) bool {
 		for _, value := range message.root.headers.values(name) {
-			if containsFoldString(imap.DecodeHeader(value), needle) {
+			if containsComparatorString(imap.DecodeHeader(value), needle, comparator) {
 				return true
 			}
 		}
@@ -235,7 +243,7 @@ func matchString(message *Message, key imap.SearchStringKey, needle string) (boo
 	}
 	addressContains := func(name string) bool {
 		for _, address := range parseAddressList(message.root.headers.value(name)) {
-			if containsFoldString(address.Name, needle) || containsFoldString(address.Mailbox+"@"+address.Host, needle) {
+			if containsComparatorString(address.Name, needle, comparator) || containsComparatorString(address.Mailbox+"@"+address.Host, needle, comparator) {
 				return true
 			}
 		}
@@ -253,14 +261,14 @@ func matchString(message *Message, key imap.SearchStringKey, needle string) (boo
 	case imap.SearchKeyTo:
 		return addressContains("To"), nil
 	case imap.SearchKeyBody:
-		return message.bodyContains(needle)
+		return message.bodyContains(needle, comparator)
 	case imap.SearchKeyText:
 		for _, field := range message.root.headers.fields {
-			if containsFoldString(field.Name, needle) || containsFoldString(imap.DecodeHeader(field.Value), needle) {
+			if containsComparatorString(field.Name, needle, comparator) || containsComparatorString(imap.DecodeHeader(field.Value), needle, comparator) {
 				return true, nil
 			}
 		}
-		return message.bodyContains(needle)
+		return message.bodyContains(needle, comparator)
 	default:
 		return false, fmt.Errorf("%w: string key %q", ErrUnsupportedCriteria, key)
 	}
@@ -337,51 +345,7 @@ func decodeSearchArgument(value, charset string) (string, error) {
 	}
 }
 
-func containsFoldString(haystack, needle string) bool {
-	ok, _ := containsFoldReader(strings.NewReader(haystack), needle)
-	return ok
-}
-
-func containsFoldReader(reader io.Reader, needle string) (bool, error) {
-	want := []rune(strings.ToLower(needle))
-	if len(want) == 0 {
-		return true, nil
-	}
-	// KMP keeps both time and memory bounded even for adversarial repeated text.
-	prefix := make([]int, len(want))
-	for i, j := 1, 0; i < len(want); i++ {
-		for j > 0 && want[i] != want[j] {
-			j = prefix[j-1]
-		}
-		if want[i] == want[j] {
-			j++
-		}
-		prefix[i] = j
-	}
-	br := bufio.NewReaderSize(reader, 32<<10)
-	matched := 0
-	for {
-		r, _, err := br.ReadRune()
-		if err == io.EOF {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		r = unicode.ToLower(r)
-		for matched > 0 && r != want[matched] {
-			matched = prefix[matched-1]
-		}
-		if r == want[matched] {
-			matched++
-			if matched == len(want) {
-				return true, nil
-			}
-		}
-	}
-}
-
-func (m *Message) bodyContains(needle string) (bool, error) {
+func (m *Message) bodyContains(needle, comparator string) (bool, error) {
 	if needle == "" {
 		return true, nil
 	}
@@ -406,13 +370,19 @@ func (m *Message) bodyContains(needle string) (bool, error) {
 		if err != nil {
 			return false, nil // malformed encodings are searched best-effort
 		}
-		ok, err := containsFoldReader(reader, needle)
+		partComparator := comparator
+		switch strings.ToLower(p.params["charset"]) {
+		case "", "us-ascii", "ascii", "utf-8", "utf8", "iso-8859-1", "iso8859-1", "latin1", "latin-1":
+		default:
+			partComparator = fallbackComparator(comparator)
+		}
+		ok, err := containsComparatorReader(reader, needle, partComparator)
 		if err == nil {
 			return ok, nil
 		}
 		// A malformed transfer encoding must not make the whole stored
 		// message unsearchable. Fall back to its encoded octets.
-		return containsFoldReader(io.NewSectionReader(m.r, p.headers.bodyStart, p.end-p.headers.bodyStart), needle)
+		return containsComparatorReader(io.NewSectionReader(m.r, p.headers.bodyStart, p.end-p.headers.bodyStart), needle, fallbackComparator(comparator))
 	}
 	return walk(m.root)
 }
@@ -421,7 +391,7 @@ func (m *Message) decodedBodyReader(p *part) (io.Reader, error) {
 	var reader io.Reader = io.NewSectionReader(m.r, p.headers.bodyStart, p.end-p.headers.bodyStart)
 	switch strings.ToLower(strings.TrimSpace(p.encoding)) {
 	case "base64":
-		reader = base64.NewDecoder(base64.StdEncoding, reader)
+		reader = newBase64Reader(reader)
 	case "quoted-printable":
 		reader = quotedprintable.NewReader(reader)
 	case "", "7bit", "8bit", "binary":

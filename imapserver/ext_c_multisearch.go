@@ -230,6 +230,9 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if err := validateSearchReturnOptions(c, &args.result); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	if err := validateContextTag(c, command.tag, args.result.returnOptions); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	if err := validateUTF8AcceptCharset(c, args.charset, false); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}

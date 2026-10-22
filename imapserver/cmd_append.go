@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/kiliant/go-imap"
 	"github.com/kiliant/go-imap/internal/imapwire"
@@ -55,7 +56,7 @@ func handleAppend(ctx context.Context, c *conn, command *queuedCommand) error {
 	messages, failure := staged.messages, staged.failure
 	origin := nextCommandOrigin()
 	if failure != nil {
-		return writeBackendError(c, command.tag, "APPEND", failure)
+		return writeBackendError(c, command.tag, "APPEND", appendDestinationRefusal(ctx, c, args.mailbox, failure))
 	}
 	if err := ctx.Err(); err != nil {
 		return writeBackendError(c, command.tag, "APPEND", err)
@@ -336,7 +337,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 				continue
 			}
 			if err := requireURLCapabilities(c, part.url); err != nil {
-				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: err.Error()}
+				failure = catenateURLRefusal(part.url, err.Error())
 				continue
 			}
 			resolved, err := session.ResolveCatenateURL(ctx, part.url, nil)
@@ -344,7 +345,7 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 				if resolved != nil {
 					_ = resolved.Close()
 				}
-				failure = &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: part.url, Text: "CATENATE URL did not resolve"}
+				failure = catenateURLRefusal(part.url, "CATENATE URL did not resolve")
 				continue
 			}
 			n, readErr := io.Copy(file, io.LimitReader(&literalContextReader{ctx: ctx, reader: resolved}, probingLimit(budget-total)))
@@ -372,6 +373,37 @@ func (c *conn) collectAppendPayload(ctx context.Context, message *appendMessage,
 	payload.reader = io.NewSectionReader(file, 0, total)
 	success = true
 	return payload, nil
+}
+
+// appendDestinationRefusal puts TRYCREATE ahead of a refusal the framework
+// reached while staging, before the backend saw the destination. RFC 3501
+// section 6.3.11 requires TRYCREATE whenever the destination does not exist,
+// and a tagged response carries one code. Status with no items asks the
+// session whether the mailbox exists; any answer other than NONEXISTENT or
+// TRYCREATE leaves the original refusal in place.
+func appendDestinationRefusal(ctx context.Context, c *conn, mailbox string, failure error) error {
+	var refusal *imap.Error
+	if !errors.As(failure, &refusal) || refusal.Type != imap.ErrorTypeNo || refusal.Code == imap.CodeTryCreate || c.state.session == nil {
+		return failure
+	}
+	_, err := c.state.session.Status(ctx, mailbox, &StatusOptions{})
+	var missing *imap.Error
+	if errors.As(err, &missing) && (missing.Code == imap.CodeNonExistent || missing.Code == imap.CodeTryCreate) {
+		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeTryCreate, Text: "destination mailbox does not exist"}
+	}
+	return failure
+}
+
+// catenateURLRefusal refuses one CATENATE URL. BADURL must echo the URL, and
+// url-resp-text cannot carry "]", CR, LF or NUL (RFC 4469 section 5). The code
+// is optional (section 3), so such a URL gets a plain NO. Left to the response
+// encoder, it would become SERVERBUG and report the client's URL to OnError as
+// a backend failure.
+func catenateURLRefusal(url, text string) error {
+	if strings.ContainsAny(url, "]\x00\r\n") {
+		return &imap.Error{Type: imap.ErrorTypeNo, Text: text}
+	}
+	return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeBadURL, CodeArgs: url, Text: text}
 }
 
 func appendUIDArgs(appended []*imap.AppendData) (string, bool) {

@@ -69,13 +69,29 @@ RUN curl -fsSL "https://dovecot.org/releases/2.3/dovecot-${DOVECOT_VERSION}.tar.
 ARG IMAPTEST_REF=0de0dbfb8293a71866d284bc1e4ddf9dfbcb6985
 ARG DOVECOT_VERSION=2.3.21
 
+# imaptest's script runner sends a literal only to a LITERAL+ server and
+# otherwise aborts the whole run with "FIXME: Add support for sync literals".
+# This server advertises LITERAL- (RFC 7888), which permits non-synchronizing
+# literals of up to 4096 octets. The patch teaches imaptest exactly that and
+# nothing else; a larger literal still aborts. Without it, the corpus never ran
+# against a backend advertising CATENATE or MULTIAPPEND, whose scripts are the
+# only ones with literals in commands (#205).
+COPY literal-minus.patch /tmp/literal-minus.patch
+
+# The scripted corpus also carries a few expectations that contradict normative
+# RFC text; rfc-expectations.pl corrects exactly those, each with its reason,
+# and fails the build if one no longer applies. docs/INTEROP.md lists them.
+COPY rfc-expectations.pl /tmp/rfc-expectations.pl
+
 RUN git clone https://github.com/dovecot/imaptest.git /src/imaptest \
     && cd /src/imaptest \
     && git checkout "$IMAPTEST_REF" \
+    && git apply /tmp/literal-minus.patch \
     && ./autogen.sh \
     && ./configure --with-dovecot="/src/dovecot-${DOVECOT_VERSION}" \
     && make -j"$(nproc)" \
     && make install \
-    && ldconfig
+    && ldconfig \
+    && perl /tmp/rfc-expectations.pl /src/imaptest/src/tests
 
 ENTRYPOINT ["imaptest"]

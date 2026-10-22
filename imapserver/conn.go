@@ -110,6 +110,10 @@ type conn struct {
 	notifySelected selectedNotifyPolicy
 	// releasingNotify is set for the implicit NOOP of a NOTIFY SET.
 	releasingNotify bool
+	// comparatorSelections counts COMPARATOR commands that selected a
+	// comparator; sorted contexts compare it with the count their order
+	// was last established under. See refreshSortContext.
+	comparatorSelections uint64
 
 	state sessionState // event-loop owned
 	// executingSeqSensitive is event-loop owned, like state: it is set and
@@ -796,7 +800,7 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 			err = fmt.Errorf("literal exceeds the connection limit")
 		}
 	} else if request.info.NonSynchronising && request.info.Size > maxLiteralMinusSize &&
-		!slices.Contains(deriveCapabilitiesContext(c.ctx, &c.state, c.server), "LITERAL+") {
+		!slices.Contains(connCapabilities(c), "LITERAL+") {
 		err = &imap.Error{Type: imap.ErrorTypeBad, Code: imap.CodeTooBig, Text: "non-synchronising literal exceeds the LITERAL- limit"}
 	} else if !request.info.NonSynchronising {
 		c.encoder.BeginResponse(imapwire.ResponseContinuation, "").ContinuationText("ready for literal").CRLF()
@@ -806,7 +810,7 @@ func (c *conn) handleLiteralRequest(request literalRequest) {
 }
 
 func (c *conn) writeGreeting() error {
-	capabilities := deriveCapabilitiesContext(c.ctx, &c.state, c.server)
+	capabilities := connCapabilities(c)
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").RespCond(imapwire.RespCond{
 		Status: "OK",
 		Text: imapwire.RespText{
@@ -1198,7 +1202,8 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			}
 		}
 	}
-	// Report removals from contexts before EXPUNGE renumbers sequence IDs.
+	// Contexts report expunged matches before EXPUNGE renumbers sequence IDs,
+	// and every other change after the FETCH or EXISTS that caused it.
 	deltas := refreshSearchContexts(c, removed, beforeSequences)
 	if err := writeSearchContextDeltas(c, deltas, true); err != nil {
 		return err

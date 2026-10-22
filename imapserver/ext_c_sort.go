@@ -188,9 +188,12 @@ type sortArgs struct {
 	keys []imap.SortKeySpec
 	// returnOptions carries ESORT's RETURN clause. See ext_e_context.go.
 	returnOptions []string
-	extended      bool
-	charset       string
-	criteria      imap.SearchCriteria
+	// partial is the PARTIAL window, RFC 5267 section 4.4 as extended by RFC
+	// 9394. It windows the sorted result.
+	partial  *searchPartialRange
+	extended bool
+	charset  string
+	criteria imap.SearchCriteria
 }
 
 func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
@@ -210,7 +213,21 @@ func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
 			if !decoder.ExpectAtom(&option) {
 				return decoder.Err()
 			}
-			args.returnOptions = append(args.returnOptions, strings.ToUpper(option))
+			option = strings.ToUpper(option)
+			if option == searchReturnPartial {
+				// The one option with an argument. As in SEARCH, a repeated
+				// PARTIAL is accepted and the last range applies (#206).
+				var raw string
+				if !decoder.ExpectSP() || !decoder.ExpectAtom(&raw) {
+					return decoder.Err()
+				}
+				window, err := parsePartialRange(raw)
+				if err != nil {
+					return err
+				}
+				args.partial = window
+			}
+			args.returnOptions = append(args.returnOptions, option)
 			return nil
 		}); err != nil {
 			return nil, 0, err
@@ -310,6 +327,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := validateSortReturnOptions(c, args.returnOptions); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
+	if err := validateContextTag(c, command.tag, args.returnOptions); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	if err := validateUTF8AcceptCharset(c, args.charset, true); err != nil {
 		return c.writeBad(command.tag, err.Error())
 	}
@@ -370,6 +390,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := writeSortResponse(c, command, args, numbers, modSeq); err != nil {
 		return err
 	}
+	if tag, update := searchContextTag(command, args.returnOptions); update {
+		registerSortContext(c, tag, matchedUIDs, commandUsesUIDs(command), query, args)
+	}
 	if err := c.drainBeforeCompletion(command, updateAccounting{}); err != nil {
 		return err
 	}
@@ -419,10 +442,19 @@ func handleThread(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	// thread-data = "THREAD" [SP 1*thread-list]: the trees are adjacent.
+	uidMode := commandUsesUIDs(command)
 	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("THREAD")
+	separated := false
 	for i := range roots {
-		c.encoder.SP()
-		writeThreadNode(c, &roots[i], commandUsesUIDs(command))
+		if !threadNodeWritable(c, &roots[i], uidMode) {
+			continue
+		}
+		if !separated {
+			c.encoder.SP()
+			separated = true
+		}
+		writeThreadList(c, &roots[i], uidMode)
 	}
 	c.encoder.CRLF()
 	if err := c.encoder.Flush(); err != nil {
@@ -470,60 +502,135 @@ func writeSortResponse(c *conn, command *queuedCommand, args *sortArgs, numbers 
 			c.encoder.SP().Atom(sortReturnMax).SP().Number(numbers[len(numbers)-1])
 		}
 		if requested[sortReturnAll] {
-			// ALL keeps the sorted order, so it is written as a plain list
-			// rather than collapsed into ranges: collapsing would re-sort it.
+			// ALL keeps the sorted order; only ascending runs become ranges.
 			c.encoder.SP().Atom(sortReturnAll).SP().Atom(numberListString(numbers))
 		}
 	}
 	if requested[sortReturnCount] {
 		c.encoder.SP().Atom(sortReturnCount).SP().Number(uint32(len(numbers)))
 	}
+	if args.partial != nil {
+		// The window is taken from the sorted order and reported with the
+		// requested range, or NIL when it holds nothing (RFC 9394 section 3.1).
+		c.encoder.SP().Atom(searchReturnPartial).SP().Special('(').Atom(formatPartialRange(args.partial)).SP()
+		if window := partialWindow(args.partial, numbers); len(window) > 0 {
+			c.encoder.Atom(numberListString(window))
+		} else {
+			c.encoder.NIL()
+		}
+		c.encoder.Special(')')
+	}
 	c.encoder.CRLF()
 	return c.encoder.Flush()
 }
 
-// numberListString renders numbers in the order given, without collapsing runs
-// into ranges. A sorted result's order is data, and range notation would lose
-// it.
+// numberListString renders a sorted result as a sequence-set that keeps its
+// order. RFC 5267 section 3.2 expands every range in increasing order, so an
+// ascending run of consecutive numbers may be written "3:5", while any other
+// order must be spelled out: "5,3:4,2" is 5, 3, 4, 2.
 func numberListString(numbers []uint32) string {
 	var builder strings.Builder
-	for i, number := range numbers {
+	for i := 0; i < len(numbers); {
+		end := i
+		for end+1 < len(numbers) && numbers[end+1] == numbers[end]+1 {
+			end++
+		}
 		if i > 0 {
 			builder.WriteByte(',')
 		}
-		builder.WriteString(strconv.FormatUint(uint64(number), 10))
+		builder.WriteString(strconv.FormatUint(uint64(numbers[i]), 10))
+		if end > i {
+			builder.WriteByte(':')
+			builder.WriteString(strconv.FormatUint(uint64(numbers[end]), 10))
+		}
+		i = end + 1
 	}
 	return builder.String()
 }
 
-// writeThreadNode writes one thread tree.
+// writeThreadList writes one thread tree as an RFC 5256 section 5 thread-list:
 //
-// A node with Num zero is the anonymous container of RFC 5256's ((a)(b))
-// grouping: it has no message of its own, so it contributes only its children's
-// parentheses.
-func writeThreadNode(c *conn, node *imap.ThreadNode, uidMode bool) {
+//	thread-list    = "(" (thread-members / thread-nested) ")"
+//	thread-members = nz-number *(SP nz-number) [SP thread-nested]
+//	thread-nested  = 2*thread-list
+//
+// A single reply continues its parent's number run, so a chain is "(1 2 3)",
+// never "(1 (2 (3)))". Only two or more replies open nested lists, and those are
+// adjacent with no SP between them. A node with Num zero is the anonymous
+// container of the ((a)(b)) grouping; a message no longer in the selection is
+// written the same way, contributing only its replies.
+func writeThreadList(c *conn, node *imap.ThreadNode, uidMode bool) {
 	c.encoder.Special('(')
-	if node.Num != 0 {
-		number := node.Num
-		if !uidMode {
-			seqNum, present := c.state.selected.sequence(imap.UID(node.Num))
-			if !present {
-				number = 0
-			} else {
-				number = uint32(seqNum)
-			}
-		}
-		if number != 0 {
-			c.encoder.Number(number)
-		}
-	}
-	for i := range node.Children {
-		if node.Num != 0 || i > 0 {
-			c.encoder.SP()
-		}
-		writeThreadNode(c, &node.Children[i], uidMode)
-	}
+	writeThreadMembers(c, node, uidMode)
 	c.encoder.Special(')')
+}
+
+func writeThreadMembers(c *conn, node *imap.ThreadNode, uidMode bool) {
+	number, ok := threadNumber(c, node, uidMode)
+	if !ok {
+		writeThreadReplies(c, node.Children, uidMode)
+		return
+	}
+	c.encoder.Number(number)
+	for len(node.Children) == 1 {
+		next, ok := threadNumber(c, &node.Children[0], uidMode)
+		if !ok {
+			break
+		}
+		c.encoder.SP().Number(next)
+		node = &node.Children[0]
+	}
+	if threadRepliesWritable(c, node.Children, uidMode) {
+		c.encoder.SP()
+		writeThreadReplies(c, node.Children, uidMode)
+	}
+}
+
+// writeThreadReplies writes sibling replies. thread-nested needs at least two
+// lists, so a lone writable reply continues the run instead.
+func writeThreadReplies(c *conn, children []imap.ThreadNode, uidMode bool) {
+	var writable []*imap.ThreadNode
+	for i := range children {
+		if threadNodeWritable(c, &children[i], uidMode) {
+			writable = append(writable, &children[i])
+		}
+	}
+	if len(writable) == 1 {
+		writeThreadMembers(c, writable[0], uidMode)
+		return
+	}
+	for _, child := range writable {
+		writeThreadList(c, child, uidMode)
+	}
+}
+
+func threadNumber(c *conn, node *imap.ThreadNode, uidMode bool) (uint32, bool) {
+	if node.Num == 0 {
+		return 0, false
+	}
+	if uidMode {
+		return node.Num, true
+	}
+	seqNum, present := c.state.selected.sequence(imap.UID(node.Num))
+	return uint32(seqNum), present
+}
+
+// threadNodeWritable reports whether a tree contributes at least one number;
+// an empty list "()" is not a thread-list.
+func threadNodeWritable(c *conn, node *imap.ThreadNode, uidMode bool) bool {
+	if _, ok := threadNumber(c, node, uidMode); ok {
+		return true
+	}
+	return threadRepliesWritable(c, node.Children, uidMode)
+}
+
+func threadRepliesWritable(c *conn, children []imap.ThreadNode, uidMode bool) bool {
+	for i := range children {
+		if threadNodeWritable(c, &children[i], uidMode) {
+			return true
+		}
+	}
+	return false
 }
 
 func sortHasModSeqCriterion(criteria imap.SearchCriteria) bool {

@@ -137,11 +137,15 @@ func (m *Message) OpenBodySection(ctx context.Context, item *imap.FetchItemBodyS
 // selects the defaults. Construct with keyed fields only; fields may be added.
 type BinarySectionOptions struct{ _ struct{} }
 
-// OpenBinarySection returns a leaf body's decoded bytes and exact octet count.
+// OpenBinarySection returns a section's decoded bytes and exact octet count.
 // It supports identity, base64 and quoted-printable transfer encodings; text
-// line endings become CRLF. Parts follow BODY numbering, with an empty path
-// selecting the entire message, retaining its headers. Multipart and encapsulated
-// message containers are invalid; select a leaf within them instead.
+// line endings become CRLF. Base64 decoding ignores characters outside the
+// alphabet, as RFC 2045 section 6.8 requires. Parts follow BODY numbering, with
+// an empty path selecting the entire message, retaining its headers. A
+// multipart or encapsulated message container is decoded by its own transfer
+// encoding, which RFC 2046 limits to identity encodings, so its stored octets
+// are returned unchanged (RFC 3516; RFC 9051 lets an IMAP4rev2 client ask only
+// for leaf parts).
 //
 // Partial ranges apply after decoding and line-ending conversion. Peek has no
 // effect on this utility. Nil items and invalid ranges fail; unknown transfer
@@ -165,6 +169,53 @@ func (m *Message) OpenBinarySection(ctx context.Context, item *imap.FetchItemBin
 		return nil, 0, err
 	}
 	return &sectionReader{ctx: ctx, reader: reader}, size, nil
+}
+
+// EncodeOptions configures [Message.EncodeNULParts]. A nil pointer selects the
+// defaults. Construct with keyed fields only; fields may be added.
+type EncodeOptions struct{ _ struct{} }
+
+// EncodeNULParts writes the message to w with every leaf part whose stored body
+// holds a NUL octet under an identity transfer encoding (none, 7bit, 8bit or
+// binary) re-encoded as base64. Every other byte is copied unchanged, header
+// lines other than Content-Transfer-Encoding included. It reports whether any
+// part changed; when none did, it writes nothing and the original bytes remain
+// the message to store.
+//
+// No IMAP string can carry NUL, so BODY cannot transmit such a part. A backend
+// that accepts BINARY APPEND (RFC 3516) can store the result instead: section
+// 4.4 permits the change because nothing is lost, BODY and BODYSTRUCTURE then
+// describe base64, and [Message.OpenBinarySection] still returns the original
+// octets. The message is read once to find such parts and once to write it,
+// with bounded buffers. A nil options pointer selects the defaults.
+func (m *Message) EncodeNULParts(ctx context.Context, w io.Writer, options *EncodeOptions) (bool, error) {
+	_ = options
+	if err := checkContext(ctx); err != nil {
+		return false, err
+	}
+	if m == nil || m.parsed == nil || w == nil {
+		return false, fmt.Errorf("message: nil or unanalysed message, or nil writer")
+	}
+	source := &operationSource{ctx: ctx, source: m.source}
+	sink := &operationSink{writer: w}
+	changed, err := m.parsed.WithReader(source).EncodeNULParts(sink)
+	if sink.err != nil && ctx.Err() == nil {
+		return changed, sink.err // the caller's own writer error, unchanged
+	}
+	return changed, operationError(ctx, source, err)
+}
+
+type operationSink struct {
+	writer io.Writer
+	err    error
+}
+
+func (w *operationSink) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if err != nil && w.err == nil {
+		w.err = err
+	}
+	return n, err
 }
 
 type operationSource struct {

@@ -1,0 +1,3 @@
+# Unified diffs applied to third-party sources: context lines begin with a
+# space followed by the original indentation, which is not a whitespace error.
+imapserver/interop/testdata/**/*.patch -whitespace

@@ -25,7 +25,10 @@ type session struct {
 	// See ext_d.go.
 	notify       *imapserver.SessionUpdater
 	notifyConfig *imapserver.NotifyConfig
-	// comparator is the active RFC 5255 collation. See ext_e.go.
+	// comparator is the active RFC 5255 collation, always named: memory
+	// advertises I18NLEVEL, so text that cannot be converted compares as
+	// i;octet (RFC 5255 section 4.6), which the message helper applies only
+	// to a named comparator. See ext_e.go.
 	comparator string
 }
 
@@ -39,20 +42,38 @@ func (s *session) List(ctx context.Context, writer *imapserver.ListWriter, refer
 		return noError(imap.CodeClosed, "session is closed")
 	}
 	var results []*imap.ListData
-	if options != nil && options.Subscribed && options.SelectRecursiveMatch {
+	specialUse := options != nil && options.SelectSpecialUse
+	switch {
+	case options != nil && options.Subscribed && options.SelectRecursiveMatch:
 		results = s.listRecursiveSubscribedLocked(reference, patterns)
-	} else {
-		for _, m := range s.account.mailboxes {
-			if options != nil && options.Subscribed && !m.subscribed {
+	case options != nil && options.Subscribed:
+		// Subscribed names are listed whether or not they still exist; a name
+		// without a mailbox is \NonExistent (RFC 5258 section 3).
+		for key, name := range s.account.subscriptions {
+			if !matchesAnyMailbox(name, reference, patterns) {
 				continue
 			}
-			if options != nil && options.SelectSpecialUse && len(m.specialUse) == 0 {
+			if m := s.account.mailboxes[key]; m != nil {
+				if specialUse && len(m.specialUse) == 0 {
+					continue
+				}
+				results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
+			} else if !specialUse {
+				results = append(results, &imap.ListData{Attrs: s.nonexistentAttrsLocked(name), Delimiter: '/', Mailbox: name})
+			}
+		}
+	default:
+		for _, m := range s.account.mailboxes {
+			if specialUse && len(m.specialUse) == 0 {
 				continue
 			}
 			if !matchesAnyMailbox(m.name, reference, patterns) {
 				continue
 			}
 			results = append(results, &imap.ListData{Attrs: s.mailboxAttrsLocked(m), Delimiter: '/', Mailbox: m.name})
+		}
+		if !specialUse {
+			results = append(results, s.listHierarchyLevelsLocked(reference, patterns)...)
 		}
 	}
 	if slices.Contains(patterns, "") {
@@ -307,12 +328,50 @@ func (s *session) setSubscribed(ctx context.Context, name string, subscribed boo
 	if s.closed {
 		return noError(imap.CodeClosed, "session is closed")
 	}
-	m := s.account.mailboxes[mailboxKey(name)]
+	key := mailboxKey(name)
+	m := s.account.mailboxes[key]
+	if subscribed {
+		// RFC 9051 section 6.3.7 lets a server require that the mailbox exist.
+		if m == nil {
+			return nonexistentMailbox(name)
+		}
+		s.account.subscriptions[key] = m.name
+		return nil
+	}
+	// A subscription can outlive its mailbox, so it must remain removable.
+	if _, ok := s.account.subscriptions[key]; ok {
+		delete(s.account.subscriptions, key)
+		return nil
+	}
 	if m == nil {
 		return nonexistentMailbox(name)
 	}
-	m.subscribed = subscribed
 	return nil
+}
+
+// subscribedLocked reports whether name is on the subscription list, whether
+// or not a mailbox by that name exists.
+//
+// The caller must hold the account lock.
+func (a *account) subscribedLocked(name string) bool {
+	_, ok := a.subscriptions[mailboxKey(name)]
+	return ok
+}
+
+// storableMessage re-encodes NUL-bearing parts of an appended message as
+// base64, as RFC 3516 section 4.4 permits, so that BODY can transmit what
+// BINARY APPEND stored. Messages without such parts are stored unchanged.
+func storableMessage(ctx context.Context, raw []byte) ([]byte, error) {
+	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var encoded bytes.Buffer
+	changed, err := analysis.EncodeNULParts(ctx, &encoded, nil)
+	if err != nil || !changed {
+		return raw, err
+	}
+	return encoded.Bytes(), nil
 }
 
 func (s *session) Append(ctx context.Context, name string, literal io.Reader, options *imapserver.AppendOptions) (*imap.AppendData, error) {
@@ -321,6 +380,9 @@ func (s *session) Append(ctx context.Context, name string, literal io.Reader, op
 	}
 	raw, err := io.ReadAll(&contextReader{ctx: ctx, reader: literal})
 	if err != nil {
+		return nil, err
+	}
+	if raw, err = storableMessage(ctx, raw); err != nil {
 		return nil, err
 	}
 	analysis, err := servermessage.Analyze(ctx, bytes.NewReader(raw), int64(len(raw)), nil)

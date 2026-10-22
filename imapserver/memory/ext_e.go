@@ -227,9 +227,7 @@ func urlAuthToken(key []byte, url string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// comparators are the collations this backend can apply. Only the RFC 5255
-// default is real; the ordinal comparator is offered because a client that asks
-// for exact octet comparison can genuinely be served it.
+// comparators apply to SEARCH, SORT and ORDEREDSUBJECT (RFC 5255).
 var comparators = []string{"i;unicode-casemap", "i;octet"}
 
 // Comparators implements [imapserver.ComparatorSession].
@@ -239,12 +237,8 @@ func (s *session) Comparators(ctx context.Context, _ *imapserver.ComparatorOptio
 	}
 	s.account.mu.Lock()
 	defer s.account.mu.Unlock()
-	active := s.comparator
-	if active == "" {
-		active = comparators[0]
-	}
 	return &imapserver.ComparatorData{
-		Active:    active,
+		Active:    s.comparator,
 		Available: append([]string(nil), comparators...),
 	}, nil
 }
