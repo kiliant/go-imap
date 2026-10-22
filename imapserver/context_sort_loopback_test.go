@@ -33,23 +33,20 @@ func TestSortContextUpdates(t *testing.T) {
 			sweepWant(t, w.cmd("REG", prefix+"SORT RETURN (UPDATE PARTIAL 2:2 COUNT) (REVERSE ARRIVAL) US-ASCII ALL"), "OK")
 			sweepWant(t, w.cmd("D", "UID STORE 2 +FLAGS (\\Deleted)"), "OK")
 			lines := w.cmd("E", "UID EXPUNGE 2")
-			remove := `* ESEARCH (TAG "REG")` + marker + " REMOVEFROM (1 3,2,1)"
-			added := "2,1"
-			if uidMode {
-				added = "3,1"
-			}
-			add := `* ESEARCH (TAG "REG")` + marker + " ADDTO (1 " + added + ")"
-			r, e, a := slices.Index(lines, remove), slices.Index(lines, "* 2 EXPUNGE"), slices.Index(lines, add)
-			if r < 0 || e <= r || a <= e {
-				t.Fatalf("ordered context must remove before EXPUNGE and add after it: %q", lines)
+			// UID 2, message 2, held position 2 of 3,2,1. The rest keeps its
+			// order, so nothing else is sent.
+			remove := `* ESEARCH (TAG "REG")` + marker + " REMOVEFROM (2 2)"
+			r, e := slices.Index(lines, remove), slices.Index(lines, "* 2 EXPUNGE")
+			if r < 0 || e <= r || r4Has(lines, `ADDTO|REMOVEFROM \(1 `) {
+				t.Fatalf("ordered context must remove the expunged position before EXPUNGE, and nothing more: %q", lines)
 			}
 			raw := "Subject: new\r\n\r\nnew body\r\n"
 			lines = w.cmd("A", fmt.Sprintf("APPEND INBOX \"04-Jan-2024 10:00:00 +0000\" {%d+}\r\n%s", len(raw), raw))
-			added = "3,2,1"
+			added := "3,2,1"
 			if uidMode {
 				added = "4,3,1"
 			}
-			add = `* ESEARCH (TAG "REG")` + marker + " ADDTO (1 " + added + ")"
+			add := `* ESEARCH (TAG "REG")` + marker + " ADDTO (1 " + added + ")"
 			if exists, addAt := slices.Index(lines, "* 3 EXISTS"), slices.Index(lines, add); exists < 0 || addAt <= exists {
 				t.Fatalf("context addition must preserve full sort order after EXISTS: %q", lines)
 			}
@@ -57,6 +54,34 @@ func TestSortContextUpdates(t *testing.T) {
 			lines = w.cmd("A", fmt.Sprintf("APPEND INBOX {%d+}\r\n%s", len(raw), raw))
 			if strings.Contains(strings.Join(lines, "\n"), `ESEARCH (TAG "REG")`) {
 				t.Fatalf("cancelled context still updated: %q", lines)
+			}
+		})
+	}
+}
+
+// Expunged entries of a sorted context leave at their own positions before the
+// EXPUNGE responses. Adjacent entries share a pair, and pairs run from the
+// highest position down, so each stays valid as a client processes them in
+// order (RFC 5267 section 4.3.4).
+func TestSortContextExpungeRuns(t *testing.T) {
+	for order, want := range map[string]string{
+		// 1 2 3 4 5: 5 at position 5, then 2 and 3 from position 2.
+		"ARRIVAL": `* ESEARCH (TAG "REG") REMOVEFROM (5 5 2 2:3)`,
+		// 5 4 3 2 1: 3 and 2 from position 3, then 5 at position 1.
+		"REVERSE ARRIVAL": `* ESEARCH (TAG "REG") REMOVEFROM (3 3,2 1 5)`,
+	} {
+		t.Run(order, func(t *testing.T) {
+			w := r4Open(t, r4Memory(), nil)
+			for i := 1; i <= 5; i++ {
+				r4Append(w, "INBOX", "", fmt.Sprint("m", i))
+			}
+			sweepWant(t, w.cmd("S", "SELECT INBOX"), "OK")
+			sweepWant(t, w.cmd("REG", "SORT RETURN (UPDATE) ("+order+") US-ASCII ALL"), "OK")
+			sweepWant(t, w.cmd("D", `UID STORE 2,3,5 +FLAGS.SILENT (\Deleted)`), "OK")
+			lines := w.cmd("E", "EXPUNGE")
+			r, e := slices.Index(lines, want), r4Index(lines, `EXPUNGE$`)
+			if r < 0 || e <= r || strings.Count(strings.Join(lines, "\n"), "ESEARCH") != 1 {
+				t.Fatalf("want only %s before the EXPUNGE responses: %q", want, lines)
 			}
 		})
 	}

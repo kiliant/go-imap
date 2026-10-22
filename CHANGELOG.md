@@ -554,6 +554,15 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   handler's helpers.
   One timeout now covers a drain's whole refresh pass, however many contexts
   the client registered; a refresh that misses it gets NOUPDATE. (#54)
+- CONTEXT=SEARCH and CONTEXT=SORT updates are part of the event that caused
+  them (RFC 5465 sections 5.1 and 5.2, RFC 5267 section 4.3.4). A flag change
+  or removal NOTIFY suppresses no longer leaks as ADDTO or REMOVEFROM; NOTIFY
+  SET releases the update after its FETCH or before its EXPUNGE. A flag
+  change's update follows its FETCH instead of preceding it, and a refresh
+  that sees a change the session has not applied yet waits for it. A sorted
+  context removes an expunged entry at its own position instead of replacing
+  the whole list. The client's own STORE still updates its contexts under
+  suppression. No exported API change. (#54)
 
 - THREAD responses follow the RFC 5256 section 5 grammar. A single reply
   continues its parent's number run, `(1 2)` rather than `(1 (2))`, and

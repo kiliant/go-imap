@@ -215,11 +215,49 @@ func handleCancelUpdate(_ context.Context, c *conn, command *queuedCommand) erro
 
 // Refresh contexts on the event-loop after backend mutations have returned and
 // their queued changes have been applied. No backend callback is re-entered.
-// UID membership survives renumbering; REMOVEFROM uses the old sequence number
-// for an expunge and the current one for a flag change.
+// UID membership survives renumbering. An expunged match is reported before
+// the EXPUNGE, in the numbers the client still holds (RFC 5267 section 4.3.4);
+// every other change follows the FETCH or EXISTS that caused it, in current
+// numbers (RFC 5465 sections 5.1 and 5.2).
 type searchContextDelta struct {
 	context     *searchContext
+	expunged    []contextRun
 	added, gone []uint32
+}
+
+// contextRun is one context position with the results removed starting there.
+// A mailbox-order SEARCH context uses position zero.
+type contextRun struct {
+	position uint32
+	numbers  []uint32
+}
+
+// contextChangeWaits judges, against the queue as it stands now, whether a
+// change in a message's context membership must wait. Take it after the
+// backend call: a change the call already saw is queued by then.
+//
+// A message the client knew before this drain, and that the drain did not
+// expunge, changes membership because of a flag change or a removal. When the
+// client has not been sent that change — it is still queued, or NOTIFY
+// retains the flags — the ADDTO or REMOVEFROM waits for the drain that
+// reports it. Otherwise it would precede its FETCH (RFC 5465 section 5.1),
+// announce a removal from a message the client still sees, or leak an event
+// NOTIFY suppresses. Messages new to the client are judged as they are: their
+// EXISTS is what the ADDTO follows.
+func contextChangeWaits(selected *selectedState, removed, before map[imap.UID]imap.SeqNum) func(imap.UID) bool {
+	queued := selected.queue.pendingMessageChanges()
+	return func(uid imap.UID) bool {
+		if _, known := before[uid]; !known {
+			return false
+		}
+		if _, expunged := removed[uid]; expunged {
+			return false
+		}
+		if _, retained := selected.pendingFlags[uid]; retained {
+			return true
+		}
+		return queued(uid)
+	}
 }
 
 func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.SeqNum) []searchContextDelta {
@@ -239,13 +277,13 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 	var live []*searchContext
 	for _, held := range selected.contexts {
 		if held.sorted {
-			delta, changed, err := refreshSortContext(ctx, c, held, beforeSequences)
+			delta, err := refreshSortContext(ctx, c, held, removed, beforeSequences)
 			if err != nil {
 				writeNoUpdate(c, held.tag, "sort context could not be refreshed")
 				continue
 			}
 			live = append(live, held)
-			if changed {
+			if delta.changed() {
 				deltas = append(deltas, delta)
 			}
 			continue
@@ -260,8 +298,9 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 			writeNoUpdate(c, held.tag, "search context could not be refreshed")
 			continue
 		}
+		waits := contextChangeWaits(selected, removed, beforeSequences)
 		current := make(map[imap.UID]struct{}, len(result.UIDs))
-		var added, gone []uint32
+		var added, gone, expunged []uint32
 		for _, uid := range result.UIDs {
 			seq, visible := selected.sequence(uid)
 			if !visible {
@@ -270,72 +309,112 @@ func refreshSearchContexts(c *conn, removed, beforeSequences map[imap.UID]imap.S
 			if _, duplicate := current[uid]; duplicate {
 				continue
 			}
-			current[uid] = struct{}{}
 			if _, known := held.uids[uid]; !known {
-				number := uint32(seq)
-				if held.uidMode {
-					number = uint32(uid)
+				if waits(uid) {
+					continue
 				}
-				added = append(added, number)
+				added = append(added, held.number(uid, seq))
 			}
+			current[uid] = struct{}{}
 		}
 		for uid := range held.uids {
 			if _, matches := current[uid]; matches {
 				continue
 			}
-			seq, expunged := removed[uid]
-			if !expunged {
-				var visible bool
-				seq, visible = selected.sequence(uid)
-				if visible && selected.backendUIDs != nil {
-					if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
-						current[uid] = struct{}{}
-						continue // its EXPUNGE is still withheld
-					}
+			if seq, ok := removed[uid]; ok {
+				expunged = append(expunged, held.number(uid, seq))
+				continue
+			}
+			seq, visible := selected.sequence(uid)
+			if !visible {
+				continue
+			}
+			if selected.backendUIDs != nil {
+				if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
+					current[uid] = struct{}{}
+					continue // its EXPUNGE is still withheld
 				}
-				if !visible {
-					continue
-				}
 			}
-			if before, ok := beforeSequences[uid]; ok {
-				seq = before
+			if waits(uid) {
+				current[uid] = struct{}{}
+				continue
 			}
-			number := uint32(seq)
-			if held.uidMode {
-				number = uint32(uid)
-			}
-			gone = append(gone, number)
+			gone = append(gone, held.number(uid, seq))
 		}
 		held.uids = current
 		live = append(live, held)
-		if len(added) == 0 && len(gone) == 0 {
-			continue
-		}
 		slices.Sort(added)
 		slices.Sort(gone)
-		deltas = append(deltas, searchContextDelta{context: held, added: added, gone: gone})
+		slices.Sort(expunged)
+		delta := searchContextDelta{context: held, added: added, gone: gone}
+		if len(expunged) != 0 {
+			delta.expunged = []contextRun{{numbers: expunged}}
+		}
+		if delta.changed() {
+			deltas = append(deltas, delta)
+		}
 	}
 	selected.contexts = live
 	return deltas
 }
 
-// A full replacement is a valid ordered delta: remove the old list from
-// position one, then insert the new list there. The two halves straddle the
-// mailbox notifications, preserving pre-EXPUNGE and post-EXISTS numbering.
-func refreshSortContext(ctx context.Context, c *conn, held *searchContext, before map[imap.UID]imap.SeqNum) (searchContextDelta, bool, error) {
+func (d searchContextDelta) changed() bool {
+	return len(d.expunged) != 0 || len(d.gone) != 0 || len(d.added) != 0
+}
+
+// number is how updates name a message: its UID for a UID SEARCH or UID SORT
+// context, otherwise seq.
+func (held *searchContext) number(uid imap.UID, seq imap.SeqNum) uint32 {
+	if held.uidMode {
+		return uint32(uid)
+	}
+	return uint32(seq)
+}
+
+// A sorted context reports each expunged run at its own position, highest
+// first: a client processes the pairs in order (RFC 5267 section 4.3.4), and
+// removing a later run does not move an earlier one. Any other change is a
+// full replacement, a valid ordered delta: remove the remaining list from
+// position one, then insert the new list there, both after the mailbox
+// notifications and in current numbers. Sort keys never change, so a
+// replacement held back while a change waits is caught up by a later drain.
+func refreshSortContext(ctx context.Context, c *conn, held *searchContext, removed, before map[imap.UID]imap.SeqNum) (searchContextDelta, error) {
 	selected := c.state.selected
-	for uid := range held.uids {
+	delta := searchContextDelta{context: held}
+	remaining := make([]imap.UID, 0, len(held.ordered))
+	for i, uid := range held.ordered {
+		seq, expunged := removed[uid]
+		if !expunged {
+			remaining = append(remaining, uid)
+			continue
+		}
+		number := held.number(uid, seq)
+		if n := len(delta.expunged); n != 0 && i > 0 {
+			if _, previous := removed[held.ordered[i-1]]; previous {
+				delta.expunged[n-1].numbers = append(delta.expunged[n-1].numbers, number)
+				continue
+			}
+		}
+		delta.expunged = append(delta.expunged, contextRun{position: uint32(i + 1), numbers: []uint32{number}})
+	}
+	slices.Reverse(delta.expunged)
+	held.ordered = remaining
+	held.uids = make(map[imap.UID]struct{}, len(remaining))
+	for _, uid := range remaining {
+		held.uids[uid] = struct{}{}
+	}
+	for _, uid := range remaining {
 		if _, visible := selected.sequence(uid); visible && selected.backendUIDs != nil {
 			if _, active := slices.BinarySearch(selected.backendUIDs, uid); !active {
-				// A command still withholds this removal. Keep its context view
-				// until the same drain can deliver the corresponding EXPUNGE.
-				return searchContextDelta{}, false, nil
+				// A command or NOTIFY still withholds this removal. Keep the
+				// rest of the order until the drain that delivers its EXPUNGE.
+				return delta, nil
 			}
 		}
 	}
 	sorter, ok := selected.mailbox.(SortMailbox)
 	if !ok {
-		return searchContextDelta{}, false, fmt.Errorf("SORT is no longer available")
+		return searchContextDelta{}, fmt.Errorf("SORT is no longer available")
 	}
 	uids, err := sorter.Sort(ctx, held.query, held.keys, &SortOptions{Charset: held.charset})
 	if err == nil {
@@ -345,8 +424,9 @@ func refreshSortContext(ctx context.Context, c *conn, held *searchContext, befor
 		if err == nil {
 			err = fmt.Errorf("SORT result limit exceeded")
 		}
-		return searchContextDelta{}, false, err
+		return searchContextDelta{}, err
 	}
+	waits := contextChangeWaits(selected, removed, before)
 	current := make(map[imap.UID]struct{}, len(uids))
 	ordered := make([]imap.UID, 0, len(uids))
 	for _, uid := range uids {
@@ -359,27 +439,29 @@ func refreshSortContext(ctx context.Context, c *conn, held *searchContext, befor
 		current[uid] = struct{}{}
 		ordered = append(ordered, uid)
 	}
-	if slices.Equal(held.ordered, ordered) {
-		return searchContextDelta{}, false, nil
+	if slices.Equal(remaining, ordered) {
+		return delta, nil
 	}
-	delta := searchContextDelta{context: held}
-	for _, uid := range held.ordered {
-		number := uint32(uid)
-		if !held.uidMode {
-			number = uint32(before[uid])
+	for _, uid := range remaining {
+		if _, still := current[uid]; !still && waits(uid) {
+			return delta, nil
 		}
-		delta.gone = append(delta.gone, number)
 	}
 	for _, uid := range ordered {
-		number := uint32(uid)
-		if !held.uidMode {
-			seq, _ := selected.sequence(uid)
-			number = uint32(seq)
+		if _, had := held.uids[uid]; !had && waits(uid) {
+			return delta, nil
 		}
-		delta.added = append(delta.added, number)
+	}
+	for _, uid := range remaining {
+		seq, _ := selected.sequence(uid)
+		delta.gone = append(delta.gone, held.number(uid, seq))
+	}
+	for _, uid := range ordered {
+		seq, _ := selected.sequence(uid)
+		delta.added = append(delta.added, held.number(uid, seq))
 	}
 	held.uids, held.ordered = current, ordered
-	return delta, true, nil
+	return delta, nil
 }
 
 // NOUPDATE's argument is a quoted tag. Write that typed production directly:
@@ -390,33 +472,55 @@ func writeNoUpdate(c *conn, tag, text string) {
 		RespText(imapwire.RespText{Text: text}).CRLF()
 }
 
-// REMOVEFROM precedes EXPUNGE renumbering; ADDTO follows the corresponding
-// EXISTS. Separate responses are legal and keep both number spaces coherent.
-func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, removals bool) error {
+// The expunged phase precedes the mailbox notifications, so its REMOVEFROM
+// comes before EXPUNGE renumbering; the other phase follows them, so its
+// REMOVEFROM and ADDTO come after the causing FETCH or EXISTS. Separate
+// responses are legal and keep both number spaces coherent.
+func writeSearchContextDeltas(c *conn, deltas []searchContextDelta, expunged bool) error {
 	for _, delta := range deltas {
-		numbers, key := delta.added, "ADDTO"
-		if removals {
-			numbers, key = delta.gone, "REMOVEFROM"
-		}
-		if len(numbers) == 0 {
+		if expunged {
+			writeContextUpdate(c, delta.context, "REMOVEFROM", delta.expunged)
 			continue
 		}
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().Special('(').Atom("TAG").SP().Quoted(delta.context.tag)
-		if delta.context.mailbox != "" {
-			c.encoder.SP().Atom("MAILBOX").SP().Mailbox(delta.context.mailbox).
-				SP().Atom("UIDVALIDITY").SP().Number(delta.context.uidValidity)
-		}
-		c.encoder.Special(')')
-		if delta.context.uidMode {
-			c.encoder.SP().Atom("UID")
-		}
-		position, set := uint32(0), numberSetString(numbers)
+		position := uint32(0)
 		if delta.context.sorted {
-			position, set = 1, numberListString(numbers)
+			position = 1
 		}
-		c.encoder.SP().Atom(key).SP().Special('(').Number(position).SP().Atom(set).Special(')').CRLF()
+		if len(delta.gone) != 0 {
+			writeContextUpdate(c, delta.context, "REMOVEFROM", []contextRun{{position: position, numbers: delta.gone}})
+		}
+		if len(delta.added) != 0 {
+			writeContextUpdate(c, delta.context, "ADDTO", []contextRun{{position: position, numbers: delta.added}})
+		}
 	}
 	return c.encoder.Flush()
+}
+
+func writeContextUpdate(c *conn, held *searchContext, key string, runs []contextRun) {
+	if len(runs) == 0 {
+		return
+	}
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ESEARCH").SP().Special('(').Atom("TAG").SP().Quoted(held.tag)
+	if held.mailbox != "" {
+		c.encoder.SP().Atom("MAILBOX").SP().Mailbox(held.mailbox).
+			SP().Atom("UIDVALIDITY").SP().Number(held.uidValidity)
+	}
+	c.encoder.Special(')')
+	if held.uidMode {
+		c.encoder.SP().Atom("UID")
+	}
+	c.encoder.SP().Atom(key).SP().Special('(')
+	for i, run := range runs {
+		if i > 0 {
+			c.encoder.SP()
+		}
+		set := numberSetString(run.numbers)
+		if held.sorted {
+			set = numberListString(run.numbers)
+		}
+		c.encoder.Number(run.position).SP().Atom(set)
+	}
+	c.encoder.Special(')').CRLF()
 }
 
 // searchContextTag reports the tag a SEARCH should register under, and whether

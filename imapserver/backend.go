@@ -54,6 +54,14 @@
 // on an expunged UID do. The client's own mutations bypass the selected policy;
 // an own addition first announces any earlier withheld additions in UID order.
 //
+// CONTEXT=SEARCH and CONTEXT=SORT updates follow the event that caused them.
+// A context's ADDTO or REMOVEFROM is withheld with a suppressed flag change or
+// removal, follows the FETCH or EXISTS that reports its cause, and precedes
+// the EXPUNGE that renumbers an expunged match away. A refresh searches live
+// backend state; a change it sees whose batch is still queued waits for the
+// drain that applies that batch. Recognising it relies on Search and Sort not
+// exposing a commit before its batch is pushed, as the shipped backends do.
+//
 // A backend's refusal of a replacement NOTIFY leaves the previous selected
 // policy in force. Its session-scoped updater has already been closed; the
 // next successful registration installs a new one. Validation refusals before

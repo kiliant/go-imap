@@ -1198,7 +1198,8 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			}
 		}
 	}
-	// Report removals from contexts before EXPUNGE renumbers sequence IDs.
+	// Contexts report expunged matches before EXPUNGE renumbers sequence IDs,
+	// and every other change after the FETCH or EXISTS that caused it.
 	deltas := refreshSearchContexts(c, removed, beforeSequences)
 	if err := writeSearchContextDeltas(c, deltas, true); err != nil {
 		return err
