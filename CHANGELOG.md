@@ -23,30 +23,6 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
-### Root module — `github.com/kiliant/go-imap`
-
-#### Fixed
-
-- **imapmessage:** preserve non-CTE header bytes when re-encoding NUL parts,
-  including fields and continuations beyond semantic header-retention limits.
-  Decode the rewritten CTE even when it appears beyond those limits. Shared
-  text matching now supports RFC 5051 Unicode preparation and exact octets,
-  with bounded streaming substring matching. Text that cannot be converted
-  (invalid UTF-8, an unknown charset, a malformed transfer encoding) still
-  matches ASCII case-insensitively by default, as RFC 3501 requires; only a
-  named comparator compares it as octets. No exported root API change. (#54)
-
-- **imapmessage:** base64 bodies decode as RFC 2045 section 6.8 requires:
-  characters outside the alphabet are ignored and `=` ends the data. Spaces or
-  tabs inside base64 no longer make BINARY fail with UNKNOWN-CTE or SEARCH fall
-  back to the encoded octets. BINARY accepts multipart and message sections
-  and returns their stored octets (RFC 3516). An address without a domain,
-  such as `From: d`, stays in the ENVELOPE with host `MISSING_DOMAIN` rather
-  than being dropped. Adds the re-encoding of NUL-bearing parts behind
-  `imapserver/message`. Only `imapserver` uses this package; a standalone
-  server build receives these fixes with the next root release. No exported
-  API change. (#205)
-
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
 #### Changed
@@ -953,6 +929,32 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - **imapserver:** reject invalid METADATA entry names with BAD before calling the backend (#78).
 - **imapserver:** evaluate MODSEQ in memory SORT, THREAD and MULTISEARCH, and append the highest matching MODSEQ to nonempty legacy SORT results (#79).
 
+## [1.3.1] - 2026-10-22
+
+### Root module — `github.com/kiliant/go-imap`
+
+#### Fixed
+
+- **imapmessage:** preserve non-CTE header bytes when re-encoding NUL parts,
+  including fields and continuations beyond semantic header-retention limits.
+  Decode the rewritten CTE even when it appears beyond those limits. Shared
+  text matching now supports RFC 5051 Unicode preparation and exact octets,
+  with bounded streaming substring matching. Text that cannot be converted
+  (invalid UTF-8, an unknown charset, a malformed transfer encoding) still
+  matches ASCII case-insensitively by default, as RFC 3501 requires; only a
+  named comparator compares it as octets. No exported root API change. (#54)
+
+- **imapmessage:** base64 bodies decode as RFC 2045 section 6.8 requires:
+  characters outside the alphabet are ignored and `=` ends the data. Spaces or
+  tabs inside base64 no longer make BINARY fail with UNKNOWN-CTE or SEARCH fall
+  back to the encoded octets. BINARY accepts multipart and message sections
+  and returns their stored octets (RFC 3516). An address without a domain,
+  such as `From: d`, stays in the ENVELOPE with host `MISSING_DOMAIN` rather
+  than being dropped. Adds the re-encoding of NUL-bearing parts behind
+  `imapserver/message`. Only `imapserver` uses this package; a standalone
+  server build receives these fixes once its `go.mod` requires this release.
+  No exported API change. (#205)
+
 ## [1.3.0] - 2026-10-21
 
 ### Root module — `github.com/kiliant/go-imap`
@@ -1830,7 +1832,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/kiliant/go-imap/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/kiliant/go-imap/releases/tag/v1.3.1
 [1.3.0]: https://github.com/kiliant/go-imap/releases/tag/v1.3.0
 [1.2.1]: https://github.com/kiliant/go-imap/releases/tag/v1.2.1
 [imapserver/v0.3.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.3.0
