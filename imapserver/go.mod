@@ -9,11 +9,12 @@
 // deliberately on each root release this module wants to pick up.
 //
 // It must be a version that actually contains what this module imports.
-// internal/imapcodec and internal/imapmessage landed after v1.0.0, which made
-// v1.1.0 the first floor; imap.ListData.ChildInfo landed in v1.2.0, which is
-// the floor now — see docs/RELEASING.md for the ordering that implies.
+// internal/imapcodec and internal/imapmessage landed after v1.0.0, and
+// imap.ListData.ChildInfo landed in v1.2.0. The shared message-decoding and
+// NUL-part re-encoding corrections require v1.3.1; see docs/RELEASING.md for
+// root-first publication ordering.
 module github.com/kiliant/go-imap/imapserver
 
 go 1.24
 
-require github.com/kiliant/go-imap v1.2.0
+require github.com/kiliant/go-imap v1.3.1
