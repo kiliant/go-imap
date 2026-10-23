@@ -30,6 +30,13 @@ earlier plan for `imapserver/v1.0.0` with independent version lines.
   the other continues its own v1 line. Neither module is forced into a major
   version, and so onto a new import path, by the other. Record the end of the
   lockstep in this file when it happens.
+- **A root v2 does not carry the server along.** The server imports the root
+  module's `internal/imapcodec`, `internal/imapmessage` and `internal/imapwire`,
+  and Go's internal-package rule stops `github.com/kiliant/go-imap/imapserver`
+  from importing `github.com/kiliant/go-imap/v2/internal/...`. A server on v1
+  therefore stays on root v1, and fixes to those packages need root v1.x
+  maintenance releases. A server that wants root v2 needs a path under it, such
+  as `github.com/kiliant/go-imap/v2/imapserver`.
 
 ## Graduating the server to v1
 
@@ -145,7 +152,7 @@ The gate that catches what the others cannot — that the tag is fetchable, the
 
 ```sh
 cd "$(mktemp -d)" && go mod init example.com/check \
-  && go get github.com/kiliant/go-imap/imapserver@v0.1.0
+  && go get github.com/kiliant/go-imap/imapserver@v1.3.1
 ```
 
 Do this from outside the repository. Inside it, the workspace answers instead of

@@ -415,12 +415,11 @@ The test is whether a correct server, given the data, could put it on the wire.
   still send a password as a bearer token, as v1 documents.
 - Removal requires a deprecation notice for at least two minor releases, and
   never lands before v2.
-- CI will run `golang.org/x/exp/cmd/apidiff` against the previous tag on every
-  PR. Post-v1.0 a detected incompatible change fails the build; pre-v1.0 it
-  posts the diff as a comment so the break is deliberate rather than accidental.
-  The gate is not wired up yet — it is an exit criterion of M4, tracked by
-  [T15](tasks/T15-release-engineering.md) — so until then the review in the next
-  section is the only thing enforcing this document.
+- CI runs `golang.org/x/exp/cmd/apidiff` against the previous tag on every PR,
+  per module. Against a v1 baseline a detected incompatible change fails the
+  build; against a v0 baseline it posts the diff as a comment so the break is
+  deliberate rather than accidental. T15 wired the gate up as an exit criterion
+  of M4; the review in the next section still applies to what it cannot see.
 
   **`apidiff` cannot see type-alias identity.** It identifies a named type by
   its defining package, so relocating a type to another package and leaving
@@ -815,8 +814,8 @@ claim both. It is recorded here because it is a token *removal*, which is the
 breaking direction, and because the window in which it is free is exactly now:
 `imapserver` has never been tagged, so the affected population is zero.
 
-After `imapserver` v1.0 a rename of this kind needs the old token to keep working
-alongside the new one. Before it, they are free and should be made deliberately.
+After the first `imapserver` v1 tag a rename of this kind needs the old token to
+keep working alongside the new one. Before it, they are free and should be made deliberately.
 
 ### Resolved: `CapabilitySupport` context/options and MOVE witness — 2026-08-21
 

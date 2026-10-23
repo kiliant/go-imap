@@ -30,8 +30,8 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 The server module's first v1 release. It now carries the same compatibility
 promise as the root module. From now on it also has the same version number:
 every release tags both modules, root first. It requires root `v1.3.1`, which
-it matches. There is no code change since `imapserver/v0.6.0`; `apidiff`
-reports no exported change in any server package. The exit criteria of the
+it matches. There is no API or behaviour change since `imapserver/v0.6.0`;
+`apidiff` reports no exported change in any server package. The exit criteria of the
 v0.x exception are recorded on #54: Maildir as the second backend,
 `imapserver/v0.5.0` and `v0.6.0` as the two quiet releases, and the two full
 reviews. (#54)

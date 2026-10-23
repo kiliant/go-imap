@@ -225,7 +225,7 @@ The next work is ordered deliberately:
    refinements separate from this patch.
 2. [#34](https://github.com/kiliant/go-imap/issues/34): strengthen backend
    conformance for RECURSIVEMATCH combined with REMOTE and SPECIAL-USE.
-   These checks belong to the independently versioned server module.
+   These checks belong to the server module.
 3. [T30](tasks/T30-unsolicited-events.md), tracked by
    [#44](https://github.com/kiliant/go-imap/issues/44): decode and route
    interleaved responses safely, deliver CONTEXT updates and metadata-change
@@ -257,11 +257,11 @@ a v2 candidate, not a prerequisite for this phase.
 exit criteria below were met, with the evidence on #54. From now on both
 modules are tagged together under one version number (`RELEASING.md`).
 
-`imapserver` has been feature-complete since M6, but it stayed on v0.x by the
+`imapserver` was feature-complete from M6, but it stayed on v0.x by the
 approved exception in `docs/API-STABILITY.md`. Most of its API consists of
 interfaces that backends implement, and adding a method to one breaks every
-backend. So far the only backend is `imapserver/memory`, written by the same
-tasks as the framework, and the server broke compatibility in
+backend. When M7 was set, the only backend was `imapserver/memory`, written by
+the same tasks as the framework, and the server had broken compatibility in
 `imapserver/v0.2.0` (signatures) and `v0.3.0` (behaviour).
 
 **Exit.** The human approved the three criteria on 2026-10-15. Their
@@ -278,8 +278,9 @@ operational definition is `API-STABILITY.md`, "When the exception ends":
    contain a server-module change beyond a root dependency bump; a release
    cut only to advance the count does not count. Any break restarts the
    window.
-3. **A full review.** An `api-guardian` review of the whole server surface,
-   with its findings resolved: T33.
+3. **Full reviews.** An `api-guardian` review of the whole server surface,
+   with its findings resolved, then a second full review of the integrated
+   corrections before the release window: T33.
 
 [T32](tasks/T32-maildir-backend.md), tracked by
 [#53](https://github.com/kiliant/go-imap/issues/53), first adds the public
@@ -293,8 +294,9 @@ release-note edits need coordination.
 once T32 is merged and its contract gaps are resolved or explicitly deferred.
 Breaking review fixes land before the release window. It reviews the final
 diff before tagging v1. Both modules then carry the same compatibility
-promise. Whether their version numbers align is T33's decision, including
-what happens if their major versions later diverge.
+promise. T33 also settled the version numbers: they align, and
+`RELEASING.md`, "One version number", records what happens if the major
+versions later diverge.
 
 
 ## Sequencing
