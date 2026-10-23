@@ -506,7 +506,15 @@ func (c *conn) requestClientData(ctx context.Context, request readerRequest) err
 }
 
 func (c *conn) continueLine(ctx context.Context, prompt string) (string, error) {
-	c.encoder.BeginResponse(imapwire.ResponseContinuation, "").ContinuationText(prompt).CRLF()
+	response := c.encoder.BeginResponse(imapwire.ResponseContinuation, "")
+	if prompt == "" {
+		// continue-req = "+" SP (resp-text / base64) CRLF. An empty SASL
+		// challenge is empty base64, and it still needs its SP.
+		response.SP()
+	} else {
+		response.ContinuationText(prompt)
+	}
+	response.CRLF()
 	if err := c.encoder.Flush(); err != nil {
 		return "", err
 	}

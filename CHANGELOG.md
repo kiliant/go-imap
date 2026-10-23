@@ -23,6 +23,17 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Fixed
+
+- An empty SASL server challenge is sent as `+ ` followed by CRLF: empty
+  base64 after the continuation's SP (RFC 3501 section 6.2.2). It was sent as
+  `+ =`, which is RFC 4959's spelling of an empty client initial response, not
+  a challenge. PLAIN and SCRAM without an initial response were affected.
+  Initial-response parsing, including `=`, is unchanged. This is a compatible
+  wire correction: no exported symbol or backend obligation changes. (#201)
+
 ## [imapserver/v0.4.0] - 2026-10-22
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
