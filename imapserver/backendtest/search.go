@@ -23,16 +23,42 @@ func searchQuery(t *testing.T, criteria imap.SearchCriteria) *imapserver.SearchQ
 
 func checkSearch(t *testing.T, mailbox imapserver.SelectedMailbox, criteria imap.SearchCriteria, want []imap.UID) {
 	t.Helper()
-	result, err := mailbox.Search(t.Context(), searchQuery(t, criteria), nil)
+	checkSearchWith(t, mailbox, criteria, nil, want)
+}
+
+func checkSearchWith(t *testing.T, mailbox imapserver.SelectedMailbox, criteria imap.SearchCriteria, options *imapserver.SearchOptions, want []imap.UID) *imapserver.SearchResult {
+	t.Helper()
+	result, err := mailbox.Search(t.Context(), searchQuery(t, criteria), options)
 	if err != nil || result == nil {
-		t.Fatalf("Search(%#v) = %#v, %v", criteria, result, err)
+		t.Fatalf("Search(%#v, %#v) = %#v, %v", criteria, options, result, err)
 	}
 	got := slices.Clone(result.UIDs)
 	want = slices.Clone(want)
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Fatalf("Search(%#v) UIDs = %v, want %v", criteria, got, want)
+		t.Fatalf("Search(%#v, %#v) UIDs = %v, want %v", criteria, options, got, want)
+	}
+	return result
+}
+
+// checkRelevancy asks for RFC 6203 relevancy scores, which are optional: a nil
+// or empty Relevancy passes. Scores a backend does supply must pair with the
+// UIDs by position and lie from 1 to 100, the rule SearchResult.Relevancy
+// states and the framework enforces with a NO.
+func checkRelevancy(t *testing.T, mailbox imapserver.SelectedMailbox, criteria imap.SearchCriteria, want []imap.UID) {
+	t.Helper()
+	result := checkSearchWith(t, mailbox, criteria, &imapserver.SearchOptions{ReturnRelevancy: true}, want)
+	if len(result.Relevancy) == 0 {
+		return
+	}
+	if len(result.Relevancy) != len(result.UIDs) {
+		t.Fatalf("Search(%#v) returned %d relevancy scores for %d UIDs", criteria, len(result.Relevancy), len(result.UIDs))
+	}
+	for i, score := range result.Relevancy {
+		if score < 1 || score > 100 {
+			t.Fatalf("Search(%#v) gave UID %d the relevancy score %d, outside 1 to 100", criteria, result.UIDs[i], score)
+		}
 	}
 }
 
@@ -241,5 +267,11 @@ func runSearch(t *testing.T, harness *Harness) {
 				checkSearch(t, selected.Mailbox, test.criteria, test.want)
 			})
 		}
+		t.Run("fuzzy-relevancy", func(t *testing.T) {
+			if !supportsCapability(instance, session, "SEARCH=FUZZY") {
+				t.Skip("backend does not witness SEARCH=FUZZY")
+			}
+			checkRelevancy(t, selected.Mailbox, imap.SearchFuzzy{Criteria: imap.SearchAll}, ids)
+		})
 	})
 }

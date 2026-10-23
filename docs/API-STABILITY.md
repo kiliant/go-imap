@@ -1427,6 +1427,55 @@ field.
   `* n UIDFETCH ()`.
 - Registrations without fetch attributes behave exactly as before.
 
+### Unsolicited FETCH delivers every item — 2026-10-23 (#221)
+
+`imapclient.UnilateralDataHandler.Fetch` was documented as receiving "an
+unsolicited FETCH update, currently flag updates". The client read
+unsolicited FETCH with a FLAGS-only parser. Only FLAGS reached the callback,
+a FETCH without FLAGS never did, and an item with a section failed the
+connection. That last case is what `NotifyFilter.MessageNewFetchItems` asks
+the server to send (RFC 5465 section 5.2), so the client could not receive
+data it had requested.
+
+**Compatible:** no exported signature changes. `FetchMessageData` already
+holds any item, keyed and open-ended, so the fix is a change of data, not of
+type. The callback is now also called for a FETCH without FLAGS, and `Items`
+can hold more than FLAGS. The old wording said "currently", and nothing
+promised that FLAGS is present. A callback that treated every call as a flag
+update, for example by replacing its cached flags with `Items["FLAGS"]`, must
+now check that FLAGS is there. An opt-in was rejected: it would need a second,
+near-duplicate field for good and would leave `Fetch` dropping UID and MODSEQ.
+
+**Delivery, which freezes with the release that ships it:**
+
+- The callback runs once per response, after the whole response has been
+  read. `FetchCommand.Next` streams a body section and yields the items after
+  it separately. A callback cannot do that usefully: it would get a section
+  without the UID that names its message.
+- The value is complete and may be retained. Every reader in it is in memory
+  and need not be drained or closed. On this path, that replaces the drain,
+  close and lifetime requirements of the individual FetchData types.
+- A body section, BINARY or RFC822 literal is kept up to 8 MiB, the codec's
+  limit for any value it holds in memory. A larger one is consumed and its
+  reader is empty, as the in-memory FETCH reader of a QRESYNC SELECT already
+  does. So is a raw item whose wire form exceeds the limit. Other values the
+  client cannot accept, such as a string literal over that limit or any
+  literal over the hard literal limit, may fail the connection, as in a FETCH
+  command's result. Starting strict keeps the choice open, as #202 did: a
+  later release may raise the limit or add a streaming field, but lowering
+  it would be incompatible.
+- While `Fetch` is nil, an unsolicited FETCH is skipped without being
+  decoded. A client that does not ask for the data does not buffer it or
+  check its items. Limits that apply to every response, such as the hard
+  literal limit, still apply.
+- With `Fetch` set, the response is decoded as strictly as a FETCH command's
+  result. A malformed item, such as `UID 0`, now fails the connection where
+  the FLAGS-only parser skipped it.
+
+The precedent: the delivery contract of an existing `UnilateralDataHandler`
+callback does not change. If unsolicited data ever needs to stream, that is a
+new field with its own contract.
+
 ### NUL in a stored message — 2026-10-23 (#210)
 
 No IMAP string can carry NUL (RFC 9051 section 4.3.1). A BODY or RFC822

@@ -7,8 +7,8 @@
 # discovers its targets: a module nobody remembered to add to a list is a module
 # nobody builds, vets or tests, and nothing goes red to say so.
 #
-# fuzz.sh carries its own copy of this logic on purpose — it is kept
-# byte-identical with go-smtp's copy and must not depend on a script that only
+# fuzz.sh carries its own copy of this logic on purpose — it has a copy in
+# go-smtp, kept in step by hand, and must not depend on a script that only
 # exists here. Everything else in .github/scripts should call this.
 set -euo pipefail
 
