@@ -30,7 +30,7 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - NOTIFY delivers MessageNew fetch attributes for a SELECTED or
   SELECTED-DELAYED group (RFC 5465 section 5.2). Until now such a
   registration was refused with `NO [CANNOT]`.
-  - When a drain announces new messages in the selected mailbox, one
+  - When a drain announces new messages in the selected mailbox, at most one
     `SelectedMailbox.Fetch` call supplies their data, sent as unsolicited
     FETCH responses after the EXISTS and numbered in the client's view.
     Additions carrying the origin of the connection's own command are not

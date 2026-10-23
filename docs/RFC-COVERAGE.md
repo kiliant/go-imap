@@ -405,8 +405,8 @@ CONDSTORE `MODIFIED` on tagged OK.
     SELECTED-DELAYED group are delivered by the framework (#195). It gates
     them as FETCH items and refuses those that would set \Seen with
     `NO [CANNOT]`; MODSEQ among them enables CONDSTORE. When a drain announces
-    new messages in the selected mailbox, one `SelectedMailbox.Fetch` call
-    supplies their data, sent as unsolicited FETCH responses after the EXISTS,
+    new messages in the selected mailbox, at most one `SelectedMailbox.Fetch`
+    call supplies their data, sent as unsolicited FETCH responses after the EXISTS,
     numbered in the client's view when written and bounded like FETCH. Their
     order against ESEARCH ADDTO is not guaranteed. Additions carrying the
     origin of the connection's own command are not fetched. A Fetch error or

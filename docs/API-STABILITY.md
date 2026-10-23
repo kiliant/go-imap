@@ -1397,9 +1397,9 @@ field.
 - MODSEQ among the attributes counts as a CONDSTORE enabling use, as FETCH
   MODSEQ does. Where CONDSTORE is not in effect for the selection, as in a
   NOMODSEQ one, MODSEQ is left out, and a list left empty sends no FETCH.
-- When a drain announces new messages, one `Fetch` call supplies their data.
-  It requests the client's items adjusted as for a FETCH command: UID is
-  added, and MODSEQ is added while CONDSTORE is in effect.
+- When a drain announces new messages, at most one `Fetch` call supplies
+  their data. It requests the client's items adjusted as for a FETCH command:
+  UID is added, and MODSEQ is added while CONDSTORE is in effect.
 - Each FETCH follows the EXISTS that announced its message and is numbered in
   the client's view when it is written. Its order against ESEARCH ADDTO is
   not part of the contract. RFC 5465 places the FETCH after ADDTO in section
@@ -1411,8 +1411,9 @@ field.
   `Limits.CommandTimeout`. If `Fetch` returns an error or the bound is
   exceeded, the registration ends as RFC 5465 section 5.8 describes: an
   untagged `OK [NOTIFICATIONOVERFLOW]`, then NOTIFY NONE behaviour, with the
-  connection kept. FETCH responses already sent stand. A failure to encode or
-  write a response ends the connection.
+  connection kept. FETCH responses already sent stand. A response that
+  cannot be mapped or measured counts as such an error; only a failure while
+  writing a response ends the connection.
 - Under UIDONLY, a UIDFETCH response keeps the UID item when it is the only
   item, for MessageNew and UID FETCH alike. RFC 9586 section 3.3 allows the
   item, and an empty list is not valid. Previously `UID FETCH n (UID)` sent

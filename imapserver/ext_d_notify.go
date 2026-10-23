@@ -188,7 +188,7 @@ type NotifyWatch struct {
 	// group can carry one, and it is empty otherwise. The framework delivers
 	// it, so a backend need not act on this field. When a drain announces new
 	// messages in the selected mailbox, it asks [SelectedMailbox.Fetch] for
-	// their data in one call and sends unsolicited FETCH responses. The
+	// their data in at most one call and sends unsolicited FETCH responses. The
 	// request carries these items adjusted as for a FETCH command: UID is
 	// added, MODSEQ is added while CONDSTORE is in effect for the selection
 	// and removed otherwise. Additions from a batch carrying the origin of
@@ -853,13 +853,14 @@ func (c *conn) notifyOverflow(text string) error {
 // batch carrying the origin of this connection's own command are left out,
 // as that section recommends.
 //
-// One SelectedMailbox.Fetch call supplies the data, bounded by
+// At most one SelectedMailbox.Fetch call supplies the data, bounded by
 // Limits.CommandTimeout, and each response is numbered in the client's view
 // as it stands after the drain's other responses, under FETCH's response size
 // bound. A message no longer in the view is skipped. If Fetch returns an
 // error or the bound is exceeded, the registration ends with
-// NOTIFICATIONOVERFLOW (section 5.8) and responses already sent stand; a
-// failure to encode or write a response ends the connection.
+// NOTIFICATIONOVERFLOW (section 5.8) and responses already sent stand. A
+// response that cannot be mapped or measured counts as a Fetch error; only a
+// failure while writing a response ends the connection.
 func (c *conn) writeMessageNewFetches(updates []deliveredUpdate) error {
 	selected := c.state.selected
 	requested := c.notifySelected.fetchItems
