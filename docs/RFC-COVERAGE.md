@@ -316,7 +316,8 @@ CONDSTORE `MODIFIED` on tagged OK.
     them from a Search of the same query. Without scores every match is reported
     as 100. The list covers the messages the response returns, as MODSEQ does
     (RFC 4731 section 3.2). Memory matches FUZZY exactly and scores every match
-    100. (#202)
+    100. (#202) `backendtest` checks the scores a backend supplies to Search
+    whenever it witnesses SEARCH=FUZZY. (#217)
 
 [^t26c]: Verified by T26's live tests (`imapclient/ext_cde_interop_test.go`),
     each asserting the data the appended messages imply, not just a tagged OK.
