@@ -700,10 +700,11 @@ type SearchOptions struct {
 	Charset string
 	// ReturnRelevancy reports that the client asked for RFC 6203 relevancy
 	// scores, which a backend supplies in [SearchResult.Relevancy]. The
-	// framework sets it only for criteria containing a FUZZY key: for SEARCH
-	// RETURN (RELEVANCY), and for the Search call it makes to answer SORT
-	// RETURN (RELEVANCY), because [SortMailbox] returns no scores. A backend
-	// that does not score its matches may ignore it.
+	// framework sets it only when the client requested RELEVANCY and the
+	// criteria contain a FUZZY key: for example for SEARCH RETURN
+	// (RELEVANCY), or for the Search call that scores SORT RETURN (RELEVANCY)
+	// because [SortMailbox] returns no scores. A backend that does not score
+	// its matches may ignore it.
 	ReturnRelevancy bool `imapfeature:"search-relevancy"`
 	_               struct{}
 }
@@ -945,12 +946,12 @@ type SearchResult struct {
 	// RFC 7162 section 3.1.5.
 	ModSeq uint64
 	// Relevancy optionally pairs each UID with its RFC 6203 relevancy score,
-	// by position, and then has the same length as UIDs. A score is from 1 to
-	// 100, where 100 is the most relevant; how it is computed is the
-	// backend's choice. The framework reads it only when
-	// [SearchOptions.ReturnRelevancy] was set. Scores that are out of range,
-	// or a length that differs from UIDs, fail the command as a backend
-	// error. Without scores, the framework reports 100 for every match.
+	// by position. A score is from 1 to 100, where 100 is the most relevant;
+	// how it is computed is the backend's choice. The framework reads it only
+	// when [SearchOptions.ReturnRelevancy] was set. A nil or empty Relevancy
+	// supplies no scores, and the framework reports 100 for every match.
+	// Otherwise it must have the same length as UIDs and every score must be
+	// in range, or the command fails as a backend error.
 	Relevancy []uint8
 	_         struct{}
 }

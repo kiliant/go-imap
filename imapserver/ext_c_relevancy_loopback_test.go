@@ -16,9 +16,9 @@ import (
 // sorted position instead of by UID shows up as a wrong number.
 type relevancyBackend struct {
 	*memory.Backend
-	// mode selects the scores: "uid" scores 10 per UID, "none" supplies no
-	// scores, "short" one too few, "zero" and "high" an out-of-range score,
-	// and "memory" leaves memory's own result untouched.
+	// mode selects the scores: "uid" scores 10 per UID, "none" supplies nil,
+	// "empty" an empty slice, "short" one too few, "zero" and "high" an
+	// out-of-range score, and "memory" leaves memory's own result untouched.
 	mode     string
 	noFuzzy  bool
 	searches []bool // ReturnRelevancy of each Search call
@@ -88,6 +88,9 @@ func (b *relevancyBackend) scores(uids []imap.UID, own []uint8) []uint8 {
 	}
 	if b.mode == "none" {
 		return nil
+	}
+	if b.mode == "empty" {
+		return []uint8{}
 	}
 	scores := make([]uint8, len(uids))
 	for i, uid := range uids {
@@ -188,9 +191,9 @@ func TestSearchReturnRelevancyRequestsScores(t *testing.T) {
 }
 
 // Memory scores every exact FUZZY match 100, and a backend that supplies no
-// scores gets the same answer from the framework.
+// scores, nil or empty, gets the same answer from the framework.
 func TestSearchReturnRelevancyWithoutBackendScores(t *testing.T) {
-	for _, mode := range []string{"memory", "none"} {
+	for _, mode := range []string{"memory", "none", "empty"} {
 		t.Run(mode, func(t *testing.T) {
 			w := relevancyOpen(t, &relevancyBackend{Backend: r4Memory(), mode: mode})
 			got, tagged := relevancyResult(t, w, "UID SEARCH RETURN (RELEVANCY ALL) FUZZY SUBJECT apple")

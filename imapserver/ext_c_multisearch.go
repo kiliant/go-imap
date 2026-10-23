@@ -88,10 +88,10 @@ type MultiSearchMailboxResult struct {
 	// which those are. Without it the framework omits MODSEQ.
 	ModSeqs []uint64
 	// Relevancy optionally pairs each UID with its RFC 6203 relevancy score,
-	// by position, and then has the same length as UIDs. Scores follow the
-	// rules of [SearchResult.Relevancy] and are read only when
-	// [MultiSearchOptions.ReturnRelevancy] was set. Without them, the
-	// framework reports 100 for every match.
+	// by position, on the terms of [SearchResult.Relevancy]: it is read only
+	// when [MultiSearchOptions.ReturnRelevancy] was set, a nil or empty
+	// Relevancy makes the framework report 100 for every match, and any other
+	// must have the same length as UIDs.
 	Relevancy []uint8
 	_         struct{}
 }

@@ -61,10 +61,10 @@ func requireRelevancyFuzzy(returnOptions []string, criteria imap.SearchCriteria)
 }
 
 // pairRelevancy maps a backend's scores to the UIDs they pair with by
-// position. Nil scores yield a nil map, for which every match takes the
-// fallback. Where a UID repeats, its first score is kept.
+// position. No scores, nil or empty, yield a nil map, for which every match
+// takes the fallback. Where a UID repeats, its first score is kept.
 func pairRelevancy(uids []imap.UID, scores []uint8, command string) (map[imap.UID]uint8, error) {
-	if scores == nil {
+	if len(scores) == 0 {
 		return nil, nil
 	}
 	if len(scores) != len(uids) {

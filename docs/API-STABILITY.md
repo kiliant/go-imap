@@ -1347,9 +1347,10 @@ interface is added.
 
 **No new obligation:** scores are optional. A backend that ignores
 `ReturnRelevancy` gets a valid response in which every match scores 100, so a
-backend that already witnessed SEARCH=FUZZY keeps working unchanged. Scores
-that a backend does supply are checked: a length that differs from UIDs, or a
-score outside 1 to 100, fails the command as a backend error. They are read
+backend that already witnessed SEARCH=FUZZY keeps working unchanged, and so
+does one that returns a nil or empty `Relevancy`. Scores that a backend does
+supply are checked: a length that differs from UIDs, or a score outside 1 to
+100, fails the command as a backend error. They are read
 only when the client asked for them. Starting strict keeps the choice open: a
 later release can accept more without breaking anyone, while rejecting more
 later would be an incompatible change.
@@ -1363,7 +1364,8 @@ added later as an optional interface, without changing this one.
 
 **Which messages are scored** follows the rule RFC 4731 section 3.2 gives for
 MODSEQ. When the response returns only its MIN, MAX or PARTIAL messages,
-without ALL or COUNT, only those are scored; otherwise every match is. The
+without ALL or COUNT, only their scores are reported; otherwise every
+match's score is. The backend is asked for every match's score either way. The
 scores follow the result order. RELEVANCY alone does not imply ALL, and a
 MODSEQ search with RELEVANCY alone reports the clock of every match.
 
