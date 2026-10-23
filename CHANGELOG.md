@@ -23,6 +23,20 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Fixed
+
+- Each ENABLED response names only the extensions its own ENABLE command
+  enabled (RFC 5161 section 3.1). A name that was already enabled is no longer
+  repeated, whether an earlier ENABLE or a CONDSTORE enabling command enabled
+  it, or QRESYNC enabled it implicitly. A requested name that the same command
+  enabled implicitly is still reported. A successful ENABLE now always sends
+  ENABLED, which may be empty, as RFC 5161 requires. Previously the response
+  was omitted when the command enabled nothing. ENABLE stays additive. This is
+  a compatible wire correction: no exported symbol or backend obligation
+  changes. (#203)
+
 ## [imapserver/v0.4.0] - 2026-10-22
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
