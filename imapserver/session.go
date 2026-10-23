@@ -213,11 +213,11 @@ func unescapeSASLName(value string) (string, bool) {
 	return result.String(), true
 }
 
-//lint:ignore U1000 T22's AUTHENTICATE handler uses this server-side SASL wire encoding.
+// encodeSASL encodes a server challenge. An empty challenge is empty base64,
+// which continueLine sends as "+ " (RFC 3501 section 6.2.2). The "=" spelling
+// is RFC 4959's, for an empty client initial response, and is never sent by
+// the server.
 func encodeSASL(value []byte) string {
-	if len(value) == 0 {
-		return "="
-	}
 	return base64.StdEncoding.EncodeToString(value)
 }
 
