@@ -6,11 +6,13 @@
 # FuzzParseSeqSet went uncampaigned and how its extension groups C/D/E shipped
 # with no targets at all: nothing failed, the list simply did not mention them.
 #
-# This file is kept byte-identical in go-imap and go-smtp. It is
-# repository-agnostic by construction — nothing here names a module, package or
-# target — and the duplication is the zero-dependency policy's own consequence,
-# since sharing it would mean a module dependency between the two. Diff the two
-# copies before editing either. Three CI-specific properties:
+# A copy of this file lives in go-smtp. It is repository-agnostic by
+# construction — nothing here names a module, package or target — and the
+# duplication is the zero-dependency policy's own consequence, since sharing it
+# would mean a module dependency between the two. The copies are kept in step
+# by hand and may differ where one repository needs it, so diff the two before
+# editing either and carry a general change across. Three CI-specific
+# properties:
 #
 #   1. sharding, so a large campaign fits inside a job's time budget;
 #   2. FUZZ_PARALLEL defaults to 1, because the deadline artifact below is
