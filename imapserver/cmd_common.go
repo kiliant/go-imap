@@ -284,6 +284,54 @@ func mapFetchResponse(selected *selectedState, data *imap.FetchMessageData, incl
 	return &copyData, nil
 }
 
+// canonicalizeFetchKeys rewrites backend item keys in upper case before they
+// reach the wire. Keys are case-insensitive for backends, and IMAP's grammar
+// is too, but some clients assume the upper-case spelling RFCs use.
+//
+// Everything up to a key's first space is upper-cased: the item name, and in a
+// section its part number and keyword. A HEADER.FIELDS list, which is the only
+// place a valid key has a space, is kept as the backend wrote it. Only ASCII
+// letters change, so a literal's announced size and the key's length are
+// unaffected. Keys that differ only in case merge, keeping every value: a
+// backend may write FLAGS and flags in one response, and both values are
+// still sent.
+func canonicalizeFetchKeys(data *imap.FetchMessageData) {
+	canonical := false
+	for key := range data.Items {
+		if canonicalFetchKey(key) != key {
+			canonical = true
+			break
+		}
+	}
+	if !canonical {
+		return
+	}
+	keys := make([]imap.FetchDataKey, 0, len(data.Items))
+	for key := range data.Items {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make(map[imap.FetchDataKey][]imap.FetchData, len(keys))
+	for _, key := range keys {
+		upper := canonicalFetchKey(key)
+		items[upper] = append(items[upper], data.Items[key]...)
+	}
+	data.Items = items
+}
+
+func canonicalFetchKey(key imap.FetchDataKey) imap.FetchDataKey {
+	raw := []byte(key)
+	for i, b := range raw {
+		if b == ' ' {
+			break
+		}
+		if 'a' <= b && b <= 'z' {
+			raw[i] = b - 'a' + 'A'
+		}
+	}
+	return imap.FetchDataKey(raw)
+}
+
 func withFetchUID(items []imap.FetchItem) ([]imap.FetchItem, bool) {
 	// UID identifies the result rather than a repeatable section. Clients may
 	// request it more than once; forward one canonical request to the backend.
