@@ -51,6 +51,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
     FLAGS is present.
   (#221)
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Added
+
+- **backendtest:** when a backend witnesses SEARCH=FUZZY, the `search`
+  group's new `fuzzy-relevancy` case calls `Search` with
+  `SearchOptions.ReturnRelevancy` set. Scores are optional, so a nil or empty
+  `SearchResult.Relevancy` passes. Scores that a backend does supply must
+  have one entry per UID, each from 1 to 100. Before, a backend learned of
+  malformed scores only from a NO at runtime. The check enforces the
+  documented rule, so a conforming backend is not affected. No exported API
+  change. (#217)
+
 ## [imapserver/v1.3.1] - 2026-10-23
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`

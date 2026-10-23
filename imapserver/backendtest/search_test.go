@@ -24,6 +24,9 @@ func TestSearchConformance(t *testing.T) {
 		{mode: "always-all", want: "want [1]"},
 		{mode: "duplicates", want: "want [1 2 3]"},
 		{mode: "ignore-modseq", want: "modseq-none"},
+		{mode: "relevancy-none"},
+		{mode: "relevancy-length", want: "returned 2 relevancy scores for 3 UIDs"},
+		{mode: "relevancy-range", want: "outside 1 to 100"},
 	} {
 		t.Run(test.mode, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestSearchConformanceFixture$/(search|sort-returns-a-permutation|thread-reports-each-message-once)$", "-test.v")
@@ -37,6 +40,8 @@ func TestSearchConformance(t *testing.T) {
 				t.Fatalf("conforming fixture failed: %v\n%s", err, output)
 			} else if test.mode == "no-witnesses" && !strings.Contains(string(output), "SKIP: TestSearchConformanceFixture/search/modseq-all") {
 				t.Fatalf("unwitnessed extension was not skipped:\n%s", output)
+			} else if test.mode == "correct" && !strings.Contains(string(output), "PASS: TestSearchConformanceFixture/search/fuzzy-relevancy") {
+				t.Fatalf("relevancy check did not run against a SEARCH=FUZZY backend:\n%s", output)
 			}
 		})
 	}
@@ -106,6 +111,16 @@ func (m *searchFixtureMailbox) Search(ctx context.Context, query *imapserver.Sea
 	result, err := m.SelectedMailbox.Search(ctx, query, options)
 	if err == nil && m.mode == "duplicates" && len(result.UIDs) > 0 {
 		result.UIDs = append(result.UIDs, result.UIDs[0])
+	}
+	if err == nil && len(result.Relevancy) > 0 {
+		switch m.mode {
+		case "relevancy-none":
+			result.Relevancy = nil
+		case "relevancy-length":
+			result.Relevancy = result.Relevancy[1:]
+		case "relevancy-range":
+			result.Relevancy[len(result.Relevancy)-1] = 0
+		}
 	}
 	return result, err
 }
