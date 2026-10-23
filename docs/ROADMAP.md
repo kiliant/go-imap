@@ -213,7 +213,8 @@ against both backends. See `INTEROP.md`.
 ## Post-M6 — reliability and event delivery
 
 The original milestones are complete. Root `v1.3.1` and server
-`imapserver/v0.6.0` are published; the two module lines remain independent.
+`imapserver/v1.3.1` are published; since M7 both modules share one version
+number.
 Current execution status lives on the issue tracker, not in this plan.
 
 The next work is ordered deliberately:
@@ -252,7 +253,11 @@ a v2 candidate, not a prerequisite for this phase.
 
 ## M7 — `imapserver` v1
 
-`imapserver` has been feature-complete since M6, but it stays on v0.x by the
+**Status: complete on 2026-10-23.** `imapserver/v1.3.1` is tagged. All three
+exit criteria below were met, with the evidence on #54. From now on both
+modules are tagged together under one version number (`RELEASING.md`).
+
+`imapserver` has been feature-complete since M6, but it stayed on v0.x by the
 approved exception in `docs/API-STABILITY.md`. Most of its API consists of
 interfaces that backends implement, and adding a method to one breaks every
 backend. So far the only backend is `imapserver/memory`, written by the same

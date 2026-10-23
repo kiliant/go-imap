@@ -438,11 +438,17 @@ The test is whether a correct server, given the data, could put it on the wire.
   at least two minor releases, never before v2.
 - Go version floor: the two most recent major Go releases.
 
-### Exception: `imapserver` outside the v1 promise — APPROVED
+### Exception: `imapserver` outside the v1 promise — CLOSED
 
-**Status: approved by the human on 2026-08-05, as part of approving
+**Status: closed on 2026-10-23 with `imapserver/v1.3.1`.** All three exit
+criteria below were met, with the evidence on #54. The server module is now
+under the v1 promise above, like the root module, and both share one version
+number (`RELEASING.md`). The text below records the exception as it was
+approved.
+
+**Approved by the human on 2026-08-05, as part of approving
 `docs/SERVER-DESIGN.md` §9. The v1.0 prerequisite was satisfied on 2026-08-06;
-execution of the nested-module release model remains T25's.**
+execution of the nested-module release model remained T25's.**
 
 The policy above says "v1.0 freezes the exported API" without qualifying by
 package. Taken literally, `imapserver` inherits the freeze the moment it lands —
@@ -480,10 +486,12 @@ Per `CLAUDE.md`, this needed explicit written approval from the human before it
 became real, and it has that approval now. `imapserver/go.mod` and the root
 `go.work` are T25's to create, at v1.0.
 
-#### When the exception ends — APPROVED
+#### When the exception ends — APPROVED, MET
 
 **Status: approved by the human on 2026-10-15** as milestone M7
-(`docs/ROADMAP.md`).
+(`docs/ROADMAP.md`). **Met on 2026-10-23:** Maildir is the second backend,
+`imapserver/v0.5.0` and `v0.6.0` are the two quiet releases, and the two full
+reviews were recorded on #54. T33's final check before the tag found no break.
 
 `imapserver` may be tagged v1, and so come under the v1 promise, only when
 all three of these hold:
