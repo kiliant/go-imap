@@ -23,6 +23,26 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Added
+
+- NOTIFY delivers MessageNew fetch attributes for a SELECTED or
+  SELECTED-DELAYED group (RFC 5465 section 5.2). Until now such a
+  registration was refused with `NO [CANNOT]`.
+  - For each new message in the selected mailbox that the connection did not
+    create itself, the framework fetches the attributes through
+    `SelectedMailbox.Fetch` and sends an unsolicited FETCH. It follows the
+    EXISTS and any ESEARCH ADDTO, and is numbered in the client's current
+    view.
+  - The attributes are gated as FETCH items. Those that would set \Seen are
+    refused with `NO [CANNOT]`, and MODSEQ among them enables CONDSTORE.
+  - Delivery is bounded like FETCH. Data that cannot be delivered ends the
+    registration with NOTIFICATIONOVERFLOW.
+  - Add `NotifyWatch.MessageNewFetchItems` on the guarded struct, mirroring
+    the client's `NotifyFilter.MessageNewFetchItems`.
+  - No interface gains a method, and no backend obligation is added. (#195)
+
 ## [imapserver/v0.5.0] - 2026-10-23
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`

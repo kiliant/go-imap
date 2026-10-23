@@ -1177,6 +1177,7 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 			deferRemovals:    deferred,
 			suppressMessages: suppressMessages && !own,
 			suppressFlags:    suppressFlags && !own,
+			own:              own,
 		})
 		if err != nil {
 			// Once an accepted batch cannot be applied, the framework no longer
@@ -1224,7 +1225,12 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if err := c.encoder.Flush(); err != nil {
 		return err
 	}
-	return writeSearchContextDeltas(c, deltas, false)
+	if err := writeSearchContextDeltas(c, deltas, false); err != nil {
+		return err
+	}
+	// RFC 5465 section 5.2: MessageNew's FETCH follows the EXISTS and any
+	// ESEARCH ADDTO the new messages caused.
+	return c.writeMessageNewFetches(wireUpdates)
 }
 
 // RFC 7162 sections 3.2 and 6 require an explicit safe checkpoint when

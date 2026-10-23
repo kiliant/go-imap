@@ -943,6 +943,9 @@ type deliveredUpdate struct {
 	modSeq  uint64
 	earlier bool
 	exists  uint32
+	// added lists the UIDs an EXISTS announces that this connection did not
+	// create itself, for NOTIFY's MessageNew fetch attributes.
+	added []imap.UID
 }
 
 type updateKind uint8
@@ -969,6 +972,7 @@ func coalesceWireUpdates(updates []deliveredUpdate) []deliveredUpdate {
 		previous := &coalesced[len(coalesced)-1]
 		switch {
 		case previous.kind == updateExists && update.kind == updateExists:
+			update.added = slices.Concat(previous.added, update.added)
 			*previous = update
 		case previous.kind == updateMailboxFlags && update.kind == updateMailboxFlags:
 			*previous = update
@@ -1007,6 +1011,9 @@ type batchDelivery struct {
 	// suppressFlags retains the latest flags per UID for the next NOTIFY SET.
 	// The resynchronisation fence covers them until they are reported.
 	suppressFlags bool
+	// own marks a batch of this connection's own command. Its additions get
+	// no MessageNew FETCH (RFC 5465 section 5.2).
+	own bool
 }
 
 func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAccounting, delivery batchDelivery) ([]deliveredUpdate, error) {
@@ -1037,7 +1044,11 @@ func (s *selectedState) applyBatchWith(batch *UpdateBatch, accounting updateAcco
 			}
 			// Additions are never blanket-suppressed: APPEND/COPY/MOVE results
 			// do not tell the selected client the new sequence position.
-			delivered = append(delivered, deliveredUpdate{kind: updateExists, exists: uint32(len(s.uids))})
+			exists := deliveredUpdate{kind: updateExists, exists: uint32(len(s.uids))}
+			if !delivery.own {
+				exists.added = slices.Clone(change.UIDs)
+			}
+			delivered = append(delivered, exists)
 		case *UpdateRecent:
 			if change == nil || uint64(change.NumRecent) > uint64(s.backendCount()) {
 				return nil, fmt.Errorf("%w: invalid RECENT count", ErrRevisionMismatch)
@@ -1255,9 +1266,12 @@ func (s *selectedState) releaseAdditions() []deliveredUpdate {
 	if len(s.pendingAdds) == 0 {
 		return nil
 	}
-	s.uids = append(s.uids, s.pendingAdds...)
+	// Only other sessions' additions are withheld, so all of these are new
+	// to this connection.
+	added := s.pendingAdds
+	s.uids = append(s.uids, added...)
 	s.pendingAdds = nil
-	return []deliveredUpdate{{kind: updateExists, exists: uint32(len(s.uids))}}
+	return []deliveredUpdate{{kind: updateExists, exists: uint32(len(s.uids)), added: added}}
 }
 
 func (s *selectedState) cancelPendingAdd(uid imap.UID) bool {

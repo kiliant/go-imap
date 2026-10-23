@@ -941,7 +941,7 @@ func TestReview87NotifyValidation(t *testing.T) {
 		{"NOTIFY SET (personal (FutureEvent))", "NO " + complete},
 		{"NOTIFY SET (personal (MessageNew MessageExpunge AnnotationChange))", "NO " + complete},
 		{"NOTIFY SET (selected (MessageNew MessageExpunge FutureMessageEvent))", "NO " + complete},
-		{"NOTIFY SET (selected (MessageNew (UID) MessageExpunge))", "NO [CANNOT]"},
+		{"NOTIFY SET (selected (MessageNew (UID BODY[TEXT]) MessageExpunge))", "NO [CANNOT]"},
 	} {
 		lines := reviewCommand(t, client, reader, "V", tc.command, strings.Fields(tc.want)[0])
 		if !strings.HasPrefix(lines[len(lines)-1], "V "+tc.want) {

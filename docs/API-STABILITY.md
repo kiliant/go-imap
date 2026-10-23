@@ -1369,3 +1369,42 @@ match's score is. The backend is asked for every match's score either way. The
 scores follow the result order. RELEVANCY alone does not imply ALL, and a
 MODSEQ search with RELEVANCY alone reports the clock of every match.
 
+### NOTIFY MessageNew fetch attributes — 2026-10-23 (#195)
+
+RFC 5465 lets a SELECTED or SELECTED-DELAYED group attach a fetch-att list
+to MessageNew. The framework parsed such a list but refused it with
+`NO [CANNOT]`. It is now delivered inside the `imapserver` stability window,
+so the change must be additive and must not put a new obligation on a
+backend that conformed before.
+
+**Additive:** `NotifyWatch.MessageNewFetchItems`, a guarded field bound to
+the existing `notify` feature. It is named like the client's
+`imapclient.NotifyFilter.MessageNewFetchItems`, so both directions use the
+same name for the list. `NotifySession` keeps its method set.
+
+**No new obligation:** the framework delivers the attributes itself. It calls
+`SelectedMailbox.Fetch`, which every selected mailbox already implements, and
+writes the result as an unsolicited FETCH. A backend can ignore the field. A
+backend that refuses configurations it does not understand still sees only
+fields it knows.
+
+**Behaviour, which freezes with v1:**
+
+- The attributes are gated as FETCH items are.
+- Attributes that would set \Seen are refused with `NO [CANNOT]`: RFC 5465
+  section 5.2 says a client SHOULD NOT use them, and the framework would
+  otherwise mark every new message read. A later release can accept them;
+  refusing more later would be incompatible.
+- MODSEQ among the attributes counts as a CONDSTORE enabling use, as FETCH
+  MODSEQ does. In a NOMODSEQ selection, MODSEQ is left out.
+- The FETCH for a new message comes after its EXISTS and any ESEARCH ADDTO,
+  and it is numbered in the client's view at that point.
+- Messages this connection created itself are not fetched.
+- Delivery is bounded by the FETCH response limit and by
+  `Limits.CommandTimeout`. If the data cannot be delivered before any of it
+  is written, the registration ends as RFC 5465 section 5.8 describes: an
+  untagged `OK [NOTIFICATIONOVERFLOW]`, then NOTIFY NONE behaviour, with the
+  connection kept. A failure after part of the response was written ends the
+  connection.
+- Registrations without fetch attributes behave exactly as before.
+
