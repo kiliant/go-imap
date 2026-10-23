@@ -1,10 +1,10 @@
 package imapclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 
 	"github.com/kiliant/go-imap"
@@ -233,17 +233,21 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 
 // readUnilateralFetch decodes an unsolicited FETCH response with the same item
 // grammar as readFetchResponse, but completely: the handler receives one value
-// per response, with every item, and may retain it. Literal values are read
-// into memory when keep is set and discarded otherwise.
-func readUnilateralFetch(resp *untaggedResponse, keep bool) (*imap.FetchMessageData, error) {
-	var adapt imapcodec.LiteralAdapter // nil reads each literal into memory
-	if !keep {
-		adapt = func(lr *imapwire.LiteralReader) (io.Reader, func()) {
+// per response, with every item, and may retain it. Each literal is read into
+// memory up to the in-memory literal limit. A larger one is consumed and
+// leaves an empty reader, as readSyncFetch does for a value it cannot keep.
+func readUnilateralFetch(resp *untaggedResponse) (*imap.FetchMessageData, error) {
+	limit := resp.dec.Options().MaxBufferedLiteralSize
+	adapt := func(lr *imapwire.LiteralReader) (io.Reader, func()) {
+		if limit >= 0 && lr.Size() > limit {
 			// A failed discard leaves the decoder failed, so the error
 			// surfaces at its next read.
 			_ = lr.Discard()
-			return strings.NewReader(""), nil
+			return bytes.NewReader(nil), nil
 		}
+		// A failed read leaves the decoder failed in the same way.
+		b, _ := io.ReadAll(lr)
+		return bytes.NewReader(b), nil
 	}
 	var data *imap.FetchMessageData
 	err := imapcodec.ReadFetchResponse(resp.dec, imap.SeqNum(resp.number), adapt, func(d *imap.FetchMessageData) {

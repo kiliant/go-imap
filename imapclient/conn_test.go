@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -236,7 +237,7 @@ func TestUnilateralFetchAllItems(t *testing.T) {
 		// (UID BODY.PEEK[HEADER.FIELDS (Subject)]))), as quoted in #221.
 		_, _ = serverConn.Write([]byte("* 1 EXISTS\r\n" +
 			"* 1 FETCH (BODY[HEADER.FIELDS (Subject)] {19}\r\nSubject: pushed\r\n\r\n UID 1)\r\n" +
-			"* 2 FETCH (UID 7 MODSEQ (12))\r\n" +
+			"* 2 FETCH (UID 7 MODSEQ (12) X-FUTURE {3}\r\nabc)\r\n" +
 			tag + " OK done\r\n"))
 	}()
 	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
@@ -279,8 +280,8 @@ func TestUnilateralFetchAllItems(t *testing.T) {
 	}
 
 	second := <-updates
-	if second.SeqNum != 2 || len(second.Items) != 2 {
-		t.Fatalf("second FETCH = %#v, want seq 2 with two items", second)
+	if second.SeqNum != 2 || len(second.Items) != 3 {
+		t.Fatalf("second FETCH = %#v, want seq 2 with three items", second)
 	}
 	if uid := second.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(7) {
 		t.Fatalf("second UID = %#v", uid)
@@ -288,10 +289,76 @@ func TestUnilateralFetchAllItems(t *testing.T) {
 	if modseq := second.Items["MODSEQ"]; len(modseq) != 1 || modseq[0] != imap.FetchDataModSeq(12) {
 		t.Fatalf("second MODSEQ = %#v", modseq)
 	}
+	// A raw value is in memory too, unlike a FETCH command's.
+	raw, ok := second.Items["X-FUTURE"][0].(*imap.FetchDataRaw)
+	if !ok {
+		t.Fatalf("second X-FUTURE = %#v", second.Items["X-FUTURE"])
+	}
+	if b, err := io.ReadAll(raw.Reader); err != nil || string(b) != "{3}\r\nabc" {
+		t.Fatalf("raw X-FUTURE = %q, %v", b, err)
+	}
 }
 
-// TestUnilateralFetchWithoutHandler checks that an unsolicited FETCH with
-// literals is consumed, not misread, when no Fetch callback is installed.
+// runUnilateralStream sends stream before the tagged OK of a NOOP and returns
+// the NOOP's result.
+func runUnilateralStream(t *testing.T, handler *UnilateralDataHandler, stream string) error {
+	t.Helper()
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close() })
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := r.ReadString('\n')
+		tag, _, _ := strings.Cut(line, " ")
+		_, _ = serverConn.Write([]byte(stream + tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: handler})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	return c.Noop(nil).Wait(ctx)
+}
+
+// A literal over the in-memory limit is consumed but not kept: its item is
+// delivered with an empty reader, and the items after it still arrive.
+func TestUnilateralFetchOversizedLiteral(t *testing.T) {
+	size := imapwire.DefaultMaxBufferedLiteralSize + 1
+	updates := make(chan *imap.FetchMessageData, 2)
+	stream := fmt.Sprintf("* 1 FETCH (BODY[] {%d}\r\n%s UID 9)\r\n", size, strings.Repeat("x", size))
+	if err := runUnilateralStream(t, &UnilateralDataHandler{
+		Fetch: func(data *imap.FetchMessageData) { updates <- data },
+	}, stream); err != nil {
+		t.Fatalf("NOOP after an oversized unsolicited literal = %v", err)
+	}
+	data := <-updates
+	if uid := data.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(9) {
+		t.Fatalf("UID after the oversized literal = %#v", data.Items)
+	}
+	section, ok := data.Items["BODY[]"][0].(*imap.FetchDataBodySection)
+	if !ok {
+		t.Fatalf("BODY[] = %#v", data.Items["BODY[]"])
+	}
+	if b, err := io.ReadAll(section.Literal); err != nil || len(b) != 0 {
+		t.Fatalf("oversized BODY[] kept %d octets, %v; want none", len(b), err)
+	}
+}
+
+// With a Fetch callback the response is decoded as strictly as a FETCH
+// command's result, so a malformed item fails the connection.
+func TestUnilateralFetchIsStrict(t *testing.T) {
+	err := runUnilateralStream(t, &UnilateralDataHandler{Fetch: func(*imap.FetchMessageData) {}}, "* 1 FETCH (UID 0)\r\n")
+	var ierr *imap.Error
+	if !errors.As(err, &ierr) || ierr.Type != imap.ErrorTypeProtocol {
+		t.Fatalf("NOOP after FETCH (UID 0) = %v, want a protocol error", err)
+	}
+}
+
+// TestUnilateralFetchWithoutHandler checks that an unsolicited FETCH is
+// skipped, literals and malformed items included, when no Fetch callback is
+// installed.
 func TestUnilateralFetchWithoutHandler(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()
@@ -302,6 +369,7 @@ func TestUnilateralFetchWithoutHandler(t *testing.T) {
 		line, _ := r.ReadString('\n')
 		tag, _, _ := strings.Cut(line, " ")
 		_, _ = serverConn.Write([]byte("* 1 FETCH (BODY[] {5}\r\nhello BINARY[1] ~{3}\r\na\x00b UID 1)\r\n" +
+			"* 2 FETCH (UID 0 EMAILID (bad!id) INTERNALDATE \"garbage\")\r\n" +
 			"* 4 EXISTS\r\n" +
 			tag + " OK done\r\n"))
 	}()

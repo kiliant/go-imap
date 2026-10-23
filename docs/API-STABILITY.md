@@ -1441,20 +1441,33 @@ data it had requested.
 holds any item, keyed and open-ended, so the fix is a change of data, not of
 type. The callback is now also called for a FETCH without FLAGS, and `Items`
 can hold more than FLAGS. The old wording said "currently", and nothing
-promised that FLAGS is present. A callback that assumed it must now check.
+promised that FLAGS is present. A callback that treated every call as a flag
+update, for example by replacing its cached flags with `Items["FLAGS"]`, must
+now check that FLAGS is there. An opt-in was rejected: it would need a second,
+near-duplicate field for good and would leave `Fetch` dropping UID and MODSEQ.
 
-**Delivery, which freezes with this release:**
+**Delivery, which freezes with the release that ships it:**
 
 - The callback runs once per response, after the whole response has been
   read. `FetchCommand.Next` streams a body section and yields the items after
   it separately. A callback cannot do that usefully: it would get a section
   without the UID that names its message.
-- Literal values are therefore read into memory first. Each one is bounded by
-  the decoder's literal limit. The data may be retained after the callback
-  returns, and its readers need not be consumed.
-- While `Fetch` is nil, literal values are discarded as they are read, so a
-  client that does not ask for the data does not buffer it.
+- The value is complete and may be retained. Every reader in it is in memory
+  and need not be drained or closed. On this path, that replaces the drain,
+  close and lifetime requirements of the individual FetchData types.
+- A literal is kept up to 8 MiB, the codec's limit for any value it holds in
+  memory. A larger one is consumed and its reader is empty, as the in-memory
+  FETCH reader of a QRESYNC SELECT already does. So is a raw item whose wire
+  form exceeds the limit. Starting strict keeps the choice open, as #202 did:
+  a later release may raise the limit or add a streaming field, but lowering
+  it would be incompatible.
+- While `Fetch` is nil, an unsolicited FETCH is skipped without being
+  decoded. A client that does not ask for the data neither buffers nor
+  validates it.
+- With `Fetch` set, the response is decoded as strictly as a FETCH command's
+  result. A malformed item, such as `UID 0`, now fails the connection where
+  the FLAGS-only parser skipped it.
 
-The precedent: a command's results may stream, because the caller paces
-them. Unsolicited data is delivered complete, because nothing paces a
-callback.
+The precedent: the delivery contract of an existing `UnilateralDataHandler`
+callback does not change. If unsolicited data ever needs to stream, that is a
+new field with its own contract.

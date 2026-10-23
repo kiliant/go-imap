@@ -431,9 +431,9 @@ CONDSTORE `MODIFIED` on tagged OK.
     (section 5.2) arrive as an unsolicited FETCH, with every item, through
     `UnilateralDataHandler.Fetch`. Until #221 the client kept only FLAGS
     there and failed the connection on a FETCH with a body section. A pushed
-    header section with its UID is live-verified on Dovecot. T30's decode-once routing
-    delivers STATUS for a different mailbox even during an active STATUS
-    command, and LIST during legacy LSUB. Scripted regressions cover this
+    header section with its UID is live-verified on Dovecot and Cyrus.
+    T30's decode-once routing delivers STATUS for a different mailbox even
+    during an active STATUS command, and LIST during legacy LSUB. Scripted regressions cover this
     interleaving; it is not yet live-verified. Metadata delivery and ownership limits:
     - MailboxMetadataChange and ServerMetadataChange arrive as names-only
       METADATA (RFC 5464 §4.4.2) through `UnilateralDataHandler.Metadata`.

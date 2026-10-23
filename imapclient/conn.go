@@ -411,14 +411,19 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 	h := c.opts.UnilateralData
 	if resp.hasNum {
 		if resp.name == "FETCH" {
-			deliver := h != nil && h.Fetch != nil
-			data, err := readUnilateralFetch(resp, deliver)
+			if h == nil || h.Fetch == nil {
+				// Nobody asked for the data: skip it unread and undecoded.
+				if err := resp.dec.DiscardLine(); err != nil {
+					return err
+				}
+				c.trace(TraceServer, "* FETCH")
+				return nil
+			}
+			data, err := readUnilateralFetch(resp)
 			if err != nil {
 				return err
 			}
-			if deliver {
-				h.Fetch(data)
-			}
+			h.Fetch(data)
 			c.trace(TraceServer, "* FETCH")
 			return nil
 		}

@@ -135,13 +135,19 @@ type UnilateralDataHandler struct {
 	// Fetch receives an unsolicited FETCH response with every item it
 	// carries: a flag update, for example, or the items NOTIFY sends for a
 	// new message ([NotifyFilter.MessageNewFetchItems], RFC 5465 section
-	// 5.2). Unlike [FetchCommand.Next], it is called once per response, after
-	// the whole response has been read. Body sections and other literal
-	// values are therefore already in memory: their readers need not be
-	// consumed, and the data may be retained after return; the client does
-	// not subsequently mutate it. Ask NOTIFY only for sections small enough
-	// to hold in memory. While this field is nil, literal values are
-	// discarded as they are read.
+	// 5.2). A response need not include FLAGS. Unlike [FetchCommand.Next],
+	// it is called once per response, after the whole response has been
+	// read.
+	//
+	// The value is complete and may be retained after return; the client
+	// does not modify it afterwards. Every reader in it, including
+	// [imap.FetchDataRaw.Reader], is in memory and need not be drained or
+	// closed: on this path this replaces the drain, close and lifetime
+	// requirements of the individual FetchData types. A literal over 8 MiB,
+	// the client's limit for one value in memory, is consumed but not kept,
+	// and its reader is empty; so is a raw item whose wire form exceeds that
+	// limit. While this field is nil, unsolicited FETCH responses are skipped
+	// without being decoded.
 	Fetch func(data *imap.FetchMessageData)
 	// Vanished receives UIDs removed from the selected mailbox after
 	// ENABLE QRESYNC. Earlier is true for VANISHED (EARLIER), which reports
