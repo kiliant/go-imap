@@ -23,6 +23,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+#### Fixed
+
+- FETCH responses write a backend's item keys in upper case up to the key's
+  first space. That covers the item name and, in a section, its part number
+  and keyword: `flags` becomes `FLAGS`, and `body[header.fields (Subject)]`
+  becomes `BODY[HEADER.FIELDS (Subject)]`. A HEADER.FIELDS list keeps the
+  backend's spelling. Values under keys that differ only in case are all still
+  sent, under one spelling. Keys stay case-insensitive for backends. This is a
+  compatible wire correction: no exported symbol or backend obligation
+  changes. (#200)
+
 ## [imapserver/v0.5.0] - 2026-10-23
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
