@@ -233,9 +233,10 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 
 // readUnilateralFetch decodes an unsolicited FETCH response with the same item
 // grammar as readFetchResponse, but completely: the handler receives one value
-// per response, with every item, and may retain it. Each literal is read into
-// memory up to the in-memory literal limit. A larger one is consumed and
-// leaves an empty reader, as readSyncFetch does for a value it cannot keep.
+// per response, with every item, and may retain it. Each section, BINARY or
+// RFC822 literal is read into memory up to the in-memory literal limit. A
+// larger one is consumed and leaves an empty reader, as readSyncFetch does for
+// a value it cannot keep.
 func readUnilateralFetch(resp *untaggedResponse) (*imap.FetchMessageData, error) {
 	limit := resp.dec.Options().MaxBufferedLiteralSize
 	adapt := func(lr *imapwire.LiteralReader) (io.Reader, func()) {

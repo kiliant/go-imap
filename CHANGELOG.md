@@ -38,9 +38,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   describes the new behaviour:
   - The callback runs once per response, after the whole response has been
     read. The value may be retained, and its readers need not be drained.
-  - A literal over 8 MiB is consumed but not kept, and its reader is empty.
+  - A body section, BINARY or RFC822 literal over 8 MiB is consumed but not
+    kept, and its reader is empty.
   - While `Fetch` is nil, unsolicited FETCH responses are skipped without
-    being decoded.
+    being decoded. Limits that apply to every response, such as the hard
+    literal limit, still apply.
   - With `Fetch` set, a malformed item such as `UID 0` now fails the
     connection, as it does in a FETCH command's result. The FLAGS-only
     parser skipped it.

@@ -1455,15 +1455,19 @@ near-duplicate field for good and would leave `Fetch` dropping UID and MODSEQ.
 - The value is complete and may be retained. Every reader in it is in memory
   and need not be drained or closed. On this path, that replaces the drain,
   close and lifetime requirements of the individual FetchData types.
-- A literal is kept up to 8 MiB, the codec's limit for any value it holds in
-  memory. A larger one is consumed and its reader is empty, as the in-memory
-  FETCH reader of a QRESYNC SELECT already does. So is a raw item whose wire
-  form exceeds the limit. Starting strict keeps the choice open, as #202 did:
-  a later release may raise the limit or add a streaming field, but lowering
+- A body section, BINARY or RFC822 literal is kept up to 8 MiB, the codec's
+  limit for any value it holds in memory. A larger one is consumed and its
+  reader is empty, as the in-memory FETCH reader of a QRESYNC SELECT already
+  does. So is a raw item whose wire form exceeds the limit. Other values the
+  client cannot accept, such as a string literal over that limit or any
+  literal over the hard literal limit, may fail the connection, as in a FETCH
+  command's result. Starting strict keeps the choice open, as #202 did: a
+  later release may raise the limit or add a streaming field, but lowering
   it would be incompatible.
 - While `Fetch` is nil, an unsolicited FETCH is skipped without being
-  decoded. A client that does not ask for the data neither buffers nor
-  validates it.
+  decoded. A client that does not ask for the data does not buffer it or
+  check its items. Limits that apply to every response, such as the hard
+  literal limit, still apply.
 - With `Fetch` set, the response is decoded as strictly as a FETCH command's
   result. A malformed item, such as `UID 0`, now fails the connection where
   the FLAGS-only parser skipped it.

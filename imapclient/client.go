@@ -143,11 +143,14 @@ type UnilateralDataHandler struct {
 	// does not modify it afterwards. Every reader in it, including
 	// [imap.FetchDataRaw.Reader], is in memory and need not be drained or
 	// closed: on this path this replaces the drain, close and lifetime
-	// requirements of the individual FetchData types. A literal over 8 MiB,
-	// the client's limit for one value in memory, is consumed but not kept,
-	// and its reader is empty; so is a raw item whose wire form exceeds that
-	// limit. While this field is nil, unsolicited FETCH responses are skipped
-	// without being decoded.
+	// requirements of the individual FetchData types. A body section, BINARY
+	// or RFC822 literal over the client's limit for one value in memory,
+	// currently 8 MiB, is consumed but not kept, and its reader is empty; so
+	// is a raw item whose wire form exceeds that limit. While this field is
+	// nil, unsolicited FETCH responses are skipped without being decoded.
+	// Either way, a value the client cannot accept, such as a literal over
+	// its hard literal limit, may fail the connection, as it does in a FETCH
+	// command's result.
 	Fetch func(data *imap.FetchMessageData)
 	// Vanished receives UIDs removed from the selected mailbox after
 	// ENABLE QRESYNC. Earlier is true for VANISHED (EARLIER), which reports
