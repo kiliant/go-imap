@@ -25,6 +25,25 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+#### Added
+
+- NOTIFY delivers MessageNew fetch attributes for a SELECTED or
+  SELECTED-DELAYED group (RFC 5465 section 5.2). Until now such a
+  registration was refused with `NO [CANNOT]`.
+  - When a drain announces new messages in the selected mailbox, at most one
+    `SelectedMailbox.Fetch` call supplies their data, sent as unsolicited
+    FETCH responses after the EXISTS and numbered in the client's view.
+    Additions carrying the origin of the connection's own command are not
+    fetched.
+  - The attributes are gated as FETCH items. Those that would set \Seen are
+    refused with `NO [CANNOT]`. MODSEQ among them enables CONDSTORE, and it
+    is left out where CONDSTORE is not in effect.
+  - Delivery is bounded like FETCH. A Fetch error or an exceeded bound ends
+    the registration with NOTIFICATIONOVERFLOW.
+  - Add `NotifyWatch.MessageNewFetchItems` on the guarded struct, mirroring
+    the client's `NotifyFilter.MessageNewFetchItems`.
+  - No interface gains a method, and no backend obligation is added. (#195)
+
 #### Fixed
 
 - FETCH responses write a backend's item keys in upper case up to the key's
@@ -35,6 +54,10 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   sent, under one spelling. Keys stay case-insensitive for backends. This is a
   compatible wire correction: no exported symbol or backend obligation
   changes. (#200)
+- Under UIDONLY, a UIDFETCH response keeps the UID item when it is its only
+  item, as RFC 9586 section 3.3 allows. `UID FETCH n (UID)` sent the invalid
+  `* n UIDFETCH ()`, and NOTIFY's `MessageNew (UID)` would have done the same.
+  This is a compatible wire correction. (#195)
 
 ## [imapserver/v0.5.0] - 2026-10-23
 

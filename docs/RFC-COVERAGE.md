@@ -401,9 +401,17 @@ CONDSTORE `MODIFIED` on tagged OK.
     command that selects a comparator any match may wait.
     Selected FlagChange carries UID. NONE groups request no
     events, SUBSCRIBED uses current subscriptions, and selected mailboxes
-    receive no STATUS. MessageNew fetch-attribute syntax is recognized but
-    refused with `NO [CANNOT]` before backend calls; unsolicited FETCH
-    attributes remain deferred. (#54, independent review B3, R3/R5/R6)
+    receive no STATUS. MessageNew fetch attributes on a SELECTED or
+    SELECTED-DELAYED group are delivered by the framework (#195). It gates
+    them as FETCH items and refuses those that would set \Seen with
+    `NO [CANNOT]`; MODSEQ among them enables CONDSTORE. When a drain announces
+    new messages in the selected mailbox, at most one `SelectedMailbox.Fetch`
+    call supplies their data, sent as unsolicited FETCH responses after the EXISTS,
+    numbered in the client's view when written and bounded like FETCH. Their
+    order against ESEARCH ADDTO is not guaranteed. Additions carrying the
+    origin of the connection's own command are not fetched. A Fetch error or
+    an exceeded bound ends the registration with NOTIFICATIONOVERFLOW;
+    responses already sent stand. (#54, independent review B3, R3/R5/R6)
 
 [^srvmsglistlimit]: Server advertisements and the incorrect mailbox-size/retention
     API were removed after the independent review (#54, A1). RFC 9738 limits

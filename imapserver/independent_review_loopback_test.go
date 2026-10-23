@@ -76,21 +76,28 @@ func TestIndependentNotifyWire(t *testing.T) {
 			t.Errorf("%s refusal did not list all supported events: %q", events, lines)
 		}
 	}
-	// A legal fetch-att list, including nested header fields, is a refusal
-	// of unsupported behavior. It must never reach Notify on the backend.
+	// Fetch attributes that would set \Seen are refused (#195). The refusal
+	// must never reach Notify on the backend.
 	before := b.calls.Load()
 	for _, group := range []string{
-		"(selected (MessageNew (UID FLAGS) MessageExpunge))",
-		"(selected-delayed (MessageNew (UID BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)]) MessageExpunge))",
+		"(selected (MessageNew (UID BODY[TEXT]) MessageExpunge))",
+		"(selected-delayed (MessageNew (UID RFC822) MessageExpunge))",
 	} {
 		lines := reviewCommand(t, client, reader, "N", "NOTIFY SET "+group, "NO")
 		wire := strings.Join(lines, "")
-		if !strings.Contains(wire, "[CANNOT]") || !strings.Contains(wire, "MessageNew fetch attributes are unsupported") {
+		if !strings.Contains(wire, "[CANNOT]") || !strings.Contains(wire, "must not set") {
 			t.Errorf("fetch attribute refusal = %q", lines)
 		}
 	}
 	if got := b.calls.Load(); got != before {
 		t.Errorf("fetch attributes reached backend: Notify calls = %d, was %d", got, before)
+	}
+	// A legal fetch-att list, including nested header fields, is accepted.
+	for _, group := range []string{
+		"(selected (MessageNew (UID FLAGS) MessageExpunge))",
+		"(selected-delayed (MessageNew (UID BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)]) MessageExpunge))",
+	} {
+		reviewCommand(t, client, reader, "N", "NOTIFY SET "+group, "OK")
 	}
 	reviewCommand(t, client, reader, "Q", "NOOP", "OK")
 }

@@ -113,8 +113,9 @@ type SessionUpdate struct {
 // The framework calls Notify with a fresh updater each time, and closes the
 // previous one first, so a backend that kept the old updater finds it closed
 // rather than delivering into a registration the client has replaced.
-// Queue overflow also closes the updater and calls Notify with a nil updater
-// and configuration, just like NOTIFY NONE.
+// Queue overflow, or MessageNew data that cannot be delivered, also closes the
+// updater and calls Notify with a nil updater and configuration, just like
+// NOTIFY NONE.
 //
 // Before any of that, the framework applies RFC 5465's rules itself: an
 // invalid registration is BAD, and one naming an event the framework cannot
@@ -129,7 +130,9 @@ type SessionUpdate struct {
 // what the selection's Updater publishes according to the SELECTED or
 // SELECTED-DELAYED group, keeping the client's sequence numbers stable while
 // it withholds them, so a backend publishes every change there regardless of
-// the registration. A successful SET reports accumulated selected changes,
+// the registration. The framework also delivers that group's MessageNew fetch
+// attributes through [SelectedMailbox.Fetch]; see
+// [NotifyWatch.MessageNewFetchItems]. A successful SET reports accumulated selected changes,
 // including flags, before its tagged OK. If Notify refuses a replacement,
 // the previous selected policy remains in force, although its session updater
 // has been closed as described above.
@@ -180,7 +183,19 @@ type NotifyWatch struct {
 	//
 	// An event the backend cannot serve must be refused, not ignored.
 	Events []imap.NotifyEventName `imapfeature:"notify"`
-	_      struct{}
+	// MessageNewFetchItems is the fetch-att list the client attached to
+	// MessageNew (RFC 5465 section 5.2). Only a SELECTED or SELECTED-DELAYED
+	// group can carry one, and it is empty otherwise. The framework delivers
+	// it, so a backend need not act on this field. When a drain announces new
+	// messages in the selected mailbox, it asks [SelectedMailbox.Fetch] for
+	// their data in at most one call and sends unsolicited FETCH responses. The
+	// request carries these items adjusted as for a FETCH command: UID is
+	// added, MODSEQ is added while CONDSTORE is in effect for the selection
+	// and removed otherwise. Additions from a batch carrying the origin of
+	// one of this connection's commands ([MutationOptions.Origin]) are not
+	// fetched.
+	MessageNewFetchItems []imap.FetchItem `imapfeature:"notify"`
+	_                    struct{}
 }
 
 // canonicalNotifyEvent folds a wire event name to the spelling RFC 5465
@@ -344,9 +359,6 @@ func init() {
 
 type notifyArgs struct {
 	config *NotifyConfig
-	// fetchAttrs reports, per watch, whether its MessageNew carried a
-	// fetch-att list. Only validateNotifySet reads it.
-	fetchAttrs []bool
 }
 
 // parseNotify reads "NOTIFY SET [STATUS] (group events)..." or "NOTIFY NONE".
@@ -388,12 +400,11 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 		config.StatusOnSet = true
 	}
 	for {
-		group, fetchAttrs, err := parseNotifyGroup(decoder)
+		group, err := parseNotifyGroup(decoder)
 		if err != nil {
 			return nil, 0, err
 		}
 		config.Watches = append(config.Watches, *group)
-		args.fetchAttrs = append(args.fetchAttrs, fetchAttrs)
 		if !decoder.SP() {
 			break
 		}
@@ -404,17 +415,15 @@ func parseNotify(decoder *imapwire.Decoder) (any, int64, error) {
 	return args, int64(len(config.Watches) * 64), nil
 }
 
-// parseNotifyGroup reads one event-group. It reports whether MessageNew
-// carried a fetch-att list.
-func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, bool, error) {
+// parseNotifyGroup reads one event-group, with MessageNew's fetch-att list.
+func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, error) {
 	group := &NotifyWatch{}
-	fetchAttrs := false
 	if !decoder.ExpectSpecial('(') {
-		return nil, false, decoder.Err()
+		return nil, decoder.Err()
 	}
 	var specifier string
 	if !decoder.ExpectAtom(&specifier) {
-		return nil, false, decoder.Err()
+		return nil, decoder.Err()
 	}
 	// Specifiers are registered upper-case, so folding to upper is already the
 	// canonical form; events are mixed-case and need the table.
@@ -422,7 +431,7 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, bool, error) {
 	switch group.Specifier {
 	case imap.NotifySubtree, imap.NotifyMailboxes:
 		if !decoder.ExpectSP() {
-			return nil, false, decoder.Err()
+			return nil, decoder.Err()
 		}
 		readName := func() error {
 			var name string
@@ -434,26 +443,26 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, bool, error) {
 		}
 		if decoder.PeekSpecial('(') {
 			if err := decoder.ExpectList(readName); err != nil {
-				return nil, false, err
+				return nil, err
 			}
 		} else if err := readName(); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		// one-or-more-mailbox: "()" names nothing and is not a list.
 		if len(group.Names) == 0 {
-			return nil, false, fmt.Errorf("NOTIFY %s requires at least one mailbox", group.Specifier)
+			return nil, fmt.Errorf("NOTIFY %s requires at least one mailbox", group.Specifier)
 		}
 	}
 	if !decoder.ExpectSP() {
-		return nil, false, decoder.Err()
+		return nil, decoder.Err()
 	}
 	// NONE silences a group without removing it. RFC 5465 section 6.
 	if decoder.PeekAtomEqual("NONE") {
 		var keyword string
 		if !decoder.ExpectAtom(&keyword) || !decoder.ExpectSpecial(')') {
-			return nil, false, decoder.Err()
+			return nil, decoder.Err()
 		}
-		return group, false, nil
+		return group, nil
 	}
 	if err := decoder.ExpectList(func() error {
 		var event string
@@ -473,20 +482,20 @@ func parseNotifyGroup(decoder *imapwire.Decoder) (*NotifyWatch, bool, error) {
 			if len(items) == 0 {
 				return fmt.Errorf("MessageNew requires at least one fetch attribute")
 			}
-			fetchAttrs = true
+			group.MessageNewFetchItems = items
 		}
 		return nil
 	}); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	// events = "(" event *(SP event) ")" / "NONE": an empty list is neither.
 	if len(group.Events) == 0 {
-		return nil, false, fmt.Errorf("NOTIFY event list is empty")
+		return nil, fmt.Errorf("NOTIFY event list is empty")
 	}
 	if !decoder.ExpectSpecial(')') {
-		return nil, false, decoder.Err()
+		return nil, decoder.Err()
 	}
-	return group, fetchAttrs, nil
+	return group, nil
 }
 
 // notifyEventAnnotationChange is RFC 5465's message event for RFC 5257
@@ -534,7 +543,7 @@ func isNotifySelectedSpecifier(specifier imap.NotifyMailboxSpecifier) bool {
 func validateNotifySet(args *notifyArgs) *imap.Error {
 	bad := func(text string) *imap.Error { return &imap.Error{Type: imap.ErrorTypeBad, Text: text} }
 	selectedGroups := 0
-	for i, watch := range args.config.Watches {
+	for _, watch := range args.config.Watches {
 		// filter-mailboxes is a closed production; a specifier outside it is
 		// unparseable rather than unsupported.
 		if !slices.Contains(imap.NotifyMailboxSpecifiers(), watch.Specifier) {
@@ -548,7 +557,7 @@ func validateNotifySet(args *notifyArgs) *imap.Error {
 			}
 		}
 		// Section 8: a fetch-att list only for the selected mailbox.
-		if args.fetchAttrs[i] && !selected {
+		if len(watch.MessageNewFetchItems) != 0 && !selected {
 			return bad("MessageNew fetch attributes apply only to SELECTED and SELECTED-DELAYED")
 		}
 		has := func(event imap.NotifyEventName) bool { return slices.Contains(watch.Events, event) }
@@ -580,12 +589,46 @@ func validateNotifySet(args *notifyArgs) *imap.Error {
 			}
 		}
 	}
-	// Legal, but not delivered yet (#195): refused rather than registered
-	// with the attributes silently dropped.
-	if slices.Contains(args.fetchAttrs, true) {
-		return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "MessageNew fetch attributes are unsupported"}
+	// Section 5.2: a client SHOULD NOT ask for attributes that set \Seen. The
+	// framework fetches them unsolicited for every new message, so it refuses
+	// them rather than mark messages read that the client never opened.
+	for _, watch := range args.config.Watches {
+		if fetchItemsSetSeen(watch.MessageNewFetchItems) {
+			return &imap.Error{Type: imap.ErrorTypeNo, Code: imap.CodeCannot, Text: "MessageNew fetch attributes must not set \\Seen; use BODY.PEEK or BINARY.PEEK"}
+		}
 	}
 	return nil
+}
+
+// validateMessageNewFetchItems gates the selected group's MessageNew fetch
+// attributes as FETCH gates its items, and treats MODSEQ among them as a
+// CONDSTORE enabling use, as FETCH MODSEQ is (RFC 7162 section 3.1). The
+// registration outlives the selection, so a NOMODSEQ selection does not
+// refuse it; MODSEQ is then left out of what that selection is sent.
+func validateMessageNewFetchItems(ctx context.Context, c *conn, config *NotifyConfig) error {
+	for _, watch := range config.Watches {
+		if len(watch.MessageNewFetchItems) == 0 {
+			continue
+		}
+		if err := requireFetchItemCapabilities(c, watch.MessageNewFetchItems); err != nil {
+			return err
+		}
+		if fetchItemsHaveModSeq(watch.MessageNewFetchItems) {
+			if err := enableCondStoreForCommand(ctx, c, true, "NOTIFY MessageNew MODSEQ"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func fetchItemsHaveModSeq(items []imap.FetchItem) bool {
+	for _, item := range items {
+		if keyword, ok := item.(imap.FetchItemKeyword); ok && strings.EqualFold(string(keyword), string(imap.FetchItemModSeq)) {
+			return true
+		}
+	}
+	return false
 }
 
 // completeBadEvent replaces a backend's BADEVENT list with the server's.
@@ -617,6 +660,9 @@ func selectedNotifyPolicyFor(config *NotifyConfig) selectedNotifyPolicy {
 		policy.immediate = watch.Specifier == imap.NotifySelected
 		policy.messages = slices.Contains(watch.Events, imap.NotifyEventMessageNew)
 		policy.flags = slices.Contains(watch.Events, imap.NotifyEventFlagChange)
+		if policy.messages {
+			policy.fetchItems = slices.Clone(watch.MessageNewFetchItems)
+		}
 	}
 	return policy
 }
@@ -635,6 +681,9 @@ func handleNotify(ctx context.Context, c *conn, command *queuedCommand) error {
 	if config != nil {
 		if refusal := validateNotifySet(args); refusal != nil {
 			return writeTaggedCondition(c, command.tag, strings.ToUpper(string(refusal.Type)), refusal.Code, refusal.CodeArgs, refusal.Text)
+		}
+		if err := validateMessageNewFetchItems(ctx, c, config); err != nil {
+			return writeCondStoreUseError(c, command.tag, command.name, err)
 		}
 	}
 	session, ok := c.state.session.(NotifySession)
@@ -742,22 +791,7 @@ func (c *conn) drainNotifyStatus(modSeq bool) error {
 	}
 	updates, dropped := c.notifyQueue.popAll()
 	if dropped {
-		// Close before calling the backend, so even a producer racing with
-		// teardown cannot publish into the ended registration. RFC 5465
-		// section 5.8: the server then behaves as if NOTIFY NONE had been
-		// received, which silences the selected mailbox too.
-		c.closeNotify()
-		c.notifySelected = selectedNotifyPolicyFor(nil)
-		ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
-		err := c.state.session.(NotifySession).Notify(ctx, nil, nil, nil)
-		cancel()
-		writeUntaggedOK(c, imap.CodeNotificationOverflow, "", "notifications disabled after queue overflow")
-		if flushErr := c.encoder.Flush(); flushErr != nil {
-			return flushErr
-		}
-		// If teardown failed, end the connection rather than silently keeping
-		// backend resources for a registration the client believes has ended.
-		return err
+		return c.notifyOverflow("notifications disabled after queue overflow")
 	}
 	var advertised map[string]bool
 	if len(updates) > 0 {
@@ -792,6 +826,125 @@ func (c *conn) drainNotifyStatus(modSeq bool) error {
 	return nil
 }
 
+// notifyOverflow ends the registration as RFC 5465 section 5.8 requires when
+// notifications cannot be delivered: an untagged OK [NOTIFICATIONOVERFLOW],
+// then behaviour as if NOTIFY NONE had been received, which silences the
+// selected mailbox too.
+func (c *conn) notifyOverflow(text string) error {
+	// Close before calling the backend, so even a producer racing with
+	// teardown cannot publish into the ended registration.
+	c.closeNotify()
+	c.notifySelected = selectedNotifyPolicyFor(nil)
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	err := c.state.session.(NotifySession).Notify(ctx, nil, nil, nil)
+	cancel()
+	writeUntaggedOK(c, imap.CodeNotificationOverflow, "", text)
+	if flushErr := c.encoder.Flush(); flushErr != nil {
+		return flushErr
+	}
+	// If teardown failed, end the connection rather than silently keeping
+	// backend resources for a registration the client believes has ended.
+	return err
+}
+
+// writeMessageNewFetches sends the FETCH data that a SELECTED or
+// SELECTED-DELAYED MessageNew registration asks for, for the messages a drain
+// has just announced with EXISTS (RFC 5465 section 5.2). Additions from a
+// batch carrying the origin of this connection's own command are left out,
+// as that section recommends.
+//
+// At most one SelectedMailbox.Fetch call supplies the data, bounded by
+// Limits.CommandTimeout, and each response is numbered in the client's view
+// as it stands after the drain's other responses, under FETCH's response size
+// bound. A message no longer in the view is skipped. If Fetch returns an
+// error or the bound is exceeded, the registration ends with
+// NOTIFICATIONOVERFLOW (section 5.8) and responses already sent stand. A
+// response that cannot be mapped or measured counts as a Fetch error; only a
+// failure while writing a response ends the connection.
+func (c *conn) writeMessageNewFetches(updates []deliveredUpdate) error {
+	selected := c.state.selected
+	requested := c.notifySelected.fetchItems
+	if selected == nil || len(requested) == 0 {
+		return nil
+	}
+	var uids []imap.UID
+	for _, update := range updates {
+		if update.kind != updateExists {
+			continue
+		}
+		for _, uid := range update.added {
+			if _, visible := selected.sequence(uid); visible {
+				uids = append(uids, uid)
+			}
+		}
+	}
+	if len(uids) == 0 {
+		return nil
+	}
+	// Once CONDSTORE is in effect every FETCH carries MODSEQ (RFC 7162
+	// section 3.1.4.1); otherwise none can, which leaves out a requested
+	// MODSEQ in a NOMODSEQ selection. A list left empty sends nothing: a
+	// FETCH response needs at least one item.
+	usesModSeq := condStoreMailboxEnabled(c)
+	if !usesModSeq {
+		requested = slices.DeleteFunc(slices.Clone(requested), func(item imap.FetchItem) bool {
+			return fetchItemsHaveModSeq([]imap.FetchItem{item})
+		})
+		if len(requested) == 0 {
+			return nil
+		}
+	}
+	items, requestedUID := withFetchUID(requested)
+	items = applyCondStoreFetchItems(c, items)
+	// UIDONLY needs the UID as the UIDFETCH response's subject.
+	includeUID := requestedUID || uidOnlyEnabled(c) || condStoreRequiresUID(c) && usesModSeq
+	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
+	defer cancel()
+	var responseBytes int64
+	var writeErr error
+	writer := newFetchWriter(func(_ context.Context, data *imap.FetchMessageData) error {
+		mapped, err := mapFetchResponse(selected, data, includeUID)
+		if err != nil {
+			return err
+		}
+		if len(mapped.Items) == 0 {
+			return nil
+		}
+		_, cleanup, err := prepareFetchResponseLiterals(mapped, maxCommandFetchBytes-responseBytes)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		wireBytes, err := fetchResponseWireSize(mapped)
+		if err != nil {
+			return err
+		}
+		if wireBytes > maxCommandFetchBytes-responseBytes {
+			return commandLimitError("MessageNew FETCH byte limit exceeded")
+		}
+		responseBytes += wireBytes
+		if err := writeFetchLikeResponse(c, mapped); err != nil {
+			writeErr = err
+			return err
+		}
+		if err := c.encoder.Flush(); err != nil {
+			writeErr = err
+			return err
+		}
+		return nil
+	})
+	err := selected.mailbox.Fetch(ctx, writer, imap.UIDSetNum(uids...), &FetchOptions{Items: items})
+	writer.core.close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if err != nil {
+		c.reportBackendError("FETCH", err)
+		return c.notifyOverflow("notifications disabled: MessageNew data could not be delivered")
+	}
+	return nil
+}
+
 // selectedNotifyPolicy is what the client asked to hear about the selected
 // mailbox. Backends publish every change through the selection's Updater
 // regardless; the framework decides what reaches the wire, because only it
@@ -810,6 +963,9 @@ type selectedNotifyPolicy struct {
 	// delivered as they happen rather than at the next command that allows
 	// them (RFC 5465 section 6.1).
 	immediate bool
+	// fetchItems is MessageNew's fetch-att list, fetched for each new
+	// message after its EXISTS. See writeMessageNewFetches.
+	fetchItems []imap.FetchItem
 }
 
 func (p selectedNotifyPolicy) suppressesMessages() bool { return p.registered && !p.messages }

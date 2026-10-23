@@ -1369,3 +1369,53 @@ match's score is. The backend is asked for every match's score either way. The
 scores follow the result order. RELEVANCY alone does not imply ALL, and a
 MODSEQ search with RELEVANCY alone reports the clock of every match.
 
+### NOTIFY MessageNew fetch attributes — 2026-10-23 (#195)
+
+RFC 5465 lets a SELECTED or SELECTED-DELAYED group attach a fetch-att list
+to MessageNew. The framework parsed such a list but refused it with
+`NO [CANNOT]`. It is now delivered inside the `imapserver` stability window,
+so the change must be additive and must not put a new obligation on a
+backend that conformed before.
+
+**Additive:** `NotifyWatch.MessageNewFetchItems`, a guarded field bound to
+the existing `notify` feature. It is named like the client's
+`imapclient.NotifyFilter.MessageNewFetchItems`, so both directions use the
+same name for the list. `NotifySession` keeps its method set.
+
+**No new obligation:** the framework delivers the attributes itself. It calls
+`SelectedMailbox.Fetch`, which every selected mailbox already implements, and
+writes the result as unsolicited FETCH responses. A backend can ignore the
+field.
+
+**Behaviour, which freezes with v1:**
+
+- The attributes are gated as FETCH items are.
+- Attributes that would set \Seen are refused with `NO [CANNOT]`: RFC 5465
+  section 5.2 says a client SHOULD NOT use them, and the framework would
+  otherwise mark every new message read. A later release can accept them;
+  refusing more later would be incompatible.
+- MODSEQ among the attributes counts as a CONDSTORE enabling use, as FETCH
+  MODSEQ does. Where CONDSTORE is not in effect for the selection, as in a
+  NOMODSEQ one, MODSEQ is left out, and a list left empty sends no FETCH.
+- When a drain announces new messages, at most one `Fetch` call supplies
+  their data. It requests the client's items adjusted as for a FETCH command:
+  UID is added, and MODSEQ is added while CONDSTORE is in effect.
+- Each FETCH follows the EXISTS that announced its message and is numbered in
+  the client's view when it is written. Its order against ESEARCH ADDTO is
+  not part of the contract. RFC 5465 places the FETCH after ADDTO in section
+  5.2 and before it in section 7, and a sorted context can hold an ADDTO back
+  to a later drain.
+- Additions from a batch carrying the origin of one of this connection's
+  commands are not fetched.
+- Delivery is bounded by the FETCH response limit and by
+  `Limits.CommandTimeout`. If `Fetch` returns an error or the bound is
+  exceeded, the registration ends as RFC 5465 section 5.8 describes: an
+  untagged `OK [NOTIFICATIONOVERFLOW]`, then NOTIFY NONE behaviour, with the
+  connection kept. FETCH responses already sent stand. A response that
+  cannot be mapped or measured counts as such an error; only a failure while
+  writing a response ends the connection.
+- Under UIDONLY, a UIDFETCH response keeps the UID item when it is the only
+  item, for MessageNew and UID FETCH alike. RFC 9586 section 3.3 allows the
+  item, and an empty list is not valid. Previously `UID FETCH n (UID)` sent
+  `* n UIDFETCH ()`.
+- Registrations without fetch attributes behave exactly as before.

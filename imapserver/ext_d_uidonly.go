@@ -67,8 +67,9 @@ func uidRequiredError(text string) error {
 // number space requires: UIDFETCH under UIDONLY, ordinary FETCH otherwise.
 //
 // Under UIDONLY the UID item is dropped from the item list, because the UID is
-// already the response's subject and RFC 9586 section 3.2 makes repeating it the
-// one redundant item in the grammar.
+// already the response's subject and RFC 9586 section 3.3 makes repeating it
+// redundant. It is kept when it is the only item: msg-att cannot be empty, and
+// the same section allows the UID item in a UIDFETCH response.
 func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
 	canonicalizeFetchKeys(data)
 	if c.state.revision == revisionIMAP4rev2 {
@@ -94,7 +95,7 @@ func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
 	trimmed := *data
 	trimmed.Items = make(map[imap.FetchDataKey][]imap.FetchData, len(data.Items))
 	for key, values := range data.Items {
-		if strings.EqualFold(string(key), string(imap.FetchItemUID)) {
+		if strings.EqualFold(string(key), string(imap.FetchItemUID)) && len(data.Items) > 1 {
 			continue
 		}
 		trimmed.Items[key] = values
