@@ -281,6 +281,7 @@ func writeURLFetchContent(ctx context.Context, c *conn, session URLAuthSession, 
 		return false, resolvedContentTooBig()
 	}
 	*remaining -= size
+	reader = &nulFreeReader{reader: reader, remaining: size}
 	literal, err := c.encoder.ResponseLiteral(size, false)
 	if err != nil {
 		return true, err

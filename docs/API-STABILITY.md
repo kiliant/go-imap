@@ -1307,7 +1307,7 @@ domainless addresses in the ENVELOPE with host `MISSING_DOMAIN`, the
 placeholder Dovecot uses, because a NIL host would mean group syntax.
 
 **Left open:** a BODY section that a backend already stores with NUL still
-closes the connection (#210).
+closes the connection (#210). Resolved below, under "NUL in a stored message".
 
 `message.MatchOptions.Comparator` is an additive field on a guarded options
 struct. Empty selects i;unicode-casemap; i;octet selects exact octets. Unknown
@@ -1475,3 +1475,41 @@ near-duplicate field for good and would leave `Fetch` dropping UID and MODSEQ.
 The precedent: the delivery contract of an existing `UnilateralDataHandler`
 callback does not change. If unsolicited data ever needs to stream, that is a
 new field with its own contract.
+
+### NUL in a stored message — 2026-10-23 (#210)
+
+No IMAP string can carry NUL (RFC 9051 section 4.3.1). A BODY or RFC822
+literal from a message stored with a NUL could therefore not be written. The
+encoder refused the payload after the literal's length had been sent, and the
+connection closed without a BYE. A BYE is impossible at that point too,
+because the client reads everything after the length as literal payload.
+
+**Decision, by the human:** the framework sends each NUL in a non-binary
+literal of a BODY, RFC822 or URLFETCH response as 0x80. A literal8 is never
+altered. Dovecot does the same. A probe of the interop matrix's Dovecot 2.4
+with an 8bit part stored by `doveadm save` returned `BODY[TEXT] {5}` with
+`a\x80b`, BODYSTRUCTURE `"8bit" 5`, and the original octets for `BINARY[1]`
+in a literal8.
+
+The issue listed three other options:
+
+- Re-encoding the part as base64 at FETCH time means BODY and BODYSTRUCTURE
+  must change together, as RFC 3516 section 6 requires, and the sizes with
+  them.
+- Scanning before writing and answering NO means reading or staging every
+  section twice, and the message then cannot be fetched at all.
+- A BYE alone is impossible once the literal's length has been sent.
+
+**Compatible:** only failure behaviour changes. A FETCH or URLFETCH response
+carrying such a literal used to end the connection. No exported symbol
+changes, and no backend obligation is added. A backend that wants no
+substitution can store such a part re-encoded as base64 with
+`message.Message.EncodeNULParts`: BODY then carries the base64 text,
+BODYSTRUCTURE describes base64, and BINARY returns the original octets. A
+backend can also substitute differently in its own reader.
+
+**Frozen with the next release:** the substitution is octet for octet, so a
+literal's announced length is unchanged, and the framework does not alter
+RFC822.SIZE or BODYSTRUCTURE. BINARY literal8 payloads are sent unchanged. A
+framework-level choice of another policy could be added later as a guarded
+option, with 0x80 staying the default.

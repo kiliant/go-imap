@@ -64,6 +64,19 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   documented rule, so a conforming backend is not affected. No exported API
   change. (#217)
 
+#### Fixed
+
+- A FETCH of a message stored with a NUL octet no longer ends the
+  connection. Such a message can reach Maildir by external delivery, for
+  example. No IMAP string can carry NUL, so the framework now sends each NUL
+  in a non-binary literal of a BODY, RFC822 or URLFETCH response as 0x80, as
+  Dovecot does. The literal keeps its length, and RFC822.SIZE and
+  BODYSTRUCTURE are sent as the backend supplies them. A BINARY literal8 is
+  sent unchanged. Before, the response stopped partway through the literal
+  and the connection closed without a BYE. The `FetchWriter` and
+  `message.Message.EncodeNULParts` documentation describes the substitution.
+  No exported symbol changes, and no backend obligation is added. (#210)
+
 ## [imapserver/v1.3.1] - 2026-10-23
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`

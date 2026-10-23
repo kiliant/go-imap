@@ -182,12 +182,13 @@ type EncodeOptions struct{ _ struct{} }
 // part changed; when none did, it writes nothing and the original bytes remain
 // the message to store.
 //
-// No IMAP string can carry NUL, so BODY cannot transmit such a part. A backend
-// that accepts BINARY APPEND (RFC 3516) can store the result instead: section
-// 4.4 permits the change because nothing is lost, BODY and BODYSTRUCTURE then
-// describe base64, and [Message.OpenBinarySection] still returns the original
-// octets. The message is read once to find such parts and once to write it,
-// with bounded buffers. A nil options pointer selects the defaults.
+// No IMAP string can carry NUL, so BODY cannot transmit such a part faithfully:
+// the framework sends each NUL as 0x80. A backend that accepts BINARY APPEND
+// (RFC 3516) can store the result instead: section 4.4 permits the change
+// because nothing is lost, BODY and BODYSTRUCTURE then describe base64, and
+// [Message.OpenBinarySection] still returns the original octets. The message
+// is read once to find such parts and once to write it, with bounded buffers.
+// A nil options pointer selects the defaults.
 func (m *Message) EncodeNULParts(ctx context.Context, w io.Writer, options *EncodeOptions) (bool, error) {
 	_ = options
 	if err := checkContext(ctx); err != nil {
