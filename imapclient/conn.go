@@ -411,11 +411,12 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 	h := c.opts.UnilateralData
 	if resp.hasNum {
 		if resp.name == "FETCH" {
-			data, hasFlags, err := parseFlagsFetch(resp)
+			deliver := h != nil && h.Fetch != nil
+			data, err := readUnilateralFetch(resp, deliver)
 			if err != nil {
 				return err
 			}
-			if hasFlags && h != nil && h.Fetch != nil {
+			if deliver {
 				h.Fetch(data)
 			}
 			c.trace(TraceServer, "* FETCH")
@@ -504,48 +505,6 @@ func (c *Client) handleUnilateral(resp *untaggedResponse) error {
 		return resp.data.err
 	}
 	return resp.dec.DiscardLine()
-}
-
-// parseFlagsFetch handles the connection-scoped form of FETCH used for flag
-// updates. T06's command collector claims full FETCH responses before they
-// reach this function. Keeping this narrow parser here gives unsolicited flag
-// changes a useful home without pre-empting the streaming FETCH implementation.
-func parseFlagsFetch(resp *untaggedResponse) (*imap.FetchMessageData, bool, error) {
-	if !resp.dec.ExpectSP() {
-		return nil, false, resp.dec.Err()
-	}
-	data := &imap.FetchMessageData{SeqNum: imap.SeqNum(resp.number), Items: make(map[imap.FetchDataKey][]imap.FetchData)}
-	hasFlags := false
-	err := resp.dec.ExpectList(func() error {
-		var key string
-		if !resp.dec.ExpectAtom(&key) {
-			return resp.dec.Err()
-		}
-		if !resp.dec.ExpectSP() {
-			return resp.dec.Err()
-		}
-		if strings.EqualFold(key, "FLAGS") {
-			var raw []string
-			if err := resp.dec.ExpectFlagList(&raw); err != nil {
-				return err
-			}
-			flags := make(imap.FetchDataFlags, len(raw))
-			for i, flag := range raw {
-				flags[i] = imap.Flag(flag)
-			}
-			data.Items[imap.FetchDataKey(key)] = append(data.Items[imap.FetchDataKey(key)], flags)
-			hasFlags = true
-			return nil
-		}
-		return resp.dec.DiscardValue()
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	if !resp.dec.ExpectCRLF() {
-		return nil, false, resp.dec.Err()
-	}
-	return data, hasFlags, nil
 }
 
 func (c *Client) completeAllExceptLogout(err error) {

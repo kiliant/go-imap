@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/kiliant/go-imap"
@@ -228,6 +229,27 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 		}
 		return stream, func() { <-stream.done }
 	}, emit)
+}
+
+// readUnilateralFetch decodes an unsolicited FETCH response with the same item
+// grammar as readFetchResponse, but completely: the handler receives one value
+// per response, with every item, and may retain it. Literal values are read
+// into memory when keep is set and discarded otherwise.
+func readUnilateralFetch(resp *untaggedResponse, keep bool) (*imap.FetchMessageData, error) {
+	var adapt imapcodec.LiteralAdapter // nil reads each literal into memory
+	if !keep {
+		adapt = func(lr *imapwire.LiteralReader) (io.Reader, func()) {
+			// A failed discard leaves the decoder failed, so the error
+			// surfaces at its next read.
+			_ = lr.Discard()
+			return strings.NewReader(""), nil
+		}
+	}
+	var data *imap.FetchMessageData
+	err := imapcodec.ReadFetchResponse(resp.dec, imap.SeqNum(resp.number), adapt, func(d *imap.FetchMessageData) {
+		data = d
+	})
+	return data, err
 }
 
 func readFetchObjectID(dec *imapwire.Decoder) (string, error) {

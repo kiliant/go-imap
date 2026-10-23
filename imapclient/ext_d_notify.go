@@ -83,7 +83,9 @@ type NotifyFilter struct {
 	None bool
 
 	// MessageNewFetchItems, when non-empty, attaches a FETCH item list to a
-	// MessageNew event (RFC 5465 MessageNew (fetch-att)).
+	// MessageNew event (RFC 5465 MessageNew (fetch-att)). The server sends
+	// the items as an unsolicited FETCH response. Unless an in-flight command
+	// claims it, it arrives at [UnilateralDataHandler.Fetch].
 	MessageNewFetchItems []imap.FetchItem
 
 	_ struct{}

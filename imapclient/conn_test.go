@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"strings"
@@ -215,6 +216,109 @@ func TestUnilateralFetchFlags(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("did not receive FETCH flag update")
+	}
+}
+
+// TestUnilateralFetchAllItems covers #221. An unsolicited FETCH with a body
+// section, which is what a NOTIFY MessageNew registration with fetch
+// attributes produces (RFC 5465 section 5.2), reaches the handler with every
+// item instead of failing the connection. So does one without FLAGS.
+func TestUnilateralFetchAllItems(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	updates := make(chan *imap.FetchMessageData, 4)
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := r.ReadString('\n')
+		tag, _, _ := strings.Cut(line, " ")
+		// imapserver's output for NOTIFY SET (selected (MessageNew
+		// (UID BODY.PEEK[HEADER.FIELDS (Subject)]))), as quoted in #221.
+		_, _ = serverConn.Write([]byte("* 1 EXISTS\r\n" +
+			"* 1 FETCH (BODY[HEADER.FIELDS (Subject)] {19}\r\nSubject: pushed\r\n\r\n UID 1)\r\n" +
+			"* 2 FETCH (UID 7 MODSEQ (12))\r\n" +
+			tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		Fetch: func(data *imap.FetchMessageData) { updates <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Noop(nil).Wait(ctx); err != nil {
+		t.Fatalf("NOOP after unsolicited FETCH = %v", err)
+	}
+	// Both responses were delivered before the tagged OK, once each.
+	if len(updates) != 2 {
+		t.Fatalf("Fetch called %d times, want 2", len(updates))
+	}
+
+	first := <-updates
+	if first.SeqNum != 1 || len(first.Items) != 2 {
+		t.Fatalf("first FETCH = %#v, want seq 1 with two items", first)
+	}
+	if uid := first.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(1) {
+		t.Fatalf("first UID = %#v", uid)
+	}
+	var section *imap.FetchDataBodySection
+	for _, values := range first.Items {
+		if v, ok := values[0].(*imap.FetchDataBodySection); ok {
+			section = v
+		}
+	}
+	if section == nil || len(section.HeaderFields) != 1 || section.HeaderFields[0] != "Subject" {
+		t.Fatalf("first body section = %#v", section)
+	}
+	// The callback has returned; the section is still readable.
+	body, err := io.ReadAll(section.Literal)
+	if err != nil || string(body) != "Subject: pushed\r\n\r\n" {
+		t.Fatalf("body section = %q, %v", body, err)
+	}
+
+	second := <-updates
+	if second.SeqNum != 2 || len(second.Items) != 2 {
+		t.Fatalf("second FETCH = %#v, want seq 2 with two items", second)
+	}
+	if uid := second.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(7) {
+		t.Fatalf("second UID = %#v", uid)
+	}
+	if modseq := second.Items["MODSEQ"]; len(modseq) != 1 || modseq[0] != imap.FetchDataModSeq(12) {
+		t.Fatalf("second MODSEQ = %#v", modseq)
+	}
+}
+
+// TestUnilateralFetchWithoutHandler checks that an unsolicited FETCH with
+// literals is consumed, not misread, when no Fetch callback is installed.
+func TestUnilateralFetchWithoutHandler(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	exists := make(chan uint32, 1)
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := r.ReadString('\n')
+		tag, _, _ := strings.Cut(line, " ")
+		_, _ = serverConn.Write([]byte("* 1 FETCH (BODY[] {5}\r\nhello BINARY[1] ~{3}\r\na\x00b UID 1)\r\n" +
+			"* 4 EXISTS\r\n" +
+			tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		Exists: func(n uint32) { exists <- n },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Noop(nil).Wait(ctx); err != nil {
+		t.Fatalf("NOOP after unsolicited FETCH = %v", err)
+	}
+	if n := <-exists; n != 4 {
+		t.Fatalf("EXISTS after the FETCH = %d, want 4", n)
 	}
 }
 

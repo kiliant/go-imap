@@ -23,6 +23,24 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+### Root module — `github.com/kiliant/go-imap`
+
+#### Fixed
+
+- **imapclient:** an unsolicited FETCH response is decoded with the item
+  grammar a FETCH command uses, and `UnilateralDataHandler.Fetch` receives
+  every item in it. Previously only FLAGS reached the callback, and a FETCH
+  without FLAGS never did. An item with a section, such as the
+  `BODY[HEADER.FIELDS (Subject)]` a `NotifyFilter.MessageNewFetchItems`
+  registration asks for, failed the connection with `imap: PROTOCOL: invalid
+  server response`. The callback runs once per response, after the whole
+  response has been read. Literal values are held in memory and may be
+  retained; while `Fetch` is nil they are discarded. No exported signature
+  changes. The documentation of `UnilateralDataHandler.Fetch` and
+  `NotifyFilter.MessageNewFetchItems` describes the new behaviour. A
+  callback that assumed every call carries FLAGS must now check for it.
+  (#221)
+
 ## [imapserver/v1.3.1] - 2026-10-23
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`

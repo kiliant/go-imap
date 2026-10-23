@@ -1426,3 +1426,35 @@ field.
   item, and an empty list is not valid. Previously `UID FETCH n (UID)` sent
   `* n UIDFETCH ()`.
 - Registrations without fetch attributes behave exactly as before.
+
+### Unsolicited FETCH delivers every item — 2026-10-23 (#221)
+
+`imapclient.UnilateralDataHandler.Fetch` was documented as receiving "an
+unsolicited FETCH update, currently flag updates". The client read
+unsolicited FETCH with a FLAGS-only parser. Only FLAGS reached the callback,
+a FETCH without FLAGS never did, and an item with a section failed the
+connection. That last case is what `NotifyFilter.MessageNewFetchItems` asks
+the server to send (RFC 5465 section 5.2), so the client could not receive
+data it had requested.
+
+**Compatible:** no exported signature changes. `FetchMessageData` already
+holds any item, keyed and open-ended, so the fix is a change of data, not of
+type. The callback is now also called for a FETCH without FLAGS, and `Items`
+can hold more than FLAGS. The old wording said "currently", and nothing
+promised that FLAGS is present. A callback that assumed it must now check.
+
+**Delivery, which freezes with this release:**
+
+- The callback runs once per response, after the whole response has been
+  read. `FetchCommand.Next` streams a body section and yields the items after
+  it separately. A callback cannot do that usefully: it would get a section
+  without the UID that names its message.
+- Literal values are therefore read into memory first. Each one is bounded by
+  the decoder's literal limit. The data may be retained after the callback
+  returns, and its readers need not be consumed.
+- While `Fetch` is nil, literal values are discarded as they are read, so a
+  client that does not ask for the data does not buffer it.
+
+The precedent: a command's results may stream, because the caller paces
+them. Unsolicited data is delivered complete, because nothing paces a
+callback.
