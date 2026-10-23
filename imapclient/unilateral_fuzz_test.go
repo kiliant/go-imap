@@ -12,7 +12,8 @@ import (
 // to a client with every unilateral handler installed and no command running.
 // Everything it reaches is reachable by a hostile server at any moment, which
 // since T27 includes the STATUS and LIST parsers and status-response
-// delivery. The client may reject the stream; it must not panic or hang.
+// delivery, and since #221 the full FETCH response decoder. The client may
+// reject the stream; it must not panic or hang.
 func FuzzUnilateralStream(f *testing.F) {
 	for _, seed := range []string{
 		"* OK [ALERT] System shutdown in 10 minutes\r\n",
@@ -23,6 +24,8 @@ func FuzzUnilateralStream(f *testing.F) {
 		"* LIST (\\NonExistent) \"/\" Gone\r\n",
 		"* LIST () NIL INBOX (\"OLDNAME\" (\"Old\"))\r\n",
 		"* 3 EXISTS\r\n* 1 EXPUNGE\r\n* 2 FETCH (FLAGS (\\Seen))\r\n",
+		"* 1 FETCH (BODY[HEADER.FIELDS (Subject)] {19}\r\nSubject: pushed\r\n\r\n UID 1)\r\n",
+		"* 2 FETCH (UID 7 MODSEQ (12) BINARY[1] ~{3}\r\na\x00b RFC822.SIZE 3)\r\n",
 		"* VANISHED (EARLIER) 1:3\r\n",
 		"* STATUS\r\n* LIST\r\n* OK [\r\n",
 		"* METADATA INBOX /shared/comment /private/comment\r\n",

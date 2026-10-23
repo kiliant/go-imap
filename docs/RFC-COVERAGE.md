@@ -427,9 +427,13 @@ CONDSTORE `MODIFIED` on tagged OK.
     previous name in `imap.ListData.OldName`, from the `OLDNAME` extended data
     (section 5.4). This is verified on Cyrus. Dovecot 2.4 sends no MailboxName
     event for RENAME at all, so that check skips there. SubscriptionChange
-    (section 5.5) arrives through `.List` as well. T30's decode-once routing
-    delivers STATUS for a different mailbox even during an active STATUS
-    command, and LIST during legacy LSUB. Scripted regressions cover this
+    (section 5.5) arrives through `.List` as well. MessageNew fetch attributes
+    (section 5.2) arrive as an unsolicited FETCH, with every item, through
+    `UnilateralDataHandler.Fetch`. Until #221 the client kept only FLAGS
+    there and failed the connection on a FETCH with a body section. A pushed
+    header section with its UID is live-verified on Dovecot and Cyrus.
+    T30's decode-once routing delivers STATUS for a different mailbox even
+    during an active STATUS command, and LIST during legacy LSUB. Scripted regressions cover this
     interleaving; it is not yet live-verified. Metadata delivery and ownership limits:
     - MailboxMetadataChange and ServerMetadataChange arrive as names-only
       METADATA (RFC 5464 §4.4.2) through `UnilateralDataHandler.Metadata`.

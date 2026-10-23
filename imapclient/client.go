@@ -132,7 +132,25 @@ type UnilateralDataHandler struct {
 	Expunge func(seqNum uint32)
 	// Recent receives the updated count of recent messages.
 	Recent func(numRecent uint32)
-	// Fetch receives an unsolicited FETCH update, currently flag updates.
+	// Fetch receives an unsolicited FETCH response with every item it
+	// carries: a flag update, for example, or the items NOTIFY sends for a
+	// new message ([NotifyFilter.MessageNewFetchItems], RFC 5465 section
+	// 5.2). A response need not include FLAGS. Unlike [FetchCommand.Next],
+	// it is called once per response, after the whole response has been
+	// read.
+	//
+	// The value is complete and may be retained after return; the client
+	// does not modify it afterwards. Every reader in it, including
+	// [imap.FetchDataRaw.Reader], is in memory and need not be drained or
+	// closed: on this path this replaces the drain, close and lifetime
+	// requirements of the individual FetchData types. A body section, BINARY
+	// or RFC822 literal over the client's limit for one value in memory,
+	// currently 8 MiB, is consumed but not kept, and its reader is empty; so
+	// is a raw item whose wire form exceeds that limit. While this field is
+	// nil, unsolicited FETCH responses are skipped without being decoded.
+	// Either way, a value the client cannot accept, such as a literal over
+	// its hard literal limit, may fail the connection, as it does in a FETCH
+	// command's result.
 	Fetch func(data *imap.FetchMessageData)
 	// Vanished receives UIDs removed from the selected mailbox after
 	// ENABLE QRESYNC. Earlier is true for VANISHED (EARLIER), which reports
