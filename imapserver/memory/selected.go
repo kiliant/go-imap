@@ -154,7 +154,22 @@ func (s *selected) Search(ctx context.Context, query *imapserver.SearchQuery, op
 		}
 	}
 	s.session.account.mu.Unlock()
-	return &imapserver.SearchResult{UIDs: matches, ModSeq: highest}, nil
+	result := &imapserver.SearchResult{UIDs: matches, ModSeq: highest}
+	if options != nil && options.ReturnRelevancy {
+		result.Relevancy = exactRelevancy(len(matches))
+	}
+	return result, nil
+}
+
+// exactRelevancy scores n matches for RFC 6203's RELEVANCY. The shared
+// evaluator answers FUZZY with exact matches, so every match is as relevant
+// as a match can be.
+func exactRelevancy(n int) []uint8 {
+	scores := make([]uint8, n)
+	for i := range scores {
+		scores[i] = 100
+	}
+	return scores
 }
 
 // Avoid hashing every message for searches that do not use its object ID.

@@ -421,12 +421,16 @@ func (s *session) MultiSearch(ctx context.Context, mailboxes []string, criteria 
 				modSeqs = append(modSeqs, msg.modSeq)
 			}
 		}
-		results = append(results, imapserver.MultiSearchMailboxResult{
+		result := imapserver.MultiSearchMailboxResult{
 			Mailbox:     m.name,
 			UIDValidity: m.uidValidity,
 			UIDs:        matches,
 			ModSeqs:     modSeqs,
-		})
+		}
+		if options != nil && options.ReturnRelevancy {
+			result.Relevancy = exactRelevancy(len(matches))
+		}
+		results = append(results, result)
 	}
 	return results, nil
 }

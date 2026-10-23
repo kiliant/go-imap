@@ -25,6 +25,23 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ### Server module — `github.com/kiliant/go-imap/imapserver`
 
+#### Added
+
+- RFC 6203's RELEVANCY return option for SEARCH (with ESEARCH), SORT (with
+  ESORT) and MULTISEARCH, once SEARCH=FUZZY is advertised. Without a FUZZY
+  key in the criteria the option is refused with BAD, as section 4 requires.
+  Until now it was refused with BAD in every case. Add
+  `SearchOptions.ReturnRelevancy`, `SearchResult.Relevancy`,
+  `MultiSearchOptions.ReturnRelevancy` and
+  `MultiSearchMailboxResult.Relevancy`, all on guarded structs. A backend may
+  supply scores from 1 to 100, paired with UIDs by position. Without scores,
+  every match is reported as 100. SORT takes its scores from a Search of the
+  same query. The score list covers the messages the response returns, as
+  MODSEQ does under RFC 4731 section 3.2. No interface gains a method and no
+  backend obligation is added. (#202)
+- `imapserver/memory` reports a relevancy score of 100 for every match, since
+  its FUZZY matching is exact. (#202)
+
 #### Fixed
 
 - An empty SASL server challenge is sent as `+ ` followed by CRLF: empty

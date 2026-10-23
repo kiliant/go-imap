@@ -21,6 +21,9 @@ type searchArgs struct {
 	partial  *searchPartialRange
 	criteria imap.SearchCriteria
 	modSeq   uint64 // response data derived after SEARCH, never a return option
+	// relevancy holds one RELEVANCY score per result message, in result order,
+	// when the option was requested. See ext_c_relevancy.go.
+	relevancy []uint8
 }
 
 func parseSearch(decoder *imapwire.Decoder) (any, int64, error) {
@@ -101,12 +104,16 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	if err := requireRelevancyFuzzy(args.returnOptions, criteria); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	if err := validateSelectedCondStoreUse(ctx, c, searchHasModSeq(criteria), "SEARCH MODSEQ"); err != nil {
 		return writeCondStoreUseError(c, command.tag, command.name, err)
 	}
 	query := newSearchQuery(criteria, c.state.selected.uids, c.state.selected.savedSearch)
 	args.criteria = query.Criteria()
-	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset})
+	wantRelevancy := slices.Contains(args.returnOptions, searchReturnRelevancy)
+	result, err := c.state.selected.mailbox.Search(ctx, query, &SearchOptions{Charset: args.charset, ReturnRelevancy: wantRelevancy})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
@@ -115,6 +122,12 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 	}
 	if len(result.UIDs) > maxCommandSearchResults {
 		return writeTaggedCondition(c, command.tag, "NO", imap.CodeLimit, "", "SEARCH result limit exceeded")
+	}
+	var scores map[imap.UID]uint8
+	if wantRelevancy {
+		if scores, err = pairRelevancy(result.UIDs, result.Relevancy, "SEARCH"); err != nil {
+			return writeBackendError(c, command.tag, command.name, err)
+		}
 	}
 	uids := slices.Clone(result.UIDs)
 	slices.Sort(uids)
@@ -135,6 +148,9 @@ func handleSearch(ctx context.Context, c *conn, command *queuedCommand) error {
 		} else {
 			numbers = append(numbers, uint32(seqNum))
 		}
+	}
+	if wantRelevancy {
+		args.relevancy = alignRelevancy(present, scores)
 	}
 	if searchHasModSeq(criteria) && len(present) > 0 {
 		args.modSeq, err = searchResponseModSeq(ctx, c, args, result, present)

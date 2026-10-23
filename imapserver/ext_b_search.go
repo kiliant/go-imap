@@ -32,8 +32,10 @@ func searchResponseModSeq(ctx context.Context, c *conn, args *searchArgs, result
 		requested := searchReturnSet(args)
 		// RFC 4731 3.2: the clock describes the messages being returned.
 		// RETURN (UPDATE) alone (RFC 5267) returns none, so there is no clock.
+		// RELEVANCY returns every match's score unless MIN, MAX or PARTIAL
+		// restrict the response, so it counts as returning them.
 		if !requested[searchReturnAll] && !requested[searchReturnCount] && !requested[searchReturnMin] &&
-			!requested[searchReturnMax] && !requested[searchReturnPartial] {
+			!requested[searchReturnMax] && !requested[searchReturnPartial] && !requested[searchReturnRelevancy] {
 			return 0, nil
 		}
 		if (requested[searchReturnMin] || requested[searchReturnMax] || requested[searchReturnPartial]) &&
