@@ -1228,7 +1228,7 @@ func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 // differ only in case are all sent. No IMAP string can carry NUL, so a NUL
 // octet in the Literal of an [imap.FetchDataBodySection] or
 // [imap.FetchDataLiteral] is sent as 0x80, and the literal keeps its length.
-// An [imap.FetchDataBinarySection] is sent as a literal8, unchanged.
+// The Literal of an [imap.FetchDataBinarySection] is never altered.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
 	// WriteFunc receives streamed results when the writer is constructed by an
