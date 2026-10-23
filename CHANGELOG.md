@@ -30,11 +30,11 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 - A FETCH of a message stored with a NUL octet no longer ends the
   connection. Such a message can reach Maildir by external delivery, for
   example. No IMAP string can carry NUL, so the framework now sends each NUL
-  in a BODY or RFC822 literal, and in URLFETCH content, as 0x80, as Dovecot
-  does. The literal keeps its length, so RFC822.SIZE and BODYSTRUCTURE still
-  describe the stored message. BINARY returns the original octets in a
-  literal8. Before, the response stopped partway through the literal and the
-  connection closed without a BYE. The `FetchWriter` and
+  in a non-binary literal of a BODY, RFC822 or URLFETCH response as 0x80, as
+  Dovecot does. The literal keeps its length, and RFC822.SIZE and
+  BODYSTRUCTURE are sent as the backend supplies them. A BINARY literal8 is
+  sent unchanged. Before, the response stopped partway through the literal
+  and the connection closed without a BYE. The `FetchWriter` and
   `message.Message.EncodeNULParts` documentation describes the substitution.
   No exported symbol changes, and no backend obligation is added. (#210)
 

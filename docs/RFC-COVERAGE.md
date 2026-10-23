@@ -260,8 +260,8 @@ CONDSTORE `MODIFIED` on tagged OK.
     Whole-message literal8 APPEND, MULTIAPPEND and REPLACE are accepted only
     with full BINARY advertised. CATENATE TEXT uses ordinary literals, as
     specified by RFC 4469. A NUL that a stored part still holds is sent as
-    0x80 in BODY, RFC822 and URLFETCH literals, as Dovecot does. The length
-    stays that of the stored part, and BINARY returns the original octets.
+    0x80 in BODY, RFC822 and URLFETCH literals, as Dovecot does. The
+    literal's length is unchanged, and a BINARY literal8 is sent unaltered.
     (#210)
 
 [^srvmultiappend]: Parsing continues between literals: the parser reads to the

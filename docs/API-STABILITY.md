@@ -1429,32 +1429,38 @@ field.
 
 ### NUL in a stored message — 2026-10-23 (#210)
 
-No IMAP string can carry NUL (RFC 9051 section 4.3). A BODY or RFC822
+No IMAP string can carry NUL (RFC 9051 section 4.3.1). A BODY or RFC822
 literal from a message stored with a NUL could therefore not be written. The
 encoder refused the payload after the literal's length had been sent, and the
 connection closed without a BYE. A BYE is impossible at that point too,
 because the client reads everything after the length as literal payload.
 
-**Decision, by the human:** the framework sends each NUL in a BODY or RFC822
-literal, and in URLFETCH content, as 0x80. Dovecot does the same. A probe of
-the interop matrix's Dovecot 2.4 with an 8bit part stored by `doveadm save`
-returned `BODY[TEXT] {5}` with `a\x80b`, BODYSTRUCTURE `"8bit" 5`, and the
-original octets for `BINARY[1]` in a literal8.
+**Decision, by the human:** the framework sends each NUL in a non-binary
+literal of a BODY, RFC822 or URLFETCH response as 0x80. A literal8 is never
+altered. Dovecot does the same. A probe of the interop matrix's Dovecot 2.4
+with an 8bit part stored by `doveadm save` returned `BODY[TEXT] {5}` with
+`a\x80b`, BODYSTRUCTURE `"8bit" 5`, and the original octets for `BINARY[1]`
+in a literal8.
 
 The issue listed three other options:
 
-- Re-encoding the part as base64 at FETCH time means BODY, BODYSTRUCTURE and
-  RFC822.SIZE must all change together, as RFC 3516 section 6 requires.
+- Re-encoding the part as base64 at FETCH time means BODY and BODYSTRUCTURE
+  must change together, as RFC 3516 section 6 requires, and the sizes with
+  them.
 - Scanning before writing and answering NO means reading or staging every
   section twice, and the message then cannot be fetched at all.
 - A BYE alone is impossible once the literal's length has been sent.
 
 **Compatible:** only failure behaviour changes. A FETCH or URLFETCH response
 carrying such a literal used to end the connection. No exported symbol
-changes, and no backend obligation is added. A backend that
-wants BODY to carry the original octets can store the part re-encoded with
-`message.Message.EncodeNULParts`.
+changes, and no backend obligation is added. A backend that wants no
+substitution can store such a part re-encoded as base64 with
+`message.Message.EncodeNULParts`: BODY then carries the base64 text,
+BODYSTRUCTURE describes base64, and BINARY returns the original octets. A
+backend can also substitute differently in its own reader.
 
 **Frozen with the next release:** the substitution is octet for octet, so a
-literal keeps its length and RFC822.SIZE and BODYSTRUCTURE describe the
-stored message. BINARY literals are sent unchanged.
+literal's announced length is unchanged, and the framework does not alter
+RFC822.SIZE or BODYSTRUCTURE. BINARY literal8 payloads are sent unchanged. A
+framework-level choice of another policy could be added later as a guarded
+option, with 0x80 staying the default.

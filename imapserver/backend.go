@@ -1226,8 +1226,9 @@ func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 // The framework writes them in upper case up to a key's first space, so a
 // HEADER.FIELDS list keeps the backend's spelling. Values under keys that
 // differ only in case are all sent. No IMAP string can carry NUL, so a NUL
-// octet in a BODY or RFC822 literal is sent as 0x80; the literal keeps its
-// length. BINARY literals are sent unchanged.
+// octet in the Literal of an [imap.FetchDataBodySection] or
+// [imap.FetchDataLiteral] is sent as 0x80, and the literal keeps its length.
+// An [imap.FetchDataBinarySection] is sent as a literal8, unchanged.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
 	// WriteFunc receives streamed results when the writer is constructed by an
