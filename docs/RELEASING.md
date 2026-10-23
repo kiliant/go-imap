@@ -1,25 +1,46 @@
 # Releasing
 
-Two modules, two version lines, one repository.
+Two modules, one version number, one repository.
 
 | Module | Path | Line | Promise |
 |---|---|---|---|
 | root | `github.com/kiliant/go-imap` | `v1.x.y` | frozen; an incompatible change fails CI |
-| server | `github.com/kiliant/go-imap/imapserver` | `imapserver/v0.a.b` | may break between minors, deliberately |
+| server | `github.com/kiliant/go-imap/imapserver` | `imapserver/v1.x.y` | frozen; an incompatible change fails CI |
 
 The split and its reasoning are `SERVER-DESIGN.md` §9, approved with the design.
-The short version: one `go.mod` cannot carry two different compatibility
-promises, and the root API froze at v1.0 while the server's has not. The
-server line stays v0.x until milestone M7 (`ROADMAP.md`) is met.
+The short version: one `go.mod` could not carry two different compatibility
+promises while the root API was frozen at v1.0 and the server's was not. The
+server line was v0.x until milestone M7 (`ROADMAP.md`) was met, and has been
+v1 since `imapserver/v1.3.1`.
+
+## One version number — decided 2026-10-23
+
+**Decided by the human on 2026-10-23**, at the server's first v1 tag. The
+reason is one version number for users to think about. This replaces the
+earlier plan for `imapserver/v1.0.0` with independent version lines.
+
+- **The first stable server tag is `imapserver/v1.3.1`.** It matches root
+  `v1.3.1`, which it requires and which had no code change since. The root
+  module was therefore not tagged again.
+- **From then on, every release tags both modules with the same version,** root
+  first. A module that did not change still gets the tag, and its CHANGELOG
+  section says so. Those empty releases are the accepted cost.
+- **Lockstep holds within major version 1 only.** If one module needs v2, the
+  lockstep ends there. That module moves to v2 with its new import path, and
+  the other continues its own v1 line. Neither module is forced into a major
+  version, and so onto a new import path, by the other. Record the end of the
+  lockstep in this file when it happens.
+- **A root v2 does not carry the server along.** The server imports the root
+  module's `internal/imapcodec`, `internal/imapmessage` and `internal/imapwire`,
+  and Go's internal-package rule stops `github.com/kiliant/go-imap/imapserver`
+  from importing `github.com/kiliant/go-imap/v2/internal/...`. A server on v1
+  therefore stays on root v1, and fixes to those packages need root v1.x
+  maintenance releases. A server that wants root v2 needs a path under it, such
+  as `github.com/kiliant/go-imap/v2/imapserver`.
 
 ## Graduating the server to v1
 
-The first stable server tag will be **`imapserver/v1.0.0`**, with independent
-version lines retained. Each module has its own compatibility surface and
-release needs; matching their version numbers would require empty releases
-and could force an unaffected module to change import paths when the other
-needs v2. A future major transition therefore applies only to the module
-that needs it. The root-first dependency ordering below still applies.
+This is how the server reached v1, kept for the record.
 
 Maildir supplies the second backend required by M7. It does not by itself
 freeze the server API. Before opening the stability window, resolve or
@@ -45,7 +66,8 @@ Immediately before the v1 tag, review every addition since the second full revie
 and compare against the second quiet release. Update the module promise in
 API-STABILITY, this file, CLAUDE and ROADMAP only in the actual release PR.
 The standalone build, clean-consumer and signed-tag gates below remain
-required. No tag or release is created automatically by this plan.
+required. No tag or release is created automatically by this plan. T33 (#54)
+completed these steps with `imapserver/v1.3.1` on 2026-10-23.
 
 ## The ordering constraint
 
@@ -82,9 +104,11 @@ So the first server release is a two-tag sequence and the order is fixed:
 
 Steps 2 and 5 are the human's; nothing in CI tags anything.
 
-Afterwards the two lines move independently. A server release that wants a newer
-root module bumps its `require` deliberately — that bump is a commit, which is
-the point.
+Afterwards the two lines moved independently until `imapserver/v1.3.1`, and
+have been tagged together since. A server release that wants a newer root
+module still bumps its `require` deliberately — that bump is a commit, which is
+the point. With both modules tagged at every release, the server's `require`
+can name the root tag of the same release, because the root is tagged first.
 
 ## Release gates
 
@@ -128,7 +152,7 @@ The gate that catches what the others cannot — that the tag is fetchable, the
 
 ```sh
 cd "$(mktemp -d)" && go mod init example.com/check \
-  && go get github.com/kiliant/go-imap/imapserver@v0.1.0
+  && go get github.com/kiliant/go-imap/imapserver@v1.3.1
 ```
 
 Do this from outside the repository. Inside it, the workspace answers instead of
@@ -136,11 +160,13 @@ the proxy, and the workspace is the thing being bypassed.
 
 ## Tagging
 
+Both modules are tagged at every release, root first. For example:
+
 ```sh
-git tag -s v1.1.0        -m 'go-imap v1.1.0'
-git tag -s imapserver/v0.1.0 -m 'imapserver v0.1.0'
-git tag -v v1.1.0 imapserver/v0.1.0
-git push origin v1.1.0 imapserver/v0.1.0
+git tag -s v1.4.0            -m 'go-imap v1.4.0'
+git tag -s imapserver/v1.4.0 -m 'imapserver v1.4.0'
+git tag -v v1.4.0 imapserver/v1.4.0
+git push origin v1.4.0 imapserver/v1.4.0
 ```
 
 Every release tag is signed (`-s`, with the SSH key `gpg.format = ssh`
@@ -158,12 +184,14 @@ matches baselines by that prefix for the same reason.
   previous `v*` tag and an incompatible change fails the build; overriding it
   takes an explicit human decision recorded on the pull request, plus a
   `CHANGELOG.md` entry naming the symbols. See `API-STABILITY.md`.
-- **Server `imapserver/v0.a.b`.** Not covered by the root module's promise, and
-  the package doc says so. `apidiff` runs in reporting mode against the previous
-  `imapserver/v*` tag. A break is allowed and must be deliberate: name the
-  affected exported symbols in `CHANGELOG.md`.
+- **Server `imapserver/v1.x.y`.** The same promise as the root module, since
+  `imapserver/v1.3.1`. `apidiff.sh` chooses enforcing mode from the baseline
+  tag's major version, so an incompatible change against the previous
+  `imapserver/v*` tag fails the build with no workflow edit.
+- **Server `imapserver/v0.a.b`**, until `v0.6.0`. Not covered by the root
+  module's promise. `apidiff` ran in reporting mode, and every break was named
+  in `CHANGELOG.md`.
 
-`API-STABILITY.md` §10 records changes that are free only until `imapserver`
-v1.0. The `MoveSupport`/`CapabilitySupport` collapse and the context/options
-upgrade landed after v0.1.0; any remaining entry there must be resolved in a
-v0.x release rather than postponed beyond v1.0.
+`API-STABILITY.md` §10 recorded changes that were free only until the server's
+v1 tag. The `MoveSupport`/`CapabilitySupport` collapse and the context/options
+upgrade landed after v0.1.0, and none was left open at `imapserver/v1.3.1`.

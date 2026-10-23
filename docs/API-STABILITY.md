@@ -415,12 +415,11 @@ The test is whether a correct server, given the data, could put it on the wire.
   still send a password as a bearer token, as v1 documents.
 - Removal requires a deprecation notice for at least two minor releases, and
   never lands before v2.
-- CI will run `golang.org/x/exp/cmd/apidiff` against the previous tag on every
-  PR. Post-v1.0 a detected incompatible change fails the build; pre-v1.0 it
-  posts the diff as a comment so the break is deliberate rather than accidental.
-  The gate is not wired up yet — it is an exit criterion of M4, tracked by
-  [T15](tasks/T15-release-engineering.md) — so until then the review in the next
-  section is the only thing enforcing this document.
+- CI runs `golang.org/x/exp/cmd/apidiff` against the previous tag on every PR,
+  per module. Against a v1 baseline a detected incompatible change fails the
+  build; against a v0 baseline it posts the diff as a comment so the break is
+  deliberate rather than accidental. T15 wired the gate up as an exit criterion
+  of M4; the review in the next section still applies to what it cannot see.
 
   **`apidiff` cannot see type-alias identity.** It identifies a named type by
   its defining package, so relocating a type to another package and leaving
@@ -438,11 +437,17 @@ The test is whether a correct server, given the data, could put it on the wire.
   at least two minor releases, never before v2.
 - Go version floor: the two most recent major Go releases.
 
-### Exception: `imapserver` outside the v1 promise — APPROVED
+### Exception: `imapserver` outside the v1 promise — CLOSED
 
-**Status: approved by the human on 2026-08-05, as part of approving
+**Status: closed on 2026-10-23 with `imapserver/v1.3.1`.** All three exit
+criteria below were met, with the evidence on #54. The server module is now
+under the v1 promise above, like the root module, and both share one version
+number (`RELEASING.md`). The text below records the exception as it was
+approved.
+
+**Approved by the human on 2026-08-05, as part of approving
 `docs/SERVER-DESIGN.md` §9. The v1.0 prerequisite was satisfied on 2026-08-06;
-execution of the nested-module release model remains T25's.**
+execution of the nested-module release model remained T25's.**
 
 The policy above says "v1.0 freezes the exported API" without qualifying by
 package. Taken literally, `imapserver` inherits the freeze the moment it lands —
@@ -480,10 +485,12 @@ Per `CLAUDE.md`, this needed explicit written approval from the human before it
 became real, and it has that approval now. `imapserver/go.mod` and the root
 `go.work` are T25's to create, at v1.0.
 
-#### When the exception ends — APPROVED
+#### When the exception ends — APPROVED, MET
 
 **Status: approved by the human on 2026-10-15** as milestone M7
-(`docs/ROADMAP.md`).
+(`docs/ROADMAP.md`). **Met on 2026-10-23:** Maildir is the second backend,
+`imapserver/v0.5.0` and `v0.6.0` are the two quiet releases, and the two full
+reviews were recorded on #54. T33's final check before the tag found no break.
 
 `imapserver` may be tagged v1, and so come under the v1 promise, only when
 all three of these hold:
@@ -807,8 +814,8 @@ claim both. It is recorded here because it is a token *removal*, which is the
 breaking direction, and because the window in which it is free is exactly now:
 `imapserver` has never been tagged, so the affected population is zero.
 
-After `imapserver` v1.0 a rename of this kind needs the old token to keep working
-alongside the new one. Before it, they are free and should be made deliberately.
+After the first `imapserver` v1 tag a rename of this kind needs the old token to
+keep working alongside the new one. Before it, they are free and should be made deliberately.
 
 ### Resolved: `CapabilitySupport` context/options and MOVE witness — 2026-08-21
 

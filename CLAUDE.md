@@ -81,8 +81,9 @@ The server framework is **implemented**: `docs/SERVER-DESIGN.md` (milestone M5
 design, M6 implementation). v1.0 was tagged on 2026-08-06 after T17's
 bidirectional audit; T18–T24 built the codec, the framework, the base command
 set, the extensions and the conformance/interop coverage between 2026-08-12 and
-2026-08-14. The root `imap` and `imapclient` APIs are frozen; `imapserver` is a
-nested module on the approved v0.x line — see "Two modules" below.
+2026-08-14. The root `imap` and `imapclient` APIs are frozen, and so is
+`imapserver`, a nested module under the same v1 promise since
+`imapserver/v1.3.1` — see "Two modules" below.
 
 ## Zero external dependencies
 
@@ -93,12 +94,15 @@ shells out to `podman`.
 
 ## Two modules
 
-Since T25 the repository holds two modules with independent version lines:
+Since T25 the repository holds two modules. Since `imapserver/v1.3.1`
+(2026-10-23) both carry the v1 promise and share one version number: every
+release tags both, root first. `docs/RELEASING.md` has the rule for when one
+module needs v2.
 
 | Module | Path | Line | Promise |
 |---|---|---|---|
 | root | `github.com/kiliant/go-imap` | `v1.x.y` | frozen; an incompatible change fails CI |
-| server | `github.com/kiliant/go-imap/imapserver` | `imapserver/v0.a.b` | may break between minors, deliberately |
+| server | `github.com/kiliant/go-imap/imapserver` | `imapserver/v1.x.y` | frozen; an incompatible change fails CI |
 
 A committed `go.work` covers both, so ordinary work needs no `replace`
 directive. **`./...` stops at the module boundary**, which is the one thing to

@@ -15,13 +15,34 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
   *Changed* or *Removed* marked `BREAKING`, with the reason. After v1.0 the
   policy hardens: additive only, and a removal needs two minor releases of
   deprecation and does not land before a major.
-- **Entries name their module.** Since T25 the repository holds two modules with
-  independent version lines: the root module at `v1.x` and `imapserver` at
-  `v0.x`, tagged `imapserver/v0.a.b`. They make different promises, so an entry
-  that does not say which module it belongs to does not say whether it was
-  allowed. See `docs/RELEASING.md`.
+- **Entries name their module.** Since T25 the repository holds two modules.
+  Until `imapserver/v1.3.1` they made different promises: the root module was
+  at `v1.x` and `imapserver` at `v0.x`, tagged `imapserver/v0.a.b`. Since then
+  both carry the v1 promise and are tagged together under one version number,
+  but an entry still names the module it changes. See `docs/RELEASING.md`.
 
 ## [Unreleased]
+
+## [imapserver/v1.3.1] - 2026-10-23
+
+### Server module — `github.com/kiliant/go-imap/imapserver`
+
+The server module's first v1 release. It now carries the same compatibility
+promise as the root module. From now on it also has the same version number:
+every release tags both modules, root first. It requires root `v1.3.1`, which
+it matches. There is no API or behaviour change since `imapserver/v0.6.0`;
+`apidiff` reports no exported change in any server package. The exit criteria of the
+v0.x exception are recorded on #54: Maildir as the second backend,
+`imapserver/v0.5.0` and `v0.6.0` as the two quiet releases, and the two full
+reviews. (#54)
+
+#### Changed
+
+- The `imapserver` package documentation states the v1 promise in place of the
+  v0.x exception. `docs/API-STABILITY.md`, `docs/RELEASING.md`, `CLAUDE.md`,
+  `docs/ROADMAP.md` and `README.md` describe the new state. `RELEASING.md`
+  records the version decision and the rule for when one module needs v2.
+  (#54)
 
 ## [imapserver/v0.6.0] - 2026-10-23
 
@@ -1933,7 +1954,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/imapserver/v0.6.0...HEAD
+[Unreleased]: https://github.com/kiliant/go-imap/compare/imapserver/v1.3.1...HEAD
+[imapserver/v1.3.1]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v1.3.1
 [imapserver/v0.6.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.6.0
 [imapserver/v0.5.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.5.0
 [imapserver/v0.4.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.4.0

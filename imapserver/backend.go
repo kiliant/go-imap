@@ -8,17 +8,14 @@
 //
 // # Stability
 //
-// This is a separate module from github.com/kiliant/go-imap, versioned v0.x,
-// and it does not carry that module's v1 compatibility promise. The root module
-// is frozen: an incompatible change there fails CI. This one may break between
-// minor versions, deliberately — the server contract has had one round of real
-// backend authors and no more, and freezing it on that evidence is how the
-// library this one exists to replace ended up in beta for years.
-//
-// Breaks will be deliberate and named in CHANGELOG.md, never silent: apidiff
-// runs against the previous imapserver/v* tag on every pull request. See
-// docs/RELEASING.md for the two-module scheme and docs/API-STABILITY.md §10 for
-// the rules this package is held to in the meantime.
+// This is a separate module from github.com/kiliant/go-imap. Since
+// imapserver/v1.3.1 it carries the same v1 compatibility promise: changes are
+// additive only, and documented behaviour is part of the promise. apidiff runs
+// against the previous imapserver/v* tag on every pull request, and an
+// incompatible change fails CI. Both modules are released together under one
+// version number. See docs/RELEASING.md for the two-module scheme and
+// docs/API-STABILITY.md for the rules, including the gates in its §10 that this
+// package is held to.
 //
 // # SEARCH return options
 //

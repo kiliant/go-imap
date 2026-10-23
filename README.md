@@ -7,11 +7,10 @@ stable v1.0 are compatible goals rather than competing ones.
 import "github.com/kiliant/go-imap/imapclient"
 ```
 
-> **Status: root v1.3.1 and imapserver v0.6.0 released.** The exported API of
-> `package imap` and
-> `package imapclient` is frozen under the compatibility policy in
-> `docs/API-STABILITY.md`; the separately versioned server framework remains
-> deliberately v0.x. Release tags are SSH-signed, and each release passes the
+> **Status: go-imap v1.3.1 and imapserver v1.3.1 released.** The exported API of
+> `package imap`, `package imapclient` and the `imapserver` module is frozen
+> under the compatibility policy in `docs/API-STABILITY.md`. Both modules are
+> released together under one version number. Release tags are SSH-signed, and each release passes the
 > gates in `docs/RELEASING.md`. See also `docs/ROADMAP.md`.
 
 ## The design constraint
@@ -67,7 +66,8 @@ same reason.
 
 ## Server framework
 
-A server framework shipped as `imapserver/v0.1.0`. The core types were
+A server framework shipped as `imapserver/v0.1.0`, and reached v1 as
+`imapserver/v1.3.1` on 2026-10-23. The core types were
 split into a shared I/O-free package from the first commit precisely so this can
 be added without an API break, and that has held up.
 
