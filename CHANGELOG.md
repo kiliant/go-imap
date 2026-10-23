@@ -46,6 +46,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 #### Fixed
 
+- FETCH responses write a backend's item keys in upper case up to the key's
+  first space. That covers the item name and, in a section, its part number
+  and keyword: `flags` becomes `FLAGS`, and `body[header.fields (Subject)]`
+  becomes `BODY[HEADER.FIELDS (Subject)]`. A HEADER.FIELDS list keeps the
+  backend's spelling. Values under keys that differ only in case are all still
+  sent, under one spelling. Keys stay case-insensitive for backends. This is a
+  compatible wire correction: no exported symbol or backend obligation
+  changes. (#200)
 - Under UIDONLY, a UIDFETCH response keeps the UID item when it is its only
   item, as RFC 9586 section 3.3 allows. `UID FETCH n (UID)` sent the invalid
   `* n UIDFETCH ()`, and NOTIFY's `MessageNew (UID)` would have done the same.

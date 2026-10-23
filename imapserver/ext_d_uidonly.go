@@ -71,6 +71,7 @@ func uidRequiredError(text string) error {
 // redundant. It is kept when it is the only item: msg-att cannot be empty, and
 // the same section allows the UID item in a UIDFETCH response.
 func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
+	canonicalizeFetchKeys(data)
 	if c.state.revision == revisionIMAP4rev2 {
 		for key, values := range data.Items {
 			for i, value := range values {

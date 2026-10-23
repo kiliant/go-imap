@@ -1226,6 +1226,9 @@ func (w *ListWriter) WriteList(ctx context.Context, data *imap.ListData) error {
 // response sequence number from its atomic selection map. It removes the
 // internally requested UID again when the client did not request it.
 // Item keys are case-insensitive, including UID, FLAGS and extension items.
+// The framework writes them in upper case up to a key's first space, so a
+// HEADER.FIELDS list keeps the backend's spelling. Values under keys that
+// differ only in case are all sent.
 // Construct with keyed fields only; fields may be added in a future release.
 type FetchWriter struct {
 	// WriteFunc receives streamed results when the writer is constructed by an
