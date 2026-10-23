@@ -195,13 +195,13 @@ func handleCompress(_ context.Context, c *conn, command *queuedCommand) error {
 func handleEnable(ctx context.Context, c *conn, command *queuedCommand) error {
 	requested, _ := command.args.([]string)
 	enabled := enableCapabilities(ctx, &c.state, c.server, requested)
-	if len(enabled) > 0 {
-		c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ENABLED")
-		for _, capability := range enabled {
-			c.encoder.SP().Atom(capability)
-		}
-		c.encoder.CRLF()
+	// RFC 5161 section 3.1: a successful ENABLE always sends ENABLED, even
+	// when it enabled nothing new.
+	c.encoder.BeginResponse(imapwire.ResponseUntagged, "").Atom("ENABLED")
+	for _, capability := range enabled {
+		c.encoder.SP().Atom(capability)
 	}
+	c.encoder.CRLF()
 	if c.state.revision == revisionIMAP4rev2 || c.state.enabledCapability("UTF8=ACCEPT") {
 		// Both directions switch together: a client that sends UTF-8 mailbox
 		// names reads them as UTF-8 too (RFC 9051 section 5.1, RFC 9755).

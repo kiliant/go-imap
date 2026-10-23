@@ -2,6 +2,7 @@ package imapserver
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -324,8 +325,15 @@ func tlsMatches(active bool, requirement tlsRequirement) bool {
 	}
 }
 
+// enableCapabilities applies ENABLE and returns the names its ENABLED
+// response reports. ENABLE is additive, but each ENABLED response names only
+// the extensions that command enabled (RFC 5161 section 3.1). A name that was
+// already enabled before the command, by an earlier ENABLE or implicitly, is
+// not reported again. A requested name that this command enabled implicitly,
+// as QRESYNC enables CONDSTORE, is reported.
 func enableCapabilities(ctx context.Context, state *sessionState, server *Server, requested []string) []string {
 	advertised := deriveCapabilitiesContext(ctx, state, server)
+	before := maps.Clone(state.enabled)
 	var enabled []string
 	seen := make(map[string]bool)
 	for _, name := range requested {
@@ -335,7 +343,7 @@ func enableCapabilities(ctx context.Context, state *sessionState, server *Server
 		}
 		seen[name] = true
 		for _, descriptor := range capabilityDescriptors {
-			if descriptor.Name == name && descriptor.Enable != nil && descriptor.Enable(state) {
+			if descriptor.Name == name && descriptor.Enable != nil && descriptor.Enable(state) && !before[name] {
 				enabled = append(enabled, name)
 			}
 		}
