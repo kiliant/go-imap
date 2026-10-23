@@ -72,6 +72,7 @@ func uidRequiredError(text string) error {
 // the same section allows the UID item in a UIDFETCH response.
 func writeFetchLikeResponse(c *conn, data *imap.FetchMessageData) error {
 	canonicalizeFetchKeys(data)
+	replaceFetchNULs(data)
 	if c.state.revision == revisionIMAP4rev2 {
 		for key, values := range data.Items {
 			for i, value := range values {

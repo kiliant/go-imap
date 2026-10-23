@@ -512,6 +512,59 @@ func (r *sizedZeroReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// nulFreeReader sends a stored NUL octet as 0x80, as Dovecot does. No IMAP
+// string can carry NUL (RFC 9051 section 4.3), so a BODY or RFC822 literal, or
+// URLFETCH content, from a message stored with one could not be sent at all.
+// Replacing octet for octet keeps the announced length, and RFC822.SIZE and
+// BODYSTRUCTURE stay those of the stored message. BINARY sends literal8, which
+// carries the original octets (#210).
+type nulFreeReader struct {
+	reader    io.Reader
+	remaining int64
+}
+
+func (r *nulFreeReader) Len() int { return int(r.remaining) }
+
+func (r *nulFreeReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.remaining -= int64(n)
+	for b := p[:n]; ; {
+		i := bytes.IndexByte(b, 0)
+		if i < 0 {
+			break
+		}
+		b[i] = 0x80
+		b = b[i+1:]
+	}
+	return n, err
+}
+
+// replaceFetchNULs puts every BODY and RFC822 literal of data behind a
+// nulFreeReader. A literal whose size cannot be measured is left as it is, so
+// it fails as it did before.
+func replaceFetchNULs(data *imap.FetchMessageData) {
+	for key, values := range data.Items {
+		for i, value := range values {
+			switch value.(type) {
+			case *imap.FetchDataLiteral, *imap.FetchDataBodySection:
+			default:
+				continue
+			}
+			reader := fetchLiteralReader(value)
+			if reader == nil {
+				continue
+			}
+			size, err := fetchLiteralSize(key, value)
+			if err != nil {
+				continue
+			}
+			if replaced, err := replaceFetchLiteralReader(value, &nulFreeReader{reader: reader, remaining: size}); err == nil {
+				values[i] = replaced
+			}
+		}
+	}
+}
+
 func isFetchLiteralValue(value imap.FetchData) bool {
 	switch value.(type) {
 	case *imap.FetchDataLiteral, *imap.FetchDataBodySection, *imap.FetchDataBinarySection:
