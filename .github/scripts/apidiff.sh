@@ -18,16 +18,18 @@
 # v1.0.0 and needs no workflow edit. APIDIFF_ENFORCE=1/0 overrides it for a
 # deliberate one-off.
 #
-# Since T25 the repository holds two modules with two different promises: the
-# root module is v1.x and frozen, imapserver is v0.x and not. The mode is
-# therefore decided per module from that module's own baseline tag, which is
-# also why each module's tags are matched by prefix — Go's convention tags a
-# nested module `imapserver/v0.1.0`, and a plain `git describe` would happily
-# compare the root module against it.
+# Since T25 the repository holds two modules. Until imapserver/v1.3.1 they made
+# different promises: the root module was v1.x and frozen, imapserver v0.x and
+# not. Since then both carry the v1 promise and share one version number
+# (docs/RELEASING.md). The mode is still decided per module from that module's
+# own baseline tag, which is also why each module's tags are matched by prefix
+# — Go's convention tags a nested module `imapserver/v1.3.1`, and a plain
+# `git describe` would happily compare the root module against it.
 #
-# A v0.x module may break between minors by definition. Reporting mode is not
-# indifference: the gate is there to catch the *unintended* break, which is the
-# common case, and CHANGELOG.md is where a deliberate one gets named.
+# A module whose baseline is v0.x may break between minors by definition.
+# Reporting mode is not indifference: the gate is there to catch the
+# *unintended* break, which is the common case, and CHANGELOG.md is where a
+# deliberate one gets named.
 #
 # Zero-dependency note: apidiff is a CI tool, never a module requirement.
 # `go install pkg@version` runs in module-aware mode ignoring any go.mod in the

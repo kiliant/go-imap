@@ -531,6 +531,88 @@ func TestExtDNotifyInterop(t *testing.T) {
 	})
 }
 
+// TestExtDNotifyMessageNewFetchInterop covers #221. A MessageNew registration
+// with fetch attributes makes the server push a FETCH response with a body
+// section for each new message (RFC 5465 section 5.2). It must reach the
+// Fetch callback with every item and leave the connection usable.
+func TestExtDNotifyMessageNewFetchInterop(t *testing.T) {
+	t26ForEachServer(t, func(t *testing.T, ctx context.Context, server *harness.Server, caps map[string]bool, setup *imapclient.Client) {
+		harness.RequireCapabilities(t, caps, "NOTIFY")
+		mailbox := t08Mailbox(t, ctx, server, setup, "notify-fetch")
+
+		fetched := make(chan *imap.FetchMessageData, 16)
+		watcher, err := interopDial(ctx, server, &imapclient.Options{
+			AllowInsecureAuth: true,
+			UnilateralData: &imapclient.UnilateralDataHandler{Fetch: func(data *imap.FetchMessageData) {
+				select {
+				case fetched <- data:
+				default:
+				}
+			}},
+		})
+		if err != nil {
+			t.Fatalf("dial watcher: %v", err)
+		}
+		defer watcher.Close()
+		if err := watcher.Login(ctx, authInteropUsername, authInteropPassword, nil); err != nil {
+			t.Fatalf("watcher login: %v", err)
+		}
+		if _, err := watcher.Select(mailbox, nil).Wait(ctx); err != nil {
+			t08Fail(t, server, watcher, "watcher SELECT", err)
+		}
+		filters := []imapclient.NotifyFilter{{
+			Specifier: imapclient.NotifySelected,
+			Events:    []imapclient.NotifyEventName{imapclient.NotifyEventMessageNew, imapclient.NotifyEventMessageExpunge},
+			MessageNewFetchItems: []imap.FetchItem{
+				imap.FetchItemUID,
+				&imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"Subject"}, Peek: true},
+			},
+		}}
+		if err := watcher.Notify(ctx, filters, nil); err != nil {
+			var imapErr *imap.Error
+			if errors.As(err, &imapErr) && imapErr.Type == imap.ErrorTypeNo {
+				t.Skipf("%s refuses MessageNew fetch attributes: %v", server.Profile.Name, err)
+			}
+			t08Fail(t, server, watcher, "NOTIFY SET (SELECTED (MessageNew (UID BODY.PEEK[HEADER.FIELDS (Subject)]) MessageExpunge))", err)
+		}
+
+		t08Append(t, ctx, setup, mailbox, "t221-notify-fetch")
+		timeout := time.After(15 * time.Second)
+		var data *imap.FetchMessageData
+		var section *imap.FetchDataBodySection
+		for section == nil {
+			select {
+			case data = <-fetched:
+			case <-timeout:
+				t.Fatal("no unsolicited FETCH with a body section within 15s of an APPEND by another session")
+			}
+			for _, values := range data.Items {
+				for _, value := range values {
+					if v, ok := value.(*imap.FetchDataBodySection); ok {
+						section = v
+					}
+				}
+			}
+		}
+		var uid imap.FetchDataUID
+		for key, values := range data.Items {
+			if strings.EqualFold(string(key), "UID") && len(values) == 1 {
+				uid, _ = values[0].(imap.FetchDataUID)
+			}
+		}
+		if uid == 0 {
+			t.Fatalf("pushed FETCH = %#v, want a UID item", data.Items)
+		}
+		body, err := io.ReadAll(section.Literal)
+		if err != nil || !strings.Contains(string(body), "Subject: t221-notify-fetch") {
+			t.Fatalf("pushed header section = %q, %v; want the Subject field", body, err)
+		}
+		if err := watcher.Noop(nil).Wait(ctx); err != nil {
+			t08Fail(t, server, watcher, "NOOP after the pushed FETCH", err)
+		}
+	})
+}
+
 // TestExtCESortInterop checks ESORT (RFC 5267) against the same corpus as
 // SORT: the extended form must return the order the plain form does, with
 // MIN and MAX as its first and last positions rather than numeric extremes.

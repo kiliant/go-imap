@@ -1,6 +1,7 @@
 package imapclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -228,6 +229,32 @@ func readFetchResponse(resp *untaggedResponse, emit func(*imap.FetchMessageData)
 		}
 		return stream, func() { <-stream.done }
 	}, emit)
+}
+
+// readUnilateralFetch decodes an unsolicited FETCH response with the same item
+// grammar as readFetchResponse, but completely: the handler receives one value
+// per response, with every item, and may retain it. Each section, BINARY or
+// RFC822 literal is read into memory up to the in-memory literal limit. A
+// larger one is consumed and leaves an empty reader, as readSyncFetch does for
+// a value it cannot keep.
+func readUnilateralFetch(resp *untaggedResponse) (*imap.FetchMessageData, error) {
+	limit := resp.dec.Options().MaxBufferedLiteralSize
+	adapt := func(lr *imapwire.LiteralReader) (io.Reader, func()) {
+		if limit >= 0 && lr.Size() > limit {
+			// A failed discard leaves the decoder failed, so the error
+			// surfaces at its next read.
+			_ = lr.Discard()
+			return bytes.NewReader(nil), nil
+		}
+		// A failed read leaves the decoder failed in the same way.
+		b, _ := io.ReadAll(lr)
+		return bytes.NewReader(b), nil
+	}
+	var data *imap.FetchMessageData
+	err := imapcodec.ReadFetchResponse(resp.dec, imap.SeqNum(resp.number), adapt, func(d *imap.FetchMessageData) {
+		data = d
+	})
+	return data, err
 }
 
 func readFetchObjectID(dec *imapwire.Decoder) (string, error) {

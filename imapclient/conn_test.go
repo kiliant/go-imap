@@ -10,6 +10,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"strings"
@@ -215,6 +217,176 @@ func TestUnilateralFetchFlags(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("did not receive FETCH flag update")
+	}
+}
+
+// TestUnilateralFetchAllItems covers #221. An unsolicited FETCH with a body
+// section, which is what a NOTIFY MessageNew registration with fetch
+// attributes produces (RFC 5465 section 5.2), reaches the handler with every
+// item instead of failing the connection. So does one without FLAGS.
+func TestUnilateralFetchAllItems(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	updates := make(chan *imap.FetchMessageData, 4)
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := r.ReadString('\n')
+		tag, _, _ := strings.Cut(line, " ")
+		// imapserver's output for NOTIFY SET (selected (MessageNew
+		// (UID BODY.PEEK[HEADER.FIELDS (Subject)]))), as quoted in #221.
+		_, _ = serverConn.Write([]byte("* 1 EXISTS\r\n" +
+			"* 1 FETCH (BODY[HEADER.FIELDS (Subject)] {19}\r\nSubject: pushed\r\n\r\n UID 1)\r\n" +
+			"* 2 FETCH (UID 7 MODSEQ (12) X-FUTURE {3}\r\nabc)\r\n" +
+			tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		Fetch: func(data *imap.FetchMessageData) { updates <- data },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Noop(nil).Wait(ctx); err != nil {
+		t.Fatalf("NOOP after unsolicited FETCH = %v", err)
+	}
+	// Both responses were delivered before the tagged OK, once each.
+	if len(updates) != 2 {
+		t.Fatalf("Fetch called %d times, want 2", len(updates))
+	}
+
+	first := <-updates
+	if first.SeqNum != 1 || len(first.Items) != 2 {
+		t.Fatalf("first FETCH = %#v, want seq 1 with two items", first)
+	}
+	if uid := first.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(1) {
+		t.Fatalf("first UID = %#v", uid)
+	}
+	var section *imap.FetchDataBodySection
+	for _, values := range first.Items {
+		if v, ok := values[0].(*imap.FetchDataBodySection); ok {
+			section = v
+		}
+	}
+	if section == nil || len(section.HeaderFields) != 1 || section.HeaderFields[0] != "Subject" {
+		t.Fatalf("first body section = %#v", section)
+	}
+	// The callback has returned; the section is still readable.
+	body, err := io.ReadAll(section.Literal)
+	if err != nil || string(body) != "Subject: pushed\r\n\r\n" {
+		t.Fatalf("body section = %q, %v", body, err)
+	}
+
+	second := <-updates
+	if second.SeqNum != 2 || len(second.Items) != 3 {
+		t.Fatalf("second FETCH = %#v, want seq 2 with three items", second)
+	}
+	if uid := second.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(7) {
+		t.Fatalf("second UID = %#v", uid)
+	}
+	if modseq := second.Items["MODSEQ"]; len(modseq) != 1 || modseq[0] != imap.FetchDataModSeq(12) {
+		t.Fatalf("second MODSEQ = %#v", modseq)
+	}
+	// A raw value is in memory too, unlike a FETCH command's.
+	raw, ok := second.Items["X-FUTURE"][0].(*imap.FetchDataRaw)
+	if !ok {
+		t.Fatalf("second X-FUTURE = %#v", second.Items["X-FUTURE"])
+	}
+	if b, err := io.ReadAll(raw.Reader); err != nil || string(b) != "{3}\r\nabc" {
+		t.Fatalf("raw X-FUTURE = %q, %v", b, err)
+	}
+}
+
+// runUnilateralStream sends stream before the tagged OK of a NOOP and returns
+// the NOOP's result.
+func runUnilateralStream(t *testing.T, handler *UnilateralDataHandler, stream string) error {
+	t.Helper()
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close() })
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := r.ReadString('\n')
+		tag, _, _ := strings.Cut(line, " ")
+		_, _ = serverConn.Write([]byte(stream + tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: handler})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	return c.Noop(nil).Wait(ctx)
+}
+
+// A literal over the in-memory limit is consumed but not kept: its item is
+// delivered with an empty reader, and the items after it still arrive.
+func TestUnilateralFetchOversizedLiteral(t *testing.T) {
+	size := imapwire.DefaultMaxBufferedLiteralSize + 1
+	updates := make(chan *imap.FetchMessageData, 2)
+	stream := fmt.Sprintf("* 1 FETCH (BODY[] {%d}\r\n%s UID 9)\r\n", size, strings.Repeat("x", size))
+	if err := runUnilateralStream(t, &UnilateralDataHandler{
+		Fetch: func(data *imap.FetchMessageData) { updates <- data },
+	}, stream); err != nil {
+		t.Fatalf("NOOP after an oversized unsolicited literal = %v", err)
+	}
+	data := <-updates
+	if uid := data.Items["UID"]; len(uid) != 1 || uid[0] != imap.FetchDataUID(9) {
+		t.Fatalf("UID after the oversized literal = %#v", data.Items)
+	}
+	section, ok := data.Items["BODY[]"][0].(*imap.FetchDataBodySection)
+	if !ok {
+		t.Fatalf("BODY[] = %#v", data.Items["BODY[]"])
+	}
+	if b, err := io.ReadAll(section.Literal); err != nil || len(b) != 0 {
+		t.Fatalf("oversized BODY[] kept %d octets, %v; want none", len(b), err)
+	}
+}
+
+// With a Fetch callback the response is decoded as strictly as a FETCH
+// command's result, so a malformed item fails the connection.
+func TestUnilateralFetchIsStrict(t *testing.T) {
+	err := runUnilateralStream(t, &UnilateralDataHandler{Fetch: func(*imap.FetchMessageData) {}}, "* 1 FETCH (UID 0)\r\n")
+	var ierr *imap.Error
+	if !errors.As(err, &ierr) || ierr.Type != imap.ErrorTypeProtocol {
+		t.Fatalf("NOOP after FETCH (UID 0) = %v, want a protocol error", err)
+	}
+}
+
+// TestUnilateralFetchWithoutHandler checks that an unsolicited FETCH is
+// skipped, literals and malformed items included, when no Fetch callback is
+// installed.
+func TestUnilateralFetchWithoutHandler(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	exists := make(chan uint32, 1)
+	go func() {
+		r := bufio.NewReader(serverConn)
+		_, _ = serverConn.Write([]byte("* OK ready\r\n"))
+		line, _ := r.ReadString('\n')
+		tag, _, _ := strings.Cut(line, " ")
+		_, _ = serverConn.Write([]byte("* 1 FETCH (BODY[] {5}\r\nhello BINARY[1] ~{3}\r\na\x00b UID 1)\r\n" +
+			"* 2 FETCH (UID 0 EMAILID (bad!id) INTERNALDATE \"garbage\")\r\n" +
+			"* 4 EXISTS\r\n" +
+			tag + " OK done\r\n"))
+	}()
+	c := NewClient(clientConn, &Options{UnilateralData: &UnilateralDataHandler{
+		Exists: func(n uint32) { exists <- n },
+	}})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.WaitGreeting(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Noop(nil).Wait(ctx); err != nil {
+		t.Fatalf("NOOP after unsolicited FETCH = %v", err)
+	}
+	if n := <-exists; n != 4 {
+		t.Fatalf("EXISTS after the FETCH = %d, want 4", n)
 	}
 }
 

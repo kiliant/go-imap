@@ -14,7 +14,7 @@
 # as the Go heap. Fuzz workers are re-executions of the test binary, so they
 # inherit it. Address-space reservations and file mappings do not count, which
 # keeps an ordinary target well inside the limit. fuzz.sh is deliberately not
-# touched: it is kept byte-identical with go-smtp.
+# touched: it has a copy in go-smtp, kept in step by hand.
 #
 # FUZZ_MEMORY_LIMIT_MB sets the cap per process (default 3072). A hosted runner
 # has 16 GiB and go test -fuzz starts one worker per CPU, so the default leaves
