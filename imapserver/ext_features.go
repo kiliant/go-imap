@@ -21,6 +21,7 @@ const (
 	featureCondStoreFetch   featureID = "condstore-fetch"
 	featureCondStoreStore   featureID = "condstore-store"
 	featureQResync          featureID = "qresync"
+	featureSearchRelevancy  featureID = "search-relevancy"
 )
 
 func init() {
@@ -51,6 +52,12 @@ func init() {
 		featureDescriptor{ID: featureCondStoreStore, Active: condStoreActive},
 		featureDescriptor{ID: featureQResync, Active: func(_ *sessionState, advertised map[string]bool) bool {
 			return advertised["QRESYNC"]
+		}},
+		// RFC 6203's RELEVANCY return option. SEARCH=FUZZY brings it to
+		// SEARCH with ESEARCH, to SORT with ESORT and to MULTISEARCH; each
+		// command checks its own token. See ext_c_relevancy.go.
+		featureDescriptor{ID: featureSearchRelevancy, Active: func(_ *sessionState, advertised map[string]bool) bool {
+			return advertised["SEARCH=FUZZY"]
 		}},
 	)
 }

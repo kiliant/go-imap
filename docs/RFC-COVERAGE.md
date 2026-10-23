@@ -308,7 +308,15 @@ CONDSTORE `MODIFIED` on tagged OK.
 
 [^srvfuzzy]: The FUZZY modifier reaches the backend through the open search
     criteria tree with no framework translation, so the capability is purely a
-    claim about the backend and is gated on its witness.
+    claim about the backend and is gated on its witness. The RELEVANCY return
+    option (sections 4 and 6) is accepted by SEARCH with ESEARCH, SORT with
+    ESORT, and MULTISEARCH, and is refused with BAD when the criteria contain no
+    FUZZY key. A backend asked through `ReturnRelevancy` may supply scores in
+    `SearchResult.Relevancy` or `MultiSearchMailboxResult.Relevancy`; SORT takes
+    them from a Search of the same query. Without scores every match is reported
+    as 100. The list covers the messages the response returns, as MODSEQ does
+    (RFC 4731 section 3.2). Memory matches FUZZY exactly and scores every match
+    100. (#202)
 
 [^t26c]: Verified by T26's live tests (`imapclient/ext_cde_interop_test.go`),
     each asserting the data the appended messages imply, not just a tagged OK.

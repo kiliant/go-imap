@@ -95,7 +95,8 @@ func sortReturnSet(options []string) map[string]bool {
 		requested[option] = true
 	}
 	if !requested[sortReturnMin] && !requested[sortReturnMax] &&
-		!requested[sortReturnAll] && !requested[sortReturnCount] && !requested[searchReturnPartial] {
+		!requested[sortReturnAll] && !requested[sortReturnCount] && !requested[searchReturnPartial] &&
+		!requested[searchReturnRelevancy] {
 		requested[sortReturnAll] = true
 	}
 	return requested
@@ -116,6 +117,11 @@ func validateSortReturnOptions(c *conn, options []string) error {
 			// PARTIAL is RFC 5267 section 4.4's, which CONTEXT=SORT brings to
 			// SORT; RFC 9394 extends the same option for SEARCH.
 			if err := requireCapability(c, "CONTEXT=SORT"); err != nil {
+				return err
+			}
+		case searchReturnRelevancy:
+			// RFC 6203 section 6. See ext_c_relevancy.go.
+			if err := validateRelevancyOption(c, "ESORT"); err != nil {
 				return err
 			}
 		default:

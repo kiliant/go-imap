@@ -403,7 +403,7 @@ type MoveMailbox interface {
 //	REPLACE | gate | CapabilitySupport + ReplaceMailbox | AS | Provide atomic selected-message replacement into the destination mailbox.
 //	SASL-IR | gate | Backend | N | Have an authentication backend; framework handles initial-response syntax.
 //	SAVEDATE | gate | CapabilitySupport | AS | Return save dates and evaluate saved-date SEARCH criteria.
-//	SEARCH=FUZZY | gate | CapabilitySupport | AS | Evaluate FUZZY criteria using the supported matching policy.
+//	SEARCH=FUZZY | gate | CapabilitySupport | AS | Evaluate FUZZY criteria using the supported matching policy; RELEVANCY scores are optional.
 //	SORT | gate | CapabilitySupport + SortMailbox | AS | Evaluate SORT keys on the selected mailbox.
 //	SORT=DISPLAY | gate | CapabilitySupport + SortMailbox | AS | Evaluate DISPLAYFROM/DISPLAYTO sorting; requires SORT.
 //	SPECIAL-USE | gate | CapabilitySupport | AS | Return accurate LIST special-use attributes.
@@ -698,7 +698,14 @@ type SearchOptions struct {
 	// Charset is the declared search-string charset, or empty for the protocol
 	// default.
 	Charset string
-	_       struct{}
+	// ReturnRelevancy reports that the client asked for RFC 6203 relevancy
+	// scores, which a backend supplies in [SearchResult.Relevancy]. The
+	// framework sets it only for criteria containing a FUZZY key: for SEARCH
+	// RETURN (RELEVANCY), and for the Search call it makes to answer SORT
+	// RETURN (RELEVANCY), because [SortMailbox] returns no scores. A backend
+	// that does not score its matches may ignore it.
+	ReturnRelevancy bool `imapfeature:"search-relevancy"`
+	_               struct{}
 }
 
 // StoreFlagsOp selects how STORE changes the current flag set.
@@ -937,7 +944,15 @@ type SearchResult struct {
 	// only when the client asked for it and CONDSTORE is active.
 	// RFC 7162 section 3.1.5.
 	ModSeq uint64
-	_      struct{}
+	// Relevancy optionally pairs each UID with its RFC 6203 relevancy score,
+	// by position, and then has the same length as UIDs. A score is from 1 to
+	// 100, where 100 is the most relevant; how it is computed is the
+	// backend's choice. The framework reads it only when
+	// [SearchOptions.ReturnRelevancy] was set. Scores that are out of range,
+	// or a length that differs from UIDs, fail the command as a backend
+	// error. Without scores, the framework reports 100 for every match.
+	Relevancy []uint8
+	_         struct{}
 }
 
 // SearchQuery is a UID-normalised SEARCH tree. The framework and NewSearchQuery

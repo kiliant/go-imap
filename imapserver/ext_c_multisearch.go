@@ -61,7 +61,13 @@ type MultiSearchOptions struct {
 	// Charset is the declared charset for string criteria, or empty for the
 	// protocol default.
 	Charset string `imapfeature:"multisearch"`
-	_       struct{}
+	// ReturnRelevancy reports that the client asked for RFC 6203 relevancy
+	// scores with ESEARCH RETURN (RELEVANCY), which a backend supplies in
+	// [MultiSearchMailboxResult.Relevancy]. The framework sets it only for
+	// criteria containing a FUZZY key. A backend that does not score its
+	// matches may ignore it.
+	ReturnRelevancy bool `imapfeature:"search-relevancy"`
+	_               struct{}
 }
 
 // MultiSearchMailboxResult is one mailbox's contribution to a MULTISEARCH
@@ -81,7 +87,13 @@ type MultiSearchMailboxResult struct {
 	// for MIN, MAX or PARTIAL (RFC 4731 section 3.2) only the framework knows
 	// which those are. Without it the framework omits MODSEQ.
 	ModSeqs []uint64
-	_       struct{}
+	// Relevancy optionally pairs each UID with its RFC 6203 relevancy score,
+	// by position, and then has the same length as UIDs. Scores follow the
+	// rules of [SearchResult.Relevancy] and are read only when
+	// [MultiSearchOptions.ReturnRelevancy] was set. Without them, the
+	// framework reports 100 for every match.
+	Relevancy []uint8
+	_         struct{}
 }
 
 const featureMultiSearch featureID = "multisearch"
@@ -278,6 +290,9 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if err := requireCriteriaCapabilities(c, criteria); err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
+	if err := requireRelevancyFuzzy(args.result.returnOptions, criteria); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	// RFC 7162 section 3.1: a SEARCH using MODSEQ enables CONDSTORE. A NOMODSEQ
 	// selection refuses it only when that mailbox is among those searched.
 	if searchHasModSeq(criteria) {
@@ -292,7 +307,8 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 	if selectedIsTheSource {
 		criteria = normalizeSearchCriteria(criteria, c.state.selected.uids, c.state.selected.savedSearch)
 	}
-	results, err := session.MultiSearch(ctx, mailboxes, criteria, &MultiSearchOptions{Charset: args.charset})
+	wantRelevancy := requested[searchReturnRelevancy]
+	results, err := session.MultiSearch(ctx, mailboxes, criteria, &MultiSearchOptions{Charset: args.charset, ReturnRelevancy: wantRelevancy})
 	if err != nil {
 		return writeBackendError(c, command.tag, command.name, err)
 	}
@@ -308,6 +324,13 @@ func handleMultiSearch(ctx context.Context, c *conn, command *queuedCommand) err
 		uids, modSeqs, err := multiSearchMatches(c, result, selected)
 		if err != nil {
 			return writeBackendError(c, command.tag, command.name, err)
+		}
+		if wantRelevancy {
+			scores, err := pairRelevancy(result.UIDs, result.Relevancy, "MULTISEARCH")
+			if err != nil {
+				return writeBackendError(c, command.tag, command.name, err)
+			}
+			args.result.relevancy = alignRelevancy(uids, scores)
 		}
 		if selected && !selectedSeen {
 			selectedSeen = true
@@ -411,10 +434,11 @@ func multiSearchMatches(c *conn, result *MultiSearchMailboxResult, selected bool
 
 // multiSearchModSeq applies RFC 4731 section 3.2 to one mailbox's result:
 // MIN and MAX alone report their messages' clock, PARTIAL alone its window's,
-// and anything else the highest clock among all the matches.
+// and anything else the highest clock among all the matches. RELEVANCY counts
+// as returning the matches its scores cover.
 func multiSearchModSeq(args *searchArgs, requested map[string]bool, modSeqs []uint64) uint64 {
 	if !requested[searchReturnAll] && !requested[searchReturnCount] && !requested[searchReturnMin] &&
-		!requested[searchReturnMax] && !requested[searchReturnPartial] {
+		!requested[searchReturnMax] && !requested[searchReturnPartial] && !requested[searchReturnRelevancy] {
 		return 0
 	}
 	subset := modSeqs

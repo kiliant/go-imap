@@ -3,6 +3,7 @@ package imapserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -194,6 +195,9 @@ type sortArgs struct {
 	extended bool
 	charset  string
 	criteria imap.SearchCriteria
+	// relevancy holds one RELEVANCY score per sorted message when the option
+	// was requested. See ext_c_relevancy.go.
+	relevancy []uint8
 }
 
 func parseSort(decoder *imapwire.Decoder) (any, int64, error) {
@@ -351,6 +355,9 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 			return c.writeBad(command.tag, "SORT RELEVANCY requires FUZZY")
 		}
 	}
+	if err := requireRelevancyFuzzy(args.returnOptions, criteria); err != nil {
+		return c.writeBad(command.tag, err.Error())
+	}
 	usesModSeq := sortHasModSeqCriterion(criteria)
 	if err := validateSelectedCondStoreUse(ctx, c, usesModSeq, "SORT MODSEQ"); err != nil {
 		return writeCondStoreUseError(c, command.tag, command.name, err)
@@ -378,6 +385,11 @@ func handleSort(ctx context.Context, c *conn, command *queuedCommand) error {
 			numbers = append(numbers, uint32(uid))
 		} else {
 			numbers = append(numbers, uint32(seqNum))
+		}
+	}
+	if slices.Contains(args.returnOptions, searchReturnRelevancy) {
+		if args.relevancy, err = sortRelevancy(ctx, c, query, args.charset, matchedUIDs); err != nil {
+			return writeBackendError(c, command.tag, command.name, err)
 		}
 	}
 	var modSeq uint64
@@ -519,6 +531,9 @@ func writeSortResponse(c *conn, command *queuedCommand, args *sortArgs, numbers 
 			c.encoder.NIL()
 		}
 		c.encoder.Special(')')
+	}
+	if requested[searchReturnRelevancy] {
+		writeRelevancy(c, args.relevancy, relevancyPositions(requested, args.partial, len(numbers)))
 	}
 	c.encoder.CRLF()
 	return c.encoder.Flush()

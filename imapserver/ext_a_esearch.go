@@ -100,6 +100,11 @@ func validateSearchReturnOptions(c *conn, args *searchArgs) error {
 			if !advertised["PARTIAL"] {
 				return fmt.Errorf("SEARCH return option PARTIAL requires PARTIAL")
 			}
+		case searchReturnRelevancy:
+			// See ext_c_relevancy.go.
+			if err := validateRelevancyOption(c, "ESEARCH"); err != nil {
+				return err
+			}
 		default:
 			// The remaining options belong to CONTEXT. See ext_e_context.go.
 			if err := validateContextReturnOptions(c, option); err != nil {
@@ -192,6 +197,9 @@ func writeESearchData(c *conn, args *searchArgs, requested map[string]bool, numb
 	if requested[searchReturnPartial] {
 		writeSearchPartial(c, args, numbers)
 	}
+	if requested[searchReturnRelevancy] {
+		writeRelevancy(c, args.relevancy, relevancyPositions(requested, args.partial, len(numbers)))
+	}
 	if modSeq != 0 {
 		c.encoder.SP().Atom("MODSEQ").SP().Number64(int64(modSeq))
 	}
@@ -199,7 +207,8 @@ func writeESearchData(c *conn, args *searchArgs, requested map[string]bool, numb
 
 // searchReturnSet resolves which data items an ESEARCH response carries.
 // RFC 4731 section 3.1: an empty RETURN list means ALL. SAVE alone has no
-// response data and must not acquire an implicit ALL (RFC 5182).
+// response data and must not acquire an implicit ALL (RFC 5182). RELEVANCY
+// is data of its own and does not imply ALL either.
 func searchReturnSet(args *searchArgs) map[string]bool {
 	requested := make(map[string]bool, len(args.returnOptions))
 	for _, option := range args.returnOptions {
@@ -207,7 +216,8 @@ func searchReturnSet(args *searchArgs) map[string]bool {
 	}
 	if !requested[searchReturnMin] && !requested[searchReturnMax] &&
 		!requested[searchReturnAll] && !requested[searchReturnCount] &&
-		!requested[searchReturnPartial] && !requested[searchReturnUpd] && !requested[searchReturnSave] {
+		!requested[searchReturnPartial] && !requested[searchReturnUpd] && !requested[searchReturnSave] &&
+		!requested[searchReturnRelevancy] {
 		requested[searchReturnAll] = true
 	}
 	return requested

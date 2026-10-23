@@ -1329,3 +1329,41 @@ one timeout, and a context whose refresh misses it ends with NOUPDATE. A
 sorted context's refresh can call `Sort` a second time, with a UID-set query
 over the entries it keeps, to place them; that call shares the same timeout
 and adds no obligation beyond answering UID criteria.
+
+### SEARCH=FUZZY relevancy scores — 2026-10-23 (#202)
+
+RFC 6203's RELEVANCY return option was refused with BAD, although a server
+advertising SEARCH=FUZZY with ESEARCH or ESORT offers it. It is added inside
+the `imapserver` stability window, so it must be additive and must not put a
+new obligation on a backend that conformed before.
+
+**Additive:** `SearchOptions.ReturnRelevancy` and
+`MultiSearchOptions.ReturnRelevancy` ask for scores. Both are bound to the
+`search-relevancy` feature, which is active when SEARCH=FUZZY is advertised.
+`SearchResult.Relevancy` and `MultiSearchMailboxResult.Relevancy` carry them,
+paired with UIDs by position as `MultiSearchMailboxResult.ModSeqs` already is.
+All four are fields of guarded structs. No interface gains a method and no
+interface is added.
+
+**No new obligation:** scores are optional. A backend that ignores
+`ReturnRelevancy` gets a valid response in which every match scores 100, so a
+backend that already witnessed SEARCH=FUZZY keeps working unchanged. Scores
+that a backend does supply are checked: a length that differs from UIDs, or a
+score outside 1 to 100, fails the command as a backend error. They are read
+only when the client asked for them. Starting strict keeps the choice open: a
+later release can accept more without breaking anyone, while rejecting more
+later would be an incompatible change.
+
+**Backend-observable call:** `SortMailbox.Sort` returns only an order, so SORT
+RETURN (RELEVANCY) also calls `SelectedMailbox.Search` with the same query and
+`ReturnRelevancy` set. A sorted UID that this Search does not return scores
+100. Search is part of every selected mailbox, so this adds no obligation. A
+successor to `SortMailbox` that returns scores with the order can still be
+added later as an optional interface, without changing this one.
+
+**Which messages are scored** follows the rule RFC 4731 section 3.2 gives for
+MODSEQ. When the response returns only its MIN, MAX or PARTIAL messages,
+without ALL or COUNT, only those are scored; otherwise every match is. The
+scores follow the result order. RELEVANCY alone does not imply ALL, and a
+MODSEQ search with RELEVANCY alone reports the clock of every match.
+
