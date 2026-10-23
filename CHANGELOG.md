@@ -23,7 +23,14 @@ in `CLAUDE.md` — reaching a v1.0 that does not have to break for the next RFC:
 
 ## [Unreleased]
 
+## [imapserver/v0.5.0] - 2026-10-23
+
 ### Server module — `github.com/kiliant/go-imap/imapserver`
+
+Requires root `v1.3.1`, as `imapserver/v0.4.0` did; `imapserver/go.mod` is
+unchanged. Every change below is additive or a compatible wire correction, and
+none is marked `BREAKING`. This is the first of the two counted minors in the
+`imapserver` v1 stability window. (#54)
 
 #### Added
 
@@ -1883,7 +1890,8 @@ previous `imapserver/v*` tag.
   standard library and this module. Test-only dependencies are covered too; the
   interop harness shells out to a container CLI rather than using an SDK.
 
-[Unreleased]: https://github.com/kiliant/go-imap/compare/imapserver/v0.4.0...HEAD
+[Unreleased]: https://github.com/kiliant/go-imap/compare/imapserver/v0.5.0...HEAD
+[imapserver/v0.5.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.5.0
 [imapserver/v0.4.0]: https://github.com/kiliant/go-imap/releases/tag/imapserver/v0.4.0
 [1.3.1]: https://github.com/kiliant/go-imap/releases/tag/v1.3.1
 [1.3.0]: https://github.com/kiliant/go-imap/releases/tag/v1.3.0
