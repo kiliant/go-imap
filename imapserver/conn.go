@@ -1228,8 +1228,8 @@ func (c *conn) drainUpdatesInternal(accounting updateAccounting, mode updateDrai
 	if err := writeSearchContextDeltas(c, deltas, false); err != nil {
 		return err
 	}
-	// RFC 5465 section 5.2: MessageNew's FETCH follows the EXISTS and any
-	// ESEARCH ADDTO the new messages caused.
+	// RFC 5465 section 5.2: MessageNew's FETCH follows the EXISTS that
+	// announced the message, after this drain's context updates.
 	return c.writeMessageNewFetches(wireUpdates)
 }
 

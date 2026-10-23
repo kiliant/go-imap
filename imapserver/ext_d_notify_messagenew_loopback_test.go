@@ -13,12 +13,15 @@ import (
 	"github.com/kiliant/go-imap/imapserver/memory"
 )
 
-// messageNewBackend lets a test withhold BINARY, fail the selected mailbox's
-// Fetch, and count Notify calls without a registration.
+// messageNewBackend lets a test withhold BINARY, select mailboxes as
+// NOMODSEQ, fail the selected mailbox's Fetch before or after writing its
+// first message, and count Notify calls without a registration.
 type messageNewBackend struct {
 	*memory.Backend
 	noBinary   bool
+	noModSeq   bool
 	failFetch  atomic.Bool
+	failAfter  atomic.Bool
 	notifyNone atomic.Int32
 }
 
@@ -51,6 +54,9 @@ func (s *messageNewSession) Select(ctx context.Context, name string, updater *im
 	result, err := s.Session.Select(ctx, name, updater, options)
 	if err == nil {
 		result.Mailbox = &messageNewMailbox{result.Mailbox, s.backend}
+		if s.backend.noModSeq {
+			result.Snapshot.Status.NoModSeq = true
+		}
 	}
 	return result, err
 }
@@ -65,6 +71,13 @@ func (s *messageNewSession) Notify(ctx context.Context, updater *imapserver.Sess
 func (m *messageNewMailbox) Fetch(ctx context.Context, writer *imapserver.FetchWriter, uids imap.UIDSet, options *imapserver.FetchOptions) error {
 	if m.backend.failFetch.Load() {
 		return errors.New("fetch failed")
+	}
+	if m.backend.failAfter.Load() {
+		first, _ := uids.Nums()
+		if err := m.SelectedMailbox.Fetch(ctx, writer, imap.UIDSetNum(first[0]), options); err != nil {
+			return err
+		}
+		return errors.New("fetch failed after one message")
 	}
 	return m.SelectedMailbox.Fetch(ctx, writer, uids, options)
 }
@@ -242,5 +255,72 @@ func TestNotifyMessageNewGatesItems(t *testing.T) {
 	lines := w.cmd("N", "NOTIFY SET (selected (MessageNew (UID BINARY.PEEK[1]) MessageExpunge))")
 	if !strings.HasPrefix(r4Tagged(lines), "N NO [CANNOT]") {
 		t.Fatalf("BINARY without BINARY = %q", lines)
+	}
+}
+
+// A Fetch that fails after delivering data ends the registration; the
+// responses already sent stand and the connection stays usable.
+func TestNotifyMessageNewOverflowAfterPartialDelivery(t *testing.T) {
+	b := &messageNewBackend{Backend: r4Memory()}
+	w, other := messageNewPair(t, b)
+	messageNewCmd(t, w, "N", "NOTIFY SET (selected (MessageNew (UID) MessageExpunge))")
+	messageNewCmd(t, w, "S", "SELECT INBOX")
+	// The backend writes the message's data, then fails the call.
+	b.failAfter.Store(true)
+	r4Append(other, "INBOX", "", "written")
+	lines := messageNewCmd(t, w, "Q", "NOOP")
+	fetch := lineIndex(lines, `^\* 1 FETCH \(UID 1\)$`)
+	overflow := lineIndex(lines, `^\* OK \[NOTIFICATIONOVERFLOW\]`)
+	if fetch < 0 || overflow < fetch {
+		t.Fatalf("partial delivery = %q", lines)
+	}
+}
+
+// Where CONDSTORE is not in effect for the selection, MODSEQ is left out, and
+// a list left with nothing sends no FETCH: a response needs an item.
+func TestNotifyMessageNewNoModSeq(t *testing.T) {
+	for _, test := range []struct{ items, want string }{
+		{"MODSEQ", ""},
+		{"UID MODSEQ", `^\* 1 FETCH \(UID 1\)$`},
+	} {
+		t.Run(test.items, func(t *testing.T) {
+			w, other := messageNewPair(t, &messageNewBackend{Backend: r4Memory(), noModSeq: true})
+			messageNewCmd(t, w, "N", "NOTIFY SET (selected (MessageNew ("+test.items+") MessageExpunge))")
+			messageNewCmd(t, w, "S", "SELECT INBOX")
+			r4Append(other, "INBOX", "", "unclocked")
+			lines := messageNewCmd(t, w, "Q", "NOOP")
+			fetches := strings.Count(strings.Join(lines, "\n"), "FETCH")
+			if lineIndex(lines, `^\* 1 EXISTS$`) < 0 || test.want == "" && fetches != 0 || test.want != "" && (fetches != 1 || lineIndex(lines, test.want) < 0) {
+				t.Fatalf("NOMODSEQ delivery = %q", lines)
+			}
+		})
+	}
+}
+
+// Under UIDONLY the UID is the response's subject, so a list without UID still
+// works, and a list of only UID keeps the item rather than send "()". UID
+// FETCH n (UID) gets the same (RFC 9586 section 3.3).
+func TestNotifyMessageNewUIDOnlyItems(t *testing.T) {
+	for _, test := range []struct{ items, want string }{
+		{"FLAGS", `^\* 1 UIDFETCH \(FLAGS \([^)]*\)\)$`},
+		{"UID", `^\* 1 UIDFETCH \(UID 1\)$`},
+	} {
+		t.Run(test.items, func(t *testing.T) {
+			w, other := messageNewPair(t, r4Memory())
+			messageNewCmd(t, w, "E", "ENABLE UIDONLY")
+			messageNewCmd(t, w, "N", "NOTIFY SET (selected (MessageNew ("+test.items+") MessageExpunge))")
+			messageNewCmd(t, w, "S", "SELECT INBOX")
+			r4Append(other, "INBOX", "", "uidonly")
+			if lines := messageNewCmd(t, w, "Q", "NOOP"); lineIndex(lines, test.want) < 0 {
+				t.Fatalf("UIDONLY (%s) delivery = %q", test.items, lines)
+			}
+		})
+	}
+	w := r4Open(t, r4Memory(), nil)
+	r4Append(w, "INBOX", "", "one")
+	messageNewCmd(t, w, "E", "ENABLE UIDONLY")
+	messageNewCmd(t, w, "S", "SELECT INBOX")
+	if lines := messageNewCmd(t, w, "F", "UID FETCH 1 (UID)"); lineIndex(lines, `^\* 1 UIDFETCH \(UID 1\)$`) < 0 {
+		t.Fatalf("UID FETCH 1 (UID) under UIDONLY = %q", lines)
 	}
 }

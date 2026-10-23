@@ -404,13 +404,14 @@ CONDSTORE `MODIFIED` on tagged OK.
     receive no STATUS. MessageNew fetch attributes on a SELECTED or
     SELECTED-DELAYED group are delivered by the framework (#195). It gates
     them as FETCH items and refuses those that would set \Seen with
-    `NO [CANNOT]`; MODSEQ among them enables CONDSTORE. For each new message
-    in the selected mailbox that the connection did not create itself, it
-    fetches them through `SelectedMailbox.Fetch` and sends an unsolicited
-    FETCH after the EXISTS and any ESEARCH ADDTO, numbered in the client's
-    current view and bounded like FETCH. Data that cannot be delivered
-    before any of it is written ends the registration with
-    NOTIFICATIONOVERFLOW. (#54, independent review B3, R3/R5/R6)
+    `NO [CANNOT]`; MODSEQ among them enables CONDSTORE. When a drain announces
+    new messages in the selected mailbox, one `SelectedMailbox.Fetch` call
+    supplies their data, sent as unsolicited FETCH responses after the EXISTS,
+    numbered in the client's view when written and bounded like FETCH. Their
+    order against ESEARCH ADDTO is not guaranteed. Additions carrying the
+    origin of the connection's own command are not fetched. A Fetch error or
+    an exceeded bound ends the registration with NOTIFICATIONOVERFLOW;
+    responses already sent stand. (#54, independent review B3, R3/R5/R6)
 
 [^srvmsglistlimit]: Server advertisements and the incorrect mailbox-size/retention
     API were removed after the independent review (#54, A1). RFC 9738 limits

@@ -113,8 +113,9 @@ type SessionUpdate struct {
 // The framework calls Notify with a fresh updater each time, and closes the
 // previous one first, so a backend that kept the old updater finds it closed
 // rather than delivering into a registration the client has replaced.
-// Queue overflow also closes the updater and calls Notify with a nil updater
-// and configuration, just like NOTIFY NONE.
+// Queue overflow, or MessageNew data that cannot be delivered, also closes the
+// updater and calls Notify with a nil updater and configuration, just like
+// NOTIFY NONE.
 //
 // Before any of that, the framework applies RFC 5465's rules itself: an
 // invalid registration is BAD, and one naming an event the framework cannot
@@ -130,8 +131,8 @@ type SessionUpdate struct {
 // SELECTED-DELAYED group, keeping the client's sequence numbers stable while
 // it withholds them, so a backend publishes every change there regardless of
 // the registration. The framework also delivers that group's MessageNew fetch
-// attributes, by calling [SelectedMailbox.Fetch] for each new message that
-// this connection did not create itself. A successful SET reports accumulated selected changes,
+// attributes through [SelectedMailbox.Fetch]; see
+// [NotifyWatch.MessageNewFetchItems]. A successful SET reports accumulated selected changes,
 // including flags, before its tagged OK. If Notify refuses a replacement,
 // the previous selected policy remains in force, although its session updater
 // has been closed as described above.
@@ -185,9 +186,14 @@ type NotifyWatch struct {
 	// MessageNewFetchItems is the fetch-att list the client attached to
 	// MessageNew (RFC 5465 section 5.2). Only a SELECTED or SELECTED-DELAYED
 	// group can carry one, and it is empty otherwise. The framework delivers
-	// it: for each new message in the selected mailbox, it fetches these
-	// items through [SelectedMailbox.Fetch] and sends them as an unsolicited
-	// FETCH, so a backend need not act on this field.
+	// it, so a backend need not act on this field. When a drain announces new
+	// messages in the selected mailbox, it asks [SelectedMailbox.Fetch] for
+	// their data in one call and sends unsolicited FETCH responses. The
+	// request carries these items adjusted as for a FETCH command: UID is
+	// added, MODSEQ is added while CONDSTORE is in effect for the selection
+	// and removed otherwise. Additions from a batch carrying the origin of
+	// one of this connection's commands ([MutationOptions.Origin]) are not
+	// fetched.
 	MessageNewFetchItems []imap.FetchItem `imapfeature:"notify"`
 	_                    struct{}
 }
@@ -843,16 +849,17 @@ func (c *conn) notifyOverflow(text string) error {
 
 // writeMessageNewFetches sends the FETCH data that a SELECTED or
 // SELECTED-DELAYED MessageNew registration asks for, for the messages a drain
-// has just announced with EXISTS (RFC 5465 section 5.2). Messages this
-// connection created itself are not included, as that section recommends.
+// has just announced with EXISTS (RFC 5465 section 5.2). Additions from a
+// batch carrying the origin of this connection's own command are left out,
+// as that section recommends.
 //
-// The data comes from SelectedMailbox.Fetch, numbered in the client's view as
-// it stands after the drain's other responses, under the same response size
-// bound as FETCH, with Limits.CommandTimeout bounding the backend call. A
-// message removed meanwhile is skipped. If the data cannot be delivered
-// before any of it is written, the registration ends with
-// NOTIFICATIONOVERFLOW; a failure while writing ends the connection, since
-// the client has a partial response.
+// One SelectedMailbox.Fetch call supplies the data, bounded by
+// Limits.CommandTimeout, and each response is numbered in the client's view
+// as it stands after the drain's other responses, under FETCH's response size
+// bound. A message no longer in the view is skipped. If Fetch returns an
+// error or the bound is exceeded, the registration ends with
+// NOTIFICATIONOVERFLOW (section 5.8) and responses already sent stand; a
+// failure to encode or write a response ends the connection.
 func (c *conn) writeMessageNewFetches(updates []deliveredUpdate) error {
 	selected := c.state.selected
 	requested := c.notifySelected.fetchItems
@@ -873,17 +880,23 @@ func (c *conn) writeMessageNewFetches(updates []deliveredUpdate) error {
 	if len(uids) == 0 {
 		return nil
 	}
-	items, requestedUID := withFetchUID(requested)
-	// Once CONDSTORE is enabled every FETCH carries MODSEQ (RFC 7162 section
-	// 3.1.4.1); before that, or in a NOMODSEQ selection, none can.
-	items = applyCondStoreFetchItems(c, items)
+	// Once CONDSTORE is in effect every FETCH carries MODSEQ (RFC 7162
+	// section 3.1.4.1); otherwise none can, which leaves out a requested
+	// MODSEQ in a NOMODSEQ selection. A list left empty sends nothing: a
+	// FETCH response needs at least one item.
 	usesModSeq := condStoreMailboxEnabled(c)
 	if !usesModSeq {
-		items = slices.DeleteFunc(slices.Clone(items), func(item imap.FetchItem) bool {
+		requested = slices.DeleteFunc(slices.Clone(requested), func(item imap.FetchItem) bool {
 			return fetchItemsHaveModSeq([]imap.FetchItem{item})
 		})
+		if len(requested) == 0 {
+			return nil
+		}
 	}
-	includeUID := requestedUID || condStoreRequiresUID(c) && usesModSeq
+	items, requestedUID := withFetchUID(requested)
+	items = applyCondStoreFetchItems(c, items)
+	// UIDONLY needs the UID as the UIDFETCH response's subject.
+	includeUID := requestedUID || uidOnlyEnabled(c) || condStoreRequiresUID(c) && usesModSeq
 	ctx, cancel := context.WithTimeout(c.ctx, c.server.options.Limits.CommandTimeout)
 	defer cancel()
 	var responseBytes int64
@@ -892,6 +905,9 @@ func (c *conn) writeMessageNewFetches(updates []deliveredUpdate) error {
 		mapped, err := mapFetchResponse(selected, data, includeUID)
 		if err != nil {
 			return err
+		}
+		if len(mapped.Items) == 0 {
+			return nil
 		}
 		_, cleanup, err := prepareFetchResponseLiterals(mapped, maxCommandFetchBytes-responseBytes)
 		if err != nil {
