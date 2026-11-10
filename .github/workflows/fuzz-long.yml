@@ -7,6 +7,21 @@ name: Fuzz (long)
 # targets concurrently starves each one of executions — the entire point of a
 # long campaign — and it is what produces the `context deadline exceeded`
 # artifact that .github/scripts/fuzz.sh has to retry around.
+#
+# A shard that fails without a failing test has lost its runner. The rule
+# (#233): rerun that shard once (`gh run rerun <run-id> --failed`) and
+# investigate only if the same shard loses its runner again. A single loss is
+# treated as GitHub infrastructure, a repeat on the same targets as a suspected
+# input. What survives depends on the annotation:
+#
+#   "The runner has received a shutdown signal": the job log survives, and its
+#   last fuzz-watchdog.sh lines name the target and show whether memory or disk
+#   ran out (#192).
+#
+#   "The hosted runner lost communication with the server": nothing survives,
+#   neither job log nor artifact. Every other shard's artifact holds
+#   all-targets.txt; shard N runs its lines N+1, N+9, ... at 10 minutes each
+#   from the shard's start, which narrows down the likely target.
 
 on:
   schedule:
